@@ -124,9 +124,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
   const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
 
-  // Remove successfully sent and stale items from queue
-  // Keep items that failed to send or are waiting for retry delay - they'll be picked up on next run
-  const idsToRemove = [...sentPendingIds, ...sentRescanIds, ...sentErrorIds, ...staleIds];
+  // Only remove stale items from queue (status changed to non-scannable or retry limit exceeded)
+  // Processed items stay in queue - if scan succeeds, they become stale next run
+  // This handles both immediate failures (ingestImage returns false) AND silent failures
+  // (scan sent but never completes) - items are retried after the delay passes
+  const idsToRemove = [...staleIds];
   if (idsToRemove.length > 0) {
     await dbWrite.jobQueue.deleteMany({
       where: {
