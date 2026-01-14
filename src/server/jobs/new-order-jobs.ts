@@ -145,31 +145,36 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   for (const batch of batches) {
     log(`DailyReset:: Processing batch ${batchCount} of ${batches.length}`);
 
-    // Step 1: Recalculate fervor for each player using 7-day rolling window
-    const playerStats = await Promise.all(
-      batch.map(async (player) => {
-        // Fetch 7-day judgment counts from ClickHouse (via counters)
-        const [exp, correctJudgments, allJudgments, oldFervor] = await Promise.all([
-          expCounter.getCount(player.userId),
-          correctJudgmentsCounter.getCount(player.userId),
-          allJudgmentsCounter.getCount(player.userId),
-          fervorCounter.getCount(player.userId),
-        ]);
+    const batchUserIds = batch.map((p) => p.userId);
 
-        // Recalculate fervor using same formula as service
-        const newFervor = calculateFervor({ correctJudgments, allJudgments });
+    // Step 1: Batch fetch all counters efficiently (checks cache first, then batched DB queries)
+    const [correctCounts, allCounts, expCounts, fervorCounts] = await Promise.all([
+      correctJudgmentsCounter.getCountBatch(batchUserIds),
+      allJudgmentsCounter.getCountBatch(batchUserIds),
+      expCounter.getCountBatch(batchUserIds),
+      fervorCounter.getCountBatch(batchUserIds),
+    ]);
 
-        return {
-          userId: player.userId,
-          exp,
-          fervor: newFervor,
-          oldFervor,
-          needsUpdate: newFervor !== oldFervor,
-        };
-      })
-    );
+    // Step 2: Build player stats from the batch-fetched data
+    const playerStats = batch.map((player) => {
+      const correctJudgments = correctCounts.get(player.userId) ?? 0;
+      const allJudgments = allCounts.get(player.userId) ?? 0;
+      const exp = expCounts.get(player.userId) ?? 0;
+      const oldFervor = fervorCounts.get(player.userId) ?? 0;
 
-    // Step 2: Update Redis fervor counter for players whose fervor changed
+      // Recalculate fervor using same formula as service
+      const newFervor = calculateFervor({ correctJudgments, allJudgments });
+
+      return {
+        userId: player.userId,
+        exp,
+        fervor: newFervor,
+        oldFervor,
+        needsUpdate: newFervor !== oldFervor,
+      };
+    });
+
+    // Step 3: Update Redis fervor counter for players whose fervor changed
     await Promise.all(
       playerStats.map(async ({ userId, fervor, oldFervor, needsUpdate }) => {
         if (!needsUpdate) return;
@@ -190,7 +195,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       })
     );
 
-    // Step 3: Bulk update PostgreSQL with exp and recalculated fervor
+    // Step 4: Bulk update PostgreSQL with exp and recalculated fervor
     await dbWrite.$queryRaw`
       WITH affected AS (
         SELECT
@@ -207,7 +212,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
-    // Step 4: Clear rated images cache for all players in this batch
+    // Step 5: Clear rated images cache for all players in this batch
     await Promise.all(batch.map((player) => clearRatedImages(player.userId)));
 
     log(`DailyReset:: Batch ${batchCount} of ${batches.length} complete`);
