@@ -17,7 +17,7 @@ import dayjs from 'dayjs';
 
 // Users who need prepaids ADDED (adjustmentType === 'add')
 // Generated from validate-all-prepaid-memberships-output.json on 2026-01-14
-// Total: 428 users
+// Total: 435 users (428 active + 7 ended subscriptions)
 const USERS_NEEDING_ADD: Array<{
   userId: number;
   prepaidsDiff: { bronze: number; silver: number; gold: number };
@@ -2592,6 +2592,48 @@ const USERS_NEEDING_ADD: Array<{
     clickhouseBonusCount: 6,
     clickhouseRefundCount: 0,
   },
+  {
+    userId: 9093974,
+    prepaidsDiff: { bronze: -1, silver: 0, gold: 0 },
+    clickhouseBonusCount: 2,
+    clickhouseRefundCount: 0,
+  },
+  {
+    userId: 5531098,
+    prepaidsDiff: { bronze: -2, silver: 0, gold: 0 },
+    clickhouseBonusCount: 5,
+    clickhouseRefundCount: 0,
+  },
+  {
+    userId: 56180,
+    prepaidsDiff: { bronze: -2, silver: -1, gold: 0 },
+    clickhouseBonusCount: 6,
+    clickhouseRefundCount: 1,
+  },
+  {
+    userId: 9378294,
+    prepaidsDiff: { bronze: 0, silver: 0, gold: -1 },
+    clickhouseBonusCount: 2,
+    clickhouseRefundCount: 0,
+  },
+  {
+    userId: 15174,
+    prepaidsDiff: { bronze: -1, silver: 0, gold: 0 },
+    clickhouseBonusCount: 6,
+    clickhouseRefundCount: 0,
+  },
+  {
+    userId: 7234151,
+    prepaidsDiff: { bronze: 0, silver: 0, gold: -1 },
+    clickhouseBonusCount: 4,
+    clickhouseRefundCount: 0,
+  },
+  {
+    userId: 1501986,
+    prepaidsDiff: { bronze: -1, silver: 0, gold: 0 },
+    clickhouseBonusCount: 5,
+    clickhouseRefundCount: 1,
+  },
 ];
 
 const LOOKBACK_DATE = dayjs().subtract(6, 'month').startOf('month');
@@ -2599,7 +2641,7 @@ const LOOKBACK_DATE = dayjs().subtract(6, 'month').startOf('month');
 type BuzzApiTransaction = {
   date: string;
   amount: number;
-  description: string | null;
+  description?: string | null;
 };
 
 async function queryBuzzApiForUser(userId: number): Promise<{
