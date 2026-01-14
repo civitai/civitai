@@ -1,6 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
 import { Center, Input, Paper, Stack, Text } from '@mantine/core';
-import { IconDots, IconLibraryPlus } from '@tabler/icons-react';
+import { IconDots } from '@tabler/icons-react';
 import { useCallback } from 'react';
 
 import {
@@ -144,34 +144,23 @@ function ModalOptionDisplay({ option, selected }: ModalOptionDisplayProps) {
 // More Button Content
 // =============================================================================
 
-interface MoreButtonContentProps {
-  hiddenOption?: AspectRatioOption;
-}
-
-function MoreButtonContent({ hiddenOption }: MoreButtonContentProps) {
-  const dimensionLabel = hiddenOption ? getDimensionsLabel(hiddenOption) : undefined;
-
+function MoreButtonContent() {
   return (
     <Stack gap={2}>
-      {hiddenOption && (
-        <Text c="dimmed" className="absolute right-0.5 top-0.5">
-          <IconLibraryPlus size={18} />
-        </Text>
-      )}
       <Center>
         <Paper
           withBorder
           style={{
             borderWidth: 2,
-            aspectRatio: hiddenOption ? getAspectRatioStyle(hiddenOption) : '1/1',
+            aspectRatio: '1/1',
             height: 20,
           }}
         />
       </Center>
       <Stack gap={0}>
-        <Text size="xs">{hiddenOption ? hiddenOption.value : 'More'}</Text>
+        <Text size="xs">More</Text>
         <Text fz={10} c="dimmed">
-          {dimensionLabel ?? <IconDots size={16} className="mx-auto" />}
+          <IconDots size={16} className="mx-auto" />
         </Text>
       </Stack>
     </Stack>
@@ -203,16 +192,8 @@ export function AspectRatioInput({
     label: <AspectRatioOptionDisplay option={option} />,
   }));
 
-  // Render the More button with hidden selection info
-  const renderMoreButton = useCallback(
-    (hiddenSelectedValue: string | undefined) => {
-      const hiddenOption = hiddenSelectedValue
-        ? options.find((opt) => opt.value === hiddenSelectedValue)
-        : undefined;
-      return <MoreButtonContent hiddenOption={hiddenOption} />;
-    },
-    [options]
-  );
+  // Render the More button
+  const renderMoreButton = useCallback(() => <MoreButtonContent />, []);
 
   // Render modal option
   const renderModalOption = useCallback(

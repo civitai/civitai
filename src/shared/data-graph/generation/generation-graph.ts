@@ -25,17 +25,33 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { DataGraph, type InferDataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { textInputGraph, imageInputGraph } from './common';
+import {
+  textInputGraph,
+  imageInputGraph,
+  imageOutputGraph,
+  videoOutputGraph,
+} from './common';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
 import { videoInterpolationGraph } from './video-interpolation-graph';
 import { videoUpscaleGraph } from './video-upscale-graph';
+import { qwenGraph } from './qwen-graph';
+import { nanoBananaGraph } from './nano-banana-graph';
+import { seedreamGraph } from './seedream-graph';
+import { imagen4Graph } from './imagen4-graph';
+import { flux2Graph } from './flux2-graph';
+import { fluxKontextGraph } from './flux-kontext-graph';
+import { zImageTurboGraph } from './z-image-turbo-graph';
+import { chromaGraph } from './chroma-graph';
+import { hiDreamGraph } from './hi-dream-graph';
+import { ponyV7Graph } from './pony-v7-graph';
 import {
   getDefaultEcosystemForWorkflow,
   getInputTypeForWorkflow,
   getOutputTypeForWorkflow,
   isWorkflowAvailable,
 } from './workflows';
+import { generation } from '~/server/common/constants';
 
 // =============================================================================
 // Helper Functions
@@ -141,18 +157,37 @@ const ecosystemGraph = new DataGraph<
     (ctx) => {
       // These are ecosystem keys, not base model names
       const sdFamilyEcosystems = ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'];
-      const fluxFamilyEcosystems = ['Flux1', 'FluxKrea', 'Flux1Kontext', 'Flux2'];
+      const fluxFamilyEcosystems = ['Flux1', 'FluxKrea'];
+
       if (sdFamilyEcosystems.includes(ctx.baseModel)) return 'stable-diffusion';
       if (fluxFamilyEcosystems.includes(ctx.baseModel)) return 'flux';
+      if (ctx.baseModel === 'Qwen') return 'qwen';
+      if (ctx.baseModel === 'NanoBanana') return 'nano-banana';
+      if (ctx.baseModel === 'Seedream') return 'seedream';
+      if (ctx.baseModel === 'Imagen4') return 'imagen4';
+      if (ctx.baseModel === 'Flux2') return 'flux2';
+      if (ctx.baseModel === 'Flux1Kontext') return 'flux-kontext';
+      if (ctx.baseModel === 'ZImageTurbo') return 'z-image-turbo';
+      if (ctx.baseModel === 'Chroma') return 'chroma';
+      if (ctx.baseModel === 'HiDream') return 'hi-dream';
+      if (ctx.baseModel === 'PonyV7') return 'pony-v7';
       return undefined;
     },
     ['baseModel']
   )
-  // Model family discriminator - selects family-specific nodes
-  // Note: model node is NOT in the discriminator subgraphs to avoid cleanup issues
   .discriminator('modelFamily', {
     'stable-diffusion': stableDiffusionGraph,
     flux: fluxGraph,
+    qwen: qwenGraph,
+    'nano-banana': nanoBananaGraph,
+    seedream: seedreamGraph,
+    imagen4: imagen4Graph,
+    flux2: flux2Graph,
+    'flux-kontext': fluxKontextGraph,
+    'z-image-turbo': zImageTurboGraph,
+    chroma: chromaGraph,
+    'hi-dream': hiDreamGraph,
+    'pony-v7': ponyV7Graph,
   });
 
 // =============================================================================
@@ -246,6 +281,18 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     },
     ['workflow']
   )
+  // Output type discriminator - adds priority/outputFormat only for image output
+  .discriminator('output', {
+    image: imageOutputGraph,
+    video: videoOutputGraph,
+  })
+  .discriminator('input', {
+    text: textInputGraph,
+    image: imageInputGraph,
+    // Video input workflows use their own video node in the workflow discriminator
+    // This empty graph prevents cleanup when input='video'
+    video: new DataGraph<Record<never, never>, GenerationCtx>(),
+  })
   // Discriminator: include ecosystem-dependent nodes only for workflows with ecosystem support
   // Workflows without ecosystem support (vid2vid:*) use their own specialized graphs
   .discriminator('workflow', {
@@ -265,13 +312,6 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     // Video enhancement workflows (no ecosystem support)
     'vid2vid:interpolate': videoInterpolationGraph,
     'vid2vid:upscale': videoUpscaleGraph,
-  })
-  .discriminator('input', {
-    text: textInputGraph,
-    image: imageInputGraph,
-    // Video input workflows use their own video node in the workflow discriminator
-    // This empty graph prevents cleanup when input='video'
-    video: new DataGraph<Record<never, never>, GenerationCtx>(),
   });
 
 /** Type helper for the generation graph context */
@@ -279,3 +319,27 @@ export type GenerationGraphCtx = ReturnType<typeof generationGraph.init>;
 
 /** Inferred types for use with Controller and useGraph hooks */
 export type GenerationGraphTypes = InferDataGraph<typeof generationGraph>;
+
+// Do not modify this test code
+if ('test'.length > 5) {
+  const result = generationGraph.validate();
+  if (result.success) {
+    const { data } = result;
+    console.log(data.workflow);
+    console.log(data.input);
+
+    if (data.input === 'image') {
+      console.log(data.images);
+    }
+
+    if (data.workflow === 'draft') {
+      if (data.modelFamily === 'flux') {
+        console.log(data.fluxMode);
+      }
+      if (data.modelFamily === 'stable-diffusion') {
+        console.log(data.aspectRatio);
+        console.log(data.seed);
+      }
+    }
+  }
+}

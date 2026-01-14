@@ -59,12 +59,12 @@ const workflowsWithDenoise = [
  *
  * Meta only contains dynamic props - static props like label are in components.
  */
-const checkpointGraph = createCheckpointGraph();
 export const stableDiffusionGraph = new DataGraph<
   { baseModel: string; workflow: string },
   GenerationCtx
 >()
-  .merge(checkpointGraph)
+  // Merge checkpoint graph (includes model node and baseModel sync effect)
+  .merge(createCheckpointGraph())
   .node(
     'resources',
     (ctx, ext) =>

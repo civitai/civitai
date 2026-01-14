@@ -53,6 +53,8 @@ import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/Imag
 import { VideoInput } from '~/components/generation_v2/inputs/VideoInput';
 import { InterpolationFactorInput } from '~/components/generation_v2/inputs/InterpolationFactorInput';
 import { OverflowSegmentedControl } from '~/components/generation_v2/inputs/OverflowSegmentedControl';
+import { PriorityInput } from '~/components/generation_v2/inputs/PriorityInput';
+import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 
 const STORAGE_KEY = 'data-graph-v2';
 
@@ -365,6 +367,21 @@ function GenerationForm() {
             }}
           />
 
+          {/* Request Priority (image output only) */}
+          <Controller
+            graph={graph}
+            name="priority"
+            render={({ value, meta, onChange }) => (
+              <PriorityInput
+                value={value}
+                onChange={onChange}
+                label="Request Priority"
+                options={meta.options}
+                isMember={meta.isMember}
+              />
+            )}
+          />
+
           {/* Advanced section */}
           <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
             {/* CFG Scale / Guidance - label varies by model family */}
@@ -499,6 +516,20 @@ function GenerationForm() {
                   onChange={(e) => onChange(e.target.checked)}
                   label="Raw Mode"
                   description="Generate with more natural, less processed look"
+                />
+              )}
+            />
+
+            {/* Output format (image output only) */}
+            <Controller
+              graph={graph}
+              name="outputFormat"
+              render={({ value, meta, onChange }) => (
+                <OutputFormatInput
+                  value={value}
+                  onChange={onChange as (v: string) => void}
+                  label="Output Format"
+                  options={meta.options}
                 />
               )}
             />

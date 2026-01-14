@@ -177,14 +177,71 @@ const ultraModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  * - krea: resources, aspectRatio, cfgScale, steps, seed, enhancedCompatibility
  * - pro: aspectRatio, cfgScale, steps, seed, enhancedCompatibility (no resources)
  * - ultra: aspectRatio (different options), fluxUltraRaw, seed
+ *
+ * Draft workflow behavior:
+ * - When workflow is 'draft', model defaults to draft version and is locked
+ * - If user changes model to a non-draft version, workflow switches to txt2img
  */
-const fluxCheckpointGraph = createCheckpointGraph({ versions: fluxModeVersionOptions });
 
 export const fluxGraph = new DataGraph<
   { baseModel: string; workflow: string; model: ModelValue },
   GenerationCtx
 >()
-  .merge(fluxCheckpointGraph)
+  // Merge checkpoint graph with dynamic modelLocked based on workflow
+  // When workflow is 'draft', force the model to draft version (overrides any existing value)
+  .merge(
+    (ctx) =>
+      createCheckpointGraph({
+        versions: fluxModeVersionOptions,
+        modelLocked: ctx.workflow === 'draft',
+        defaultModelId: fluxVersionIds.standard,
+      }),
+    ['workflow']
+  )
+  // Effect 1: When workflow changes, sync model to match
+  // - If workflow changed to draft but model is not draft → set model to draft
+  // - If workflow changed away from draft but model is draft → set model to standard
+  .effect(
+    (ctx, _ext, set) => {
+      const isDraftModel = ctx.model?.id === fluxVersionIds.draft;
+      const isDraftWorkflow = ctx.workflow === 'draft';
+
+      if (isDraftWorkflow && !isDraftModel) {
+        set('model', { id: fluxVersionIds.draft } as ModelValue);
+      } else if (!isDraftWorkflow && isDraftModel) {
+        set('model', { id: fluxVersionIds.standard } as ModelValue);
+      }
+    },
+    ['workflow']
+  )
+  // Effect 2: When model changes, sync workflow to match
+  // - If model changed to draft and workflow is not draft → set workflow to draft
+  // - If model changed away from draft and workflow is draft → set workflow to txt2img
+  //
+  // Note: This effect only handles user-initiated model changes.
+  // When workflow changes trigger Effect 1 to set model, we don't want Effect 2
+  // to set workflow back - that would cause an infinite loop.
+  // The check for consistency prevents this: if workflow already matches what
+  // the model implies, no action is taken.
+  .effect(
+    (ctx, _ext, set) => {
+      const model = ctx.model as { id?: number } | undefined;
+      if (!model?.id) return;
+
+      const isDraftModel = model.id === fluxVersionIds.draft;
+      const isDraftWorkflow = ctx.workflow === 'draft';
+
+      // Only sync if there's an actual mismatch that needs fixing
+      // This prevents loops: if Effect 1 set model to standard because workflow
+      // changed to txt2img, isDraftWorkflow is already false, so no action needed
+      if (isDraftModel && !isDraftWorkflow) {
+        set('workflow', 'draft');
+      } else if (!isDraftModel && isDraftWorkflow) {
+        set('workflow', 'txt2img');
+      }
+    },
+    ['model']
+  )
   // Computed: derive flux mode from model.id (version ID)
   .computed(
     'fluxMode',

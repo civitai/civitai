@@ -1002,6 +1002,9 @@ export const ecosystemSettings: EcosystemSettings[] = [
 /** SD family ecosystem IDs (img2img support) */
 const SD_FAMILY_IDS = [ECO.SD1, ECO.SDXL, ECO.Pony, ECO.Illustrious, ECO.NoobAI];
 
+/** Ecosystem IDs that support draft mode (SD family + Flux1) */
+const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
+
 /** Image ecosystems that support txt2img (all image ecosystems with generation support) */
 const TXT2IMG_IDS = [
   // SD family
@@ -1078,7 +1081,7 @@ export const workflows: WorkflowRecord[] = [
     label: 'Draft',
     inputType: 'text',
     category: 'text-to-image',
-    ecosystemIds: SD_FAMILY_IDS,
+    ecosystemIds: DRAFT_IDS,
   },
   {
     key: 'txt2img:face-fix',
@@ -2590,6 +2593,29 @@ export function getEcosystemFamily(ecosystemId: number): BaseModelFamilyRecord |
   const ecosystem = ecosystemById.get(ecosystemId);
   if (!ecosystem?.familyId) return undefined;
   return ecosystemFamilyById.get(ecosystem.familyId);
+}
+
+/**
+ * Get all ecosystem defaults (with inheritance from parent ecosystems)
+ */
+export function getEcosystemDefaults(
+  ecosystemId: number
+): NonNullable<EcosystemSettings['defaults']> | undefined {
+  const settings = ecosystemSettings.find((s) => s.ecosystemId === ecosystemId);
+  const ecosystem = ecosystemById.get(ecosystemId);
+
+  // Get parent defaults recursively
+  const parentDefaults = ecosystem?.parentEcosystemId
+    ? getEcosystemDefaults(ecosystem.parentEcosystemId)
+    : undefined;
+
+  // Merge parent defaults with current settings
+  if (!settings?.defaults && !parentDefaults) return undefined;
+
+  return {
+    ...parentDefaults,
+    ...settings?.defaults,
+  };
 }
 
 /**

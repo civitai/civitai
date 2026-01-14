@@ -11,8 +11,7 @@ import {
   ecosystemById,
   ecosystemByKey,
   getCompatibleBaseModels,
-  getDefaultModelId,
-  getEcosystemSetting,
+  getEcosystemDefaults,
 } from '~/shared/constants/basemodel.constants';
 import { MAX_SEED, samplers } from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -312,63 +311,58 @@ function getResourceSelectOptions(baseModel: string, resourceTypes: ModelType[])
     .filter((r) => r.baseModels.length > 0 || r.partialSupport.length > 0);
 }
 
-/** Version option for checkpoint subgraph */
+/** Version option for checkpoint graph */
 export type CheckpointVersionOption = {
   label: string;
   value: number;
 };
 
 /**
- * Creates a checkpoint subgraph with model node and ecosystem sync effect.
+ * Creates a checkpoint graph with model node and baseModel sync effect.
  *
- * This subgraph includes:
- * - model: The checkpoint node with optional version options in meta
- * - An effect that syncs baseModel when the model changes to a different ecosystem
+ * This creates a subgraph containing:
+ * - A 'model' node for checkpoint selection
+ * - An effect to sync baseModel when model changes to a different ecosystem
  *
- * The model node:
- * - Validates that loaded models are compatible with the current baseModel ecosystem
- * - Only allows checkpoints with FULL support for the ecosystem (no partial support)
- * - Falls back to the default model for the ecosystem if incompatible
- *
- * @param versions - Optional list of version options for mode switching (e.g., Flux modes)
- * @returns A DataGraph subgraph for checkpoint selection with ecosystem sync
+ * Use with `.merge()` to include in a parent graph:
  *
  * @example
  * ```ts
- * // Standard checkpoint
- * const checkpointGraph = createCheckpointGraph();
+ * // Static merge (no dynamic options)
+ * const graph = new DataGraph()
+ *   .merge(createCheckpointGraph());
  *
- * // With versions (e.g., Flux modes)
- * const fluxCheckpointGraph = createCheckpointGraph({
- *   versions: [
- *     { label: 'Standard', value: 691639 },
- *     { label: 'Ultra', value: 1088507 },
- *   ],
- * });
+ * // Dynamic merge with callback (for dynamic modelLocked, versions, etc.)
+ * const graph = new DataGraph()
+ *   .merge(
+ *     (ctx) => createCheckpointGraph({
+ *       versions: fluxModeVersionOptions,
+ *       modelLocked: ctx.workflow === 'draft',
+ *     }),
+ *     ['workflow']
+ *   );
  * ```
  */
-export function createCheckpointGraph({
-  versions,
-}: {
+export function createCheckpointGraph(options?: {
+  /** Version options for the model selector (e.g., Flux modes) */
   versions?: CheckpointVersionOption[];
-} = {}) {
+  /** Whether to lock the model (hide swap button) */
+  modelLocked?: boolean;
+  /** Default model version ID override */
+  defaultModelId?: number;
+}) {
   return new DataGraph<{ baseModel: string }, GenerationCtx>()
     .node(
       'model',
       (ctx, ext) => {
-        const baseModel = ctx.baseModel;
-        const resourceIds = ext.resources.map((x) => x.id);
-
-        const ecosystem = ecosystemByKey.get(baseModel);
-        const modelVersionId = ecosystem ? getDefaultModelId(ecosystem.id) : undefined;
-        const modelLocked = ecosystem
-          ? getEcosystemSetting(ecosystem.id, 'modelLocked') ?? false
-          : false;
+        const ecosystem = ecosystemByKey.get(ctx.baseModel);
+        const ecosystemDefaults = ecosystem ? getEcosystemDefaults(ecosystem.id) : undefined;
+        const modelVersionId = options?.defaultModelId ?? ecosystemDefaults?.model?.id;
+        const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
         const compatibleBaseModels = ecosystem
           ? getCompatibleBaseModels(ecosystem.id, 'Checkpoint').full.map((m) => m.name)
           : [];
 
-        // Input schema that preserves the baseModel field for validation
         const checkpointInputSchema = z
           .union([
             z.number().transform((id) => ({ id })),
@@ -377,19 +371,15 @@ export function createCheckpointGraph({
           .optional()
           .transform((val) => {
             if (!val) return undefined;
-            // Validate that the model is compatible with the current baseModel ecosystem
             const modelBaseModel = 'baseModel' in val ? val.baseModel : undefined;
             if (modelBaseModel) {
-              // If we have compatible base models defined, check against them
               if (compatibleBaseModels.length > 0) {
                 if (!compatibleBaseModels.includes(modelBaseModel)) {
                   return undefined;
                 }
               } else {
-                // No compatible base models defined (e.g., video ecosystems)
-                // Check if the model's ecosystem matches the current baseModel ecosystem
                 const modelEcosystemKey = getEcosystemKeyForBaseModel(modelBaseModel);
-                if (modelEcosystemKey && modelEcosystemKey !== baseModel) {
+                if (modelEcosystemKey && modelEcosystemKey !== ctx.baseModel) {
                   return undefined;
                 }
               }
@@ -401,16 +391,16 @@ export function createCheckpointGraph({
           input: checkpointInputSchema,
           output: resourceSchema.optional(),
           defaultValue: modelVersionId
-            ? { id: modelVersionId, baseModel, model: { type: 'Checkpoint' } }
+            ? { id: modelVersionId, baseModel: ctx.baseModel, model: { type: 'Checkpoint' } }
             : undefined,
           meta: {
             options: {
               canGenerate: true,
-              resources: getResourceSelectOptions(baseModel, ['Checkpoint']),
-              excludeIds: resourceIds,
+              resources: getResourceSelectOptions(ctx.baseModel, ['Checkpoint']),
+              excludeIds: ext.resources.map((x) => x.id),
             },
             modelLocked,
-            versions,
+            versions: options?.versions,
           },
         };
       },
@@ -419,18 +409,11 @@ export function createCheckpointGraph({
     .effect(
       (ctx, _ext, set) => {
         const model = ctx.model as { id?: number; baseModel?: string } | undefined;
-        // Only run if we have a valid model with both id and baseModel
-        if (!model?.baseModel || !model.id) {
-          return;
-        }
+        if (!model?.baseModel || !model.id) return;
 
         const modelEcosystemKey = getEcosystemKeyForBaseModel(model.baseModel);
-        // If we can't determine the ecosystem, or they already match, nothing to do
-        if (!modelEcosystemKey || modelEcosystemKey === ctx.baseModel) {
-          return;
-        }
+        if (!modelEcosystemKey || modelEcosystemKey === ctx.baseModel) return;
 
-        // Update baseModel to match the model's ecosystem
         set('baseModel', modelEcosystemKey);
       },
       ['model']
@@ -622,3 +605,104 @@ export function videoNode() {
     defaultValue: undefined,
   };
 }
+
+// =============================================================================
+// Priority Node Builder
+// =============================================================================
+
+/** Priority options */
+const priorityOptions = ['low', 'normal', 'high'] as const;
+export type Priority = (typeof priorityOptions)[number];
+
+/** Priority option metadata */
+type PriorityOption = {
+  label: string;
+  value: Priority;
+  offset: number;
+  memberOnly?: boolean;
+  disabled?: boolean;
+};
+
+/**
+ * Creates a priority node factory.
+ * Uses external context to check member status and adjust priority accordingly.
+ *
+ * Member behavior:
+ * - Default value is 'normal' for members, 'low' for non-members
+ * - 'low' option is disabled for members (auto-upgraded to 'normal')
+ * - 'high' option requires membership
+ */
+export function priorityNode() {
+  return (_ctx: Record<string, unknown>, ext: GenerationCtx) => {
+    const isMember = ext.user?.isMember ?? false;
+    const defaultValue: Priority = isMember ? 'normal' : 'low';
+
+    const options: PriorityOption[] = [
+      { label: 'Standard', value: 'low', offset: 0, disabled: isMember },
+      { label: 'High', value: 'normal', offset: 10 },
+      { label: 'Highest', value: 'high', offset: 20, memberOnly: true, disabled: !isMember },
+    ];
+
+    return {
+      input: z
+        .enum(priorityOptions)
+        .optional()
+        .transform((val) => {
+          // Auto-upgrade 'low' to 'normal' for members
+          if (isMember && val === 'low') return 'normal';
+          return val;
+        }),
+      output: z.enum(priorityOptions),
+      defaultValue,
+      meta: {
+        options,
+        isMember,
+      },
+    };
+  };
+}
+
+// =============================================================================
+// Output Format Node Builder
+// =============================================================================
+
+/** Output format options */
+const outputFormatOptions = ['jpeg', 'png'] as const;
+export type OutputFormat = (typeof outputFormatOptions)[number];
+
+/**
+ * Creates an output format node.
+ * Meta contains: options (for UI rendering)
+ */
+export function outputFormatNode({ defaultValue = 'jpeg' }: { defaultValue?: OutputFormat } = {}) {
+  return {
+    input: z.enum(outputFormatOptions).optional(),
+    output: z.enum(outputFormatOptions),
+    defaultValue,
+    meta: {
+      options: [
+        { label: 'JPEG', value: 'jpeg' },
+        { label: 'PNG', value: 'png' },
+      ],
+    },
+  };
+}
+
+// =============================================================================
+// Output Type Graphs (image vs video output)
+// =============================================================================
+
+/**
+ * Image output graph.
+ * Adds priority and outputFormat nodes for image generation workflows.
+ * Priority node uses external context to check member status.
+ */
+export const imageOutputGraph = new DataGraph<Record<never, never>, GenerationCtx>()
+  .node('priority', priorityNode(), [])
+  .node('outputFormat', outputFormatNode());
+
+/**
+ * Video output graph.
+ * Empty for now - video-specific output settings can be added here.
+ */
+export const videoOutputGraph = new DataGraph<Record<never, never>, GenerationCtx>();
