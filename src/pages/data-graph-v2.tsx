@@ -22,6 +22,7 @@ import {
   ActionIcon,
   SegmentedControl,
   Checkbox,
+  Input,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown } from '@tabler/icons-react';
@@ -367,19 +368,43 @@ function GenerationForm() {
             }}
           />
 
-          {/* Request Priority (image output only) */}
+          {/* Output Settings (image output only) */}
           <Controller
             graph={graph}
-            name="priority"
-            render={({ value, meta, onChange }) => (
-              <PriorityInput
-                value={value}
-                onChange={onChange}
-                label="Request Priority"
-                options={meta.options}
-                isMember={meta.isMember}
-              />
-            )}
+            name="output"
+            render={({ value: outputValue }) =>
+              outputValue === 'image' ? (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Output Settings</Input.Label>
+                  <div className="flex items-center gap-2">
+                    <Controller
+                      graph={graph}
+                      name="outputFormat"
+                      render={({ value, meta, onChange }) => (
+                        <OutputFormatInput
+                          value={value}
+                          onChange={onChange as (v: string) => void}
+                          options={meta.options}
+                          isMember={meta.isMember}
+                        />
+                      )}
+                    />
+                    <Controller
+                      graph={graph}
+                      name="priority"
+                      render={({ value, meta, onChange }) => (
+                        <PriorityInput
+                          value={value}
+                          onChange={onChange}
+                          options={meta.options}
+                          isMember={meta.isMember}
+                        />
+                      )}
+                    />
+                  </div>
+                </div>
+              ) : null
+            }
           />
 
           {/* Advanced section */}
@@ -516,20 +541,6 @@ function GenerationForm() {
                   onChange={(e) => onChange(e.target.checked)}
                   label="Raw Mode"
                   description="Generate with more natural, less processed look"
-                />
-              )}
-            />
-
-            {/* Output format (image output only) */}
-            <Controller
-              graph={graph}
-              name="outputFormat"
-              render={({ value, meta, onChange }) => (
-                <OutputFormatInput
-                  value={value}
-                  onChange={onChange as (v: string) => void}
-                  label="Output Format"
-                  options={meta.options}
                 />
               )}
             />

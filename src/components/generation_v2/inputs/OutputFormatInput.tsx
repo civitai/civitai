@@ -1,13 +1,12 @@
 /**
  * Output Format Input Component
  *
- * A dropdown selector for output image format (JPEG/PNG).
+ * A compact dropdown selector for output image format (JPEG/PNG).
  * Works with the DataGraph Controller pattern, receiving options from meta.
  */
 
-import { Input } from '@mantine/core';
-import { IconCheck, IconSelector } from '@tabler/icons-react';
-import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
+import { Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { IconBolt, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 
 // =============================================================================
@@ -19,14 +18,44 @@ export type OutputFormat = 'jpeg' | 'png';
 export interface OutputFormatOption {
   label: string;
   value: string;
+  offset?: number;
 }
 
 export interface OutputFormatInputProps {
   value?: string;
   onChange?: (format: string) => void;
-  label?: string;
-  placeholder?: string;
   options: OutputFormatOption[];
+  isMember?: boolean;
+}
+
+// =============================================================================
+// Format Label Component
+// =============================================================================
+
+interface FormatLabelProps {
+  label: string;
+  offset?: number;
+  isFreeForMember?: boolean;
+}
+
+function FormatLabel({ label, offset = 0, isFreeForMember = false }: FormatLabelProps) {
+  return (
+    <div className="flex items-center gap-3">
+      <span>{label}</span>
+      {offset > 0 && (
+        <span className={clsx('flex items-center', isFreeForMember && 'line-through opacity-50')}>
+          <span>+</span>
+          <span className="flex items-center">
+            <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
+            <span>{offset}</span>
+          </span>
+        </span>
+      )}
+      {isFreeForMember && (
+        <span className="text-xs text-green-6 dark:text-green-5">Free for Members</span>
+      )}
+    </div>
+  );
 }
 
 // =============================================================================
@@ -36,75 +65,49 @@ export interface OutputFormatInputProps {
 export function OutputFormatInput({
   value,
   onChange,
-  label = 'Output Format',
-  placeholder = 'select...',
   options,
+  isMember = false,
 }: OutputFormatInputProps) {
   const selected = value ? options.find((x) => x.value === value) : undefined;
 
   return (
-    <Input.Wrapper label={label}>
-      <Listbox value={value} onChange={(val) => onChange?.(val)}>
-        <div className="relative">
-          <ListboxButton
+    <Menu position="bottom-start" withinPortal>
+      <Tooltip label="Output Format" position="top" withArrow>
+        <Menu.Target>
+          <UnstyledButton
             className={clsx(
-              'grid w-full cursor-default grid-cols-1 rounded-md py-1.5 pl-3 pr-2 text-left outline outline-1 -outline-offset-1 focus:outline focus:outline-2 focus:-outline-offset-2 sm:text-sm/6',
-              'bg-white text-dark-9 outline-gray-4 focus:outline-blue-5',
-              'dark:bg-dark-6 dark:text-dark-0 dark:outline-dark-4 dark:focus:outline-blue-8'
+              'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
+              'bg-gray-1 hover:bg-gray-2',
+              'dark:bg-dark-5 dark:hover:bg-dark-4'
             )}
           >
-            <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
-              {selected?.label ?? placeholder}
-            </span>
-            <IconSelector
-              aria-hidden="true"
-              className={clsx(
-                'col-start-1 row-start-1 size-5 self-center justify-self-end sm:size-4',
-                'text-gray-6'
-              )}
+            <IconPhoto size={16} className="text-gray-6 dark:text-dark-2" />
+            <span className="font-medium">{selected?.label ?? 'JPEG'}</span>
+            {selected && (selected.offset ?? 0) > 0 && (
+              <span className={clsx('flex items-center', isMember && 'line-through opacity-50')}>
+                <span className="text-xs">+</span>
+                <IconBolt className="fill-yellow-7 stroke-yellow-7" size={14} />
+                <span className="text-xs">{selected.offset}</span>
+              </span>
+            )}
+          </UnstyledButton>
+        </Menu.Target>
+      </Tooltip>
+      <Menu.Dropdown>
+        {options.map((option) => (
+          <Menu.Item
+            key={option.value}
+            onClick={() => onChange?.(option.value)}
+            className={clsx(value === option.value && 'bg-blue-5/10 dark:bg-blue-8/20')}
+          >
+            <FormatLabel
+              label={option.label}
+              offset={option.offset}
+              isFreeForMember={isMember && option.value === 'png'}
             />
-          </ListboxButton>
-
-          <ListboxOptions
-            transition
-            anchor="bottom start"
-            portal
-            className={clsx(
-              'z-[1000] mt-1 max-h-56 w-[var(--button-width)] overflow-auto rounded-md py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none data-[closed]:data-[leave]:opacity-0 data-[leave]:transition data-[leave]:duration-100 data-[leave]:ease-in sm:text-sm',
-              'bg-white',
-              'dark:bg-dark-6'
-            )}
-          >
-            {options.map((option) => (
-              <ListboxOption
-                key={option.value}
-                value={option.value}
-                className={clsx(
-                  'group relative cursor-default select-none justify-between py-2 pl-6 pr-9 data-[focus]:outline-none',
-                  'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
-                  'dark:text-dark-0 dark:data-[focus]:bg-blue-8'
-                )}
-              >
-                <div className="flex items-center">
-                  <span className="block truncate group-data-[selected]:font-semibold">
-                    {option.label}
-                  </span>
-                </div>
-
-                <span
-                  className={clsx(
-                    'absolute inset-y-0 right-0 flex items-center pr-4 group-[&:not([data-selected])]:hidden',
-                    'text-blue-5 group-data-[focus]:text-white',
-                    'dark:text-blue-8'
-                  )}
-                >
-                  <IconCheck aria-hidden="true" className="size-5" />
-                </span>
-              </ListboxOption>
-            ))}
-          </ListboxOptions>
-        </div>
-      </Listbox>
-    </Input.Wrapper>
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
   );
 }

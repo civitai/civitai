@@ -640,7 +640,7 @@ export function priorityNode() {
     const options: PriorityOption[] = [
       { label: 'Standard', value: 'low', offset: 0, disabled: isMember },
       { label: 'High', value: 'normal', offset: 10 },
-      { label: 'Highest', value: 'high', offset: 20, memberOnly: true, disabled: !isMember },
+      { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
     ];
 
     return {
@@ -672,19 +672,23 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
 
 /**
  * Creates an output format node.
- * Meta contains: options (for UI rendering)
+ * Meta contains: options (for UI rendering), isMember (for free PNG display)
  */
 export function outputFormatNode({ defaultValue = 'jpeg' }: { defaultValue?: OutputFormat } = {}) {
-  return {
-    input: z.enum(outputFormatOptions).optional(),
-    output: z.enum(outputFormatOptions),
-    defaultValue,
-    meta: {
-      options: [
-        { label: 'JPEG', value: 'jpeg' },
-        { label: 'PNG', value: 'png' },
-      ],
-    },
+  return (_ctx: Record<string, unknown>, ext: GenerationCtx) => {
+    const isMember = ext.user?.isMember ?? false;
+    return {
+      input: z.enum(outputFormatOptions).optional(),
+      output: z.enum(outputFormatOptions),
+      defaultValue,
+      meta: {
+        options: [
+          { label: 'JPEG', value: 'jpeg', offset: 0 },
+          { label: 'PNG', value: 'png', offset: 2 },
+        ],
+        isMember,
+      },
+    };
   };
 }
 
@@ -699,7 +703,7 @@ export function outputFormatNode({ defaultValue = 'jpeg' }: { defaultValue?: Out
  */
 export const imageOutputGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   .node('priority', priorityNode(), [])
-  .node('outputFormat', outputFormatNode());
+  .node('outputFormat', outputFormatNode(), []);
 
 /**
  * Video output graph.
