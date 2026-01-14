@@ -87,19 +87,19 @@ export interface StorageAdapter<Ctx extends Record<string, unknown> = Record<str
 
 // Extract the Ctx type from a DataGraph or a lazy factory that returns one
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type InferGraphContext<G> = G extends DataGraph<infer Ctx, any, any>
+type InferGraphContext<G> = G extends DataGraph<infer Ctx, any, any, any>
   ? Ctx
   : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  G extends (ctx: any, ext: any) => DataGraph<infer Ctx, any, any>
+  G extends (ctx: any, ext: any) => DataGraph<infer Ctx, any, any, any>
   ? Ctx
   : never;
 
 // Extract the CtxMeta type from a DataGraph
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type InferGraphMeta<G> = G extends DataGraph<any, any, infer CtxMeta>
+type InferGraphMeta<G> = G extends DataGraph<any, any, infer CtxMeta, any>
   ? CtxMeta
   : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  G extends (ctx: any, ext: any) => DataGraph<any, any, infer CtxMeta>
+  G extends (ctx: any, ext: any) => DataGraph<any, any, infer CtxMeta, any>
   ? CtxMeta
   : never;
 
@@ -133,18 +133,43 @@ type BranchesRecord<Ctx = any, ExternalCtx = any> = Record<
   BranchDefinition<Ctx, ExternalCtx>
 >;
 
-// Build the discriminated union for Ctx - FLAT structure (no prefixing)
+// Helper: Distributive Omit that preserves discriminated unions
+type OmitDistributive<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+// Helper: Get the "own" context from a branch (what the subgraph adds, excluding parent keys)
+// The subgraph's InferGraphContext already includes its nested discriminated union
+// We just strip the parent keys and add the discriminator literal
+type BranchShape<
+  ParentCtx extends Record<string, unknown>,
+  DiscKey extends string,
+  BranchName extends string,
+  BranchGraph
+> = Prettify<
+  { [K in DiscKey]: BranchName } & OmitDistributive<InferGraphContext<BranchGraph>, keyof ParentCtx>
+>;
+
+// Build the discriminated union for Ctx
+// Bottom-up approach: each branch produces a single prettified shape,
+// then we union them and intersect with parent context
+//
+// Structure: ParentCtx (minus disc key) & BranchUnion
+// This avoids cartesian product explosion by NOT distributing over ParentCtx first.
+// The resulting type has the same number of union members as branches,
+// regardless of how many unions exist in ParentCtx.
 type BuildDiscriminatedUnion<
   ParentCtx extends Record<string, unknown>,
   DiscKey extends string,
   Branches extends BranchesRecord
-> = {
-  [BranchName in keyof Branches]: Prettify<
-    Omit<ParentCtx, DiscKey> & { [K in DiscKey]: BranchName } & InferGraphContext<
-        Branches[BranchName]
-      >
-  >;
-}[keyof Branches];
+> = OmitDistributive<ParentCtx, DiscKey> &
+  {
+    // Map each branch name to its complete shape, then index to create union
+    [BranchName in keyof Branches & string]: BranchShape<
+      ParentCtx,
+      DiscKey,
+      BranchName,
+      Branches[BranchName]
+    >;
+  }[keyof Branches & string];
 
 /**
  * Convert a union type to an intersection type.
@@ -199,11 +224,35 @@ type GraphEntry =
   | { kind: 'discriminator'; discriminatorKey: string; factory: DiscriminatorFactory };
 
 // ============================================================================
+// Active Entry Types (Runtime - entries with source tracking)
+// ============================================================================
+
+/** An entry that is currently active in the graph, with source tracking */
+type ActiveEntry = GraphEntry & {
+  /** The discriminator path that activated this entry (e.g., 'workflow:txt2img/modelFamily:flux') */
+  source: string;
+};
+
+/** Tracks an active discriminator branch */
+interface ActiveBranch {
+  branch: string;
+  /** Keys of entries added by this branch (for cleanup) */
+  entryKeys: Set<string>;
+}
+
+// ============================================================================
 // DataGraph Class
 // ============================================================================
 
 /**
  * A reactive data graph with type-safe discriminated unions and per-node typed meta.
+ *
+ * Architecture:
+ * - Root graph maintains all state (_ctx, nodeDefs, nodeMeta, activeEntries)
+ * - Subgraphs are templates that provide entry definitions
+ * - When a discriminator activates, subgraph entries are added to root's activeEntries
+ * - When a discriminator deactivates, those entries are removed
+ * - Single evaluation loop processes all activeEntries on the root graph
  *
  * @template Ctx - The context type containing all node values (discriminated union)
  * @template ExternalCtx - External context passed from outside the graph
@@ -221,50 +270,76 @@ export class DataGraph<
   /** Timestamp when this graph instance was created (useful for HMR debugging) */
   readonly createdAt = Date.now();
 
+  /** Template entries defined on this graph (used when this graph is a subgraph template) */
   private entries: GraphEntry[] = [];
+
+  /** Active entries currently being evaluated (only on root graph) */
+  private activeEntries: ActiveEntry[] = [];
+
+  /** Node definitions (schemas, defaults, meta) - only on root graph */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private nodeDefs = new Map<string, any>();
+
+  /** Node meta values - only on root graph */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private nodeMeta = new Map<string, any>();
+
+  /** Validation errors - only on root graph */
   private nodeErrors = new Map<string, NodeError>();
+
+  /** Node watchers for subscriptions - only on root graph */
   private nodeWatchers = new Map<string, Set<NodeCallback>>();
+
+  /** The context containing all node values - only on root graph */
   private _ctx: Ctx = {} as Ctx;
+
+  /** External context passed from outside */
   private _ext: ExternalCtx = {} as ExternalCtx;
+
+  /** Whether init() has been called */
   private _initialized = false;
+
+  /** Debug mode flag */
   private _debug = false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private activeDiscriminators = new Map<
-    string,
-    { branch: string; subGraph: DataGraph<any, any, any, any> }
-  >();
+
+  /** Tracks which discriminator branches are currently active */
+  private activeDiscriminators = new Map<string, ActiveBranch>();
+
+  /** Set of computed node keys (for isComputed check) */
   private computedNodes = new Set<string>();
+
+  /** Value provider for loading values (e.g., from storage) */
   private valueProvider?: ValueProvider<Ctx>;
+
+  /** Cache for lazy branch factories */
   private lazyBranchCache = new Map<string, BranchGraph>();
+
+  /** Storage adapter for persistence */
   private storageAdapter?: StorageAdapter<Ctx>;
+
+  /** Snapshot cache for getSnapshot() */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private snapshotCache = new Map<string, NodeSnapshot<unknown, any>>();
+
+  /** Meta keys for tracking meta changes */
   private nodeMetaKeys = new Map<string, number>();
+
+  /** Global watchers for any change */
   private globalWatchers = new Set<() => void>();
-  /**
-   * Reference to the root graph for notifying watchers during cleanup.
-   * When a discriminator branch is cleaned up, we need to notify watchers on
-   * the root graph (where Controllers subscribe), not just the subgraph.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private rootGraph?: DataGraph<any, any, any, any>;
-  /**
-   * Scope dependencies: maps scope keys to the node keys that depend on them.
-   * When a scope key changes, the dependent nodes should be re-evaluated
-   * to load fresh values from storage.
-   */
+
+  /** Scope dependencies for storage scoping */
   private scopeDependencies = new Map<string, Set<string>>();
 
+  /** Reference to root graph (self-reference on root, parent reference on subgraphs) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private rootGraph: DataGraph<any, any, any, any> = this;
+
   get ctx(): Ctx {
-    return this._ctx;
+    return this.rootGraph._ctx as Ctx;
   }
 
   get ext(): ExternalCtx {
-    return this._ext;
+    return this.rootGraph._ext as ExternalCtx;
   }
 
   private addEntry(entry: GraphEntry): void {
@@ -276,12 +351,12 @@ export class DataGraph<
 
   /** Check if a key is a computed value */
   isComputed(key: keyof Ctx & string): boolean {
-    return this.computedNodes.has(key);
+    return this.rootGraph.computedNodes.has(key);
   }
 
   /** Check if a node key currently exists in the context */
   hasNode(key: string): boolean {
-    return key in this._ctx;
+    return key in this.rootGraph._ctx;
   }
 
   /**
@@ -289,13 +364,13 @@ export class DataGraph<
    * Returns the exact meta type that was defined for this node.
    */
   getNodeMeta<K extends keyof CtxMeta & string>(key: K): CtxMeta[K] | undefined {
-    return this.nodeMeta.get(key);
+    return this.rootGraph.nodeMeta.get(key);
   }
 
   /** Get all current node meta */
   getAllMeta(): Partial<CtxMeta> {
     const result: Partial<CtxMeta> = {};
-    this.nodeMeta.forEach((meta, key) => {
+    this.rootGraph.nodeMeta.forEach((meta, key) => {
       (result as Record<string, unknown>)[key] = meta;
     });
     return result;
@@ -303,35 +378,36 @@ export class DataGraph<
 
   /** Get validation error for a specific node */
   getNodeError(key: keyof Ctx & string): NodeError | undefined {
-    return this.nodeErrors.get(key);
+    return this.rootGraph.nodeErrors.get(key);
   }
 
   /** Get all current validation errors */
   getErrors(): Record<string, NodeError | undefined> {
     const result: Record<string, NodeError | undefined> = {};
     for (const key of this.getNodeKeys()) {
-      result[key] = this.nodeErrors.get(key);
+      result[key] = this.rootGraph.nodeErrors.get(key);
     }
     return result;
   }
 
   /** Validate all node values against their output schemas */
   validate(): ValidationResult<Ctx> {
-    const previousErrorKeys = new Set(this.nodeErrors.keys());
-    this.nodeErrors.clear();
+    const root = this.rootGraph;
+    const previousErrorKeys = new Set(root.nodeErrors.keys());
+    root.nodeErrors.clear();
     let isValid = true;
     const nodes: Record<string, NodeEntry> = {};
 
-    for (const entry of this.entries) {
+    for (const entry of root.activeEntries) {
       if (entry.kind === 'node') {
-        const def = this.nodeDefs.get(entry.key);
+        const def = root.nodeDefs.get(entry.key);
         if (!def?.output) continue;
 
-        const value = (this._ctx as Record<string, unknown>)[entry.key];
+        const value = (root._ctx as Record<string, unknown>)[entry.key];
         const result = def.output.safeParse(value);
         if (!result.success) {
           const firstError = result.error?.issues?.[0];
-          this.nodeErrors.set(entry.key, {
+          root.nodeErrors.set(entry.key, {
             message: firstError?.message ?? 'Validation failed',
             code: firstError?.code ?? 'unknown',
           });
@@ -343,31 +419,17 @@ export class DataGraph<
       }
     }
 
-    for (const [, { subGraph }] of this.activeDiscriminators) {
-      const subResult = subGraph.validate();
-      if (!subResult.success) {
-        isValid = false;
-        for (const [key, error] of Object.entries(subResult.errors)) {
-          if (error) {
-            this.nodeErrors.set(key, error);
-          }
-        }
-      } else {
-        Object.assign(nodes, subResult.nodes);
-      }
-    }
-
-    const keysToNotify = new Set([...this.nodeErrors.keys(), ...previousErrorKeys]);
+    const keysToNotify = new Set([...root.nodeErrors.keys(), ...previousErrorKeys]);
     keysToNotify.forEach((key) => {
-      this.notifyNodeWatchers(key);
+      root.notifyNodeWatchers(key);
     });
 
     if (isValid) {
-      return { success: true, data: this._ctx, nodes };
+      return { success: true, data: root._ctx as Ctx, nodes };
     }
 
     const errors: Record<string, NodeError> = {};
-    this.nodeErrors.forEach((error, key) => {
+    root.nodeErrors.forEach((error, key) => {
       errors[key] = error;
     });
 
@@ -375,22 +437,23 @@ export class DataGraph<
   }
 
   private watchNode(key: string, callback: NodeCallback): () => void {
-    let callbacks = this.nodeWatchers.get(key);
+    const root = this.rootGraph;
+    let callbacks = root.nodeWatchers.get(key);
     if (!callbacks) {
       callbacks = new Set();
-      this.nodeWatchers.set(key, callbacks);
+      root.nodeWatchers.set(key, callbacks);
     }
     callbacks.add(callback);
     return () => {
       callbacks!.delete(callback);
       if (callbacks!.size === 0) {
-        this.nodeWatchers.delete(key);
+        root.nodeWatchers.delete(key);
       }
     };
   }
 
   private notifyNodeWatchers(key: string) {
-    const callbacks = this.nodeWatchers.get(key);
+    const callbacks = this.rootGraph.nodeWatchers.get(key);
     if (callbacks) {
       for (const callback of callbacks) {
         callback();
@@ -400,196 +463,23 @@ export class DataGraph<
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private updateMeta(key: string, newMeta: any | undefined) {
-    const oldMeta = this.nodeMeta.get(key);
+    const root = this.rootGraph;
+    const oldMeta = root.nodeMeta.get(key);
     if (!isEqual(oldMeta, newMeta)) {
       if (newMeta === undefined) {
-        this.nodeMeta.delete(key);
-        this.nodeMetaKeys.delete(key);
+        root.nodeMeta.delete(key);
+        root.nodeMetaKeys.delete(key);
       } else {
-        this.nodeMeta.set(key, newMeta);
-        this.nodeMetaKeys.set(key, Date.now());
+        root.nodeMeta.set(key, newMeta);
+        root.nodeMetaKeys.set(key, Date.now());
       }
-      this.notifyNodeWatchers(key);
+      root.notifyNodeWatchers(key);
     }
-  }
-
-  // ===========================================================================
-  // Subgraph Helper Methods
-  // ===========================================================================
-
-  /**
-   * Sync values from a subgraph back to the parent context.
-   * Returns the set of keys that changed.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private syncSubgraphValues(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    subGraph: DataGraph<any, any, any, any>,
-    subNodeKeys: string[],
-    changed: Set<string>
-  ): void {
-    for (const subKey of subNodeKeys) {
-      // Skip nodes that don't exist in subgraph (e.g., when: false)
-      if (!(subKey in subGraph.ctx)) {
-        // If the key exists in parent but not in subgraph, remove it from parent
-        if (subKey in this._ctx) {
-          delete (this._ctx as Record<string, unknown>)[subKey];
-          this.nodeMeta.delete(subKey);
-          changed.add(subKey);
-          this.notifyNodeWatchers(subKey);
-        }
-        continue;
-      }
-      const subValue = (subGraph.ctx as Record<string, unknown>)[subKey];
-      const keyExists = subKey in this._ctx;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const valueChanged = !isEqual((this._ctx as any)[subKey], subValue);
-      // Sync if: key doesn't exist in parent (new key) OR value changed
-      if (!keyExists || valueChanged) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (this._ctx as any)[subKey] = subValue;
-        changed.add(subKey);
-        if (valueChanged) {
-          this.notifyNodeWatchers(subKey);
-        }
-      }
-    }
-  }
-
-  /**
-   * Sync meta from a subgraph back to the parent.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private syncSubgraphMeta(subGraph: DataGraph<any, any, any, any>, subNodeKeys: string[]): void {
-    const subMeta = subGraph.getAllMeta();
-    for (const [subKey, meta] of Object.entries(subMeta)) {
-      if (subNodeKeys.includes(subKey)) {
-        this.updateMeta(subKey, meta);
-      }
-    }
-  }
-
-  /**
-   * Clean up nodes from an old subgraph that is being deactivated.
-   * Recursively cleans up nested discriminator nodes.
-   * Deletes from and notifies watchers on the root graph (where Controllers subscribe).
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private cleanupSubgraphNodes(subGraph: DataGraph<any, any, any, any>): void {
-    // Always delete from and notify the root graph - that's where Controllers subscribe
-    const rootGraph = this.rootGraph ?? this;
-    // Clean up this subgraph's own nodes
-    const ownKeys = [...subGraph.getOwnNodeKeys(), ...subGraph.getComputedKeys()];
-    for (const oldKey of ownKeys) {
-      delete (rootGraph._ctx as Record<string, unknown>)[oldKey];
-      rootGraph.nodeMeta.delete(oldKey);
-      rootGraph.nodeErrors.delete(oldKey);
-      rootGraph.notifyNodeWatchers(oldKey);
-    }
-    // Recursively clean up nested discriminator nodes
-    for (const [, { subGraph: nestedGraph }] of subGraph.activeDiscriminators) {
-      this.cleanupSubgraphNodes(nestedGraph);
-    }
-  }
-
-  /**
-   * Recursively sync values and meta from nested discriminator subgraphs.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private syncNestedDiscriminatorNodes(
-    subGraph: DataGraph<any, any, any, any>,
-    changed: Set<string>
-  ): void {
-    for (const [, { subGraph: nestedGraph }] of subGraph.activeDiscriminators) {
-      const nestedKeys = [...nestedGraph.getOwnNodeKeys(), ...nestedGraph.getComputedKeys()];
-      this.syncSubgraphValues(nestedGraph, nestedKeys, changed);
-      this.syncSubgraphMeta(nestedGraph, nestedKeys);
-      // Recursively sync deeper nested discriminators
-      this.syncNestedDiscriminatorNodes(nestedGraph, changed);
-    }
-  }
-
-  /**
-   * Prepare a subgraph for use by copying parent's valueProvider, scope dependencies,
-   * and setting the root graph reference for proper watcher notifications.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private prepareSubgraph(subGraph: DataGraph<any, any, any, any>): void {
-    // Set root graph reference - propagate the root from parent, or use this graph if it's the root
-    subGraph.rootGraph = this.rootGraph ?? this;
-
-    if (this.valueProvider) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      subGraph.setValueProvider(this.valueProvider as ValueProvider<any>);
-    }
-    // Copy parent's scope dependencies to subgraph so scoped values work correctly
-    this.scopeDependencies.forEach((deps, scopeKey) => {
-      deps.forEach((depKey) => {
-        subGraph.addScopeDependency(scopeKey, depKey);
-      });
-    });
-  }
-
-  /**
-   * Update a subgraph's context with changed parent values.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private updateSubgraphParentContext(
-    subGraph: DataGraph<any, any, any, any>,
-    changedKeys: string[]
-  ): void {
-    for (const key of changedKeys) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (subGraph as any)._ctx[key] = (this._ctx as any)[key];
-    }
-  }
-
-  /**
-   * Sync a subgraph's values and meta back to the parent context.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private syncSubgraph(subGraph: DataGraph<any, any, any, any>, changed: Set<string>): void {
-    const ownKeys = [...subGraph.getOwnNodeKeys(), ...subGraph.getComputedKeys()];
-    this.syncSubgraphValues(subGraph, ownKeys, changed);
-    this.syncSubgraphMeta(subGraph, ownKeys);
-    this.syncNestedDiscriminatorNodes(subGraph, changed);
-  }
-
-  /**
-   * Re-evaluate a subgraph and sync its values/meta back to the parent.
-   * Handles forwarding input values to nested discriminators.
-   */
-  private evaluateAndSyncSubgraph(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    subGraph: DataGraph<any, any, any, any>,
-    inputValues: Partial<Ctx>,
-    changed: Set<string>
-  ): void {
-    const subNodeKeys = subGraph.getOwnNodeKeys();
-    const subComputedKeys = subGraph.getComputedKeys();
-
-    // Check for parent context changes that the sub-graph depends on
-    const parentChangedKeys = Array.from(changed).filter(
-      (k) => !subNodeKeys.includes(k) && !subComputedKeys.includes(k) && k in this._ctx
-    );
-
-    const hasInputValues = Object.keys(inputValues).length > 0;
-    if (parentChangedKeys.length > 0 || hasInputValues) {
-      this.updateSubgraphParentContext(subGraph, parentChangedKeys);
-      subGraph.setExt(this._ext);
-      // Forward all input values to allow nested discriminators to receive their values
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (subGraph as any)._evaluate(inputValues, parentChangedKeys);
-    } else {
-      subGraph.setExt(this._ext);
-    }
-
-    this.syncSubgraph(subGraph, changed);
   }
 
   /** Get the unique meta key for a node (changes when meta changes) */
   getNodeMetaKey(key: keyof Ctx & string): number | undefined {
-    return this.nodeMetaKeys.get(key);
+    return this.rootGraph.nodeMetaKeys.get(key);
   }
 
   /** Subscribe to graph changes */
@@ -597,9 +487,9 @@ export class DataGraph<
   subscribe<K extends keyof Ctx & string>(key: K, callback: () => void): () => void;
   subscribe(keyOrCallback: string | (() => void), callback?: () => void): () => void {
     if (typeof keyOrCallback === 'function') {
-      this.globalWatchers.add(keyOrCallback);
+      this.rootGraph.globalWatchers.add(keyOrCallback);
       return () => {
-        this.globalWatchers.delete(keyOrCallback);
+        this.rootGraph.globalWatchers.delete(keyOrCallback);
       };
     }
     return this.watchNode(keyOrCallback, callback!);
@@ -613,17 +503,18 @@ export class DataGraph<
   getSnapshot<K extends keyof Ctx & string>(
     key?: K
   ): Ctx | NodeSnapshot<Ctx[K], K extends keyof CtxMeta ? CtxMeta[K] : unknown> {
+    const root = this.rootGraph;
     if (key === undefined) {
-      return this._ctx;
+      return root._ctx as Ctx;
     }
 
-    const value = this._ctx[key];
-    const meta = this.nodeMeta.get(key);
-    const error = this.nodeErrors.get(key);
-    const isComputed = this.computedNodes.has(key);
-    const metaKey = this.nodeMetaKeys.get(key);
+    const value = (root._ctx as Ctx)[key];
+    const meta = root.nodeMeta.get(key);
+    const error = root.nodeErrors.get(key);
+    const isComputed = root.computedNodes.has(key);
+    const metaKey = root.nodeMetaKeys.get(key);
 
-    const cached = this.snapshotCache.get(key);
+    const cached = root.snapshotCache.get(key);
     if (
       cached &&
       Object.is(cached.value, value) &&
@@ -642,12 +533,12 @@ export class DataGraph<
       isComputed,
       metaKey,
     };
-    this.snapshotCache.set(key, snapshot as NodeSnapshot<unknown, unknown>);
+    root.snapshotCache.set(key, snapshot as NodeSnapshot<unknown, unknown>);
     return snapshot;
   }
 
   setValueProvider(provider: ValueProvider<Ctx> | undefined): void {
-    this.valueProvider = provider;
+    this.rootGraph.valueProvider = provider;
   }
 
   /**
@@ -656,10 +547,11 @@ export class DataGraph<
    * when their scope changes.
    */
   addScopeDependency(scopeKey: string, dependentKey: string): void {
-    let deps = this.scopeDependencies.get(scopeKey);
+    const root = this.rootGraph;
+    let deps = root.scopeDependencies.get(scopeKey);
     if (!deps) {
       deps = new Set();
-      this.scopeDependencies.set(scopeKey, deps);
+      root.scopeDependencies.set(scopeKey, deps);
     }
     deps.add(dependentKey);
   }
@@ -668,7 +560,7 @@ export class DataGraph<
    * Get all keys that depend on a given scope key.
    */
   getScopeDependencies(scopeKey: string): string[] {
-    return Array.from(this.scopeDependencies.get(scopeKey) ?? []);
+    return Array.from(this.rootGraph.scopeDependencies.get(scopeKey) ?? []);
   }
 
   useStorage(adapter: StorageAdapter<Ctx>): this {
@@ -753,7 +645,7 @@ export class DataGraph<
   node(key: string, arg1: any, deps?: readonly string[]) {
     const isFactory = typeof arg1 === 'function';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const factory = isFactory ? arg1 : (_ctx: any, _ext: any) => arg1;
+    const factory = isFactory ? arg1 : () => arg1;
     const nodeDeps = isFactory ? (Array.isArray(deps) ? deps : []) : [];
 
     this.addEntry({ kind: 'node', key, factory, deps: nodeDeps });
@@ -789,6 +681,12 @@ export class DataGraph<
 
   /**
    * Merge another graph's nodes into this graph.
+   *
+   * Can be called with:
+   * 1. A graph directly: `.merge(otherGraph)` - entries are added as-is
+   * 2. A factory with deps: `.merge((ctx, ext) => createGraph(...), ['dep1', 'dep2'])`
+   *    - Each entry's deps will be combined with the merge deps
+   *    - Allows dynamic graph creation based on context
    */
   merge<
     ChildCtx extends Record<string, unknown>,
@@ -804,9 +702,71 @@ export class DataGraph<
         Prettify<CtxMeta & ChildMeta>,
         Prettify<CtxValues & ChildValues>
       >
-    : never {
-    for (const entry of graph.entries) {
-      this.addEntry(entry);
+    : never;
+
+  merge<
+    ChildCtx extends Record<string, unknown>,
+    ChildExternal extends Record<string, unknown>,
+    ChildMeta extends Record<string, unknown>,
+    ChildValues extends Record<string, unknown>,
+    const Deps extends readonly (keyof Ctx & string)[]
+  >(
+    factory: (
+      ctx: Ctx,
+      ext: ExternalCtx
+    ) => DataGraph<ChildCtx, ChildExternal, ChildMeta, ChildValues>,
+    deps: Deps
+  ): ExternalCtx extends ChildExternal
+    ? DataGraph<
+        MergeDistributive<Ctx, ChildCtx>,
+        ExternalCtx,
+        Prettify<CtxMeta & ChildMeta>,
+        Prettify<CtxValues & ChildValues>
+      >
+    : never;
+
+  // prettier-ignore
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  merge(graphOrFactory: DataGraph<any, any, any, any> | ((ctx: Ctx, ext: ExternalCtx) => DataGraph<any, any, any, any>), deps?: readonly string[]): any {
+    if (typeof graphOrFactory === 'function') {
+      // Factory mode: call factory once to get graph structure, then add entries with combined deps
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const templateGraph = graphOrFactory({} as any, {} as any);
+      const mergeDeps = deps ?? [];
+
+      for (const entry of templateGraph.entries) {
+        switch (entry.kind) {
+          case 'node': {
+            // Wrap the node factory to re-call merge factory with current context
+            const originalFactory = entry.factory;
+            this.addEntry({
+              kind: 'node',
+              key: entry.key,
+              factory: (ctx, ext, actions) => {
+                const freshGraph = graphOrFactory(ctx, ext);
+                const freshEntry = freshGraph.entries.find(
+                  (e): e is typeof entry => e.kind === 'node' && e.key === entry.key
+                );
+                return freshEntry ? freshEntry.factory(ctx, ext, actions) : originalFactory(ctx, ext, actions);
+              },
+              deps: [...new Set([...entry.deps, ...mergeDeps])],
+            });
+            break;
+          }
+          case 'computed':
+          case 'effect':
+            this.addEntry({ ...entry, deps: [...new Set([...entry.deps, ...mergeDeps])] });
+            break;
+          case 'discriminator':
+            this.addEntry(entry);
+            break;
+        }
+      }
+    } else {
+      // Direct graph mode: copy entries as-is
+      for (const entry of graphOrFactory.entries) {
+        this.addEntry(entry);
+      }
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return this as any;
@@ -855,6 +815,12 @@ export class DataGraph<
     this._ctx = { ...parentCtx } as Ctx;
     this._initialized = true;
     this.activeDiscriminators.clear();
+    this.activeEntries = [];
+
+    // Initialize activeEntries from template entries with 'root' source
+    for (const entry of this.entries) {
+      this.activeEntries.push({ ...entry, source: 'root' });
+    }
 
     let mergedInput = input;
     if (this.storageAdapter && !options.skipStorage) {
@@ -865,10 +831,7 @@ export class DataGraph<
       this.valueProvider = undefined;
     }
 
-    // Include parent context keys as "changed" so dependent nodes are processed.
-    // This is important for sub-graphs that depend on values from the parent.
-    const parentKeys = Object.keys(parentCtx);
-    const result = this._evaluate(mergedInput, parentKeys);
+    const result = this._evaluate(mergedInput);
 
     if (this.storageAdapter) {
       this.storageAdapter.onInit();
@@ -929,10 +892,10 @@ export class DataGraph<
 
   /** Get all active node keys in the current context */
   getNodeKeys(): string[] {
-    return Object.keys(this._ctx).filter((k) => !this.computedNodes.has(k));
+    return Object.keys(this.rootGraph._ctx).filter((k) => !this.rootGraph.computedNodes.has(k));
   }
 
-  /** Get node keys defined by this graph */
+  /** Get node keys defined by this graph's template entries */
   getOwnNodeKeys(): string[] {
     const keys: string[] = [];
     for (const entry of this.entries) {
@@ -943,7 +906,7 @@ export class DataGraph<
     return keys;
   }
 
-  /** Get all computed keys defined by this graph */
+  /** Get all computed keys defined by this graph's template entries */
   getComputedKeys(): string[] {
     return this.entries.filter((e) => e.kind === 'computed').map((e) => e.key);
   }
@@ -983,32 +946,122 @@ export class DataGraph<
     return Array.from(keys);
   }
 
-  private _evaluate(inputValues: Partial<Ctx> = {}, additionalChangedKeys: string[] = []): Ctx {
-    const log = this._debug ? console.log.bind(console) : () => {};
-    const order = this.toposort();
+  // ===========================================================================
+  // Branch Management - Add/Remove entries when discriminators change
+  // ===========================================================================
 
-    const changed = new Set<string>([...Object.keys(inputValues), ...additionalChangedKeys]);
+  /**
+   * Add entries from a subgraph to the active entries list.
+   * Recursively handles nested discriminators.
+   */
+  private activateBranch(
+    discriminatorKey: string,
+    branchName: string,
+    branchGraph: BranchGraph,
+    insertAfterIndex: number
+  ): { entryKeys: Set<string>; insertedCount: number } {
+    const source = `${discriminatorKey}:${branchName}`;
+    const entryKeys = new Set<string>();
+    const newEntries: ActiveEntry[] = [];
 
-    const keyToIndex = new Map<string, number>();
-    for (let i = 0; i < order.length; i++) {
-      const entry = order[i];
+    for (const entry of branchGraph.entries) {
+      const activeEntry: ActiveEntry = { ...entry, source };
+      newEntries.push(activeEntry);
+
       if (entry.kind === 'node' || entry.kind === 'computed') {
-        keyToIndex.set(entry.key, i);
+        entryKeys.add(entry.key);
+        if (entry.kind === 'computed') {
+          this.computedNodes.add(entry.key);
+        }
       }
     }
 
-    let currentIndex = 0;
+    // Insert new entries after the discriminator entry
+    this.activeEntries.splice(insertAfterIndex + 1, 0, ...newEntries);
+
+    return { entryKeys, insertedCount: newEntries.length };
+  }
+
+  /**
+   * Remove entries that were added by a specific discriminator branch.
+   * Also removes nested discriminator entries recursively.
+   */
+  private deactivateBranch(discriminatorKey: string, branchName: string): void {
+    const source = `${discriminatorKey}:${branchName}`;
+    const sourcePrefix = `${source}/`;
+
+    // Find all entries to remove (direct and nested)
+    const entriesToRemove: ActiveEntry[] = [];
+    for (const entry of this.activeEntries) {
+      if (entry.source === source || entry.source.startsWith(sourcePrefix)) {
+        entriesToRemove.push(entry);
+      }
+    }
+
+    // Clean up state for removed entries
+    for (const entry of entriesToRemove) {
+      if (entry.kind === 'node' || entry.kind === 'computed') {
+        delete (this._ctx as Record<string, unknown>)[entry.key];
+        this.nodeMeta.delete(entry.key);
+        this.nodeDefs.delete(entry.key);
+        this.nodeErrors.delete(entry.key);
+        if (entry.kind === 'computed') {
+          this.computedNodes.delete(entry.key);
+        }
+        this.notifyNodeWatchers(entry.key);
+      }
+      if (entry.kind === 'discriminator') {
+        // Clean up nested discriminator tracking
+        this.activeDiscriminators.delete(entry.discriminatorKey);
+      }
+    }
+
+    // Remove entries from activeEntries
+    this.activeEntries = this.activeEntries.filter(
+      (e) => e.source !== source && !e.source.startsWith(sourcePrefix)
+    );
+  }
+
+  // ===========================================================================
+  // Evaluation Loop
+  // ===========================================================================
+
+  private _evaluate(inputValues: Partial<Ctx> = {}): Ctx {
+    const log = this._debug ? console.log.bind(console) : () => {};
+
+    const changed = new Set<string>(Object.keys(inputValues));
+
     let iterations = 0;
+    let currentIndex = 0;
+
+    // Build key-to-index map for rewinding
+    const rebuildKeyToIndex = () => {
+      const map = new Map<string, number>();
+      for (let i = 0; i < this.activeEntries.length; i++) {
+        const entry = this.activeEntries[i];
+        if (entry.kind === 'node' || entry.kind === 'computed') {
+          map.set(entry.key, i);
+        }
+      }
+      return map;
+    };
+
+    let keyToIndex = rebuildKeyToIndex();
 
     const effectSet = (key: string, value: unknown) => {
       const def = this.nodeDefs.get(key);
       if (!def) throw new Error(`Unknown node "${key}"`);
-      const next = def.output.parse(value);
-      if (!isEqual(this._ctx[key as keyof Ctx], next)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (this._ctx as any)[key] = next;
+
+      // Use input schema if available (allows partial values with transforms)
+      const schema = def.input ?? def.output;
+      const next = schema.parse(value);
+
+      if (!isEqual((this._ctx as Record<string, unknown>)[key], next)) {
+        (this._ctx as Record<string, unknown>)[key] = next;
         changed.add(key);
         this.notifyNodeWatchers(key);
+
+        // Rewind to the node if it's earlier in the list
         const nodeIndex = keyToIndex.get(key);
         if (nodeIndex !== undefined && nodeIndex < currentIndex) {
           currentIndex = nodeIndex;
@@ -1016,15 +1069,15 @@ export class DataGraph<
       }
     };
 
-    for (currentIndex = 0; currentIndex < order.length; currentIndex++) {
+    while (currentIndex < this.activeEntries.length) {
       if (++iterations > 1000) throw new Error('Effect loop detected');
 
-      const entry = order[currentIndex];
+      const entry = this.activeEntries[currentIndex];
 
       if (entry.kind === 'node') {
         // Process if: no deps, a dep changed, OR this node's value is being set directly
         const isDirectUpdate = entry.key in inputValues;
-        // Check if any scope dependency changed (e.g., 'output' changed and this node is scoped by 'output')
+        // Check if any scope dependency changed
         const isScopeDependencyChange = Array.from(this.scopeDependencies.entries()).some(
           ([scopeKey, dependentKeys]) => changed.has(scopeKey) && dependentKeys.has(entry.key)
         );
@@ -1033,7 +1086,11 @@ export class DataGraph<
           isScopeDependencyChange ||
           entry.deps.length === 0 ||
           entry.deps.some((dep) => changed.has(dep));
-        if (!shouldProcess) continue;
+
+        if (!shouldProcess) {
+          currentIndex++;
+          continue;
+        }
 
         const actions: GraphActions<Ctx> = {
           set: (values) => this.set(values),
@@ -1050,6 +1107,7 @@ export class DataGraph<
             changed.add(entry.key);
             this.notifyNodeWatchers(entry.key);
           }
+          currentIndex++;
           continue;
         }
 
@@ -1057,12 +1115,10 @@ export class DataGraph<
         if (entry.key in inputValues) {
           inputValue = inputValues[entry.key as keyof Ctx];
         } else if (this.valueProvider) {
-          // Check valueProvider first - it may have scope-dependent values
           const providedValue = this.valueProvider(entry.key, this._ctx);
           if (providedValue !== undefined) {
             inputValue = providedValue;
           } else if (isScopeDependencyChange) {
-            // Scope changed but no stored value exists - use default (don't reuse old scope's value)
             inputValue = undefined;
           } else if (entry.key in this._ctx) {
             inputValue = this._ctx[entry.key as keyof Ctx];
@@ -1077,7 +1133,6 @@ export class DataGraph<
         let next: any;
         try {
           next = inputSchema.parse(raw);
-          // If the input schema transform returned undefined, fall back to default
           if (next === undefined && def.defaultValue !== undefined) {
             next = def.defaultValue;
           }
@@ -1090,8 +1145,6 @@ export class DataGraph<
         if (!keyExists || valueChanged) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (this._ctx as any)[entry.key] = next;
-          // Mark as changed if value changed OR if this is a new key (even with undefined value)
-          // This ensures dependent nodes are processed when a node is first added
           changed.add(entry.key);
           if (valueChanged) {
             this.notifyNodeWatchers(entry.key);
@@ -1103,14 +1156,16 @@ export class DataGraph<
         this.updateMeta(entry.key, metaValue);
       } else if (entry.kind === 'computed') {
         const shouldProcess = entry.deps.length === 0 || entry.deps.some((dep) => changed.has(dep));
-        if (!shouldProcess) continue;
+        if (!shouldProcess) {
+          currentIndex++;
+          continue;
+        }
 
         const keyExists = entry.key in this._ctx;
         const next = entry.compute(this._ctx, this._ext);
         const valueChanged = !isEqual(this._ctx[entry.key as keyof Ctx], next);
         if (!keyExists || valueChanged) {
           (this._ctx as Record<string, unknown>)[entry.key] = next;
-          // Mark as changed if value changed OR if this is a new key
           changed.add(entry.key);
           if (valueChanged) {
             this.notifyNodeWatchers(entry.key);
@@ -1119,101 +1174,94 @@ export class DataGraph<
       } else if (entry.kind === 'discriminator') {
         const current = this.activeDiscriminators.get(entry.discriminatorKey);
 
-        // If discriminator key hasn't changed but we have an active sub-graph,
-        // forward input values and sync
+        // Only process if discriminator key changed OR no branch is active yet
         if (!changed.has(entry.discriminatorKey) && current) {
-          this.evaluateAndSyncSubgraph(current.subGraph, inputValues, changed);
+          currentIndex++;
           continue;
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const discriminatorValue = (this._ctx as any)[entry.discriminatorKey];
         const branches = entry.factory(this._ctx, this._ext);
-        const targetBranch = discriminatorValue;
+        const targetBranch = discriminatorValue as string;
         const branchDef = targetBranch ? branches[targetBranch] : undefined;
 
         if (!branchDef) {
           if (current) {
             log(`  🔀 discriminator: no matching branch for "${targetBranch}", cleaning up`);
-            this.cleanupSubgraphNodes(current.subGraph);
+            this.deactivateBranch(entry.discriminatorKey, current.branch);
             this.activeDiscriminators.delete(entry.discriminatorKey);
+            keyToIndex = rebuildKeyToIndex();
           }
+          currentIndex++;
           continue;
-        }
-
-        const cacheKey = `${entry.discriminatorKey}:${targetBranch}`;
-        let branchGraph: BranchGraph;
-        if (typeof branchDef === 'function') {
-          const cached = this.lazyBranchCache.get(cacheKey);
-          if (cached) {
-            branchGraph = cached;
-          } else {
-            branchGraph = branchDef(this._ctx, this._ext);
-            this.lazyBranchCache.set(cacheKey, branchGraph);
-            log(`  📦 lazy branch "${targetBranch}" instantiated and cached`);
-          }
-        } else {
-          branchGraph = branchDef;
         }
 
         const needsSwitch = !current || current.branch !== targetBranch;
         if (needsSwitch) {
           log(`  🔀 discriminator: switching to branch "${targetBranch}"`);
 
+          // Deactivate old branch
           if (current) {
-            this.cleanupSubgraphNodes(current.subGraph);
+            this.deactivateBranch(entry.discriminatorKey, current.branch);
           }
 
-          const subGraph = branchGraph.clone();
-          this.prepareSubgraph(subGraph);
+          // Get or create branch graph
+          const cacheKey = `${entry.discriminatorKey}:${targetBranch}`;
+          let branchGraph: BranchGraph;
+          if (typeof branchDef === 'function') {
+            const cached = this.lazyBranchCache.get(cacheKey);
+            if (cached) {
+              branchGraph = cached;
+            } else {
+              branchGraph = branchDef(this._ctx, this._ext);
+              this.lazyBranchCache.set(cacheKey, branchGraph);
+              log(`  📦 lazy branch "${targetBranch}" instantiated and cached`);
+            }
+          } else {
+            branchGraph = branchDef;
+          }
 
-          // Forward all input values to the subgraph - it will use what it needs
-          // and forward the rest to its own nested discriminators
-          subGraph.init(inputValues as Record<string, unknown>, this._ext, this._ctx, this._debug);
-          this.syncSubgraph(subGraph, changed);
+          // Activate new branch - insert entries after this discriminator
+          const { entryKeys } = this.activateBranch(
+            entry.discriminatorKey,
+            targetBranch,
+            branchGraph,
+            currentIndex
+          );
 
+          // Track active branch
           this.activeDiscriminators.set(entry.discriminatorKey, {
             branch: targetBranch,
-            subGraph,
+            entryKeys,
           });
-        } else if (current && (changed.size > 0 || Object.keys(inputValues).length > 0)) {
-          this.evaluateAndSyncSubgraph(current.subGraph, inputValues, changed);
+
+          // Rebuild key-to-index map since entries changed
+          keyToIndex = rebuildKeyToIndex();
+
+          // Mark all new entry keys as needing processing
+          for (const key of entryKeys) {
+            changed.add(key);
+          }
+
+          // Continue to next entry (the first of the newly inserted entries)
+          // Don't increment currentIndex since we want to process the new entries
         }
       } else if (entry.kind === 'effect') {
         const depsChanged = entry.deps.some((dep) => changed.has(dep));
-        if (!depsChanged) continue;
+        if (!depsChanged) {
+          currentIndex++;
+          continue;
+        }
 
         entry.run(this._ctx, this._ext, effectSet);
       }
+
+      currentIndex++;
     }
 
     for (const callback of this.globalWatchers) callback();
     return this._ctx;
-  }
-
-  private toposort(): GraphEntry[] {
-    const visited = new Set<GraphEntry>();
-    const visiting = new Set<GraphEntry>();
-    const result: GraphEntry[] = [];
-    const nodeIndex = new Map<string, number>();
-    this.entries.forEach((e, i) => {
-      if (e.kind === 'node' || e.kind === 'computed') nodeIndex.set(e.key, i);
-    });
-    const visit = (entry: GraphEntry, entryIndex: number) => {
-      if (visited.has(entry)) return;
-      if (visiting.has(entry)) throw new Error('Cycle detected');
-      visiting.add(entry);
-      const deps = entry.kind === 'discriminator' ? [entry.discriminatorKey] : entry.deps;
-      for (const dep of deps) {
-        const depIdx = nodeIndex.get(dep);
-        if (depIdx !== undefined && depIdx < entryIndex) visit(this.entries[depIdx], depIdx);
-      }
-      visiting.delete(entry);
-      visited.add(entry);
-      result.push(entry);
-    };
-    this.entries.forEach((entry, i) => visit(entry, i));
-    return result;
   }
 }
 
