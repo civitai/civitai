@@ -21,6 +21,7 @@ import { getModelsRaw } from '~/server/services/model.service';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
+import { isFlipt } from '~/server/flipt/client';
 
 interface TestResult {
   name: string;
@@ -122,6 +123,14 @@ export default JobEndpoint(async function testModelFeedFilters(
     }
   }
 
+  // Test 6: Sorting comparison - verify MostLiked sort produces different results
+  if (testBaseModel) {
+    results.push(await testSortingComparison([testBaseModel]));
+  }
+
+  // Check what the feature flag is actually returning
+  const flagValue = await isFlipt('base-model-feed-metrics');
+
   // Summary
   const passed = results.filter((r) => r.passed).length;
   const failed = results.filter((r) => !r.passed).length;
@@ -132,6 +141,13 @@ export default JobEndpoint(async function testModelFeedFilters(
       passed,
       failed,
       allPassed: failed === 0,
+    },
+    featureFlag: {
+      key: 'base-model-feed-metrics',
+      enabled: flagValue,
+      note: flagValue
+        ? 'Flag is ON - production should use ModelBaseModelMetric path'
+        : 'Flag is OFF - production uses standard ModelMetric path',
     },
     testData: {
       username: testUsername,
@@ -432,6 +448,94 @@ async function testBaseModelOnlyFilter(
       name: `[${queryPath}] BaseModel only filter`,
       passed: false,
       queryPath,
+      details: `Error: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+async function testSortingComparison(baseModels: string[]): Promise<TestResult> {
+  try {
+    // Get results from standard path with MostLiked sort
+    const standardResult = await getModelsRaw({
+      input: {
+        ...createInput({
+          baseModels: baseModels as GetAllModelsOutput['baseModels'],
+        }),
+        sort: ModelSort.MostLiked,
+        take: 20,
+      },
+      _forceBaseModelMetrics: false,
+    });
+
+    // Get results from base model metrics path with MostLiked sort
+    const mbmResult = await getModelsRaw({
+      input: {
+        ...createInput({
+          baseModels: baseModels as GetAllModelsOutput['baseModels'],
+        }),
+        sort: ModelSort.MostLiked,
+        take: 20,
+      },
+      _forceBaseModelMetrics: true,
+    });
+
+    // Compare the ordering - they should be different if per-base-model stats differ
+    const standardIds = standardResult.items.map((m) => m.id);
+    const mbmIds = mbmResult.items.map((m) => m.id);
+
+    // Check if the order is different (at least some items in different positions)
+    let orderDifferences = 0;
+    for (let i = 0; i < Math.min(standardIds.length, mbmIds.length); i++) {
+      if (standardIds[i] !== mbmIds[i]) {
+        orderDifferences++;
+      }
+    }
+
+    // For this test, we WANT the orders to be different (proving base model metrics sorting works)
+    const passed = orderDifferences > 0;
+
+    return {
+      name: `[sorting] MostLiked sort comparison (${baseModels.join(', ')})`,
+      passed,
+      queryPath: 'baseModelMetrics',
+      details: passed
+        ? `Sorting differs: ${orderDifferences}/${Math.min(standardIds.length, mbmIds.length)} positions different`
+        : 'WARNING: Both paths returned identical ordering - base model metrics may not be affecting sort',
+      itemCount: mbmResult.items.length,
+      sampleItems: [
+        {
+          name: '--- STANDARD PATH TOP 5 ---',
+          userId: 0,
+          type: '',
+          baseModels: [],
+        },
+        ...standardResult.items.slice(0, 5).map((m) => ({
+          name: m.name,
+          userId: m.user.id,
+          type: m.type,
+          baseModels: m.modelVersions.map((mv) => mv.baseModel),
+          thumbsUp: (m.rank as Record<string, number>)[`thumbsUpCountAllTime`],
+        })),
+        {
+          name: '--- BASE MODEL METRICS PATH TOP 5 ---',
+          userId: 0,
+          type: '',
+          baseModels: [],
+        },
+        ...mbmResult.items.slice(0, 5).map((m) => ({
+          name: m.name,
+          userId: m.user.id,
+          type: m.type,
+          baseModels: m.modelVersions.map((mv) => mv.baseModel),
+          thumbsUp: (m.rank as Record<string, number>)[`thumbsUpCountAllTime`],
+        })),
+      ] as Array<{ name: string; userId: number; type: string; baseModels: string[] }>,
+    };
+  } catch (error) {
+    return {
+      name: `[sorting] MostLiked sort comparison`,
+      passed: false,
+      queryPath: 'baseModelMetrics',
       details: `Error: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
