@@ -150,7 +150,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -615,6 +615,7 @@ export interface Model {
   threads?: Thread[];
   resourceReviews?: ResourceReview[];
   metricsDaily?: ModelMetricDaily[];
+  baseModelMetrics?: ModelBaseModelMetric[];
   associatedFrom?: ModelAssociations[];
   associations?: ModelAssociations[];
   collectionItems?: CollectionItem[];
@@ -835,6 +836,22 @@ export interface ModelVersionMetric {
   thumbsUpCount: number;
   thumbsDownCount: number;
   earnedAmount: number;
+  updatedAt: Date;
+}
+
+export interface ModelBaseModelMetric {
+  model?: Model;
+  modelId: number;
+  baseModel: string;
+  thumbsUpCount: number;
+  downloadCount: number;
+  imageCount: number;
+  status: ModelStatus;
+  availability: Availability;
+  nsfwLevel: number;
+  mode: ModelModifier | null;
+  poi: boolean;
+  minor: boolean;
   updatedAt: Date;
 }
 
