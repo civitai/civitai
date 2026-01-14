@@ -255,3 +255,33 @@ export async function moveTask(taskId, targetListId) {
   });
   return response;
 }
+
+// Add a watcher/follower to a task
+// NOTE: ClickUp API v2 does not have a documented public endpoint for adding watchers.
+// Returns null to indicate watchers cannot be added programmatically via API.
+// Callers should use @mentions in comments as an alternative notification mechanism.
+export async function addWatcher(taskId, userId) {
+  throw new Error(
+    'ClickUp API v2 does not support adding watchers programmatically. ' +
+    'Use "@username" in a comment to notify someone instead.'
+  );
+}
+
+// Add a tag to a task
+export async function addTag(taskId, tagName) {
+  // Tag names in URL must be URL-encoded
+  const encodedTag = encodeURIComponent(tagName);
+  const response = await apiRequest(`/task/${taskId}/tag/${encodedTag}`, {
+    method: 'POST',
+  });
+  return response;
+}
+
+// Remove a tag from a task
+export async function removeTag(taskId, tagName) {
+  const encodedTag = encodeURIComponent(tagName);
+  const response = await apiRequest(`/task/${taskId}/tag/${encodedTag}`, {
+    method: 'DELETE',
+  });
+  return response;
+}
