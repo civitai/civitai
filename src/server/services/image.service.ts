@@ -2891,21 +2891,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
   }
   sorts.push(searchSort);
-
-  // Add secondary sort for consistent ordering when primary sort has ties
-  const isSortingByMetrics = [
-    ImageSort.MostComments,
-    ImageSort.MostReactions,
-    ImageSort.MostCollected,
-  ].includes(sort);
-
-  if (isSortingByMetrics) {
-    // For metric sorts, use sortAt as secondary (show newer images first when metrics are tied)
-    sorts.push(makeMeiliImageSearchSort('sortAt', 'desc'));
-  } else {
-    // For time-based sorts, use id as secondary (deterministic ordering when timestamps are identical)
-    sorts.push(makeMeiliImageSearchSort('id', 'desc'));
-  }
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
