@@ -56,6 +56,9 @@ node .claude/skills/clickup/query.mjs <command> [options]
 | `link <task> <url> ["desc"]` | Add external link reference (as comment) |
 | `checklist <task> "item"` | Add checklist item to task |
 | `delete-comment <comment_id>` | Delete a comment |
+| `watch <task> <user>` | Notify user via @mention comment (watchers not supported in API) |
+| `tag <task> "tag_name"` | Add a tag to task |
+| `description <task> "text"` | Update task description (markdown supported) |
 
 ### Options
 
@@ -213,6 +216,37 @@ node .claude/skills/clickup/query.mjs me
 node .claude/skills/clickup/query.mjs delete-comment 90110200841741
 ```
 
+### Notify Users (Watch)
+
+```bash
+# Notify user via @mention comment (ClickUp API doesn't support adding watchers directly)
+node .claude/skills/clickup/query.mjs watch 86a1b2c3d koen
+
+# Notify by email
+node .claude/skills/clickup/query.mjs watch 86a1b2c3d jane@example.com
+```
+
+### Add Tags
+
+```bash
+# Add a tag to a task
+node .claude/skills/clickup/query.mjs tag 86a1b2c3d "DevOps"
+node .claude/skills/clickup/query.mjs tag 86a1b2c3d "bug"
+```
+
+### Update Description
+
+```bash
+# Update task description with markdown
+node .claude/skills/clickup/query.mjs description 86a1b2c3d "## Summary
+This is a **bold** statement.
+
+- Item 1
+- Item 2
+
+See [documentation](https://example.com) for more info."
+```
+
 ## Task/List URL Formats
 
 The skill recognizes these ClickUp URL formats:
@@ -270,7 +304,8 @@ Total: 2 task(s)
 - **Daily standups**: Use `my-tasks` to see your assignments
 - **Status updates**: Post progress comments as you work
 - **Task management**: Assign, prioritize, and set due dates
-- **Collaboration**: View recent comments for context
+- **Collaboration**: View recent comments for context, add watchers
+- **Task organization**: Add tags to categorize tasks
 - **Task linking**: Reference task IDs in commit messages
 
 ## Tips
