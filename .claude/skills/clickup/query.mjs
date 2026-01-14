@@ -10,7 +10,7 @@
  *   status <url|id> "status"      Update task status
  *   tasks <list_id>               List tasks in a list
  *   me                            Show current user info
- *   create <list_id> "title"      Create a new task
+ *   create [list_id] "title"      Create a new task (list_id optional if default set)
  *   my-tasks                      List all tasks assigned to me
  *   search "query"                Search tasks across workspace
  *   assign <task> <user>          Assign task to user
@@ -96,7 +96,7 @@ Commands:
   status <url|id> "status"      Update task status
   tasks <list_id>               List tasks in a list
   me                            Show current user info
-  create <list_id> "title"      Create a new task
+  create [list_id] "title"      Create a new task (list_id optional if default set)
   my-tasks                      List all tasks assigned to me
   search "query"                Search tasks across workspace
   assign <task> <user>          Assign task to user
@@ -119,6 +119,7 @@ Examples:
   node query.mjs status 86a1b2c3d "in progress"
   node query.mjs tasks 901111220963 --me
   node query.mjs create 901111220963 "New feature: dark mode"
+  node query.mjs create "Quick task" (uses CLICKUP_DEFAULT_LIST_ID)
   node query.mjs my-tasks
   node query.mjs search "dark mode"
   node query.mjs assign 86a1b2c3d justin
@@ -310,17 +311,29 @@ async function main() {
       }
 
       case 'create': {
-        const listId = parseListId(targetInput);
+        // Support: create <list_id> "title" OR create "title" (uses default list)
+        let listId = parseListId(targetInput);
+        let title = arg2;
+
+        // If targetInput doesn't parse as a list ID, treat it as the title
         if (!listId) {
-          console.error('Error: Could not parse list ID from input');
-          process.exit(1);
+          title = targetInput;
+          listId = process.env.CLICKUP_DEFAULT_LIST_ID;
+          if (!listId) {
+            console.error('Error: No list ID provided and CLICKUP_DEFAULT_LIST_ID not set');
+            console.error('Usage: node query.mjs create <list_id> "Task title"');
+            console.error('   Or: Set CLICKUP_DEFAULT_LIST_ID in .env to use: node query.mjs create "Task title"');
+            process.exit(1);
+          }
         }
-        if (!arg2) {
+
+        if (!title) {
           console.error('Error: Task title required');
           console.error('Usage: node query.mjs create <list_id> "Task title"');
+          console.error('   Or: node query.mjs create "Task title" (uses default list)');
           process.exit(1);
         }
-        const task = await createTask(listId, arg2);
+        const task = await createTask(listId, title);
         if (jsonOutput) {
           console.log(JSON.stringify(task, null, 2));
         } else {

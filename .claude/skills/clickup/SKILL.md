@@ -20,6 +20,15 @@ cp .claude/skills/clickup/.env-example .claude/skills/clickup/.env
 
 Team ID and User ID are auto-detected and cached on first use.
 
+### Default List (Optional)
+
+Set `CLICKUP_DEFAULT_LIST_ID` in `.env` to enable creating tasks without specifying a list:
+
+```bash
+# In .claude/skills/clickup/.env
+CLICKUP_DEFAULT_LIST_ID=901111220963
+```
+
 ## Running Commands
 
 ```bash
@@ -36,7 +45,7 @@ node .claude/skills/clickup/query.mjs <command> [options]
 | `status <url\|id> [status]` | Update task status (or list available statuses) |
 | `tasks <list_id>` | List tasks in a list |
 | `me` | Show current user info |
-| `create <list_id> "title"` | Create a new task in a list |
+| `create [list_id] "title"` | Create a new task (list_id optional if default set) |
 | `my-tasks` | List all tasks assigned to you across workspace |
 | `search "query"` | Search tasks by name or description |
 | `assign <task> <user>` | Assign task to a user (by name, email, or ID) |
@@ -74,7 +83,11 @@ node .claude/skills/clickup/query.mjs get 86a1b2c3d --subtasks
 ### Create a Task
 
 ```bash
+# With explicit list ID
 node .claude/skills/clickup/query.mjs create 901111220963 "New feature: dark mode"
+
+# Using default list (if CLICKUP_DEFAULT_LIST_ID is set)
+node .claude/skills/clickup/query.mjs create "Quick task"
 ```
 
 ### List My Tasks
@@ -262,7 +275,8 @@ Total: 2 task(s)
 
 ## Tips
 
-- Team ID and User ID are auto-cached on first use
+- Team ID, User ID, and default list ID are auto-cached in `.env`
+- Set `CLICKUP_DEFAULT_LIST_ID` to skip list_id when creating team tasks
 - Use `my-tasks` for a quick overview of your assignments
 - Use natural language dates: "tomorrow", "next friday", "+3d"
 - Post comments to keep stakeholders updated on progress
