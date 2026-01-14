@@ -25,6 +25,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
+import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
@@ -642,6 +643,233 @@ export const getModelsRaw = async ({
   }
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+
+  // When filtering by baseModels, use ModelBaseModelMetric for accurate per-base-model stats
+  // Feature flag allows easy rollback if issues arise
+  const useBaseModelMetrics = baseModels?.length && (await isFlipt('base-model-feed-metrics'));
+  if (useBaseModelMetrics) {
+    // Build WHERE clauses for ModelBaseModelMetric (uses mbm. instead of mm.)
+    const mbmAND: Prisma.Sql[] = [];
+
+    // Base model filter - direct equality instead of EXISTS
+    mbmAND.push(Prisma.sql`mbm."baseModel" IN (${Prisma.join(baseModels, ',')})`);
+
+    // Reapply relevant filters using mbm. alias
+    if (searchModelIds.length) {
+      mbmAND.push(Prisma.sql`mbm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
+    }
+    if (!archived) {
+      mbmAND.push(
+        Prisma.sql`(mbm."mode" IS NULL OR mbm."mode" != ${ModelModifier.Archived}::"ModelModifier")`
+      );
+    }
+    if (disablePoi) {
+      mbmAND.push(Prisma.sql`(mbm."poi" = false OR mm."userId" = ${userId})`);
+    }
+    if (disableMinor) {
+      mbmAND.push(Prisma.sql`mbm."minor" = false`);
+    }
+    if (!sessionUser?.isModerator || !status?.length) {
+      mbmAND.push(Prisma.sql`mbm."status" = ${ModelStatus.Published}::"ModelStatus"`);
+    }
+    if (ids?.length) {
+      mbmAND.push(Prisma.sql`mbm."modelId" IN (${Prisma.join(ids, ',')})`);
+    }
+    if (excludedUserIds?.length) {
+      mbmAND.push(Prisma.sql`mm."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+    }
+
+    // Availability filter
+    if (availability) {
+      mbmAND.push(Prisma.sql`mbm."availability" = ${availability}::"Availability"`);
+    } else if (!isModerator) {
+      mbmAND.push(Prisma.sql`mbm."availability" != 'Private'::"Availability"`);
+    }
+
+    // Browsing level filter
+    const mbmBrowsingLevelQuery = Prisma.sql`(mbm."nsfwLevel" & ${browsingLevel}) != 0`;
+    if (pending && (isModerator || userId)) {
+      if (isModerator) {
+        mbmAND.push(Prisma.sql`(${mbmBrowsingLevelQuery} OR mbm."nsfwLevel" = 0)`);
+      } else if (userId) {
+        mbmAND.push(
+          Prisma.sql`(${mbmBrowsingLevelQuery} OR (mbm."nsfwLevel" = 0 AND mm."userId" = ${userId}))`
+        );
+      }
+    } else {
+      mbmAND.push(mbmBrowsingLevelQuery);
+    }
+
+    // Build ORDER BY using mbm. for base-model-specific stats
+    let mbmOrderBy = `mbm."thumbsUpCount" DESC, mbm."downloadCount" DESC, mbm."modelId" DESC`;
+    if (sort === ModelSort.HighestRated || sort === ModelSort.MostLiked)
+      mbmOrderBy = `mbm."thumbsUpCount" DESC, mbm."downloadCount" DESC, mbm."modelId"`;
+    else if (sort === ModelSort.MostDownloaded)
+      mbmOrderBy = `mbm."downloadCount" DESC, mbm."thumbsUpCount" DESC, mbm."modelId"`;
+    else if (sort === ModelSort.MostDiscussed)
+      // commentCount is model-level, use mm
+      mbmOrderBy = `mm."commentCount" DESC, mbm."thumbsUpCount" DESC, mbm."modelId"`;
+    else if (sort === ModelSort.MostCollected)
+      // collectedCount is model-level, use mm
+      mbmOrderBy = `mm."collectedCount" DESC, mbm."thumbsUpCount" DESC, mbm."modelId"`;
+    else if (sort === ModelSort.ImageCount)
+      mbmOrderBy = `mbm."imageCount" DESC, mbm."thumbsUpCount" DESC, mbm."modelId"`;
+    else if (sort === ModelSort.Oldest) mbmOrderBy = `mm."lastVersionAt" ASC, mbm."modelId"`;
+    else if (sort === ModelSort.Newest)
+      mbmOrderBy = `mm."lastVersionAt" DESC NULLS LAST, mbm."modelId" DESC`;
+
+    // Handle cursor for base model query
+    const { where: mbmCursorClause, prop: mbmCursorProp } = getCursor(mbmOrderBy, cursor);
+    if (mbmCursorClause) mbmAND.push(mbmCursorClause);
+
+    const baseModelQuery = Prisma.sql`
+      ${queryWith}
+      SELECT
+        mbm."modelId" as "id",
+        m."name",
+        ${ifDetails`
+          m."description",
+          m."allowNoCredit",
+          m."allowCommercialUse",
+          m."allowDerivatives",
+          m."allowDifferentLicense",
+        `} m."type",
+        mbm."minor",
+        m."sfwOnly",
+        mbm."poi",
+        m."nsfw",
+        mbm."nsfwLevel",
+        mbm."status",
+        m."createdAt",
+        mm."lastVersionAt",
+        m."publishedAt",
+        m."locked",
+        m."earlyAccessDeadline",
+        mbm."mode",
+        mbm."availability",
+        jsonb_build_object(
+          'downloadCount', mbm."downloadCount",
+          'thumbsUpCount', mbm."thumbsUpCount",
+          'thumbsDownCount', mm."thumbsDownCount",
+          'commentCount', mm."commentCount",
+          'collectedCount', mm."collectedCount",
+          'tippedAmountCount', mm."tippedAmountCount"
+        ) as "rank",
+        mm."userId",
+        ${Prisma.raw(mbmCursorProp ? mbmCursorProp : 'null')} as "cursorId"
+      FROM "ModelBaseModelMetric" mbm
+      JOIN "Model" m ON m."id" = mbm."modelId"
+      JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"
+      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
+      WHERE
+        ${Prisma.join(mbmAND, ' AND ')}
+      ORDER BY
+        ${Prisma.raw(mbmOrderBy)}
+      LIMIT ${(take ?? 100) + 1}
+    `;
+
+    const pgQuery = await pgDbRead.cancellableQuery<ModelRaw & { cursorId: string | bigint | null }>(
+      baseModelQuery
+    );
+    const models = await pgQuery.result();
+
+    const userIds = [...new Set(models.map((m) => m.userId))];
+    const modelIds = models.map((m) => m.id);
+
+    const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+    ]);
+
+    let nextCursor: string | bigint | undefined;
+    if (take && models.length > take) {
+      nextCursor = models[models.length - 1]?.cursorId || undefined;
+      models.pop();
+    }
+
+    return {
+      items: models
+        .map(({ rank, cursorId, ...model }) => {
+          const data = modelData[model.id.toString()];
+          if (!data) return null;
+
+          let modelVersions = data.versions;
+
+          // Apply version filters
+          if (!sessionUser?.isModerator || !status?.length) {
+            modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
+          }
+
+          // Filter to matching base models
+          modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
+
+          if (modelVersionIds?.length) {
+            modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
+          }
+
+          // Filter out NSFW versions for license-restricted base models
+          if (nsfwRestrictedBaseModels.length > 0) {
+            modelVersions = modelVersions.filter(
+              (mv) =>
+                !(
+                  (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                  nsfwRestrictedBaseModels.includes(mv.baseModel)
+                )
+            );
+          }
+
+          if (hidePrivateModels) {
+            modelVersions = modelVersions.filter(
+              (mv) =>
+                mv.availability === Availability.Public ||
+                mv.availability === Availability.EarlyAccess
+            );
+          }
+
+          if (!modelVersions.length) return null;
+
+          // Take only first version unless full details requested
+          if (!includeDetails) {
+            modelVersions = modelVersions.slice(0, 1);
+          }
+
+          const version = modelVersions[0];
+          const user = userBasicData[model.userId];
+
+          return {
+            ...model,
+            rank: {
+              [`downloadCount${period}`]: rank?.downloadCount ?? 0,
+              [`thumbsUpCount${period}`]: rank?.thumbsUpCount ?? 0,
+              [`thumbsDownCount${period}`]: rank?.thumbsDownCount ?? 0,
+              [`commentCount${period}`]: rank?.commentCount ?? 0,
+              [`collectedCount${period}`]: rank?.collectedCount ?? 0,
+              [`tippedAmountCount${period}`]: rank?.tippedAmountCount ?? 0,
+            },
+            modelVersions,
+            hashes: data.hashes,
+            tagsOnModels: data.tags,
+            user: {
+              id: model.userId,
+              username: user?.username ?? null,
+              deletedAt: user?.deletedAt ?? null,
+              image: user?.image ?? null,
+              profilePicture: profilePictures?.[model.userId] ?? null,
+              cosmetics: userCosmetics[model.userId] ?? [],
+            },
+            cosmetic: cosmetics[model.id] ?? null,
+          };
+        })
+        .filter(isDefined),
+      isPrivate,
+      nextCursor,
+    };
+  }
 
   const modelQuery = Prisma.sql`
     ${queryWith}
