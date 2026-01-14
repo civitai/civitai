@@ -181,8 +181,6 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
         keysToSave = group.keys.filter((k) => activeKeys.has(k) && !claimedKeys.has(k));
       }
 
-      if (keysToSave.length === 0) continue;
-
       const storageKey = this.buildStorageKey(
         group.keys === '*' ? undefined : group.name,
         group.scope,
@@ -192,12 +190,26 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
       keysToSave.forEach((k) => claimedKeys.add(k));
 
-      const values: Record<string, unknown> = {};
+      // Start with existing values to retain keys from inactive nodes
+      let values: Record<string, unknown> = {};
+      const stored = this.options.storage.getItem(storageKey);
+      if (stored) {
+        try {
+          values = JSON.parse(stored);
+        } catch {
+          // Invalid JSON, start fresh
+        }
+      }
+
+      // Overwrite with current context values
       for (const key of keysToSave) {
         values[key] = ctx[key as keyof Ctx];
       }
 
-      this.options.storage.setItem(storageKey, JSON.stringify(values));
+      // Only save if we have values to save
+      if (Object.keys(values).length > 0) {
+        this.options.storage.setItem(storageKey, JSON.stringify(values));
+      }
     }
   }
 

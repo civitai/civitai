@@ -1,20 +1,12 @@
 import type { InputWrapperProps } from '@mantine/core';
-import {
-  Button,
-  Center,
-  Group,
-  Input,
-  Modal,
-  Paper,
-  SegmentedControl,
-  SimpleGrid,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { Center, Input, Paper, Stack, Text } from '@mantine/core';
 import { IconDots, IconLibraryPlus } from '@tabler/icons-react';
-import clsx from 'clsx';
+import { useCallback } from 'react';
+
+import {
+  OverflowSegmentedControl,
+  type OverflowSegmentedControlOption,
+} from './OverflowSegmentedControl';
 
 // =============================================================================
 // Types
@@ -71,8 +63,18 @@ function getDimensionsLabel(option: AspectRatioOption): string | null {
   return null;
 }
 
+/** Helper to convert an option to an AspectRatioValue */
+function optionToValue(option: AspectRatioOption): AspectRatioValue {
+  const parsed = parseRatio(option.value);
+  return {
+    value: option.value,
+    width: option.width ?? parsed.width,
+    height: option.height ?? parsed.height,
+  };
+}
+
 // =============================================================================
-// Option Display Component
+// Option Display Component (for segmented control)
 // =============================================================================
 
 interface AspectRatioOptionDisplayProps {
@@ -107,31 +109,19 @@ function AspectRatioOptionDisplay({
 }
 
 // =============================================================================
-// Modal Option Component
+// Modal Option Display Component
 // =============================================================================
 
-interface ModalOptionProps {
+interface ModalOptionDisplayProps {
   option: AspectRatioOption;
   selected: boolean;
-  onClick: () => void;
-  disabled?: boolean;
 }
 
-function ModalOption({ option, selected, onClick, disabled }: ModalOptionProps) {
+function ModalOptionDisplay({ option, selected }: ModalOptionDisplayProps) {
   const dimensions = getDimensionsLabel(option);
 
   return (
-    <UnstyledButton
-      onClick={onClick}
-      disabled={disabled}
-      className={clsx(
-        'flex flex-col items-center gap-2 rounded-md border-2 p-3 transition-colors',
-        selected
-          ? 'border-blue-6 bg-blue-1 dark:bg-blue-9/20'
-          : 'border-gray-3 hover:border-gray-4 dark:border-dark-4 dark:hover:border-dark-3',
-        disabled && 'cursor-not-allowed opacity-50'
-      )}
-    >
+    <div className="flex flex-col items-center gap-2 p-3">
       <Paper
         withBorder
         style={{ borderWidth: 2, aspectRatio: getAspectRatioStyle(option), height: 40 }}
@@ -146,7 +136,45 @@ function ModalOption({ option, selected, onClick, disabled }: ModalOptionProps) 
           </Text>
         )}
       </Stack>
-    </UnstyledButton>
+    </div>
+  );
+}
+
+// =============================================================================
+// More Button Content
+// =============================================================================
+
+interface MoreButtonContentProps {
+  hiddenOption?: AspectRatioOption;
+}
+
+function MoreButtonContent({ hiddenOption }: MoreButtonContentProps) {
+  const dimensionLabel = hiddenOption ? getDimensionsLabel(hiddenOption) : undefined;
+
+  return (
+    <Stack gap={2}>
+      {hiddenOption && (
+        <Text c="dimmed" className="absolute right-0.5 top-0.5">
+          <IconLibraryPlus size={18} />
+        </Text>
+      )}
+      <Center>
+        <Paper
+          withBorder
+          style={{
+            borderWidth: 2,
+            aspectRatio: hiddenOption ? getAspectRatioStyle(hiddenOption) : '1/1',
+            height: 20,
+          }}
+        />
+      </Center>
+      <Stack gap={0}>
+        <Text size="xs">{hiddenOption ? hiddenOption.value : 'More'}</Text>
+        <Text fz={10} c="dimmed">
+          {dimensionLabel ?? <IconDots size={16} className="mx-auto" />}
+        </Text>
+      </Stack>
+    </Stack>
   );
 }
 
@@ -155,16 +183,6 @@ function ModalOption({ option, selected, onClick, disabled }: ModalOptionProps) 
 // =============================================================================
 
 const DEFAULT_MAX_VISIBLE = 5;
-
-/** Helper to convert an option to an AspectRatioValue */
-function optionToValue(option: AspectRatioOption): AspectRatioValue {
-  const parsed = parseRatio(option.value);
-  return {
-    value: option.value,
-    width: option.width ?? parsed.width,
-    height: option.height ?? parsed.height,
-  };
-}
 
 export function AspectRatioInput({
   value,
@@ -176,120 +194,60 @@ export function AspectRatioInput({
   priorityOptions,
   ...inputWrapperProps
 }: AspectRatioInputProps) {
-  const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
-
   // Extract the value string from the value object
   const selectedAspectRatio = value?.value;
 
-  // Determine visible options based on priorityOptions or default slicing
-  const visibleOptions = (() => {
-    if (priorityOptions && priorityOptions.length > 0) {
-      // Use priority options - filter to only include valid values from options
-      const prioritySet = new Set(priorityOptions);
-      return options.filter((opt) => prioritySet.has(opt.value));
-    }
-    // Default: show first N-1 options (leaving room for "More" button)
-    if (options.length > maxVisible) {
-      return options.slice(0, maxVisible - 1);
-    }
-    return options;
-  })();
-
-  const showMoreButton = options.length > visibleOptions.length;
-  const selectedOption = options.find((opt) => opt.value === selectedAspectRatio);
-  const isSelectedHidden =
-    showMoreButton && !visibleOptions.find((opt) => opt.value === selectedAspectRatio);
-
-  const segmentedData = visibleOptions.map((option) => ({
-    label: <AspectRatioOptionDisplay option={option} />,
+  // Convert AspectRatioOption[] to OverflowSegmentedControlOption[]
+  const segmentedOptions: OverflowSegmentedControlOption<string>[] = options.map((option) => ({
     value: option.value,
+    label: <AspectRatioOptionDisplay option={option} />,
   }));
 
-  // Add "More" option if needed
-  if (showMoreButton) {
-    const dimensionLabel = isSelectedHidden ? getDimensionsLabel(selectedOption!) : undefined;
-    segmentedData.push({
-      label: (
-        <Stack gap={2} onClick={openModal}>
-          {isSelectedHidden && (
-            <Text c="dimmed" className="absolute right-0.5 top-0.5">
-              <IconLibraryPlus size={18} />
-            </Text>
-          )}
-          <Center>
-            <Paper
-              withBorder
-              style={{
-                borderWidth: 2,
-                aspectRatio: isSelectedHidden ? getAspectRatioStyle(selectedOption!) : '1/1',
-                height: 20,
-              }}
-            />
-          </Center>
-          <Stack gap={0}>
-            <Text size="xs">{isSelectedHidden ? selectedOption?.value : 'More'}</Text>
-            <Text fz={10} c="dimmed">
-              {dimensionLabel ? dimensionLabel : <IconDots size={16} className="mx-auto" />}
-            </Text>
-          </Stack>
-        </Stack>
-      ),
-      value: '__more__',
-    });
-  }
+  // Render the More button with hidden selection info
+  const renderMoreButton = useCallback(
+    (hiddenSelectedValue: string | undefined) => {
+      const hiddenOption = hiddenSelectedValue
+        ? options.find((opt) => opt.value === hiddenSelectedValue)
+        : undefined;
+      return <MoreButtonContent hiddenOption={hiddenOption} />;
+    },
+    [options]
+  );
 
-  const handleSegmentedChange = (newValue: string) => {
-    if (newValue === '__more__') {
-      openModal();
-    } else {
+  // Render modal option
+  const renderModalOption = useCallback(
+    (option: OverflowSegmentedControlOption<string>, selected: boolean) => {
+      const aspectOption = options.find((opt) => opt.value === option.value);
+      if (!aspectOption) return null;
+      return <ModalOptionDisplay option={aspectOption} selected={selected} />;
+    },
+    [options]
+  );
+
+  // Handle value change - convert string to AspectRatioValue
+  const handleChange = useCallback(
+    (newValue: string) => {
       const option = options.find((opt) => opt.value === newValue);
       if (option) {
         onChange?.(optionToValue(option));
       }
-    }
-  };
-
-  const handleModalSelect = (newValue: string) => {
-    const option = options.find((opt) => opt.value === newValue);
-    if (option) {
-      onChange?.(optionToValue(option));
-    }
-    closeModal();
-  };
+    },
+    [options, onChange]
+  );
 
   return (
-    <>
-      <Input.Wrapper {...inputWrapperProps} label={label}>
-        <SegmentedControl
-          value={isSelectedHidden ? '__more__' : selectedAspectRatio ?? ''}
-          onChange={handleSegmentedChange}
-          data={segmentedData}
-          disabled={disabled}
-          fullWidth
-          classNames={{ label: 'relative', innerLabel: 'static' }}
-        />
-      </Input.Wrapper>
-
-      <Modal opened={modalOpened} onClose={closeModal} title="Select Aspect Ratio" size="md">
-        <Stack gap="md">
-          <SimpleGrid cols={3} spacing="sm">
-            {options.map((option) => (
-              <ModalOption
-                key={option.value}
-                option={option}
-                selected={option.value === selectedAspectRatio}
-                onClick={() => handleModalSelect(option.value)}
-                disabled={disabled}
-              />
-            ))}
-          </SimpleGrid>
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={closeModal}>
-              Cancel
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </>
+    <Input.Wrapper {...inputWrapperProps} label={label}>
+      <OverflowSegmentedControl
+        value={selectedAspectRatio}
+        onChange={handleChange}
+        options={segmentedOptions}
+        disabled={disabled}
+        maxVisible={maxVisible}
+        priorityOptions={priorityOptions}
+        renderMoreButton={renderMoreButton}
+        renderModalOption={renderModalOption}
+        modalTitle="Select Aspect Ratio"
+      />
+    </Input.Wrapper>
   );
 }

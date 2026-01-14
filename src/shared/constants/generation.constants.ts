@@ -487,14 +487,24 @@ export const fluxModeOptions = [
 
 // #region [workflows]
 
+/** Standard Flux aspect ratios (1024px based) */
+export const fluxAspectRatios = [
+  { label: '2:3', width: 832, height: 1216 },
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '3:2', width: 1216, height: 832 },
+  { label: '9:16', width: 768, height: 1344 },
+  { label: '16:9', width: 1344, height: 768 },
+];
+
+/** Ultra mode aspect ratios (higher resolution) */
 export const fluxUltraAspectRatios = [
-  { label: 'Landscape - 21:9', width: 3136, height: 1344 },
-  { label: 'Landscape - 16:9', width: 2752, height: 1536 },
-  { label: 'Landscape - 4:3', width: 2368, height: 1792 },
-  { label: 'Square - 1:1', width: 2048, height: 2048 },
-  { label: 'Portrait - 3:4', width: 1792, height: 2368 },
-  { label: 'Portrait - 9:16', width: 1536, height: 2752 },
-  { label: 'Portrait - 9:21', width: 1344, height: 3136 },
+  { label: '21:9', width: 3136, height: 1344 },
+  { label: '16:9', width: 2752, height: 1536 },
+  { label: '4:3', width: 2368, height: 1792 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1792, height: 2368 },
+  { label: '9:16', width: 1536, height: 2752 },
+  { label: '9:21', width: 1344, height: 3136 },
 ];
 const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspectRatio;
 

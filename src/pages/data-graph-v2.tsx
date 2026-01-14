@@ -52,6 +52,7 @@ import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { VideoInput } from '~/components/generation_v2/inputs/VideoInput';
 import { InterpolationFactorInput } from '~/components/generation_v2/inputs/InterpolationFactorInput';
+import { OverflowSegmentedControl } from '~/components/generation_v2/inputs/OverflowSegmentedControl';
 
 const STORAGE_KEY = 'data-graph-v2';
 
@@ -238,15 +239,16 @@ function GenerationForm() {
                 />
 
                 {meta.versions?.length && (
-                  <SegmentedControl
+                  <OverflowSegmentedControl
                     value={value?.id?.toString()}
                     onChange={(stringId) => onChange({ id: Number(stringId) } as any)}
-                    data={
+                    options={
                       meta.versions?.map(({ label, value }) => ({
                         label,
                         value: value.toString(),
                       })) ?? []
                     }
+                    maxVisible={5}
                   />
                 )}
               </>
@@ -345,14 +347,22 @@ function GenerationForm() {
           <Controller
             graph={graph}
             name="aspectRatio"
-            render={({ value, meta, onChange }) => (
-              <AspectRatioInput
-                value={value}
-                onChange={onChange}
-                label="Aspect Ratio"
-                options={meta.options}
-              />
-            )}
+            render={({ value, meta, onChange }) => {
+              // Get middle 5 items as priority options when there are more than 5
+              const priorityOptions =
+                meta.options.length > 5 ? meta.options.slice(1, 6).map((o) => o.value) : undefined;
+
+              return (
+                <AspectRatioInput
+                  value={value}
+                  onChange={onChange}
+                  label="Aspect Ratio"
+                  options={meta.options}
+                  priorityOptions={priorityOptions}
+                  maxVisible={5}
+                />
+              );
+            }}
           />
 
           {/* Advanced section */}
@@ -478,6 +488,20 @@ function GenerationForm() {
                 />
               )}
             />
+
+            {/* Flux Ultra Raw mode toggle */}
+            <Controller
+              graph={graph}
+              name="fluxUltraRaw"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  checked={value}
+                  onChange={(e) => onChange(e.target.checked)}
+                  label="Raw Mode"
+                  description="Generate with more natural, less processed look"
+                />
+              )}
+            />
           </AccordionLayout>
         </Stack>
       </div>
@@ -500,6 +524,8 @@ const storageAdapter = createLocalStorageAdapter({
     // Common settings shared across all workflows
     { name: 'common', keys: ['prompt', 'negativePrompt', 'seed', 'quantity'] },
     // Model-family specific settings scoped to baseModel
+    // Values for inactive nodes are automatically retained in storage
+    // (e.g., cfgScale/steps when switching to Ultra mode which doesn't have them)
     { keys: '*', scope: 'baseModel' },
   ],
 });
