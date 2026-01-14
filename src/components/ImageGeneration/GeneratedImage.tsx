@@ -560,7 +560,7 @@ function GeneratedImageWorkflowMenuItems({
     !isPonyV7 &&
     !isZImageTurbo;
 
-  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream;
+  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream || isQwen;
   const img2imgWorkflows =
     !isVideo && !isBlocked
       ? workflowDefinitions.filter(

@@ -140,13 +140,11 @@ export async function getMyTasks(teamId, userId) {
 export async function assignTask(taskId, assigneeIds, options = {}) {
   const body = {};
 
-  if (options.add) {
-    body.assignees = { add: assigneeIds };
-  } else if (options.remove) {
+  if (options.remove) {
     body.assignees = { rem: assigneeIds };
   } else {
-    // Replace all assignees
-    body.assignees = assigneeIds;
+    // Default to add format - ClickUp API requires { add: [...] } for updates
+    body.assignees = { add: assigneeIds };
   }
 
   const response = await updateTask(taskId, body);
@@ -167,7 +165,7 @@ export async function setDueDate(taskId, dueDate) {
 }
 
 // Parse natural language date input
-function parseDateInput(input) {
+export function parseDateInput(input) {
   const now = new Date();
   const inputLower = input.toLowerCase().trim();
 
@@ -254,6 +252,36 @@ export async function moveTask(taskId, targetListId) {
   // Use the dedicated move endpoint
   const response = await apiRequest(`/list/${targetListId}/task/${taskId}`, {
     method: 'POST',
+  });
+  return response;
+}
+
+// Add a watcher/follower to a task
+// NOTE: ClickUp API v2 does not have a documented public endpoint for adding watchers.
+// Returns null to indicate watchers cannot be added programmatically via API.
+// Callers should use @mentions in comments as an alternative notification mechanism.
+export async function addWatcher(taskId, userId) {
+  throw new Error(
+    'ClickUp API v2 does not support adding watchers programmatically. ' +
+    'Use "@username" in a comment to notify someone instead.'
+  );
+}
+
+// Add a tag to a task
+export async function addTag(taskId, tagName) {
+  // Tag names in URL must be URL-encoded
+  const encodedTag = encodeURIComponent(tagName);
+  const response = await apiRequest(`/task/${taskId}/tag/${encodedTag}`, {
+    method: 'POST',
+  });
+  return response;
+}
+
+// Remove a tag from a task
+export async function removeTag(taskId, tagName) {
+  const encodedTag = encodeURIComponent(tagName);
+  const response = await apiRequest(`/task/${taskId}/tag/${encodedTag}`, {
+    method: 'DELETE',
   });
   return response;
 }

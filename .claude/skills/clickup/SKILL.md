@@ -20,6 +20,15 @@ cp .claude/skills/clickup/.env-example .claude/skills/clickup/.env
 
 Team ID and User ID are auto-detected and cached on first use.
 
+### Default List (Optional)
+
+Set `CLICKUP_DEFAULT_LIST_ID` in `.env` to enable creating tasks without specifying a list:
+
+```bash
+# In .claude/skills/clickup/.env
+CLICKUP_DEFAULT_LIST_ID=901111220963
+```
+
 ## Running Commands
 
 ```bash
@@ -36,7 +45,7 @@ node .claude/skills/clickup/query.mjs <command> [options]
 | `status <url\|id> [status]` | Update task status (or list available statuses) |
 | `tasks <list_id>` | List tasks in a list |
 | `me` | Show current user info |
-| `create <list_id> "title"` | Create a new task in a list |
+| `create [list_id] "title"` | Create a new task (list_id optional if default set) |
 | `my-tasks` | List all tasks assigned to you across workspace |
 | `search "query"` | Search tasks by name or description |
 | `assign <task> <user>` | Assign task to a user (by name, email, or ID) |
@@ -47,6 +56,9 @@ node .claude/skills/clickup/query.mjs <command> [options]
 | `link <task> <url> ["desc"]` | Add external link reference (as comment) |
 | `checklist <task> "item"` | Add checklist item to task |
 | `delete-comment <comment_id>` | Delete a comment |
+| `watch <task> <user>` | Notify user via @mention comment (watchers not supported in API) |
+| `tag <task> "tag_name"` | Add a tag to task |
+| `description <task> "text"` | Update task description (markdown supported) |
 
 ### Options
 
@@ -74,7 +86,11 @@ node .claude/skills/clickup/query.mjs get 86a1b2c3d --subtasks
 ### Create a Task
 
 ```bash
+# With explicit list ID
 node .claude/skills/clickup/query.mjs create 901111220963 "New feature: dark mode"
+
+# Using default list (if CLICKUP_DEFAULT_LIST_ID is set)
+node .claude/skills/clickup/query.mjs create "Quick task"
 ```
 
 ### List My Tasks
@@ -200,6 +216,37 @@ node .claude/skills/clickup/query.mjs me
 node .claude/skills/clickup/query.mjs delete-comment 90110200841741
 ```
 
+### Notify Users (Watch)
+
+```bash
+# Notify user via @mention comment (ClickUp API doesn't support adding watchers directly)
+node .claude/skills/clickup/query.mjs watch 86a1b2c3d koen
+
+# Notify by email
+node .claude/skills/clickup/query.mjs watch 86a1b2c3d jane@example.com
+```
+
+### Add Tags
+
+```bash
+# Add a tag to a task
+node .claude/skills/clickup/query.mjs tag 86a1b2c3d "DevOps"
+node .claude/skills/clickup/query.mjs tag 86a1b2c3d "bug"
+```
+
+### Update Description
+
+```bash
+# Update task description with markdown
+node .claude/skills/clickup/query.mjs description 86a1b2c3d "## Summary
+This is a **bold** statement.
+
+- Item 1
+- Item 2
+
+See [documentation](https://example.com) for more info."
+```
+
 ## Task/List URL Formats
 
 The skill recognizes these ClickUp URL formats:
@@ -257,12 +304,14 @@ Total: 2 task(s)
 - **Daily standups**: Use `my-tasks` to see your assignments
 - **Status updates**: Post progress comments as you work
 - **Task management**: Assign, prioritize, and set due dates
-- **Collaboration**: View recent comments for context
+- **Collaboration**: View recent comments for context, add watchers
+- **Task organization**: Add tags to categorize tasks
 - **Task linking**: Reference task IDs in commit messages
 
 ## Tips
 
-- Team ID and User ID are auto-cached on first use
+- Team ID, User ID, and default list ID are auto-cached in `.env`
+- Set `CLICKUP_DEFAULT_LIST_ID` to skip list_id when creating team tasks
 - Use `my-tasks` for a quick overview of your assignments
 - Use natural language dates: "tomorrow", "next friday", "+3d"
 - Post comments to keep stakeholders updated on progress

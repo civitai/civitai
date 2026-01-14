@@ -10,7 +10,7 @@
  *   status <url|id> "status"      Update task status
  *   tasks <list_id>               List tasks in a list
  *   me                            Show current user info
- *   create <list_id> "title"      Create a new task
+ *   create [list_id] "title"      Create a new task (list_id optional if default set)
  *   my-tasks                      List all tasks assigned to me
  *   search "query"                Search tasks across workspace
  *   assign <task> <user>          Assign task to user
@@ -21,6 +21,9 @@
  *   link <task> <url> ["desc"]    Add external link reference
  *   checklist <task> "item"       Add checklist item
  *   delete-comment <comment_id>   Delete a comment
+ *   watch <task> <user>           Add a watcher to task
+ *   tag <task> "tag_name"         Add a tag to task
+ *   description <task> "text"     Update task description (markdown supported)
  *
  * Options:
  *   --json       Output raw JSON
@@ -36,6 +39,7 @@ import {
   getTasksInList,
   getAvailableStatuses,
   updateTaskStatus,
+  updateTask,
   createTask,
   createSubtask,
   searchTasks,
@@ -44,6 +48,9 @@ import {
   setDueDate,
   setPriority,
   moveTask,
+  parseDateInput,
+  addWatcher,
+  addTag,
 } from './api/tasks.mjs';
 import { getComments, postComment, deleteComment } from './api/comments.mjs';
 import { addChecklistItemToTask, getChecklists } from './api/checklists.mjs';
@@ -62,6 +69,9 @@ let arg3 = null;
 let jsonOutput = false;
 let includeSubtasks = false;
 let filterMe = false;
+let assigneeArg = null;
+let dueArg = null;
+let descriptionArg = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -71,6 +81,12 @@ for (let i = 0; i < args.length; i++) {
     includeSubtasks = true;
   } else if (arg === '--me') {
     filterMe = true;
+  } else if (arg === '--assignee' || arg === '-a') {
+    assigneeArg = args[++i];
+  } else if (arg === '--due' || arg === '-d') {
+    dueArg = args[++i];
+  } else if (arg === '--description' || arg === '--desc') {
+    descriptionArg = args[++i];
   } else if (!command) {
     command = arg;
   } else if (!targetInput) {
@@ -96,7 +112,7 @@ Commands:
   status <url|id> "status"      Update task status
   tasks <list_id>               List tasks in a list
   me                            Show current user info
-  create <list_id> "title"      Create a new task
+  create [list_id] "title"      Create a new task (list_id optional if default set)
   my-tasks                      List all tasks assigned to me
   search "query"                Search tasks across workspace
   assign <task> <user>          Assign task to user
@@ -107,6 +123,9 @@ Commands:
   link <task> <url> ["desc"]    Add external link reference
   checklist <task> "item"       Add checklist item
   delete-comment <comment_id>   Delete a comment
+  watch <task> <user>           Add a watcher to task
+  tag <task> "tag_name"         Add a tag to task
+  description <task> "text"     Update task description (markdown supported)
 
 Options:
   --json       Output raw JSON
@@ -119,6 +138,7 @@ Examples:
   node query.mjs status 86a1b2c3d "in progress"
   node query.mjs tasks 901111220963 --me
   node query.mjs create 901111220963 "New feature: dark mode"
+  node query.mjs create "Quick task" (uses CLICKUP_DEFAULT_LIST_ID)
   node query.mjs my-tasks
   node query.mjs search "dark mode"
   node query.mjs assign 86a1b2c3d justin
@@ -128,7 +148,10 @@ Examples:
   node query.mjs move 86a1b2c3d 901111220964
   node query.mjs link 86a1b2c3d "https://github.com/..." "PR #123"
   node query.mjs checklist 86a1b2c3d "Review code"
-  node query.mjs delete-comment 90110200841741`);
+  node query.mjs delete-comment 90110200841741
+  node query.mjs watch 86a1b2c3d koen
+  node query.mjs tag 86a1b2c3d "DevOps"
+  node query.mjs description 86a1b2c3d "## Summary\\nThis is **bold** text"`);
   process.exit(1);
 }
 
@@ -310,22 +333,72 @@ async function main() {
       }
 
       case 'create': {
-        const listId = parseListId(targetInput);
+        // Support: create <list_id> "title" [options] OR create "title" [options] (uses default list)
+        // Options: --assignee/-a <user>, --due/-d <date>, --description/--desc <text>
+        let listId = parseListId(targetInput);
+        let title = arg2;
+
+        // If targetInput doesn't parse as a list ID, treat it as the title
         if (!listId) {
-          console.error('Error: Could not parse list ID from input');
-          process.exit(1);
+          title = targetInput;
+          listId = process.env.CLICKUP_DEFAULT_LIST_ID;
+          if (!listId) {
+            console.error('Error: No list ID provided and CLICKUP_DEFAULT_LIST_ID not set');
+            console.error('Usage: node query.mjs create <list_id> "Task title" [options]');
+            console.error('   Or: Set CLICKUP_DEFAULT_LIST_ID in .env to use: node query.mjs create "Task title"');
+            console.error('Options: --assignee/-a <user>, --due/-d <date>, --description/--desc <text>');
+            process.exit(1);
+          }
         }
-        if (!arg2) {
+
+        if (!title) {
           console.error('Error: Task title required');
-          console.error('Usage: node query.mjs create <list_id> "Task title"');
+          console.error('Usage: node query.mjs create <list_id> "Task title" [options]');
+          console.error('Options: --assignee/-a <user>, --due/-d <date>, --description/--desc <text>');
           process.exit(1);
         }
-        const task = await createTask(listId, arg2);
+
+        // Build options from flags
+        const options = {};
+        if (descriptionArg) {
+          // Use markdown_description for proper markdown rendering in ClickUp
+          // Note: Task descriptions use markdown_description (ClickUp parses),
+          // while comments use JSON array format (we parse via markdownToClickUp)
+          options.markdown_description = descriptionArg;
+        }
+        if (dueArg) {
+          const dueDate = parseDateInput(dueArg);
+          options.due_date = dueDate.getTime();
+        }
+        if (assigneeArg) {
+          let assigneeId;
+          if (assigneeArg.toLowerCase() === 'me') {
+            // Special case: "me" means the current authenticated user
+            assigneeId = await getUserId();
+          } else {
+            const teamId = await getTeamId();
+            const user = await findUser(teamId, assigneeArg);
+            if (!user) {
+              console.error(`Error: User "${assigneeArg}" not found in team`);
+              process.exit(1);
+            }
+            assigneeId = user.id;
+          }
+          options.assignees = [assigneeId];
+        }
+
+        const task = await createTask(listId, title, options);
         if (jsonOutput) {
           console.log(JSON.stringify(task, null, 2));
         } else {
           console.log(`Task created: ${task.name}`);
           console.log(`ID: ${task.id}`);
+          if (task.assignees?.length) {
+            console.log(`Assignees: ${task.assignees.map(a => a.username).join(', ')}`);
+          }
+          if (task.due_date) {
+            console.log(`Due: ${new Date(parseInt(task.due_date, 10)).toLocaleDateString()}`);
+          }
           console.log(`URL: ${task.url}`);
         }
         break;
@@ -496,6 +569,81 @@ async function main() {
           console.log(JSON.stringify({ deleted: true, commentId }, null, 2));
         } else {
           console.log(`Comment ${commentId} deleted`);
+        }
+        break;
+      }
+
+      case 'watch': {
+        const taskId = parseTaskId(targetInput);
+        if (!taskId) {
+          console.error('Error: Could not parse task ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: User required');
+          console.error('Usage: node query.mjs watch <task> <user>');
+          process.exit(1);
+        }
+        const teamId = await getTeamId();
+        const user = await findUser(teamId, arg2);
+        if (!user) {
+          console.error(`Error: User "${arg2}" not found in team`);
+          process.exit(1);
+        }
+        // ClickUp API v2 doesn't support adding watchers programmatically.
+        // Post a comment with @mention as an alternative to notify the user.
+        const mentionComment = `@${user.username} has been added as a watcher on this task.`;
+        const result = await postComment(taskId, mentionComment);
+        if (jsonOutput) {
+          console.log(JSON.stringify({ notified: true, user: user.username, comment_id: result.id }, null, 2));
+        } else {
+          console.log(`Notified ${user.username || user.email} via @mention comment`);
+          console.log(`(Note: ClickUp API does not support adding watchers directly)`);
+        }
+        break;
+      }
+
+      case 'tag': {
+        const taskId = parseTaskId(targetInput);
+        if (!taskId) {
+          console.error('Error: Could not parse task ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Tag name required');
+          console.error('Usage: node query.mjs tag <task> "tag_name"');
+          process.exit(1);
+        }
+        await addTag(taskId, arg2);
+        if (jsonOutput) {
+          console.log(JSON.stringify({ tagged: true, taskId, tag: arg2 }, null, 2));
+        } else {
+          console.log(`Tag "${arg2}" added to task`);
+        }
+        break;
+      }
+
+      case 'description': {
+        const taskId = parseTaskId(targetInput);
+        if (!taskId) {
+          console.error('Error: Could not parse task ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Description text required');
+          console.error('Usage: node query.mjs description <task> "description text"');
+          console.error('Markdown formatting is supported.');
+          process.exit(1);
+        }
+        // Use markdown_description for proper markdown rendering in ClickUp
+        // Note: Unlike comments (which use JSON array format via markdownToClickUp),
+        // task descriptions use ClickUp's native markdown_description field
+        const task = await updateTask(taskId, { markdown_description: arg2 });
+        if (jsonOutput) {
+          console.log(JSON.stringify(task, null, 2));
+        } else {
+          console.log('Task description updated');
+          console.log(`URL: ${task.url}`);
         }
         break;
       }

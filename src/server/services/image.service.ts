@@ -2809,8 +2809,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else if (userId) {
-    // For specific user's content, allow seeing scheduled/notPublished content for owners
-    // Filtering is handled in post
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+    // For own user's content, allow seeing scheduled/notPublished content
+    if (currentUserId && userId === currentUserId) {
+      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+    }
+    filters.push(`(${publishedFilters.join(' OR ')})`);
   } else {
     // General feed queries - apply published filter for caching
     filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`));

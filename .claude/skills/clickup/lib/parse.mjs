@@ -39,5 +39,5 @@ export function parseListId(input) {
   const listMatch = input.match(/\/li\/(\d+)/);
   if (listMatch) return listMatch[1];
 
-  return input; // Return as-is, let API handle validation
+  return null; // Not a valid list ID or URL
 }

@@ -79,5 +79,10 @@ export async function apiRequest(endpoint, options = {}) {
     throw new Error(`ClickUp API error: ${response.status} - ${text}`);
   }
 
-  return response.json();
+  // Handle empty responses (e.g., DELETE returns empty body)
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+  return JSON.parse(text);
 }

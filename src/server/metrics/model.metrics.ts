@@ -39,8 +39,16 @@ const modelMetricKeys = [
   'earnedAmount',
 ] as const;
 
+const baseModelMetricKeys = ['thumbsUpCount', 'downloadCount', 'imageCount'] as const;
+
 type ModelVersionMetricKey = (typeof versionMetricKeys)[number];
 type ModelMetricKey = (typeof modelMetricKeys)[number];
+type BaseModelMetricKey = (typeof baseModelMetricKeys)[number];
+
+type BaseModelMetricUpdate = {
+  modelId: number;
+  baseModel: string;
+} & Partial<Record<BaseModelMetricKey, number>>;
 
 type ModelMetricContext = MetricProcessorRunContext & {
   queuedModelVersions: number[];
@@ -50,6 +58,7 @@ type ModelMetricContext = MetricProcessorRunContext & {
     Partial<Record<ModelVersionMetricKey, number>> & { modelVersionId: number }
   >;
   updates: Record<number, Record<string, number>>;
+  baseModelUpdates: Record<string, BaseModelMetricUpdate>; // key is `${modelId}:${baseModel}`
   idKey: string;
 };
 
@@ -62,6 +71,7 @@ export const modelMetrics = createMetricProcessor({
     ctx.queuedModelVersions = [];
     ctx.versionUpdates = {};
     ctx.updates = {};
+    ctx.baseModelUpdates = {};
     ctx.idKey = 'modelId';
     ctx.isBeginningOfDay = dayjs(ctx.lastUpdate).isSame(dayjs().subtract(1, 'day'), 'day');
     if (ctx.queue.length > 0) {
@@ -109,6 +119,14 @@ export const modelMetrics = createMetricProcessor({
       table: 'ModelMetric',
       logName: 'model metrics',
     });
+
+    // Aggregate and insert base model metrics
+    //---------------------------------------
+    const baseModelTasks = await getBaseModelAggregationTasks(ctx);
+    log('baseModelMetrics update', baseModelTasks.length, 'tasks');
+    for (const task of baseModelTasks) await task();
+
+    await bulkInsertBaseModelMetrics(ctx);
 
     // If beginning of day - clear top earners cache
     //---------------------------------------
@@ -613,4 +631,138 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
   });
 
   return tasks;
+}
+
+async function getBaseModelAggregationTasks(ctx: ModelMetricContext) {
+  // Find all model IDs that had version metrics updated or reviews updated
+  const affected = await getAffected(ctx, 'Model')`
+    SELECT DISTINCT mv."modelId" as id
+    FROM "ModelVersionMetric" mvm
+    JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+    WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getBaseModelAggregationTasks', i + 1, 'of', tasks.length);
+
+    // Aggregate version metrics grouped by (modelId, baseModel)
+    // - downloadCount and imageCount: sum from ModelVersionMetric
+    // - thumbsUpCount: count unique users from ResourceReview
+    const query = await ctx.pg.cancellableQuery<{
+      modelId: number;
+      baseModel: string;
+      thumbsUpCount: string;
+      downloadCount: string;
+      imageCount: string;
+    }>(
+      `-- aggregate version metrics by base model
+      WITH version_stats AS (
+        SELECT
+          mv."modelId",
+          mv."baseModel",
+          SUM(mvm."downloadCount") as "downloadCount",
+          SUM(mvm."imageCount") as "imageCount"
+        FROM "ModelVersionMetric" mvm
+        JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+        WHERE mv."modelId" = ANY($1::int[])
+          AND mv."modelId" BETWEEN $2 AND $3
+          AND mv."status" = 'Published'
+        GROUP BY mv."modelId", mv."baseModel"
+      ),
+      review_stats AS (
+        SELECT
+          mv."modelId",
+          mv."baseModel",
+          COUNT(DISTINCT r."userId") FILTER (WHERE r.recommended = true) as "thumbsUpCount"
+        FROM "ResourceReview" r
+        JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
+        WHERE mv."modelId" = ANY($1::int[])
+          AND mv."modelId" BETWEEN $2 AND $3
+          AND mv."status" = 'Published'
+          AND r.exclude = false
+          AND r."tosViolation" = false
+        GROUP BY mv."modelId", mv."baseModel"
+      )
+      SELECT
+        vs."modelId",
+        vs."baseModel",
+        COALESCE(rs."thumbsUpCount", 0) as "thumbsUpCount",
+        vs."downloadCount",
+        vs."imageCount"
+      FROM version_stats vs
+      LEFT JOIN review_stats rs ON rs."modelId" = vs."modelId" AND rs."baseModel" = vs."baseModel"`,
+      [ids, ids[0], ids[ids.length - 1]]
+    );
+    ctx.jobContext.on('cancel', query.cancel);
+    const data = await query.result();
+
+    for (const row of data) {
+      const key = `${row.modelId}:${row.baseModel}`;
+      ctx.baseModelUpdates[key] = {
+        modelId: row.modelId,
+        baseModel: row.baseModel,
+        thumbsUpCount: parseInt(row.thumbsUpCount) || 0,
+        downloadCount: parseInt(row.downloadCount) || 0,
+        imageCount: parseInt(row.imageCount) || 0,
+      };
+    }
+
+    log('getBaseModelAggregationTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function bulkInsertBaseModelMetrics(ctx: ModelMetricContext) {
+  const updates = Object.values(ctx.baseModelUpdates);
+  if (!updates.length) return;
+
+  const tasks = chunk(updates, 100).map((batch, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('insert base model metrics', i + 1, 'of', tasks.length);
+
+    // Use raw SQL for upsert with composite key
+    await executeRefresh(ctx)`
+      -- insert base model metrics
+      WITH data AS (
+        SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x(
+          "modelId" INT,
+          "baseModel" TEXT,
+          "thumbsUpCount" INT,
+          "downloadCount" INT,
+          "imageCount" INT
+        )
+      )
+      INSERT INTO "ModelBaseModelMetric" (
+        "modelId", "baseModel", "thumbsUpCount", "downloadCount", "imageCount", "updatedAt",
+        "status", "availability", "mode", "nsfwLevel", "minor", "poi"
+      )
+      SELECT
+        d."modelId",
+        d."baseModel",
+        COALESCE(d."thumbsUpCount", 0),
+        COALESCE(d."downloadCount", 0),
+        COALESCE(d."imageCount", 0),
+        NOW(),
+        m."status",
+        m."availability",
+        m."mode",
+        m."nsfwLevel",
+        m."minor",
+        m."poi"
+      FROM data d
+      JOIN "Model" m ON m.id = d."modelId"
+      ON CONFLICT ("modelId", "baseModel") DO UPDATE
+        SET
+          "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+          "downloadCount" = EXCLUDED."downloadCount",
+          "imageCount" = EXCLUDED."imageCount",
+          "updatedAt" = NOW()
+    `;
+
+    log('insert base model metrics', i + 1, 'of', tasks.length, 'done');
+  });
+
+  await limitConcurrency(tasks, 10);
 }
