@@ -8,6 +8,7 @@ export function PopConfirm({
   message = 'Are you sure?',
   onConfirm,
   onCancel,
+  confirmButtonColor,
   ...popoverProps
 }: {
   children: React.ReactElement;
@@ -15,6 +16,7 @@ export function PopConfirm({
   onConfirm?: () => void;
   onCancel?: () => void;
   enabled?: boolean;
+  confirmButtonColor?: string;
 } & Omit<PopoverProps, 'opened' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
 
@@ -39,10 +41,10 @@ export function PopConfirm({
         <Stack>
           {message}
           <Group gap={8} justify="flex-end">
-            <Button variant="outline" size="compact-sm" onClick={handleCancel}>
+            <Button variant="default" size="compact-sm" onClick={handleCancel}>
               No
             </Button>
-            <Button size="compact-sm" onClick={handleConfirm}>
+            <Button size="compact-sm" color={confirmButtonColor} onClick={handleConfirm}>
               Yes
             </Button>
           </Group>
