@@ -9,14 +9,15 @@ const log = createLogger('remove-old-drafts');
 export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', async () => {
   // Step 1: Query replica (dbRead) for model IDs to delete
   // This offloads the read operation from the write database and prevents lock contention
+  // Uses Model.status (indexed) instead of ModelMetric.status for faster lookups
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT DISTINCT mm."modelId" as id
-    FROM "ModelMetric" mm
-    JOIN "Model" m ON mm."modelId" = m.id
-    WHERE mm.status IN ('Draft', 'Deleted')
+    SELECT DISTINCT m.id
+    FROM "Model" m
+    JOIN "ModelMetric" mm ON mm."modelId" = m.id
+    WHERE m.status IN ('Draft', 'Deleted')
       AND m."updatedAt" < now() - INTERVAL '30 days'
       AND mm."downloadCount" < 10
-    ORDER BY mm."modelId"  -- Consistent lock ordering to prevent deadlocks
+    ORDER BY m.id  -- Consistent lock ordering to prevent deadlocks
   `;
 
   if (rows.length === 0) {
@@ -26,8 +27,9 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   }
 
   // Step 2: Delete in batches using dbWrite to minimize lock duration
+  // Small batch size (10) because each Model delete cascades to 20+ related tables
   const modelIds = rows.map((r) => r.id);
-  const BATCH_SIZE = 100;
+  const BATCH_SIZE = 10;
   let deletedCount = 0;
   let errorCount = 0;
 
