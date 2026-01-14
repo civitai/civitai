@@ -2809,8 +2809,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else if (userId) {
-    // For specific user's content, allow seeing scheduled/notPublished content for owners
-    // Filtering is handled in post
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+    // For own user's content, allow seeing scheduled/notPublished content
+    if (currentUserId && userId === currentUserId) {
+      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+    }
+    filters.push(`(${publishedFilters.join(' OR ')})`);
   } else {
     // General feed queries - apply published filter for caching
     filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`));
@@ -2887,7 +2891,21 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
   }
   sorts.push(searchSort);
-  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+
+  // Add secondary sort for consistent ordering when primary sort has ties
+  const isSortingByMetrics = [
+    ImageSort.MostComments,
+    ImageSort.MostReactions,
+    ImageSort.MostCollected,
+  ].includes(sort);
+
+  if (isSortingByMetrics) {
+    // For metric sorts, use sortAt as secondary (show newer images first when metrics are tied)
+    sorts.push(makeMeiliImageSearchSort('sortAt', 'desc'));
+  } else {
+    // For time-based sorts, use id as secondary (deterministic ordering when timestamps are identical)
+    sorts.push(makeMeiliImageSearchSort('id', 'desc'));
+  }
 
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
