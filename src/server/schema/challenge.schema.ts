@@ -71,14 +71,16 @@ export const upsertChallengeSchema = z.object({
   invitation: z.string().optional(),
   coverImageId: z.number().optional().nullable(),
   nsfwLevel: z.number().min(1).max(32).default(1),
+  allowedNsfwLevel: z.number().min(1).max(63).default(1), // Bitwise NSFW levels for entries (1=PG, 3=PG+PG13, etc.)
   modelId: z.number().optional().nullable(),
-  modelVersionId: z.number().optional().nullable(),
+  modelVersionIds: z.array(z.number()).default([]), // Array of allowed model version IDs
   judgingPrompt: z.string().optional().nullable(),
   reviewPercentage: z.number().min(0).max(100).default(100),
   maxReviews: z.number().optional().nullable(),
   maxEntriesPerUser: z.number().min(1).max(100).default(20),
   prizes: z.array(prizeSchema).default([]),
   entryPrize: prizeSchema.optional().nullable(),
+  entryPrizeRequirement: z.number().min(1).max(100).default(10), // Min entries for participation prize
   prizePool: z.number().min(0).default(0),
   operationBudget: z.number().min(0).default(0),
   startsAt: z.date(),

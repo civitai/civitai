@@ -334,15 +334,27 @@ async function reviewEntries() {
     // Update pending entries
     // ----------------------------------------------
     const reviewing = Date.now();
+
+    // Get the Challenge record to check allowedNsfwLevel (new system)
+    // Fall back to PG-only (1) for old article-based challenges
+    const [challengeRecord] = await dbRead.$queryRaw<
+      [{ allowedNsfwLevel: number } | undefined]
+    >`
+      SELECT "allowedNsfwLevel"
+      FROM "Challenge"
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+      LIMIT 1
+    `;
+    const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+
     // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
+    // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
     const reviewedCount = await dbWrite.$executeRaw`
     WITH source AS (
       SELECT
       i.id,
-      i."nsfwLevel" = 1 as "isSafe",
-      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" IN (${Prisma.join(
-        currentChallenge.modelVersionIds
-      )}) AND ir."imageId" = i.id) as "hasResource",
+      (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
+      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
       i."createdAt" >= ${currentChallenge.date} as "isRecent"
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"

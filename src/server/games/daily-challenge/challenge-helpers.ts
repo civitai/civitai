@@ -21,15 +21,17 @@ export type ChallengeDetails = {
   invitation: string | null;
   coverUrl: string | null;
   nsfwLevel: number;
+  allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
   modelId: number | null;
-  modelVersionIds: number[];
-  collectionId: number; // Required - entries are stored here
+  modelVersionIds: number[]; // Array of allowed model version IDs
+  collectionId: number | null; // Collection for entries (null if not yet created)
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxReviews: number | null;
   maxEntriesPerUser: number;
   prizes: Prize[];
   entryPrize: Prize | null;
+  entryPrizeRequirement: number; // Min entries for participation prize
   prizePool: number;
   operationBudget: number;
   operationSpent: number;
@@ -43,9 +45,9 @@ type ChallengeDbRow = Omit<
   ChallengeDetails,
   'modelVersionIds' | 'coverUrl' | 'prizes' | 'entryPrize'
 > & {
-  modelVersionIds: number[] | null;
+  modelVersionIds: number[] | null; // Can be null from DB
   coverUrl: string | null;
-  prizes: Prize[] | string;
+  prizes: Prize[] | string; // JSON comes as string or parsed
   entryPrize: Prize | string | null;
 };
 
@@ -63,8 +65,9 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c.invitation,
       (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
       c."nsfwLevel",
+      c."allowedNsfwLevel",
       c."modelId",
-      (SELECT array_agg(id) FROM "ModelVersion" WHERE "modelId" = c."modelId") as "modelVersionIds",
+      c."modelVersionIds",
       c."collectionId",
       c."judgingPrompt",
       c."reviewPercentage",
@@ -72,6 +75,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."maxEntriesPerUser",
       c.prizes,
       c."entryPrize",
+      c."entryPrizeRequirement",
       c."prizePool",
       c."operationBudget",
       c."operationSpent",
@@ -142,15 +146,17 @@ export type CreateChallengeInput = {
   invitation?: string;
   coverImageId?: number;
   nsfwLevel?: number;
+  allowedNsfwLevel?: number; // Bitwise NSFW levels for entries (default 1 = PG only)
   modelId?: number;
-  modelVersionId?: number;
+  modelVersionIds?: number[]; // Array of allowed model version IDs
   judgingPrompt?: string;
   reviewPercentage?: number;
   maxReviews?: number;
-  collectionId: number; // Required - created before calling this
+  collectionId?: number; // Optional - auto-created if not provided
   maxEntriesPerUser?: number;
   prizes: Prize[];
   entryPrize?: Prize;
+  entryPrizeRequirement?: number; // Min entries for participation prize
   prizePool?: number;
   operationBudget?: number;
   createdById: number;
@@ -170,6 +176,7 @@ export async function createChallengeCollection(input: {
   startsAt: Date;
   endsAt: Date;
   maxEntriesPerUser: number;
+  allowedNsfwLevel?: number; // Bitwise NSFW levels (default 1 = PG only)
 }): Promise<number> {
   const collection = await dbWrite.collection.create({
     data: {
@@ -181,6 +188,7 @@ export async function createChallengeCollection(input: {
         maxItemsPerUser: input.maxEntriesPerUser,
         submissionStartDate: input.startsAt,
         submissionEndDate: input.endsAt,
+        forcedBrowsingLevel: input.allowedNsfwLevel ?? 1, // Enforce NSFW restrictions
       },
     },
     select: { id: true },
@@ -200,15 +208,17 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       invitation: input.invitation,
       coverImageId: input.coverImageId,
       nsfwLevel: input.nsfwLevel ?? 1,
+      allowedNsfwLevel: input.allowedNsfwLevel ?? 1,
       modelId: input.modelId,
-      modelVersionId: input.modelVersionId,
+      modelVersionIds: input.modelVersionIds ?? [],
       judgingPrompt: input.judgingPrompt,
       reviewPercentage: input.reviewPercentage ?? 100,
       maxReviews: input.maxReviews,
-      collectionId: input.collectionId,
+      collectionId: input.collectionId, // Optional - can be null
       maxEntriesPerUser: input.maxEntriesPerUser ?? 20,
       prizes: input.prizes as unknown as Prisma.InputJsonValue,
       entryPrize: input.entryPrize as unknown as Prisma.InputJsonValue,
+      entryPrizeRequirement: input.entryPrizeRequirement ?? 10,
       prizePool: input.prizePool ?? 0,
       operationBudget: input.operationBudget ?? 0,
       createdById: input.createdById,
@@ -304,7 +314,9 @@ export async function getChallengeWinners(challengeId: number): Promise<
 // Collection Helpers
 // =============================================================================
 
-export async function closeChallengeCollection(challenge: { collectionId: number }) {
+export async function closeChallengeCollection(challenge: { collectionId: number | null }) {
+  if (!challenge.collectionId) return; // No collection to close
+
   await dbWrite.$executeRaw`
     UPDATE "Collection"
     SET write = 'Private'::"CollectionWriteConfiguration"
@@ -318,9 +330,38 @@ export async function closeChallengeCollection(challenge: { collectionId: number
 }
 
 /**
+ * Creates a challenge with an auto-created collection.
+ * This is the preferred way to create challenges.
+ */
+export async function createChallengeWithCollection(
+  input: Omit<CreateChallengeInput, 'collectionId'>
+): Promise<{ challengeId: number; collectionId: number }> {
+  // Create the collection first
+  const collectionId = await createChallengeCollection({
+    title: input.title,
+    description: input.description,
+    userId: input.createdById,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    maxEntriesPerUser: input.maxEntriesPerUser ?? 20,
+    allowedNsfwLevel: input.allowedNsfwLevel,
+  });
+
+  // Create the challenge with the collection
+  const challengeId = await createChallengeRecord({
+    ...input,
+    collectionId,
+  });
+
+  return { challengeId, collectionId };
+}
+
+/**
  * Get entry count for a challenge from its collection
  */
-export async function getChallengeEntryCount(collectionId: number): Promise<number> {
+export async function getChallengeEntryCount(collectionId: number | null): Promise<number> {
+  if (!collectionId) return 0;
+
   const [result] = await dbRead.$queryRaw<[{ count: bigint }]>`
     SELECT COUNT(*) as count
     FROM "CollectionItem"

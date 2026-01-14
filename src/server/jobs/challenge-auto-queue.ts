@@ -24,13 +24,14 @@ async function getDatesWithoutChallenges(horizonDays: number): Promise<Date[]> {
   const endDate = dayjs().utc().add(horizonDays, 'day').endOf('day');
 
   // Get all dates that have challenges scheduled
+  // Note: Only Scheduled and Active challenges count toward the horizon.
+  // Draft challenges are not counted - they must be explicitly scheduled.
   const scheduledDates = await dbRead.$queryRaw<{ date: Date }[]>`
     SELECT DISTINCT DATE_TRUNC('day', "startsAt") as date
     FROM "Challenge"
     WHERE "startsAt" >= ${startDate.toDate()}
     AND "startsAt" <= ${endDate.toDate()}
     AND status IN (
-      ${ChallengeStatus.Draft}::"ChallengeStatus",
       ${ChallengeStatus.Scheduled}::"ChallengeStatus",
       ${ChallengeStatus.Active}::"ChallengeStatus"
     )

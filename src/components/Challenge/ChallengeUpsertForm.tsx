@@ -26,6 +26,15 @@ import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prism
 import type { Prize } from '~/server/schema/challenge.schema';
 import { ModelSearchInput } from '~/components/Challenge/ModelSearchInput';
 
+// NSFW level options (bitwise flags)
+const nsfwLevelOptions = [
+  { value: '1', label: 'PG Only' },
+  { value: '3', label: 'PG + PG-13' },
+  { value: '7', label: 'PG + PG-13 + R' },
+  { value: '15', label: 'PG through X' },
+  { value: '31', label: 'All levels' },
+];
+
 // Form data type (explicit, no zod inference issues)
 type ChallengeFormData = {
   title: string;
@@ -33,11 +42,13 @@ type ChallengeFormData = {
   theme: string;
   invitation: string;
   modelId: number | null;
-  modelVersionId: number | null;
+  modelVersionIds: number[];
   nsfwLevel: number;
+  allowedNsfwLevel: number; // Bitwise NSFW levels for entries
   judgingPrompt: string;
   reviewPercentage: number;
   maxEntriesPerUser: number;
+  entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
   startsAt: Date;
@@ -58,11 +69,13 @@ type ChallengeForEdit = {
   theme: string | null;
   invitation: string | null;
   modelId: number | null;
-  modelVersionId: number | null;
+  modelVersionIds: number[];
   nsfwLevel: number;
+  allowedNsfwLevel: number;
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxEntriesPerUser: number;
+  entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
   startsAt: Date;
@@ -106,11 +119,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       theme: challenge?.theme ?? '',
       invitation: challenge?.invitation ?? '',
       modelId: challenge?.modelId ?? null,
-      modelVersionId: challenge?.modelVersionId ?? null,
+      modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
+      allowedNsfwLevel: challenge?.allowedNsfwLevel ?? 1,
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
       maxEntriesPerUser: challenge?.maxEntriesPerUser ?? 20,
+      entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
       startsAt: challenge?.startsAt ?? defaultStartsAt,
@@ -159,11 +174,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       theme: data.theme || undefined,
       invitation: data.invitation || undefined,
       modelId: data.modelId,
-      modelVersionId: data.modelVersionId,
+      modelVersionIds: data.modelVersionIds,
       nsfwLevel: data.nsfwLevel,
+      allowedNsfwLevel: data.allowedNsfwLevel,
       judgingPrompt: data.judgingPrompt,
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
+      entryPrizeRequirement: data.entryPrizeRequirement,
       prizePool: totalPrizePool,
       operationBudget: data.operationBudget,
       startsAt: data.startsAt,
@@ -245,13 +262,16 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                   value={field.value}
                   onChange={(modelId) => {
                     field.onChange(modelId);
-                    // Clear version when model changes
-                    setValue('modelVersionId', null);
+                    // Clear versions when model changes - will be auto-populated based on modelId
+                    setValue('modelVersionIds', []);
                   }}
                   error={errors.modelId?.message}
                 />
               )}
             />
+            <Text size="xs" c="dimmed">
+              When a model is selected, all its versions will be allowed for entries.
+            </Text>
           </Stack>
         </Paper>
 
@@ -376,12 +396,26 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Stack>
         </Paper>
 
-        {/* Configuration */}
+        {/* Entry Requirements */}
         <Paper withBorder p="md">
           <Stack gap="md">
-            <Title order={4}>Configuration</Title>
+            <Title order={4}>Entry Requirements</Title>
 
             <Group grow>
+              <Controller
+                name="allowedNsfwLevel"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    label="Allowed Content Ratings"
+                    description="Which NSFW levels are allowed for entries"
+                    data={nsfwLevelOptions}
+                    value={String(field.value)}
+                    onChange={(value) => field.onChange(Number(value))}
+                  />
+                )}
+              />
+
               <Controller
                 name="maxEntriesPerUser"
                 control={control}
@@ -396,6 +430,30 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 )}
               />
 
+              <Controller
+                name="entryPrizeRequirement"
+                control={control}
+                render={({ field }) => (
+                  <NumberInput
+                    label="Entry Prize Requirement"
+                    description="Min entries to qualify for participation prize"
+                    min={1}
+                    max={100}
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+            </Group>
+          </Stack>
+        </Paper>
+
+        {/* Configuration */}
+        <Paper withBorder p="md">
+          <Stack gap="md">
+            <Title order={4}>AI Configuration</Title>
+
+            <Group grow>
               <Controller
                 name="reviewPercentage"
                 control={control}

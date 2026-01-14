@@ -850,7 +850,6 @@ model ModelVersion {
   featuredInfo            FeaturedModelVersion[]
   ImageResourceNew        ImageResourceNew[]
   coveredCheckpoints      CoveredCheckpoint[]
-  challenges              Challenge[]
 
   @@index([modelId], type: Hash)
 }
@@ -3726,25 +3725,28 @@ model Challenge {
   coverImage   Image?  @relation("ChallengeCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
   nsfwLevel    Int     @default(1)
 
-  // Required resources (optional - null means any allowed)
-  modelId        Int?
-  model          Model?        @relation(fields: [modelId], references: [id], onDelete: SetNull)
-  modelVersionId Int?
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  // Required resources (optional - null/empty means any allowed)
+  modelId         Int?
+  model           Model?  @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  modelVersionIds Int[]   @default([]) // Array of allowed model version IDs (OR logic)
+
+  // Entry requirements
+  allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)
 
   // Judging Configuration
   judgingPrompt    String? @db.Text // Custom AI judging prompt
   reviewPercentage Int     @default(100) // % of entries to score
   maxReviews       Int? // Hard cap on reviews (cost control)
 
-  // Entries - stored in a Contest Collection
-  collectionId      Int // Required - entries are CollectionItems
-  collection        Collection @relation(fields: [collectionId], references: [id], onDelete: Restrict)
-  maxEntriesPerUser Int        @default(20)
+  // Entries - stored in a Contest Collection (auto-created if not provided)
+  collectionId      Int? // Optional - auto-created on challenge creation
+  collection        Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  maxEntriesPerUser Int         @default(20)
 
   // Prizes & Costs
-  prizes          Json @default("[]") // [{buzz: 5000, points: 150}, ...]
-  entryPrize      Json? // {buzz: 200, points: 10} for all valid entries
+  prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
+  entryPrize           Json? // {buzz: 200, points: 10} for participation
+  entryPrizeRequirement Int  @default(10) // Min entries to qualify for entry prize
   prizePool       Int  @default(0) // Total buzz for prizes
   operationBudget Int  @default(0) // Budget for AI review costs
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)

@@ -55,18 +55,20 @@ export type ChallengeDetail = {
   status: ChallengeStatus;
   source: ChallengeSource;
   nsfwLevel: number;
+  allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
   modelId: number | null;
-  modelVersionId: number | null;
+  modelVersionIds: number[]; // Array of allowed model version IDs
   model: {
     id: number;
     name: string;
   } | null;
-  collectionId: number; // Required - entries are stored here
+  collectionId: number | null; // Collection for entries (null if not yet created)
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxEntriesPerUser: number;
   prizes: Prize[];
   entryPrize: Prize | null;
+  entryPrizeRequirement: number; // Min entries for participation prize
   prizePool: number;
   entryCount: number;
   createdBy: {
@@ -249,19 +251,25 @@ async function getChallengeDetail(
     if (challenge.visibleAt > now) {
       return null; // Not yet visible
     }
-    // Also hide drafts from public
-    if (challenge.status === ChallengeStatus.Draft) {
+    // Hide drafts and cancelled challenges from public
+    if (
+      challenge.status === ChallengeStatus.Draft ||
+      challenge.status === ChallengeStatus.Cancelled
+    ) {
       return null;
     }
   }
 
   // Get entry count from the challenge's collection
-  const [countResult] = await dbRead.$queryRaw<[{ count: bigint }]>`
-    SELECT COUNT(*) as count
-    FROM "CollectionItem"
-    WHERE "collectionId" = ${challenge.collectionId}
-  `;
-  const entryCount = Number(countResult.count);
+  let entryCount = 0;
+  if (challenge.collectionId) {
+    const [countResult] = await dbRead.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*) as count
+      FROM "CollectionItem"
+      WHERE "collectionId" = ${challenge.collectionId}
+    `;
+    entryCount = Number(countResult.count);
+  }
 
   // Get creator info
   const [creator] = await dbRead.$queryRaw<
@@ -302,8 +310,9 @@ async function getChallengeDetail(
     status: challenge.status,
     source: challenge.source,
     nsfwLevel: challenge.nsfwLevel,
+    allowedNsfwLevel: challenge.allowedNsfwLevel,
     modelId: challenge.modelId,
-    modelVersionId: challenge.modelVersionIds[0] || null,
+    modelVersionIds: challenge.modelVersionIds,
     model,
     collectionId: challenge.collectionId,
     judgingPrompt: challenge.judgingPrompt,
@@ -311,6 +320,7 @@ async function getChallengeDetail(
     maxEntriesPerUser: challenge.maxEntriesPerUser,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
+    entryPrizeRequirement: challenge.entryPrizeRequirement,
     prizePool: challenge.prizePool,
     entryCount,
     createdBy: creator,
@@ -473,6 +483,7 @@ export const challengeRouter = router({
         where: { id },
         data: {
           ...data,
+          modelVersionIds: data.modelVersionIds ?? [],
           prizes: data.prizes as Prisma.InputJsonValue,
           entryPrize: data.entryPrize as Prisma.InputJsonValue | undefined,
         },
@@ -480,7 +491,7 @@ export const challengeRouter = router({
       return challenge;
     } else {
       // Create new challenge with a Contest Collection for entries
-      // First create the collection
+      // First create the collection with proper Contest Mode settings
       const collection = await dbWrite.collection.create({
         data: {
           name: `Challenge: ${data.title}`,
@@ -488,9 +499,10 @@ export const challengeRouter = router({
           userId: ctx.user.id,
           mode: CollectionMode.Contest,
           metadata: {
-            maxItemsPerUser: data.maxEntriesPerUser,
+            maxItemsPerUser: data.maxEntriesPerUser ?? 20,
             submissionStartDate: data.startsAt,
             submissionEndDate: data.endsAt,
+            forcedBrowsingLevel: data.allowedNsfwLevel ?? 1, // Enforce NSFW restrictions
           },
         },
       });
@@ -501,6 +513,9 @@ export const challengeRouter = router({
           ...data,
           collectionId: collection.id,
           createdById: ctx.user.id,
+          modelVersionIds: data.modelVersionIds ?? [],
+          allowedNsfwLevel: data.allowedNsfwLevel ?? 1,
+          entryPrizeRequirement: data.entryPrizeRequirement ?? 10,
           prizes: data.prizes as Prisma.InputJsonValue,
           entryPrize: data.entryPrize as Prisma.InputJsonValue | undefined,
         },
@@ -541,15 +556,17 @@ export const challengeRouter = router({
     }
 
     // Check if challenge collection has any entries
-    const entryCount = await dbRead.collectionItem.count({
-      where: { collectionId: challenge.collectionId },
-    });
-
-    if (entryCount > 0) {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: `Cannot delete challenge with ${entryCount} entries. Cancel the challenge instead.`,
+    if (challenge.collectionId) {
+      const entryCount = await dbRead.collectionItem.count({
+        where: { collectionId: challenge.collectionId },
       });
+
+      if (entryCount > 0) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: `Cannot delete challenge with ${entryCount} entries. Cancel the challenge instead.`,
+        });
+      }
     }
 
     // Delete the challenge (collection deletion would need separate handling based on business rules)
