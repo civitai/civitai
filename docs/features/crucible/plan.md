@@ -5,6 +5,30 @@ for safety, let's do that discovery and stuff inside of a work tree so that we d
 
 ---
 
+## Tracking
+
+**ClickUp Task:** https://app.clickup.com/t/868h3x3f7
+**GitHub PR:** https://github.com/civitai/civitai/pull/1959
+
+### Agent Instructions
+
+When working on this feature, post progress updates to the ClickUp task:
+
+```bash
+# Post a comment when starting a phase
+node .claude/skills/clickup/query.mjs comment 868h3x3f7 "Starting Phase 1: Database & Foundation"
+
+# Post a comment when completing a phase
+node .claude/skills/clickup/query.mjs comment 868h3x3f7 "Completed Phase 1: Schema, service, and router created"
+
+# Post a comment if blocked or need input
+node .claude/skills/clickup/query.mjs comment 868h3x3f7 "Blocked: Need clarification on prize distribution edge case"
+```
+
+Keep comments concise - just phase progress and any blockers.
+
+---
+
 ## Discovery Complete
 
 @ai:* I found and reviewed the factions documentation on `justin/feature/factions` branch. I've documented the key systems in `docs/features/crucible-dependencies.md` and updated `CLAUDE.md` with references.
