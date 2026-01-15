@@ -1027,7 +1027,7 @@ export function GenerationFormContent() {
                       <InputSourceImageUploadMultiple
                         name="images"
                         aspect="video"
-                        max={7}
+                        max={isQwen ? 1 : 7}
                         warnOnMissingAiMetadata
                         enableDrawing
                         annotations={imageAnnotations}
