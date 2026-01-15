@@ -823,16 +823,343 @@ We're proceeding with **Proposal A (Minimal Schema Change)** focused on UI impro
 
 ---
 
-## Next Steps
+## Codebase Discovery
 
-All questions resolved! Ready to implement.
+This section documents existing components, patterns, and infrastructure we can reuse.
 
-1. @ai: Create detailed implementation plan with:
-   - TypeScript types for extended metadata (`quantType`, `componentType`)
-   - API changes for component linking (expand beyond `vaeId`)
-   - Frontend component breakdown
-   - User preferences extension (`quantType` for GGUF)
-2. @ai: Implement new file upload UI
-3. @ai: Implement new model detail sidebar
-4. @ai: Update account settings for quant preferences
-5. @ai: Handle component-only models (no download button, just components)
+### File Upload System
+
+**Key Components:**
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `Files.tsx` | `src/components/Resource/Files.tsx` | Main upload UI with dropzone, file cards, metadata editing |
+| `FilesProvider.tsx` | `src/components/Resource/FilesProvider.tsx` | State management, validation, S3 upload integration |
+| `FilesEditModal.tsx` | `src/components/Resource/FilesEditModal.tsx` | Modal wrapper for editing existing version files |
+| `ModelVersionWizard.tsx` | `src/components/Resource/Wizard/ModelVersionWizard.tsx` | Multi-step wizard (Step 2 = file upload) |
+
+**Current File Type Categories** (in `constants.ts`):
+- Model, Text Encoder, Pruned Model, Negative, Training Data, VAE, Config, Archive
+
+**Current Metadata Fields:**
+- `format`: SafeTensor, PickleTensor, GGUF, Diffusers, Core ML, ONNX
+- `size`: full, pruned
+- `fp`: fp16, fp8, nf4, fp32, bf16
+
+**Validation Logic** (in `FilesProvider.tsx`):
+- For Checkpoints: `size` and `fp` are required for Model files
+- Conflict checking prevents duplicate `[size, type, fp, format]` combinations
+
+**To Extend:**
+- Add `quantType` field for GGUF files (Q8_0, Q4_K_M, etc.)
+- Add `componentType` field to distinguish VAE, TextEncoder, UNet
+- Add new validation for Required Components section
+- Update `FileEditForm` in `Files.tsx` to show new dropdowns
+
+---
+
+### Model Detail Sidebar
+
+**Key Components:**
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `ModelVersionDetails.tsx` | `src/components/Model/ModelVersions/ModelVersionDetails.tsx` | **Main sidebar** - all download/generate UI |
+| `DownloadButton.tsx` | `src/components/Model/ModelVersions/DownloadButton.tsx` | Download button with dropdown support |
+| `GenerateButton.tsx` | `src/components/RunStrategy/GenerateButton.tsx` | Generate button component |
+
+**Current Download Display** (lines 598-658 in ModelVersionDetails):
+- Single file: Icon-only download button
+- Multiple files: Menu dropdown with file list
+- Files shown with name + size, no variant grouping
+
+**Current File Accordion** (lines 1293-1330):
+- Shows all visible files in expandable accordion
+- "Manage Files" link for owners
+
+**To Modify:**
+- Lines 598-658: Add variant grouping logic (group by format, show precision/quant)
+- Lines 808-940: Update download button area to show grouped variants
+- Add new "Required Components" accordion section with yellow warning styling
+- Add "Download All Components" button
+- Handle component-only models (hide download button, show only components)
+
+---
+
+### User File Preferences
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `SettingsCard.tsx` | `src/components/Account/SettingsCard.tsx` - UI for setting preferences |
+| `model-helpers.ts` | `src/server/utils/model-helpers.ts` - Scoring algorithm |
+| `global.d.ts` | `src/types/global.d.ts` - Type definitions |
+| `constants.ts` | `src/server/common/constants.ts` - Available options |
+
+**Current Preferences Structure:**
+```typescript
+{
+  format: 'SafeTensor' | 'PickleTensor' | 'GGUF' | ...,
+  size: 'full' | 'pruned',
+  fp: 'fp16' | 'fp8' | 'nf4' | 'fp32' | 'bf16',
+  imageFormat: 'optimized' | 'metadata'
+}
+```
+
+**Scoring Algorithm** (`getPrimaryFile` in model-helpers.ts):
+```typescript
+const preferenceWeight = {
+  format: 100,  // Highest priority
+  size: 10,     // Medium priority
+  fp: 1         // Lowest priority
+};
+// Files are scored by matching preferences, highest score wins
+```
+
+**To Extend:**
+1. Add `quantType` to `UserFilePreferences` type in `global.d.ts`
+2. Add `modelFileQuantTypes` array to `constants.ts`
+3. Add `quantType: 0.5` to `preferenceWeight` in `model-helpers.ts`
+4. Add fourth `Select` in `SettingsCard.tsx` (conditionally shown for GGUF users)
+5. Update `file.service.ts` to include `quantType` in file selection
+
+---
+
+### VAE Linking Pattern (Existing)
+
+**Current Implementation:**
+- `ModelVersion.vaeId` → Foreign key to another ModelVersion
+- UI: `InputSelect` in `ModelVersionUpsertForm.tsx` (lines 899-909)
+- Query: `trpc.modelVersion.getModelVersionsByModelType({ type: 'VAE' })`
+- Display: VAE files merged into version.files array via `getVaeFiles()`
+
+**To Expand for Other Components:**
+Two options considered:
+1. **Add more foreign keys**: `textEncoderId`, `unetId` (simple but rigid)
+2. **Use JSON metadata** on ModelFile (flexible, chosen approach)
+
+We're using **Option 2** - extend `ModelFile.metadata` with `componentType` field rather than adding schema fields.
+
+---
+
+### Model Search/Select Components (Reusable)
+
+**Key Components:**
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `QuickSearchDropdown.tsx` | `src/components/Search/QuickSearchDropdown.tsx` | **Primary search component** - reuse for link modal |
+| `AssociateModels.tsx` | `src/components/AssociatedModels/AssociateModels.tsx` | Association pattern with drag-drop |
+| `AssociateModelsModal.tsx` | `src/components/Modals/AssociateModelsModal.tsx` | Modal wrapper pattern |
+| `ResourceSelectModal2.tsx` | `src/components/ImageGeneration/GenerationForm/ResourceSelectModal2.tsx` | Advanced modal with filters |
+
+**QuickSearchDropdown Features:**
+- Integrates with Meilisearch
+- Supports filtering by index, query, custom filters
+- Returns `SearchIndexDataMap['models']` structure with versions array
+
+**For Link Component Modal:**
+```typescript
+// Reuse QuickSearchDropdown with type-first filtering
+<QuickSearchDropdown
+  supportedIndexes={['models']}
+  onItemSelected={(item, data) => setSelectedModel(data)}
+  filters={`type=${selectedComponentType}`}  // Filter to VAE, TextEncoder, etc.
+/>
+
+// Then show version selector
+<Select
+  data={selectedModel.versions.map(v => ({ label: v.name, value: v.id }))}
+  onChange={setSelectedVersion}
+/>
+```
+
+**Dialog System:**
+- Use `dialogStore.trigger()` from `src/components/Dialog/dialogStore.ts`
+- Pattern: `createDialogTrigger(YourModal)` returns opener function
+
+---
+
+## Detailed Implementation Plan
+
+### Phase 1: Type & Constant Updates (Foundation)
+
+**Task 1.1: Update Type Definitions**
+- File: `src/types/global.d.ts`
+- Changes:
+  - Add `type ModelFileQuantType = 'Q8_0' | 'Q6_K' | 'Q5_K_M' | 'Q4_K_M' | 'Q4_K_S' | 'Q3_K_M' | 'Q2_K' | ...`
+  - Add `quantType?: ModelFileQuantType` to `BasicFileMetadata`
+  - Add `componentType?: 'VAE' | 'TextEncoder' | 'UNet' | 'CLIPVision' | 'ControlNet' | 'Config'` to `BasicFileMetadata`
+  - Add `quantType?: ModelFileQuantType` to `UserFilePreferences`
+
+**Task 1.2: Update Constants**
+- File: `src/server/common/constants.ts`
+- Changes:
+  - Add `modelFileQuantTypes: ['Q8_0', 'Q6_K', 'Q5_K_M', 'Q4_K_M', 'Q4_K_S', 'Q3_K_M', 'Q2_K']`
+  - Add `modelFileComponentTypes: ['VAE', 'TextEncoder', 'UNet', 'CLIPVision', 'ControlNet', 'Config', 'Other']`
+
+**Task 1.3: Update File Preference Scoring**
+- File: `src/server/utils/model-helpers.ts`
+- Changes:
+  - Add `quantType: 0.5` to `preferenceWeight`
+  - Update `FileMetaKey` type to include `quantType`
+  - Update `defaultFilePreferences` to include sensible quantType default
+
+---
+
+### Phase 2: User Settings Extension
+
+**Task 2.1: Update Settings UI**
+- File: `src/components/Account/SettingsCard.tsx`
+- Changes:
+  - Add "Preferred Quant Type" `Select` (conditionally shown when format is GGUF)
+  - Wire up to `user.filePreferences.quantType`
+  - Add tooltip explaining quant types (Q8 = quality, Q4 = smaller)
+
+**Task 2.2: Update File Service**
+- File: `src/server/services/file.service.ts`
+- Changes:
+  - Add `quantType` to query parameter handling
+  - Include in metadata merge for file selection
+
+**Task 2.3: Update Download API**
+- File: `src/pages/api/download/models/[modelVersionId].ts`
+- Changes:
+  - Add `quantType` to validation schema
+  - Pass through to file selection
+
+---
+
+### Phase 3: File Upload UI Updates
+
+**Task 3.1: Add Quant Type Selector**
+- File: `src/components/Resource/Files.tsx` (FileEditForm, ~line 513)
+- Changes:
+  - Add `Select` for quantType (shown when format is GGUF)
+  - Options from `constants.modelFileQuantTypes`
+  - Update validation to require quantType for GGUF files
+
+**Task 3.2: Add Component Type Selector**
+- File: `src/components/Resource/Files.tsx`
+- Changes:
+  - Add `Select` for componentType
+  - Options from `constants.modelFileComponentTypes`
+  - Shown for non-Model file types (VAE, Text Encoder, Config, Archive)
+
+**Task 3.3: Add Upload Sections**
+- File: `src/components/Resource/Files.tsx`
+- Changes:
+  - Restructure UI into three sections:
+    1. **Model Files** - Main model weights
+    2. **Required Components** - Yellow warning styling, VAE/TextEncoder/UNet
+    3. **Optional Files** - Workflows, configs, examples
+  - Add section headers with icons
+  - Files auto-categorize based on type
+
+**Task 3.4: Create Link Component Modal**
+- New File: `src/components/Resource/LinkComponentModal.tsx`
+- Features:
+  - Component type selector (VAE, TextEncoder, UNet, etc.)
+  - QuickSearchDropdown filtered by component type
+  - Version selector
+  - File selector (for multi-file versions)
+  - Save creates reference in metadata
+
+**Task 3.5: Update FilesProvider Validation**
+- File: `src/components/Resource/FilesProvider.tsx`
+- Changes:
+  - Extend `metadataSchema` for quantType validation
+  - Add validation: component-only models need at least 2 required components
+  - Update conflict checking to include quantType
+
+---
+
+### Phase 4: Model Sidebar Updates
+
+**Task 4.1: Add File Variant Grouping**
+- File: `src/components/Model/ModelVersions/ModelVersionDetails.tsx`
+- Changes:
+  - Create `groupFilesByVariant()` utility function
+  - Group files by: format (SafeTensor vs GGUF), then by type (Model vs Component)
+  - Within each group, sort by precision/quant
+
+**Task 4.2: Update Download Button Area**
+- File: `src/components/Model/ModelVersions/ModelVersionDetails.tsx` (~lines 808-940)
+- Changes:
+  - Replace flat file list with grouped dropdown
+  - Show "Best match" badge on user's preferred file
+  - Group sections: SafeTensor variants, GGUF variants
+
+**Task 4.3: Add Required Components Section**
+- File: `src/components/Model/ModelVersions/ModelVersionDetails.tsx`
+- Changes:
+  - Add new accordion section "Required Components"
+  - Yellow warning styling to indicate these are required
+  - Group component variants (e.g., Text Encoder fp16 / fp8)
+  - "Download All Components" button
+
+**Task 4.4: Handle Component-Only Models**
+- File: `src/components/Model/ModelVersions/ModelVersionDetails.tsx`
+- Changes:
+  - Detect when no "Model" type files exist
+  - Hide download button, show message: "This is a modular model"
+  - Make "Download All Components" the primary action
+  - Update Generate button positioning
+
+**Task 4.5: Update File Info Display**
+- File: `src/components/FileInfo/FileInfo.tsx`
+- Changes:
+  - Show quantType for GGUF files
+  - Show componentType for component files
+
+---
+
+### Phase 5: Testing & Polish
+
+**Task 5.1: Manual Testing Scenarios**
+- Test file upload with new fields (quantType, componentType)
+- Test user preference selection for GGUF files
+- Test download auto-selection with new scoring
+- Test sidebar display with grouped variants
+- Test component-only model display
+- Test link component modal flow
+
+**Task 5.2: Update Storybook/Tests**
+- Add stories for new upload sections
+- Add stories for variant grouping
+- Test preference scoring with quantType
+
+**Task 5.3: Documentation**
+- Update API docs for new metadata fields
+- Document new upload flow for creators
+- Create help content for component types
+
+---
+
+## File Change Summary
+
+| File | Changes |
+|------|---------|
+| `src/types/global.d.ts` | Add quantType, componentType types |
+| `src/server/common/constants.ts` | Add quantTypes, componentTypes arrays |
+| `src/server/utils/model-helpers.ts` | Add quantType to scoring |
+| `src/components/Account/SettingsCard.tsx` | Add quant preference UI |
+| `src/server/services/file.service.ts` | Add quantType to selection |
+| `src/pages/api/download/models/[modelVersionId].ts` | Add quantType param |
+| `src/components/Resource/Files.tsx` | Add sections, new dropdowns |
+| `src/components/Resource/FilesProvider.tsx` | Update validation |
+| `src/components/Resource/LinkComponentModal.tsx` | **New file** |
+| `src/components/Model/ModelVersions/ModelVersionDetails.tsx` | Variant grouping, components section |
+| `src/components/FileInfo/FileInfo.tsx` | Show new metadata |
+
+---
+
+## Dependencies & Risks
+
+**No External Dependencies** - All changes use existing libraries (Mantine, tRPC, Zustand)
+
+**Risk: Backwards Compatibility**
+- Mitigation: All new metadata fields are optional, existing files continue to work
+
+**Risk: Performance with Many Variants**
+- Mitigation: Grouping reduces visual complexity; scoring algorithm is O(n) with small n
+
+**Risk: User Confusion with New UI**
+- Mitigation: Phased rollout, clear section labels, tooltips explaining purpose
