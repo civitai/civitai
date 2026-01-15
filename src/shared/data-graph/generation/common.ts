@@ -278,6 +278,56 @@ export function seedNode() {
 }
 
 // =============================================================================
+// Quantity Node Builder
+// =============================================================================
+
+export interface QuantityNodeConfig {
+  /** Minimum quantity (default: 1) */
+  min?: number;
+  /** Step increment (default: 1) */
+  step?: number;
+}
+
+/**
+ * Creates a quantity node with configurable min/step.
+ * Max is always derived from external context (ext.limits.maxQuantity).
+ *
+ * Meta contains: min, max, step (for UI rendering)
+ *
+ * @example
+ * // Default quantity (min: 1, step: 1)
+ * .node('quantity', quantityNode(), [])
+ *
+ * // Draft mode quantity (min: 4, step: 4)
+ * .node('quantity', quantityNode({ min: 4, step: 4 }), [])
+ */
+export function quantityNode(config?: QuantityNodeConfig) {
+  return (_ctx: Record<string, unknown>, ext: GenerationCtx) => {
+    const min = config?.min ?? 1;
+    const step = config?.step ?? 1;
+    const max = ext.limits.maxQuantity;
+
+    return {
+      input: z.coerce
+        .number()
+        .optional()
+        .transform((val) => {
+          if (val === undefined) return undefined;
+          // Snap to step multiples (round up to nearest step) and clamp to max
+          return Math.min(Math.ceil(val / step) * step, max);
+        }),
+      output: z.number().min(min).max(max),
+      defaultValue: min,
+      meta: {
+        min,
+        max,
+        step,
+      },
+    };
+  };
+}
+
+// =============================================================================
 // Resource Schemas & Node Builders
 // =============================================================================
 
@@ -496,23 +546,140 @@ export const textInputGraph = new DataGraph<Record<never, never>, GenerationCtx>
 
 /**
  * Image input graph (for img2img/img2vid).
- * Prompt (optional) and source images.
+ * Prompt (optional) and source images with hierarchical limits.
  * Note: denoise is added per-workflow via denoiseNode().
+ *
+ * Parent context requirements:
+ * - workflow: Required - determines image limits
+ * - baseModel: Optional - used for ecosystem-specific limits
+ * - model: Optional - used for model-specific limits
+ *
+ * For workflows without ecosystem support (img2img:upscale, img2img:remove-background),
+ * only workflow-based limits are used.
  */
-export const imageInputGraph = new DataGraph<Record<never, never>, GenerationCtx>()
+export const imageInputGraph = new DataGraph<
+  { workflow: string; baseModel?: string; model?: { id: number } },
+  GenerationCtx
+>()
   .node('prompt', promptNode({ required: false }))
-  .node('images', {
-    input: z
-      .union([z.url(), z.object({ url: z.string })])
-      .array()
-      .optional()
-      .transform((arr) => arr?.map((item) => (typeof item === 'string' ? { url: item } : item))),
-    output: z
-      .object({ url: z.string(), width: z.number(), height: z.number() })
-      .array()
-      .min(1, 'At least one image is required'),
-    defaultValue: [],
-  });
+  .node('images', imagesNode(), ['workflow', 'baseModel', 'model']);
+
+// =============================================================================
+// Images Node Builder
+// =============================================================================
+
+export interface ImagesNodeConfig {
+  /** Maximum number of images allowed (default: 1) */
+  max?: number;
+  /** Minimum number of images required (default: 1) */
+  min?: number;
+}
+
+type ImageLimits = { max: number; min?: number };
+
+/**
+ * Image limits lookup.
+ * Keys can be:
+ * - Model + workflow: "model:123456:image-edit"
+ * - Model only: "model:123456"
+ * - Ecosystem + workflow: "Qwen:image-edit"
+ * - Ecosystem only: "Qwen"
+ * - Workflow only: "image-edit"
+ *
+ * Lookup priority (most specific wins):
+ * 1. model:{id}:{workflow}
+ * 2. model:{id}
+ * 3. {ecosystem}:{workflow}
+ * 4. {ecosystem}
+ * 5. {workflow}
+ * 6. default (max: 1, min: 1)
+ */
+const imageLimits: Record<string, ImageLimits> = {
+  // Ecosystem + workflow combinations
+  'Qwen:image-edit': { max: 1 },
+
+  // Workflow defaults
+  'image-edit': { max: 7 },
+};
+
+function getImageLimits(ctx: {
+  workflow?: string;
+  baseModel?: string;
+  model?: { id: number };
+}): ImageLimits | undefined {
+  // 1. Check model + workflow combination
+  if (ctx.model?.id && ctx.workflow) {
+    const modelWorkflowLimit = imageLimits[`model:${ctx.model.id}:${ctx.workflow}`];
+    if (modelWorkflowLimit) return modelWorkflowLimit;
+  }
+
+  // 2. Check model-specific limit
+  if (ctx.model?.id) {
+    const modelLimit = imageLimits[`model:${ctx.model.id}`];
+    if (modelLimit) return modelLimit;
+  }
+
+  // 3. Check ecosystem + workflow combination
+  if (ctx.baseModel && ctx.workflow) {
+    const comboLimit = imageLimits[`${ctx.baseModel}:${ctx.workflow}`];
+    if (comboLimit) return comboLimit;
+  }
+
+  // 4. Check ecosystem only
+  if (ctx.baseModel) {
+    const ecosystemLimit = imageLimits[ctx.baseModel];
+    if (ecosystemLimit) return ecosystemLimit;
+  }
+
+  // 5. Check workflow only
+  if (ctx.workflow) {
+    const workflowLimit = imageLimits[ctx.workflow];
+    if (workflowLimit) return workflowLimit;
+  }
+
+  return undefined;
+}
+
+/**
+ * Creates an images node with hierarchical limits.
+ * Meta contains: min, max (for UI rendering)
+ *
+ * @example
+ * // With parent context - limits derived from model/ecosystem/workflow
+ * .node('images', imagesNode(), ['workflow', 'baseModel', 'model'])
+ *
+ * // With explicit config override
+ * .node('images', imagesNode({ max: 5 }), [])
+ */
+export function imagesNode(config?: ImagesNodeConfig) {
+  return (ctx: { workflow?: string; baseModel?: string; model?: { id: number } }) => {
+    const limits = getImageLimits(ctx);
+    const max = config?.max ?? limits?.max ?? 1;
+    const min = config?.min ?? limits?.min ?? 1;
+
+    return {
+      input: z
+        .union([z.url(), z.object({ url: z.string() })])
+        .array()
+        .optional()
+        .transform((arr) => {
+          if (!arr) return undefined;
+          // Transform URLs to objects and limit to max
+          return arr.slice(0, max).map((item) => (typeof item === 'string' ? { url: item } : item));
+        }),
+      output: z
+        .object({ url: z.string(), width: z.number(), height: z.number() })
+        .array()
+        .min(min, `At least ${min} image${min > 1 ? 's are' : ' is'} required`)
+        .max(max, `Maximum ${max} image${max > 1 ? 's' : ''} allowed`),
+      defaultValue: [],
+      meta: {
+        min,
+        max,
+      },
+    };
+  };
+}
 
 // =============================================================================
 // Denoise Node Builder

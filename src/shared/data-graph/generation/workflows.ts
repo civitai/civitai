@@ -37,9 +37,6 @@ export type WorkflowOption = {
   ecosystemSpecific?: boolean;
 };
 
-/** @deprecated Use WorkflowOption instead */
-export type FeatureRecord = WorkflowOption;
-
 // =============================================================================
 // Workflow Definitions
 // =============================================================================

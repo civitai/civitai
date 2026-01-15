@@ -136,40 +136,48 @@ type BranchesRecord<Ctx = any, ExternalCtx = any> = Record<
 // Helper: Distributive Omit that preserves discriminated unions
 type OmitDistributive<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-// Helper: Get the "own" context from a branch (what the subgraph adds, excluding parent keys)
-// The subgraph's InferGraphContext already includes its nested discriminated union
-// We just strip the parent keys and add the discriminator literal
+// Helper: Merge A and B, where B's types take precedence for overlapping keys
+// Distributes over both A and B to preserve discriminated unions from either side.
+// This is critical for nested discriminators: the parent's discriminated union (A)
+// must be preserved when merging with branch shapes (B).
+type MergePreferRight<A, B> = A extends unknown
+  ? B extends unknown
+    ? Prettify<Omit<A, keyof B> & B>
+    : never
+  : never;
+
+// Helper: Get the branch shape - combines the discriminator literal with subgraph context
+// The subgraph's InferGraphContext includes its nested discriminated unions.
+// We omit the discriminator key from the subgraph since we set it to the literal BranchName.
 type BranchShape<
-  ParentCtx extends Record<string, unknown>,
+  _ParentCtx extends Record<string, unknown>,
   DiscKey extends string,
   BranchName extends string,
   BranchGraph
-> = Prettify<
-  { [K in DiscKey]: BranchName } & OmitDistributive<InferGraphContext<BranchGraph>, keyof ParentCtx>
+> = MergePreferRight<
+  { [K in DiscKey]: BranchName },
+  OmitDistributive<InferGraphContext<BranchGraph>, DiscKey>
 >;
 
 // Build the discriminated union for Ctx
-// Bottom-up approach: each branch produces a single prettified shape,
-// then we union them and intersect with parent context
+// Bottom-up approach: each branch produces its full shape (including nested discriminated unions),
+// then we merge with parent context using MergePreferRight.
 //
-// Structure: ParentCtx (minus disc key) & BranchUnion
-// This avoids cartesian product explosion by NOT distributing over ParentCtx first.
-// The resulting type has the same number of union members as branches,
-// regardless of how many unions exist in ParentCtx.
+// MergePreferRight distributes over both sides, so:
+// - Parent's discriminated union (from earlier discriminators) is preserved
+// - Branch's discriminated union (from nested discriminators) is preserved
+// This allows type narrowing to work for nested discriminators like: workflow -> input -> images
 type BuildDiscriminatedUnion<
   ParentCtx extends Record<string, unknown>,
   DiscKey extends string,
   Branches extends BranchesRecord
-> = OmitDistributive<ParentCtx, DiscKey> &
-  {
-    // Map each branch name to its complete shape, then index to create union
-    [BranchName in keyof Branches & string]: BranchShape<
-      ParentCtx,
-      DiscKey,
-      BranchName,
-      Branches[BranchName]
-    >;
-  }[keyof Branches & string];
+> = {
+  // Map each branch name to its complete shape (merged with parent, subgraph types preferred)
+  [BranchName in keyof Branches & string]: MergePreferRight<
+    OmitDistributive<ParentCtx, DiscKey>,
+    BranchShape<ParentCtx, DiscKey, BranchName, Branches[BranchName]>
+  >;
+}[keyof Branches & string];
 
 /**
  * Convert a union type to an intersection type.
@@ -953,14 +961,27 @@ export class DataGraph<
   /**
    * Add entries from a subgraph to the active entries list.
    * Recursively handles nested discriminators.
+   *
+   * @param discriminatorKey - The discriminator key (e.g., 'workflow', 'input')
+   * @param branchName - The branch being activated (e.g., 'txt2img', 'image')
+   * @param branchGraph - The subgraph to activate
+   * @param insertAfterIndex - Index to insert entries after
+   * @param parentSource - Parent discriminator's source for nested discriminators
    */
   private activateBranch(
     discriminatorKey: string,
     branchName: string,
     branchGraph: BranchGraph,
-    insertAfterIndex: number
+    insertAfterIndex: number,
+    parentSource?: string
   ): { entryKeys: Set<string>; insertedCount: number } {
-    const source = `${discriminatorKey}:${branchName}`;
+    // Build source path: for nested discriminators, include parent path
+    // e.g., 'workflow:txt2img/input:image' for input discriminator inside workflow branch
+    // Root discriminators (parentSource === 'root') don't include 'root' in the path
+    const source =
+      parentSource && parentSource !== 'root'
+        ? `${parentSource}/${discriminatorKey}:${branchName}`
+        : `${discriminatorKey}:${branchName}`;
     const entryKeys = new Set<string>();
     const newEntries: ActiveEntry[] = [];
 
@@ -1223,11 +1244,13 @@ export class DataGraph<
           }
 
           // Activate new branch - insert entries after this discriminator
+          // Pass the discriminator entry's source as parent for nested discriminators
           const { entryKeys } = this.activateBranch(
             entry.discriminatorKey,
             targetBranch,
             branchGraph,
-            currentIndex
+            currentIndex,
+            entry.source // Parent source for nested path tracking
           );
 
           // Track active branch

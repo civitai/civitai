@@ -40,10 +40,7 @@ const qwenAspectRatios = [
  * Meta only contains dynamic props - static props like label are in components.
  * Note: Qwen doesn't use negative prompts, samplers, or CLIP skip.
  */
-export const qwenGraph = new DataGraph<
-  { baseModel: string; workflow: string },
-  GenerationCtx
->()
+export const qwenGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph (includes model node and baseModel sync effect)
   .merge(createCheckpointGraph())
   .node(

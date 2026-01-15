@@ -31,6 +31,7 @@ export {
   vaeNode,
   videoNode,
   denoiseNode,
+  imagesNode,
   // Subgraph builders
   createCheckpointGraph,
   // Input graphs
@@ -41,5 +42,6 @@ export {
   type CheckpointVersionOption,
   type VideoMetadata,
   type VideoValue,
+  type ImagesNodeConfig,
 } from './common';
 export type { GenerationCtx } from './context';
