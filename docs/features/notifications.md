@@ -2,6 +2,17 @@
 
 This document explains how the notification system works in Civitai. The notification service itself runs in a separate repository, but this codebase handles the client-side implementation, notification processing, and user interaction.
 
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/server/notifications/` | Notification processors by feature |
+| `src/server/notifications/base.notifications.ts` | `createNotificationProcessor()` factory |
+| `src/server/notifications/utils.notifications.ts` | Processor registry |
+| `src/server/services/notification.service.ts` | `createNotification()` service |
+| `src/server/jobs/send-notifications.ts` | Background processing job |
+| `src/components/Notifications/` | Client-side notification components |
+
 ## Architecture Overview
 
 The notification system consists of several key components:

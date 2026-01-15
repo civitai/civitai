@@ -206,6 +206,20 @@ Use the S3 upload hooks and providers in the codebase.
 ### Image Handling
 Use EdgeImage component for optimized image loading with CDN support.
 
+## Feature Documentation
+
+Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
+
+### Core Systems Reference
+| System | Documentation |
+|--------|--------------|
+| Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
+| NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
+| Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
+| Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
+| Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
+| Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
+
 ## Troubleshooting
 
 ### Memory Issues
