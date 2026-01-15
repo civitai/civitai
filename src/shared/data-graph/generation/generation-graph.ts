@@ -20,13 +20,33 @@
 import { z } from 'zod';
 import { DataGraph, type InferDataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { imageOutputGraph, videoOutputGraph } from './common';
 import { videoInterpolationGraph } from './video-interpolation-graph';
 import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
 import { ecosystemGraph } from './ecosystem-graph';
 import { getInputTypeForWorkflow, getOutputTypeForWorkflow } from './workflows';
+
+// =============================================================================
+// Priority & Output Format Types
+// =============================================================================
+
+/** Priority options */
+const priorityOptions = ['low', 'normal', 'high'] as const;
+export type Priority = (typeof priorityOptions)[number];
+
+/** Priority option metadata */
+type PriorityOption = {
+  label: string;
+  value: Priority;
+  offset: number;
+  memberOnly?: boolean;
+  disabled?: boolean;
+};
+
+/** Output format options */
+const outputFormatOptions = ['jpeg', 'png'] as const;
+export type OutputFormat = (typeof outputFormatOptions)[number];
 
 // =============================================================================
 // Generation Graph V2
@@ -90,11 +110,61 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     },
     ['workflow']
   )
-  // Output type discriminator - adds priority/outputFormat only for image output
-  .discriminator('output', {
-    image: imageOutputGraph,
-    video: videoOutputGraph,
-  })
+  // Priority node - only for image output
+  .node(
+    'priority',
+    (ctx, ext) => {
+      const isImageOutput = ctx.output === 'image';
+      const isMember = ext.user?.isMember ?? false;
+      const defaultValue: Priority = isMember ? 'normal' : 'low';
+
+      const options: PriorityOption[] = [
+        { label: 'Standard', value: 'low', offset: 0, disabled: isMember },
+        { label: 'High', value: 'normal', offset: 10 },
+        { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
+      ];
+
+      return {
+        input: z
+          .enum(priorityOptions)
+          .optional()
+          .transform((val) => {
+            // Auto-upgrade 'low' to 'normal' for members
+            if (isMember && val === 'low') return 'normal';
+            return val;
+          }),
+        output: z.enum(priorityOptions),
+        defaultValue,
+        meta: { options, isMember },
+        when: isImageOutput,
+      };
+    },
+    ['output']
+  )
+  // Output format node - only for image output, excluding background removal
+  .node(
+    'outputFormat',
+    (ctx, ext) => {
+      const isImageOutput = ctx.output === 'image';
+      const isBackgroundRemoval = ctx.workflow === 'img2img:remove-background';
+      const isMember = ext.user?.isMember ?? false;
+
+      return {
+        input: z.enum(outputFormatOptions).optional(),
+        output: z.enum(outputFormatOptions),
+        defaultValue: 'jpeg' as OutputFormat,
+        meta: {
+          options: [
+            { label: 'JPEG', value: 'jpeg', offset: 0 },
+            { label: 'PNG', value: 'png', offset: 2 },
+          ],
+          isMember,
+        },
+        when: isImageOutput && !isBackgroundRemoval,
+      };
+    },
+    ['output', 'workflow']
+  )
 
   // Discriminator: include ecosystem-dependent nodes only for workflows with ecosystem support
   // Workflows without ecosystem support (vid2vid:*) use their own specialized graphs

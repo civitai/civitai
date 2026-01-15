@@ -33,10 +33,7 @@ import { zImageTurboGraph } from './z-image-turbo-graph';
 import { chromaGraph } from './chroma-graph';
 import { hiDreamGraph } from './hi-dream-graph';
 import { ponyV7Graph } from './pony-v7-graph';
-import {
-  isWorkflowAvailable,
-  getDefaultEcosystemForWorkflow,
-} from './workflows';
+import { isWorkflowAvailable, getDefaultEcosystemForWorkflow } from './workflows';
 
 // =============================================================================
 // Helper Functions

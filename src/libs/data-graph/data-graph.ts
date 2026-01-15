@@ -1006,9 +1006,21 @@ export class DataGraph<
   /**
    * Remove entries that were added by a specific discriminator branch.
    * Also removes nested discriminator entries recursively.
+   *
+   * @param discriminatorKey - The discriminator key (e.g., 'modelFamily')
+   * @param branchName - The branch being deactivated (e.g., 'flux2')
+   * @param parentSource - The parent discriminator's source for building hierarchical path
    */
-  private deactivateBranch(discriminatorKey: string, branchName: string): void {
-    const source = `${discriminatorKey}:${branchName}`;
+  private deactivateBranch(
+    discriminatorKey: string,
+    branchName: string,
+    parentSource?: string
+  ): void {
+    // Build the source path matching how activateBranch builds it
+    const source =
+      parentSource && parentSource !== 'root'
+        ? `${parentSource}/${discriminatorKey}:${branchName}`
+        : `${discriminatorKey}:${branchName}`;
     const sourcePrefix = `${source}/`;
 
     // Find all entries to remove (direct and nested)
@@ -1210,7 +1222,8 @@ export class DataGraph<
         if (!branchDef) {
           if (current) {
             log(`  🔀 discriminator: no matching branch for "${targetBranch}", cleaning up`);
-            this.deactivateBranch(entry.discriminatorKey, current.branch);
+            // Pass entry.source to build correct hierarchical path for nested discriminators
+            this.deactivateBranch(entry.discriminatorKey, current.branch, entry.source);
             this.activeDiscriminators.delete(entry.discriminatorKey);
             keyToIndex = rebuildKeyToIndex();
           }
@@ -1222,9 +1235,9 @@ export class DataGraph<
         if (needsSwitch) {
           log(`  🔀 discriminator: switching to branch "${targetBranch}"`);
 
-          // Deactivate old branch
+          // Deactivate old branch - pass entry.source for correct hierarchical path
           if (current) {
-            this.deactivateBranch(entry.discriminatorKey, current.branch);
+            this.deactivateBranch(entry.discriminatorKey, current.branch, entry.source);
           }
 
           // Get or create branch graph
