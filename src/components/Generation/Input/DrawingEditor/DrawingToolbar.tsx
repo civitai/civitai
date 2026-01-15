@@ -268,7 +268,7 @@ export function DrawingToolbar({
                           e.target.value = brushColor.toUpperCase();
                         }}
                         size="xs"
-                        maxLength={6}
+                        maxLength={7}
                         classNames={{ input: styles.hexInput }}
                       />
                     </div>
