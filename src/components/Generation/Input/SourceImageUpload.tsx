@@ -1,7 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
 import { Input, CloseButton, Alert, ActionIcon, Tooltip } from '@mantine/core';
 import { IconPalette } from '@tabler/icons-react';
-import { trpc } from '~/utils/trpc';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
 import type { DrawingElement } from './DrawingEditor/drawing.types';
@@ -13,7 +12,8 @@ import {
   minUploadSize,
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
-import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
@@ -63,15 +63,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
     // Store drawing elements for re-editing
     const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
-    const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
-      onSettled: () => {
-        setLoading(false);
-      },
-      onError: (error) => {
-        setError(error.message);
-        setLoading(false);
-      },
-    });
 
     function handleWarnOnMissingAiMetadata(Warning: JSX.Element | null) {
       setWarning(Warning);
@@ -86,20 +77,10 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       });
     }
 
-    function handleChange(value?: string) {
+    function handleClear() {
       setError(null);
       handleWarnOnMissingAiMetadata(null);
-      if (!value) onChange?.(null);
-      else
-        mutate(
-          { sourceImage: value },
-          {
-            onSuccess: ({ blob }) => {
-              if (blob.url) handleUrlChange(blob.url);
-              setLoading(false);
-            },
-          }
-        );
+      onChange?.(null);
     }
 
     async function handleDrop(files: File[]) {
@@ -108,6 +89,9 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
 
     async function handleDropCapture(src: File | Blob | string) {
       setLoading(true);
+      setError(null);
+      handleWarnOnMissingAiMetadata(null);
+
       try {
         const resized = await resizeImage(src, {
           maxHeight: maxUpscaleSize,
@@ -116,11 +100,15 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
           minHeight: minUploadSize,
         });
         const jpegBlob = await imageToJpegBlob(resized);
-        const base64 = await getBase64(jpegBlob);
-        if (base64) handleChange(base64);
+        const blob = await uploadConsumerBlob(jpegBlob);
+
+        if (blob.url) {
+          handleUrlChange(blob.url);
+        }
       } catch (e) {
         console.log({ dropzoneError: e });
         setError((e as Error).message);
+      } finally {
         setLoading(false);
       }
     }
@@ -181,7 +169,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     }, [_value, warnOnMissingAiMetadata, loaded]);
 
     function handleRemoveItem() {
-      handleChange();
+      handleClear();
     }
 
     function handleError() {
@@ -198,27 +186,14 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
 
       setLoading(true);
       try {
-        const base64 = await getBase64(drawingBlob);
-        if (base64) {
-          mutate(
-            { sourceImage: base64 },
-            {
-              onSuccess: ({ blob }) => {
-                const url = blob.url;
-                if (url) {
-                  getImageDimensions(url).then(({ width, height }) => {
-                    onDrawingComplete({ url, width, height });
-                  });
-                }
-              },
-              onSettled: () => {
-                setLoading(false);
-              },
-            }
-          );
+        const blob = await uploadConsumerBlob(drawingBlob);
+        if (blob.url) {
+          const { width, height } = await getImageDimensions(blob.url);
+          onDrawingComplete({ url: blob.url, width, height });
         }
       } catch (e) {
         console.error('Failed to upload drawing:', e);
+      } finally {
         setLoading(false);
       }
     }
@@ -261,7 +236,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                 maxSize={maxOrchestratorImageFileSize}
                 label="Drag image here or click to select a file"
                 onDropCapture={handleDropCapture}
-                loading={(loading || isLoading) && !isError}
+                loading={loading}
                 iconSize={iconSize}
                 // onMissingAiMetadata={warnOnMissingAiMetadata ? handleMissingAiMetadata : undefined}
               >
