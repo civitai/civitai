@@ -14,6 +14,7 @@ import { generateElementId, isTransformableElement } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
 import { ActionIcon, Loader, Text } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 // Dynamic imports for SSR compatibility
 const Stage = dynamic(() => import('react-konva').then((mod) => mod.Stage), {
@@ -79,6 +80,7 @@ export function DrawingCanvas({
   onCommit,
   editingTextId,
 }: DrawingCanvasProps) {
+  const isMobile = useIsMobile({ type: 'media', breakpoint: 'md' });
   const [isDrawing, setIsDrawing] = useState(false);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
@@ -536,8 +538,8 @@ export function DrawingCanvas({
 
   // Render cursor based on tool type
   const renderCursor = () => {
-    // Don't render custom cursor for select mode
-    if (tool === 'select') {
+    // Don't render cursor on mobile (touch devices) or in select mode
+    if (isMobile || tool === 'select') {
       return null;
     }
 
@@ -638,6 +640,8 @@ export function DrawingCanvas({
 
   // Check if an element should be draggable/selectable
   const isSelectMode = tool === 'select';
+  // On mobile, show default cursor; on desktop with custom cursor, hide it
+  const stageCursor = isMobile || isSelectMode ? 'default' : 'none';
 
   return (
     <div style={{ position: 'relative', width, height }}>
@@ -699,7 +703,7 @@ export function DrawingCanvas({
         onTouchStart={handleMouseDown}
         onTouchMove={handleMouseMove}
         onTouchEnd={handleMouseUp}
-        style={{ cursor: isSelectMode ? 'default' : 'none' }}
+        style={{ cursor: stageCursor }}
       >
         {/* Background layer with source image */}
         <Layer listening={false}>

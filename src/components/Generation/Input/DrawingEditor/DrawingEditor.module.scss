@@ -13,7 +13,16 @@
 
   :global(.mantine-Modal-body) {
     padding: 0;
+    height: 100%;
   }
+}
+
+/* Mobile-specific layout for fullscreen mode */
+.mobileLayout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh; // Use dynamic viewport height for better mobile support
 }
 
 .header {
@@ -23,6 +32,11 @@
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--mantine-color-default-border);
   background-color: var(--mantine-color-body);
+
+  // On mobile, keep header at top
+  .mobileLayout & {
+    flex-shrink: 0;
+  }
 }
 
 .headerTitle {
@@ -38,6 +52,16 @@
     var(--mantine-color-gray-1),
     var(--mantine-color-dark-8)
   );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden; // Prevent scroll - canvas should fit within available space
+
+  // On mobile, expand to fill available space between header and toolbar
+  .mobileLayout & {
+    flex: 1;
+    min-height: 0; // Important for flex child to shrink properly
+  }
 }
 
 .canvasContainer {
@@ -45,12 +69,19 @@
   overflow: hidden;
   border-radius: var(--mantine-radius-md);
   box-shadow: var(--mantine-shadow-xl);
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .toolbarArea {
   padding: 0.75rem 1rem;
   border-top: 1px solid var(--mantine-color-default-border);
   background-color: var(--mantine-color-body);
+
+  // On mobile, keep toolbar at bottom
+  .mobileLayout & {
+    flex-shrink: 0;
+  }
 }
 
 /* Toolbar styles */
