@@ -280,6 +280,8 @@ export function RequestPriorityCompact({
   useEffect(() => {
     if (isMember && (!value || value === 'low')) {
       onChange?.('normal' as Priority);
+    } else if (!isMember && value === 'high') {
+      onChange?.('low');
     }
   }, [value, isMember]);
 
@@ -333,7 +335,7 @@ export function RequestPriorityCompact({
                     <SupportButtonPolymorphic
                       icon={IconDiamond}
                       position="right"
-                      className="w-full !py-2 !pl-3 !pr-3"
+                      className="w-full !px-3 !py-2"
                     >
                       <PriorityLabel {...options} modifier={modifier} />
                     </SupportButtonPolymorphic>
