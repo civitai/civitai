@@ -509,8 +509,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         quantity: overrides.quantity ?? defaultValues.quantity,
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
-        // Set default priority to 'normal' (High) for members
-        priority: isMember ? 'normal' : defaultValues.priority,
+        // Preserve priority once set by the user, defaulting to 'normal' (High) for members
+        priority: overrides.priority ?? (isMember ? 'normal' : defaultValues.priority),
+        // Preserve outputFormat once set by the user
+        outputFormat: overrides.outputFormat ?? defaultValues.outputFormat,
       },
       status.limits
     );
