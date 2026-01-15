@@ -130,13 +130,12 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   // (scan sent but never completes) - items are retried after the delay passes
   const idsToRemove = [...staleIds];
   if (idsToRemove.length > 0) {
-    await dbWrite.jobQueue.deleteMany({
-      where: {
-        type: JobQueueType.ImageScan,
-        entityType: EntityType.Image,
-        entityId: { in: idsToRemove },
-      },
-    });
+    await dbWrite.$executeRaw`
+      DELETE FROM "JobQueue"
+      WHERE type = ${JobQueueType.ImageScan}::"JobQueueType"
+        AND "entityType" = ${EntityType.Image}::"EntityType"
+        AND "entityId" = ANY(${idsToRemove})
+    `;
   }
 
   const totalSent = sentPendingIds.length + sentRescanIds.length + sentErrorIds.length;
@@ -272,13 +271,12 @@ export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * 
   // Remove processed and stale entries from queue
   const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
   if (idsToRemove.length > 0) {
-    await dbWrite.jobQueue.deleteMany({
-      where: {
-        type: JobQueueType.BlockedImageDelete,
-        entityType: EntityType.Image,
-        entityId: { in: idsToRemove },
-      },
-    });
+    await dbWrite.$executeRaw`
+      DELETE FROM "JobQueue"
+      WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+        AND "entityType" = ${EntityType.Image}::"EntityType"
+        AND "entityId" = ANY(${idsToRemove})
+    `;
   }
 
   return {
