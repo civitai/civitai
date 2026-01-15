@@ -12,6 +12,7 @@ export {
 } from './generation-graph';
 export { stableDiffusionGraph } from './stable-diffusion-graph';
 export { fluxGraph } from './flux-graph';
+export { viduGraph, viduAspectRatios, viduStyles, viduMovementAmplitudes } from './vidu-graph';
 export {
   videoInterpolationGraph,
   type VideoInterpolationGraphCtx,
@@ -34,14 +35,12 @@ export {
   imagesNode,
   // Subgraph builders
   createCheckpointGraph,
-  // Input graphs
-  textInputGraph,
-  imageInputGraph,
   // Types
   type AspectRatioOption,
   type CheckpointVersionOption,
   type VideoMetadata,
   type VideoValue,
   type ImagesNodeConfig,
+  type ImageSlotConfig,
 } from './common';
 export type { GenerationCtx } from './context';

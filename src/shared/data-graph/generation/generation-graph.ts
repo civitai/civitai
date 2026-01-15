@@ -131,6 +131,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
           .transform((val) => {
             // Auto-upgrade 'low' to 'normal' for members
             if (isMember && val === 'low') return 'normal';
+            if (!isMember && val === 'high') return 'low';
             return val;
           }),
         output: z.enum(priorityOptions),
@@ -182,6 +183,8 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     // Video workflows with ecosystem support
     txt2vid: ecosystemGraph,
     img2vid: ecosystemGraph,
+    'img2vid:first-last-frame': ecosystemGraph,
+    'img2vid:ref2vid': ecosystemGraph,
     // Video enhancement workflows (no ecosystem support)
     'vid2vid:interpolate': videoInterpolationGraph,
     'vid2vid:upscale': videoUpscaleGraph,

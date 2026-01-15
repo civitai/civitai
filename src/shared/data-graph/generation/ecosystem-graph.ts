@@ -20,7 +20,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { textInputGraph, imageInputGraph, quantityNode } from './common';
+import { quantityNode, imagesNode, promptNode, type ImageSlotConfig } from './common';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
 import { qwenGraph } from './qwen-graph';
@@ -33,6 +33,7 @@ import { zImageTurboGraph } from './z-image-turbo-graph';
 import { chromaGraph } from './chroma-graph';
 import { hiDreamGraph } from './hi-dream-graph';
 import { ponyV7Graph } from './pony-v7-graph';
+import { viduGraph } from './vidu-graph';
 import { isWorkflowAvailable, getDefaultEcosystemForWorkflow } from './workflows';
 
 // =============================================================================
@@ -74,6 +75,8 @@ export const ecosystemGraph = new DataGraph<
       const compatibleEcosystems = getEcosystemsForWorkflow(ctx.workflow);
       // Default to first compatible ecosystem, or SDXL as fallback
       const defaultValue = compatibleEcosystems[0] ?? 'SDXL';
+      // Disable selection when there's only one option
+      const disabled = compatibleEcosystems.length <= 1;
 
       return {
         input: z.string().optional(),
@@ -82,6 +85,7 @@ export const ecosystemGraph = new DataGraph<
         meta: {
           compatibleEcosystems,
           mediaType: ctx.output, // 'image' or 'video'
+          disabled,
         },
       };
     },
@@ -131,13 +135,19 @@ export const ecosystemGraph = new DataGraph<
     },
     ['workflow']
   )
-  .discriminator('input', {
-    text: textInputGraph,
-    image: imageInputGraph,
-    // Video input workflows use their own video node in the workflow discriminator
-    // This empty graph prevents cleanup when input='video'
-    video: new DataGraph<Record<never, never>, GenerationCtx>(),
-  })
+  .node('prompt', (ctx) => promptNode({ required: ctx.input === 'text' }), ['input'])
+  .node(
+    'images',
+    (ctx) => {
+      const config = getImageConfig(ctx);
+      const max = config?.max ?? 1;
+      const min = config?.min ?? 1;
+      const slots = config?.slots;
+      return { ...imagesNode({ max, min, slots }), when: ctx.input === 'image' };
+    },
+    ['workflow', 'baseModel', 'model', 'input']
+  )
+
   // Compute model family from baseModel to determine which subgraph to use
   .computed(
     'modelFamily',
@@ -159,6 +169,7 @@ export const ecosystemGraph = new DataGraph<
       if (ctx.baseModel === 'Chroma') return 'chroma';
       if (ctx.baseModel === 'HiDream') return 'hi-dream';
       if (ctx.baseModel === 'PonyV7') return 'pony-v7';
+      if (ctx.baseModel === 'Vidu') return 'vidu';
       return undefined;
     },
     ['baseModel']
@@ -177,4 +188,83 @@ export const ecosystemGraph = new DataGraph<
     chroma: chromaGraph,
     'hi-dream': hiDreamGraph,
     'pony-v7': ponyV7Graph,
+    vidu: viduGraph,
   });
+
+type ImageConfig = {
+  max?: number;
+  min?: number;
+  slots?: ImageSlotConfig[];
+};
+
+/**
+ * Image config lookup.
+ * Keys can be:
+ * - Model + workflow: "model:123456:image-edit"
+ * - Model only: "model:123456"
+ * - Ecosystem + workflow: "Qwen:image-edit"
+ * - Ecosystem only: "Qwen"
+ * - Workflow only: "image-edit"
+ *
+ * Lookup priority (most specific wins):
+ * 1. model:{id}:{workflow}
+ * 2. model:{id}
+ * 3. {ecosystem}:{workflow}
+ * 4. {ecosystem}
+ * 5. {workflow}
+ * 6. default (max: 1, min: 1)
+ */
+const imageConfigs: Record<string, ImageConfig> = {
+  // Ecosystem + workflow combinations
+  'Qwen:image-edit': { max: 1 },
+  'Flux1Kontext:image-edit': { max: 1 },
+
+  // Workflow defaults
+  'image-edit': { max: 7 },
+
+  // Video workflows - default img2vid is single image
+  img2vid: { max: 1, min: 1 },
+  // Vidu-specific video workflows
+  'img2vid:first-last-frame': {
+    slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame' }],
+  },
+  'img2vid:ref2vid': { max: 7, min: 1 },
+};
+
+function getImageConfig(ctx: {
+  workflow?: string;
+  baseModel?: string;
+  model?: { id: number };
+}): ImageConfig | undefined {
+  // 1. Check model + workflow combination
+  if (ctx.model?.id && ctx.workflow) {
+    const modelWorkflowConfig = imageConfigs[`model:${ctx.model.id}:${ctx.workflow}`];
+    if (modelWorkflowConfig) return modelWorkflowConfig;
+  }
+
+  // 2. Check model-specific config
+  if (ctx.model?.id) {
+    const modelConfig = imageConfigs[`model:${ctx.model.id}`];
+    if (modelConfig) return modelConfig;
+  }
+
+  // 3. Check ecosystem + workflow combination
+  if (ctx.baseModel && ctx.workflow) {
+    const comboConfig = imageConfigs[`${ctx.baseModel}:${ctx.workflow}`];
+    if (comboConfig) return comboConfig;
+  }
+
+  // 4. Check ecosystem only
+  if (ctx.baseModel) {
+    const ecosystemConfig = imageConfigs[ctx.baseModel];
+    if (ecosystemConfig) return ecosystemConfig;
+  }
+
+  // 5. Check workflow only
+  if (ctx.workflow) {
+    const workflowConfig = imageConfigs[ctx.workflow];
+    if (workflowConfig) return workflowConfig;
+  }
+
+  return undefined;
+}

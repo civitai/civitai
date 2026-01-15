@@ -176,20 +176,22 @@ export function BaseModelInput({
         <Text size="sm" c="dimmed">
           {label}:
         </Text>
-        <UnstyledButton
-          onClick={openModal}
-          disabled={disabled}
-          className="group flex items-center gap-0.5"
-        >
-          <Text
-            size="sm"
-            fw={500}
-            className="underline decoration-dotted underline-offset-2 group-hover:decoration-solid"
-          >
+        {disabled ? (
+          <Text size="sm" fw={500}>
             {readableName}
           </Text>
-          <IconChevronDown size={14} className="text-gray-500" />
-        </UnstyledButton>
+        ) : (
+          <UnstyledButton onClick={openModal} className="group flex items-center gap-0.5">
+            <Text
+              size="sm"
+              fw={500}
+              className="underline decoration-dotted underline-offset-2 group-hover:decoration-solid"
+            >
+              {readableName}
+            </Text>
+            <IconChevronDown size={14} className="text-gray-500" />
+          </UnstyledButton>
+        )}
       </div>
 
       <Modal

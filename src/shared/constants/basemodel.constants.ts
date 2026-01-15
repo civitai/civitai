@@ -1125,7 +1125,7 @@ export const workflows: WorkflowRecord[] = [
     label: 'Image Edit',
     inputType: 'image',
     category: 'image-to-image',
-    ecosystemIds: [ECO.Qwen, ECO.Seedream, ECO.NanoBanana, ECO.OpenAI, ECO.Flux2],
+    ecosystemIds: [ECO.Qwen, ECO.Seedream, ECO.NanoBanana, ECO.OpenAI, ECO.Flux2, ECO.Flux1Kontext],
   },
 
   // Image enhancement workflows
@@ -1160,6 +1160,22 @@ export const workflows: WorkflowRecord[] = [
     outputType: 'video',
     category: 'image-to-video',
     ecosystemIds: IMG2VID_IDS,
+  },
+  {
+    key: 'img2vid:first-last-frame',
+    label: 'First/Last Frame',
+    inputType: 'image',
+    outputType: 'video',
+    category: 'image-to-video',
+    ecosystemIds: [ECO.Vidu],
+  },
+  {
+    key: 'img2vid:ref2vid',
+    label: 'Reference Video',
+    inputType: 'image',
+    outputType: 'video',
+    category: 'image-to-video',
+    ecosystemIds: [ECO.Vidu],
   },
 
   // Video enhancement workflows (no ecosystems currently support vid2vid)

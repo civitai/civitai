@@ -60,7 +60,7 @@ const workflowsWithDenoise = [
  * Meta only contains dynamic props - static props like label are in components.
  */
 export const stableDiffusionGraph = new DataGraph<
-  { baseModel: string; workflow: string },
+  { baseModel: string; workflow: string; input: 'text' | 'image' | 'video' },
   GenerationCtx
 >()
   // Merge checkpoint graph (includes model node and baseModel sync effect)
@@ -100,11 +100,15 @@ export const stableDiffusionGraph = new DataGraph<
   .node('seed', seedNode())
   .node('enhancedCompatibility', enhancedCompatibilityNode())
   // Denoise is only shown for specific workflows (face-fix, hires-fix, img2img variants)
+  // Max is 0.75 for text input (txt2img variants), 1.0 for image input (img2img variants)
   .node(
     'denoise',
-    (ctx) => ({
-      ...denoiseNode(),
-      when: workflowsWithDenoise.includes(ctx.workflow),
-    }),
-    ['workflow']
+    (ctx) => {
+      const max = ctx.input === 'text' ? 0.75 : 1;
+      return {
+        ...denoiseNode({ max }),
+        when: workflowsWithDenoise.includes(ctx.workflow),
+      };
+    },
+    ['workflow', 'input']
   );

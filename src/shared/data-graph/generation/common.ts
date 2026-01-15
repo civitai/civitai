@@ -113,6 +113,9 @@ export function promptNode({ required }: { required?: boolean } = {}) {
     input: z.string().optional(),
     output,
     defaultValue: '',
+    meta: {
+      required,
+    },
   };
 }
 
@@ -532,117 +535,30 @@ export function vaeNode({
 }
 
 // =============================================================================
-// Input Graphs (text vs image input)
-// =============================================================================
-
-/**
- * Text input graph (for txt2img/txt2vid).
- * Just a prompt - no images.
- */
-export const textInputGraph = new DataGraph<Record<never, never>, GenerationCtx>().node(
-  'prompt',
-  promptNode({ required: true })
-);
-
-/**
- * Image input graph (for img2img/img2vid).
- * Prompt (optional) and source images with hierarchical limits.
- * Note: denoise is added per-workflow via denoiseNode().
- *
- * Parent context requirements:
- * - workflow: Required - determines image limits
- * - baseModel: Optional - used for ecosystem-specific limits
- * - model: Optional - used for model-specific limits
- *
- * For workflows without ecosystem support (img2img:upscale, img2img:remove-background),
- * only workflow-based limits are used.
- */
-export const imageInputGraph = new DataGraph<
-  { workflow: string; baseModel?: string; model?: { id: number } },
-  GenerationCtx
->()
-  .node('prompt', promptNode({ required: false }))
-  .node('images', imagesNode(), ['workflow', 'baseModel', 'model']);
-
-// =============================================================================
 // Images Node Builder
 // =============================================================================
+
+/** Image slot configuration for named upload positions (e.g., first/last frame) */
+export type ImageSlotConfig = {
+  label: string;
+  required?: boolean;
+};
 
 export interface ImagesNodeConfig {
   /** Maximum number of images allowed (default: 1) */
   max?: number;
   /** Minimum number of images required (default: 1) */
   min?: number;
-}
-
-type ImageLimits = { max: number; min?: number };
-
-/**
- * Image limits lookup.
- * Keys can be:
- * - Model + workflow: "model:123456:image-edit"
- * - Model only: "model:123456"
- * - Ecosystem + workflow: "Qwen:image-edit"
- * - Ecosystem only: "Qwen"
- * - Workflow only: "image-edit"
- *
- * Lookup priority (most specific wins):
- * 1. model:{id}:{workflow}
- * 2. model:{id}
- * 3. {ecosystem}:{workflow}
- * 4. {ecosystem}
- * 5. {workflow}
- * 6. default (max: 1, min: 1)
- */
-const imageLimits: Record<string, ImageLimits> = {
-  // Ecosystem + workflow combinations
-  'Qwen:image-edit': { max: 1 },
-
-  // Workflow defaults
-  'image-edit': { max: 7 },
-};
-
-function getImageLimits(ctx: {
-  workflow?: string;
-  baseModel?: string;
-  model?: { id: number };
-}): ImageLimits | undefined {
-  // 1. Check model + workflow combination
-  if (ctx.model?.id && ctx.workflow) {
-    const modelWorkflowLimit = imageLimits[`model:${ctx.model.id}:${ctx.workflow}`];
-    if (modelWorkflowLimit) return modelWorkflowLimit;
-  }
-
-  // 2. Check model-specific limit
-  if (ctx.model?.id) {
-    const modelLimit = imageLimits[`model:${ctx.model.id}`];
-    if (modelLimit) return modelLimit;
-  }
-
-  // 3. Check ecosystem + workflow combination
-  if (ctx.baseModel && ctx.workflow) {
-    const comboLimit = imageLimits[`${ctx.baseModel}:${ctx.workflow}`];
-    if (comboLimit) return comboLimit;
-  }
-
-  // 4. Check ecosystem only
-  if (ctx.baseModel) {
-    const ecosystemLimit = imageLimits[ctx.baseModel];
-    if (ecosystemLimit) return ecosystemLimit;
-  }
-
-  // 5. Check workflow only
-  if (ctx.workflow) {
-    const workflowLimit = imageLimits[ctx.workflow];
-    if (workflowLimit) return workflowLimit;
-  }
-
-  return undefined;
+  /**
+   * Named slots for fixed-position images (e.g., first/last frame).
+   * When provided, renders side-by-side dropzones with labels.
+   */
+  slots?: ImageSlotConfig[];
 }
 
 /**
  * Creates an images node with hierarchical limits.
- * Meta contains: min, max (for UI rendering)
+ * Meta contains: min, max, slots (for UI rendering)
  *
  * @example
  * // With parent context - limits derived from model/ecosystem/workflow
@@ -650,34 +566,53 @@ function getImageLimits(ctx: {
  *
  * // With explicit config override
  * .node('images', imagesNode({ max: 5 }), [])
+ *
+ * // With slots for named positions
+ * .node('images', imagesNode({
+ *   slots: [
+ *     { label: 'First Frame', required: true },
+ *     { label: 'Last Frame' }
+ *   ]
+ * }), [])
  */
-export function imagesNode(config?: ImagesNodeConfig) {
-  return (ctx: { workflow?: string; baseModel?: string; model?: { id: number } }) => {
-    const limits = getImageLimits(ctx);
-    const max = config?.max ?? limits?.max ?? 1;
-    const min = config?.min ?? limits?.min ?? 1;
+export function imagesNode({ min = 1, max = 1, slots }: ImagesNodeConfig) {
+  // When slots are provided, max is derived from slots length
+  const effectiveMax = slots?.length ?? max;
+  const effectiveMin = slots ? slots.filter((s) => s.required).length : min;
 
-    return {
-      input: z
-        .union([z.url(), z.object({ url: z.string() })])
-        .array()
-        .optional()
-        .transform((arr) => {
-          if (!arr) return undefined;
-          // Transform URLs to objects and limit to max
-          return arr.slice(0, max).map((item) => (typeof item === 'string' ? { url: item } : item));
-        }),
-      output: z
-        .object({ url: z.string(), width: z.number(), height: z.number() })
-        .array()
-        .min(min, `At least ${min} image${min > 1 ? 's are' : ' is'} required`)
-        .max(max, `Maximum ${max} image${max > 1 ? 's' : ''} allowed`),
-      defaultValue: [],
-      meta: {
-        min,
-        max,
-      },
-    };
+  // Image object schema with required url and optional dimensions
+  const imageObjectSchema = z.object({
+    url: z.string(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+  });
+
+  return {
+    input: z
+      .union([z.url(), imageObjectSchema])
+      .array()
+      .optional()
+      .transform((arr) => {
+        if (!arr) return undefined;
+        // Transform URLs to objects and limit to max
+        return arr
+          .slice(0, effectiveMax)
+          .map((item) => (typeof item === 'string' ? { url: item } : item));
+      }),
+    output: z
+      .object({ url: z.string(), width: z.number(), height: z.number() })
+      .array()
+      .min(
+        effectiveMin,
+        `At least ${effectiveMin} image${effectiveMin > 1 ? 's are' : ' is'} required`
+      )
+      .max(effectiveMax, `Maximum ${effectiveMax} image${effectiveMax > 1 ? 's' : ''} allowed`),
+    defaultValue: [],
+    meta: {
+      min: effectiveMin,
+      max: effectiveMax,
+      slots,
+    },
   };
 }
 

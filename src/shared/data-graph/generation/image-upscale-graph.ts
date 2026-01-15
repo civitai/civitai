@@ -53,7 +53,7 @@ export type ImageUpscaleOption = {
  */
 export const imageUpscaleGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   // Images node - upscale only allows 1 image
-  .node('images', imagesNode({ max: 1, min: 1 }), [])
+  .node('images', () => imagesNode({ max: 1, min: 1 }), [])
   // Scale factor node - depends on image dimensions for available options
   .node(
     'scaleFactor',

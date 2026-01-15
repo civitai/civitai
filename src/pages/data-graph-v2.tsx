@@ -219,7 +219,8 @@ function GenerationForm() {
                 value={value}
                 onChange={onChange}
                 label="Base Model"
-                compatibleEcosystems={meta.compatibleEcosystems}
+                compatibleEcosystems={meta?.compatibleEcosystems}
+                disabled={meta?.disabled}
               />
             )}
           />
@@ -279,13 +280,13 @@ function GenerationForm() {
           <Controller
             graph={graph}
             name="images"
-            render={({ value, onChange }) => (
+            render={({ value, meta, onChange }) => (
               <ImageUploadMultipleInput
                 value={value}
                 onChange={onChange}
-                label="Source Image"
                 aspect="video"
-                max={1}
+                max={meta?.max}
+                slots={meta?.slots}
               />
             )}
           />
@@ -318,7 +319,7 @@ function GenerationForm() {
           <Controller
             graph={graph}
             name="prompt"
-            render={({ value, onChange }) => (
+            render={({ value, onChange, meta }) => (
               <PromptInput
                 value={value}
                 onChange={onChange}
@@ -326,6 +327,7 @@ function GenerationForm() {
                 placeholder="Your prompt goes here..."
                 autosize
                 minRows={2}
+                required={meta.required}
               />
             )}
           />
@@ -384,8 +386,8 @@ function GenerationForm() {
                         <OutputFormatInput
                           value={value}
                           onChange={onChange as (v: string) => void}
-                          options={meta.options}
-                          isMember={meta.isMember}
+                          options={meta?.options ?? []}
+                          isMember={meta?.isMember}
                         />
                       )}
                     />
@@ -396,8 +398,8 @@ function GenerationForm() {
                         <PriorityInput
                           value={value}
                           onChange={onChange}
-                          options={meta.options}
-                          isMember={meta.isMember}
+                          options={meta?.options ?? []}
+                          isMember={meta?.isMember}
                         />
                       )}
                     />
@@ -560,7 +562,7 @@ const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,
   groups: [
     // Workflow is the primary selector - stored globally
-    { keys: ['workflow'] },
+    { keys: ['workflow', 'outputFormat', 'priority'] },
     // baseModel is scoped to workflow (different workflows may use different ecosystems)
     { keys: ['baseModel'], scope: 'workflow' },
     // Common settings shared across all workflows
