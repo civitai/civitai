@@ -83,7 +83,12 @@ const flux2GuidancePresets = [
 type ModelValue = { id: number; baseModel: string; model: { type: string } } | undefined;
 
 /** Context shape passed to flux2 mode subgraphs */
-type Flux2ModeCtx = { baseModel: string; workflow: string; model: ModelValue; flux2Mode: Flux2Mode };
+type Flux2ModeCtx = {
+  baseModel: string;
+  workflow: string;
+  model: ModelValue;
+  flux2Mode: Flux2Mode;
+};
 
 /**
  * Base subgraph with common nodes for all modes.
@@ -108,18 +113,16 @@ const baseModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>()
  * Dev mode subgraph: resources + base controls
  * Dev mode supports LoRA resources
  */
-const devModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>()
-  .merge(baseModeGraph)
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
-        limit: ext.limits.maxResources,
-      }),
-    ['baseModel']
-  );
+const devModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>().merge(baseModeGraph).node(
+  'resources',
+  (ctx, ext) =>
+    resourcesNode({
+      baseModel: ctx.baseModel,
+      resourceIds: ext.resources.map((x) => x.id),
+      limit: ext.limits.maxResources,
+    }),
+  ['baseModel']
+);
 
 /**
  * Other modes subgraph: just base controls (no resources)
