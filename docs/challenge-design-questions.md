@@ -81,17 +81,21 @@ Challenges can require a specific `modelId` or `modelVersionId`. How should we v
 @dev: We already handled this validation. You can look and see how we were doing it previously. We should do it the same way. We were looking at the meta, not the metadata, the image resources. I think there's a table called image resource new or something like that. You'll see it in the code. We were already doing this. I think we'll want to make it so that challenges, though, and you might need to make some adjustments here, can support multiple models or model version IDs. So this might require some changes on your end. this requirement would be an OR requirement, not an AND requirement, meaning that as long as you have at least one of the model versions, you're accepted.
 @dev: I'm realizing that there's probably another requirement that we should allow the challenge creators to set, and that's not safe for work level. They should be able to say, hey, it's limited to PG through PG-13 entries, or, hey, this only is an X-rated challenge, or something like that, if that makes sense. So, if you don't already have that in there, we'll want to add that. Keep in mind that's currently a bitwise flag, so you don't have to have some array or something like that to handle this. the existing challenge system only allowed PG entries, and so you can kind of see how that works if you're looking at how to validate this.
 
-@ai: Found the existing validation in `daily-challenge-processing.ts:reviewEntries()` - it queries `ImageResourceNew` table to verify the image was generated using one of the challenge's model versions. Current schema has single `modelVersionId`, will need to support multiple.
+@ai: Found the existing validation in `daily-challenge-processing.ts:reviewEntries()` - it queries `ImageResourceNew` table to verify the image was generated using one of the challenge's model versions.
 
-**Schema changes needed:**
-1. Change `modelVersionId Int?` to `modelVersionIds Int[]` (array) in Challenge table
-2. Add `allowedNsfwLevel Int @default(1)` field - bitwise flag for allowed NSFW levels (default PG only)
-3. Update `createChallengeCollection()` to set `forcedBrowsingLevel` in collection metadata
+**Schema changes completed:**
+1. ✅ Changed to `modelVersionIds Int[]` (array) in Challenge table
+2. ✅ Added `allowedNsfwLevel Int @default(1)` field - bitwise flag for allowed NSFW levels
+3. ✅ Updated collection creation to set `forcedBrowsingLevel` in collection metadata
 
 **Validation logic (OR requirement):**
 - Entry is valid if image has ANY of the required modelVersionIds in `ImageResourceNew`
 - Entry NSFW level must match `allowedNsfwLevel` bitwise flag
-- Existing job handles this via SQL query - will update to use array `ANY()` operator
+- Job uses SQL `ANY()` operator for array matching
+
+**UI Components created:**
+- `ModelVersionMultiSelect.tsx` - Uses resource select modal to pick multiple model versions
+- `ContentRatingSelect.tsx` - Visual checkbox selector with presets (SFW Only, Include Mature, All Content)
 
 ---
 
@@ -173,5 +177,7 @@ Active → Cancelled (emergency only)
 - [x] Job: Update auto-queue to query only Scheduled status
 - [x] Job: Update validation to use `ANY()` for modelVersionIds + bitwise NSFW
 - [x] Service: Add immediate entry prize distribution on threshold
-- [x] Form: Add NSFW level selector for challenge creators
+- [x] Form: Add NSFW level selector for challenge creators → `ContentRatingSelect.tsx`
 - [x] Form: Add entry prize requirement field
+- [x] Form: Add model version multi-select component → `ModelVersionMultiSelect.tsx`
+- [x] API: Add `getVersionsByIds` endpoint for edit mode support

@@ -12,7 +12,7 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 
 ---
 
-## Current Status: Phase 1 Complete (Backend) - Ready for UI Review
+## Current Status: Phase 1 Complete - Ready for Testing
 
 ### What's Been Built
 
@@ -68,10 +68,10 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
    - [ ] Test create/edit form functionality
    - [ ] Test filtering and sorting on challenge feed
 
-3. **Form Improvements Needed**
-   - [ ] Add proper `ModelVersionSelector` component (currently placeholder)
-   - [ ] Style the NSFW level selector appropriately
-   - [ ] Add date pickers for startsAt/endsAt/visibleAt
+3. **Form Improvements** ✅ Complete
+   - [x] Add proper `ModelVersionSelector` component → `ModelVersionMultiSelect.tsx`
+   - [x] Style the NSFW level selector appropriately → `ContentRatingSelect.tsx`
+   - [x] Add date pickers for startsAt/endsAt/visibleAt → Using `DateTimePicker`
 
 4. **Data Migration** (if needed)
    - Script exists at `src/server/jobs/migrate-challenges.ts`
@@ -101,6 +101,8 @@ See `docs/features/challenge-platform.md` for full roadmap:
 | Challenge feed | `src/components/Challenge/ChallengesInfinite.tsx` |
 | Challenge card | `src/components/Cards/ChallengeCard.tsx` |
 | Create/edit form | `src/components/Challenge/ChallengeUpsertForm.tsx` |
+| Model version selector | `src/components/Challenge/ModelVersionMultiSelect.tsx` |
+| NSFW level selector | `src/components/Challenge/ContentRatingSelect.tsx` |
 
 ---
 
