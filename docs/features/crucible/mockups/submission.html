@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submit Entry - Crucible Submission Modal (Refined)</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+    }
+
+    body {
+      background: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    /* Modal Overlay */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(2px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+
+    .modal-content {
+      background: #25262b;
+      border: 1px solid #373a40;
+      border-radius: 0.75rem;
+      max-width: 600px;
+      width: 100%;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+      animation: slideUp 0.3s ease;
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    /* Header */
+    .modal-header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid #373a40;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .modal-header-left {
+      flex: 1;
+    }
+
+    .modal-header-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.25rem;
+    }
+
+    .modal-header-subtitle {
+      color: #909296;
+      font-size: 0.875rem;
+    }
+
+    /* Progress Bar in Header */
+    .entries-progress {
+      flex: 1;
+      max-width: 180px;
+    }
+
+    .entries-progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .entries-progress-count {
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .entries-progress-max {
+      color: #909296;
+    }
+
+    .entries-progress-bar {
+      height: 6px;
+      background: #373a40;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .entries-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #228be6, #40c057);
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: #909296;
+      cursor: pointer;
+      padding: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s;
+      margin-top: -0.25rem;
+    }
+
+    .modal-close-btn:hover {
+      color: #c1c2c5;
+    }
+
+    /* Body */
+    .modal-body {
+      flex: 1;
+      overflow-y: visible;
+      overflow-x: visible;
+      padding: 1.5rem;
+    }
+
+    /* Entry Requirements */
+    .requirements-section {
+      background: #2c2e33;
+      border: 1px solid #373a40;
+      border-radius: 0.5rem;
+      padding: 0.875rem 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .requirements-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #909296;
+      margin-bottom: 0.5rem;
+    }
+
+    .requirements-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .requirement-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: rgba(34, 139, 230, 0.1);
+      border: 1px solid rgba(34, 139, 230, 0.3);
+      border-radius: 0.35rem;
+      padding: 0.35rem 0.6rem;
+      font-size: 0.75rem;
+      color: #74c0fc;
+    }
+
+    /* Drop Zone */
+    .drop-zone {
+      border: 2px dashed #373a40;
+      border-radius: 0.75rem;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: #2c2e33;
+      margin-bottom: 1.5rem;
+    }
+
+    .drop-zone:hover {
+      border-color: #228be6;
+      background: rgba(34, 139, 230, 0.05);
+    }
+
+    .drop-zone.dragging {
+      border-color: #228be6;
+      background: rgba(34, 139, 230, 0.1);
+      transform: scale(1.02);
+    }
+
+    .drop-zone-icon {
+      font-size: 3rem;
+      color: #228be6;
+      margin-bottom: 0.75rem;
+      display: block;
+    }
+
+    .drop-zone-title {
+      color: #fff;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .drop-zone-hint {
+      color: #909296;
+      font-size: 0.875rem;
+    }
+
+    /* Entries Grid */
+    .entries-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 1rem;
+      overflow: visible;
+      padding-bottom: 1rem; /* Space for hover cards */
+    }
+
+    .entry-card {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 0.5rem;
+      overflow: visible;
+      border: 2px solid #373a40;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: #1a1b1e;
+    }
+
+    .entry-card-image {
+      border-radius: 0.4rem;
+    }
+
+    .entry-card:hover {
+      border-color: #535458;
+    }
+
+    .entry-card.valid {
+      border-color: rgba(81, 207, 102, 0.5);
+    }
+
+    .entry-card.invalid {
+      border-color: rgba(250, 82, 82, 0.5);
+    }
+
+    .entry-card-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* Status Indicator Badge (Always Visible) */
+    .entry-status-badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.875rem;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      transition: transform 0.2s;
+    }
+
+    .entry-status-badge:hover {
+      transform: scale(1.15);
+    }
+
+    .entry-status-badge.valid {
+      background: #51cf66;
+      color: #fff;
+    }
+
+    .entry-status-badge.invalid {
+      background: #fa5252;
+      color: #fff;
+    }
+
+    /* Hover Card - using popup approach */
+    .entry-card {
+      /* Needed for hover card to escape overflow */
+    }
+
+    .entry-status-badge {
+      position: relative;
+    }
+
+    .hover-card {
+      position: absolute;
+      bottom: 100%;
+      right: -8px;
+      margin-bottom: 8px;
+      background: #2c2e33;
+      border: 1px solid #373a40;
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+      min-width: 200px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      z-index: 9999;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(8px);
+      transition: all 0.2s ease;
+      pointer-events: none;
+    }
+
+    .entry-status-badge:hover .hover-card {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .hover-card-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .hover-card-title.valid {
+      color: #51cf66;
+    }
+
+    .hover-card-title.invalid {
+      color: #fa5252;
+    }
+
+    .criteria-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .criteria-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.7rem;
+    }
+
+    .criteria-icon {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.6rem;
+      flex-shrink: 0;
+    }
+
+    .criteria-icon.pass {
+      background: rgba(81, 207, 102, 0.2);
+      color: #51cf66;
+    }
+
+    .criteria-icon.fail {
+      background: rgba(250, 82, 82, 0.2);
+      color: #fa5252;
+    }
+
+    .criteria-text {
+      color: #c1c2c5;
+    }
+
+    .criteria-text.fail {
+      color: #fa5252;
+    }
+
+    /* Footer */
+    .modal-footer {
+      padding: 1.25rem 1.5rem;
+      border-top: 1px solid #373a40;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .footer-buttons {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    /* Cancel Button */
+    .button-cancel {
+      background: transparent;
+      color: #c1c2c5;
+      border: 1px solid #373a40;
+      border-radius: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .button-cancel:hover {
+      border-color: #535458;
+      color: #fff;
+    }
+
+    /* Buzz-Style Submit Button */
+    .button-submit-buzz {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      border-radius: 0.5rem;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+      background: none;
+      padding: 0;
+    }
+
+    .button-submit-buzz:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(250, 176, 5, 0.25);
+    }
+
+    .button-submit-buzz:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .button-submit-label {
+      background: #fab005;
+      color: #1a1b1e;
+      padding: 0.75rem 1rem;
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 1;
+      justify-content: center;
+    }
+
+    .button-submit-cost {
+      background: #1a1b1e;
+      color: #fab005;
+      padding: 0.75rem 1rem;
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      border-left: 1px solid #373a40;
+    }
+
+    .button-submit-cost i {
+      font-size: 1rem;
+    }
+
+    /* Per Entry Cost */
+    .per-entry-cost {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #909296;
+    }
+
+    /* Scrollbar */
+    .modal-body::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .modal-body::-webkit-scrollbar-track {
+      background: #2c2e33;
+    }
+
+    .modal-body::-webkit-scrollbar-thumb {
+      background: #535458;
+      border-radius: 3px;
+    }
+
+    .modal-body::-webkit-scrollbar-thumb:hover {
+      background: #636363;
+    }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .modal-content {
+        max-width: 100%;
+        border-radius: 1rem 1rem 0 0;
+        max-height: 85vh;
+      }
+
+      .modal-header {
+        flex-wrap: wrap;
+      }
+
+      .entries-progress {
+        max-width: none;
+        width: 100%;
+        order: 3;
+        margin-top: 0.75rem;
+      }
+
+      .entries-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .footer-buttons {
+        flex-direction: column-reverse;
+      }
+
+      .button-cancel {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+  <!-- Background Demo -->
+  <div class="absolute inset-0 bg-gradient-to-b from-slate-900 to-slate-950">
+    <div class="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+    <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+  </div>
+
+  <!-- Modal Overlay -->
+  <div class="modal-overlay">
+    <!-- Modal -->
+    <div class="modal-content">
+      <!-- Header with Progress Bar -->
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <div class="modal-header-title">Submit Entry</div>
+          <div class="modal-header-subtitle">Pixel Paradise Crucible</div>
+        </div>
+
+        <!-- Entry Progress Bar -->
+        <!-- NOTE: If entries are unlimited, hide this element or show "Unlimited entries" text -->
+        <div class="entries-progress">
+          <div class="entries-progress-label">
+            <span class="entries-progress-count">3 of 5</span>
+            <span class="entries-progress-max">entries</span>
+          </div>
+          <div class="entries-progress-bar">
+            <div class="entries-progress-fill" style="width: 60%;"></div>
+          </div>
+        </div>
+
+        <button class="modal-close-btn" onclick="closeModal()">
+          <i class="ti ti-x text-xl"></i>
+        </button>
+      </div>
+
+      <!-- Body -->
+      <div class="modal-body">
+        <!-- Entry Requirements -->
+        <div class="requirements-section">
+          <div class="requirements-title">Entry Requirements</div>
+          <div class="requirements-list">
+            <div class="requirement-item">
+              <i class="ti ti-cube"></i>
+              Flux Pro 1.1
+            </div>
+            <div class="requirement-item">
+              <i class="ti ti-photo"></i>
+              1024×1024 min
+            </div>
+            <div class="requirement-item">
+              <i class="ti ti-eye-off"></i>
+              SFW only
+            </div>
+          </div>
+        </div>
+
+        <!-- Drop Zone -->
+        <div class="drop-zone" id="dropZone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+          <i class="ti ti-cloud-upload drop-zone-icon"></i>
+          <div class="drop-zone-title">Drag images here to add entries</div>
+          <div class="drop-zone-hint">or <button onclick="document.getElementById('fileInput').click()" style="color: #228be6; background: none; border: none; cursor: pointer; text-decoration: underline;">click to browse</button></div>
+          <input type="file" id="fileInput" accept="image/*" multiple onchange="handleFileSelect(event)" style="display: none;">
+        </div>
+
+        <!-- Entries Grid (No Label) -->
+        <div class="entries-grid">
+          <!-- Valid Entry 1 -->
+          <div class="entry-card valid">
+            <img src="https://picsum.photos/seed/pixel1/120/120" alt="Entry 1" class="entry-card-image">
+            <div class="entry-status-badge valid">
+              <i class="ti ti-check"></i>
+              <div class="hover-card">
+                <div class="hover-card-title valid">
+                  <i class="ti ti-circle-check"></i>
+                  Valid Entry
+                </div>
+                <div class="criteria-list">
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">Uses Flux Pro 1.1</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">Resolution 1024×1024</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">SFW content</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Invalid Entry -->
+          <div class="entry-card invalid">
+            <img src="https://picsum.photos/seed/pixel2/120/120" alt="Entry 2" class="entry-card-image">
+            <div class="entry-status-badge invalid">
+              <i class="ti ti-x"></i>
+              <div class="hover-card">
+                <div class="hover-card-title invalid">
+                  <i class="ti ti-circle-x"></i>
+                  Invalid Entry
+                </div>
+                <div class="criteria-list">
+                  <div class="criteria-item">
+                    <div class="criteria-icon fail"><i class="ti ti-x"></i></div>
+                    <span class="criteria-text fail">Uses SDXL (requires Flux Pro 1.1)</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">Resolution 1024×1024</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">SFW content</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Valid Entry 2 -->
+          <div class="entry-card valid">
+            <img src="https://picsum.photos/seed/pixel3/120/120" alt="Entry 3" class="entry-card-image">
+            <div class="entry-status-badge valid">
+              <i class="ti ti-check"></i>
+              <div class="hover-card">
+                <div class="hover-card-title valid">
+                  <i class="ti ti-circle-check"></i>
+                  Valid Entry
+                </div>
+                <div class="criteria-list">
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">Uses Flux Pro 1.1</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">Resolution 1536×1024</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">SFW content</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Invalid Entry 2 (Resolution) -->
+          <div class="entry-card invalid">
+            <img src="https://picsum.photos/seed/pixel4/120/120" alt="Entry 4" class="entry-card-image">
+            <div class="entry-status-badge invalid">
+              <i class="ti ti-x"></i>
+              <div class="hover-card">
+                <div class="hover-card-title invalid">
+                  <i class="ti ti-circle-x"></i>
+                  Invalid Entry
+                </div>
+                <div class="criteria-list">
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">Uses Flux Pro 1.1</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon fail"><i class="ti ti-x"></i></div>
+                    <span class="criteria-text fail">Resolution 512×512 (min 1024×1024)</span>
+                  </div>
+                  <div class="criteria-item">
+                    <div class="criteria-icon pass"><i class="ti ti-check"></i></div>
+                    <span class="criteria-text">SFW content</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="modal-footer">
+        <div class="footer-buttons">
+          <!-- Cancel on Left -->
+          <button class="button-cancel" onclick="closeModal()">
+            Cancel
+          </button>
+
+          <!-- Buzz-Style Submit Button on Right -->
+          <button class="button-submit-buzz" onclick="submitEntries()">
+            <div class="button-submit-label">
+              <i class="ti ti-send"></i>
+              Submit 2 Entries
+            </div>
+            <div class="button-submit-cost">
+              <i class="ti ti-bolt-filled"></i>
+              200
+            </div>
+          </button>
+        </div>
+
+        <!-- Per Entry Cost -->
+        <div class="per-entry-cost">100 Buzz per entry</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      document.getElementById('dropZone').classList.add('dragging');
+    }
+
+    function handleDragLeave(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      document.getElementById('dropZone').classList.remove('dragging');
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      document.getElementById('dropZone').classList.remove('dragging');
+      // In real app, would process files here
+    }
+
+    function handleFileSelect(e) {
+      // In real app, would add entries to grid
+    }
+
+    function submitEntries() {
+      const button = event.target.closest('.button-submit-buzz');
+      button.disabled = true;
+      button.querySelector('.button-submit-label').innerHTML = '<i class="ti ti-loader" style="animation: spin 0.8s linear infinite;"></i> Submitting...';
+
+      setTimeout(() => {
+        button.querySelector('.button-submit-label').innerHTML = '<i class="ti ti-check"></i> Submitted!';
+        button.querySelector('.button-submit-label').style.background = '#51cf66';
+        button.querySelector('.button-submit-cost').style.display = 'none';
+
+        setTimeout(() => {
+          closeModal();
+        }, 1500);
+      }, 2000);
+    }
+
+    function closeModal() {
+      document.querySelector('.modal-overlay').style.opacity = '0';
+      setTimeout(() => {
+        alert('Modal closed. In a real app, this would close the modal.');
+      }, 300);
+    }
+  </script>
+
+  <style>
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</body>
+</html>
