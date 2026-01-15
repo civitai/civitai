@@ -431,6 +431,7 @@ export function DrawingEditorModal({
             onUndo={handleUndo}
             canUndo={canUndo}
             onDownload={handleDownload}
+            isMobile={isMobile}
           />
         </div>
       </div>

@@ -227,12 +227,16 @@ export function DrawingCanvas({
           case 'circle':
             return { ...el, x: newX, y: newY };
           case 'arrow': {
-            // For arrows, we need to offset all points
-            const dx = newX - el.points[0];
-            const dy = newY - el.points[1];
+            // For arrows, newX/newY are the drag offset (node starts at 0,0)
+            // Simply add the offset to all points
             return {
               ...el,
-              points: [el.points[0] + dx, el.points[1] + dy, el.points[2] + dx, el.points[3] + dy],
+              points: [
+                el.points[0] + newX,
+                el.points[1] + newY,
+                el.points[2] + newX,
+                el.points[3] + newY,
+              ],
             };
           }
           case 'text':
