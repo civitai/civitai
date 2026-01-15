@@ -6,13 +6,19 @@
  *
  * Run with:
  *   GET /api/admin/temp/query-buzz-api-for-add-users?token=WEBHOOK_TOKEN
- *   GET /api/admin/temp/query-buzz-api-for-add-users?token=WEBHOOK_TOKEN&limit=50
- *   GET /api/admin/temp/query-buzz-api-for-add-users?token=WEBHOOK_TOKEN&offset=0&limit=50
+ *   GET /api/admin/temp/query-buzz-api-for-add-users?token=WEBHOOK_TOKEN&limit=10
+ *   GET /api/admin/temp/query-buzz-api-for-add-users?token=WEBHOOK_TOKEN&offset=0&limit=20&concurrency=5
+ *
+ * Parameters:
+ *   - offset: Starting index (default: 0)
+ *   - limit: Number of users to process (default: 10, max: 50)
+ *   - concurrency: Parallel processing limit (default: 5, max: 10)
  */
 
 import type { NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getUserBuzzTransactions } from '~/server/services/buzz.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import dayjs from 'dayjs';
 
 // Users who need prepaids ADDED (adjustmentType === 'add')
@@ -2644,65 +2650,120 @@ type BuzzApiTransaction = {
   description?: string | null;
 };
 
-async function queryBuzzApiForUser(userId: number): Promise<{
-  bonusTransactions: BuzzApiTransaction[];
-  refundTransactions: BuzzApiTransaction[];
-}> {
-  const bonusTransactions: BuzzApiTransaction[] = [];
-  const refundTransactions: BuzzApiTransaction[] = [];
+const USER_TIMEOUT_MS = 10000; // 10 seconds per user max
 
+// Helper to fetch transactions of a specific type with pagination
+async function fetchTransactionsByType(
+  userId: number,
+  type: TransactionType,
+  startTime: number
+): Promise<{ transactions: BuzzApiTransaction[]; timedOut: boolean }> {
+  const transactions: BuzzApiTransaction[] = [];
   let cursor: Date | undefined;
   let hasMore = true;
   let iterations = 0;
-  const maxIterations = 20; // Safety limit
+  const maxIterations = 5; // Should be enough for filtered queries
 
   while (hasMore && iterations < maxIterations) {
+    if (Date.now() - startTime > USER_TIMEOUT_MS) {
+      return { transactions, timedOut: true };
+    }
+
     iterations++;
 
     const result = await getUserBuzzTransactions({
       accountId: userId,
+      type,
       limit: 200,
       cursor,
       start: LOOKBACK_DATE.toDate(),
     });
 
     for (const tx of result.transactions) {
-      const desc = tx.description?.toLowerCase() ?? '';
-
-      // Check for membership bonus transactions
-      if (tx.toAccountId === userId && desc.includes('membership') && desc.includes('bonus')) {
-        bonusTransactions.push({
-          date: dayjs(tx.date).format('YYYY-MM-DD HH:mm:ss'),
-          amount: tx.amount,
-          description: tx.description,
-        });
-      }
-
-      // Check for refund transactions
-      if (
-        tx.fromAccountId === userId &&
-        desc.includes('free membership renewal error correction reclaim')
-      ) {
-        refundTransactions.push({
-          date: dayjs(tx.date).format('YYYY-MM-DD HH:mm:ss'),
-          amount: Math.abs(tx.amount),
-          description: tx.description,
-        });
-      }
+      transactions.push({
+        date: dayjs(tx.date).format('YYYY-MM-DD HH:mm:ss'),
+        amount: Math.abs(tx.amount),
+        description: tx.description,
+      });
     }
 
     cursor = result.cursor ?? undefined;
     hasMore = !!cursor && result.transactions.length > 0;
   }
 
-  return { bonusTransactions, refundTransactions };
+  return { transactions, timedOut: false };
+}
+
+async function queryBuzzApiForUser(userId: number): Promise<{
+  bonusTransactions: BuzzApiTransaction[];
+  refundTransactions: BuzzApiTransaction[];
+  timedOut?: boolean;
+}> {
+  const startTime = Date.now();
+
+  // Query Purchase transactions (membership bonuses)
+  const purchaseResult = await fetchTransactionsByType(userId, TransactionType.Purchase, startTime);
+
+  // Filter to only membership bonus transactions
+  const bonusTransactions = purchaseResult.transactions.filter((tx) => {
+    const desc = tx.description?.toLowerCase() ?? '';
+    return desc.includes('membership') && desc.includes('bonus');
+  });
+
+  if (purchaseResult.timedOut) {
+    return { bonusTransactions, refundTransactions: [], timedOut: true };
+  }
+
+  // Query Refund transactions
+  const refundResult = await fetchTransactionsByType(userId, TransactionType.Refund, startTime);
+
+  // Filter to only the specific refund transactions we care about
+  const refundTransactions = refundResult.transactions.filter((tx) => {
+    const desc = tx.description?.toLowerCase() ?? '';
+    return desc.includes('free membership renewal error correction reclaim');
+  });
+
+  return {
+    bonusTransactions,
+    refundTransactions,
+    timedOut: refundResult.timedOut,
+  };
+}
+
+// Process users in parallel with concurrency limit
+async function processUsersInParallel<T, R>(
+  items: T[],
+  processor: (item: T) => Promise<R>,
+  concurrency: number
+): Promise<R[]> {
+  const results: R[] = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const currentIndex = index++;
+      const item = items[currentIndex];
+      const result = await processor(item);
+      results[currentIndex] = result;
+    }
+  }
+
+  const workers = Array(Math.min(concurrency, items.length))
+    .fill(null)
+    .map(() => worker());
+
+  await Promise.all(workers);
+  return results;
 }
 
 export default WebhookEndpoint(async (req, res: NextApiResponse) => {
   const offset = parseInt(req.query.offset as string) || 0;
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+  const limit = Math.min(parseInt(req.query.limit as string) || 10, 50); // Reduced default from 50 to 10
+  const concurrency = Math.min(parseInt(req.query.concurrency as string) || 5, 10);
 
-  console.log(`[query-buzz-api] Starting with offset=${offset}, limit=${limit}`);
+  console.log(
+    `[query-buzz-api] Starting with offset=${offset}, limit=${limit}, concurrency=${concurrency}`
+  );
   console.log(`[query-buzz-api] Total users: ${USERS_NEEDING_ADD.length}`);
 
   if (USERS_NEEDING_ADD.length === 0) {
@@ -2714,41 +2775,42 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
   }
 
   const usersToProcess = USERS_NEEDING_ADD.slice(offset, offset + limit);
-  console.log(`[query-buzz-api] Processing ${usersToProcess.length} users`);
+  console.log(`[query-buzz-api] Processing ${usersToProcess.length} users in parallel`);
 
-  const results: Array<{
-    userId: number;
-    prepaidsDiff: { bronze: number; silver: number; gold: number };
-    clickhouse: { bonusCount: number; refundCount: number };
-    buzzApi: {
-      bonusCount: number;
-      refundCount: number;
-      bonusTransactions: BuzzApiTransaction[];
-      refundTransactions: BuzzApiTransaction[];
-    };
-    analysis: {
-      bonusCountDiff: number;
-      refundCountDiff: number;
-      missingFromClickhouse: boolean;
-    };
-  }> = [];
+  type UserResult =
+    | {
+        success: true;
+        userId: number;
+        prepaidsDiff: { bronze: number; silver: number; gold: number };
+        clickhouse: { bonusCount: number; refundCount: number };
+        buzzApi: {
+          bonusCount: number;
+          refundCount: number;
+          bonusTransactions: BuzzApiTransaction[];
+          refundTransactions: BuzzApiTransaction[];
+        };
+        analysis: {
+          bonusCountDiff: number;
+          refundCountDiff: number;
+          missingFromClickhouse: boolean;
+          timedOut?: boolean;
+        };
+      }
+    | {
+        success: false;
+        userId: number;
+        error: string;
+      };
 
-  const errors: Array<{ userId: number; error: string }> = [];
-
-  for (let i = 0; i < usersToProcess.length; i++) {
-    const user = usersToProcess[i];
-
-    if (i % 10 === 0) {
-      console.log(`[query-buzz-api] Progress: ${i}/${usersToProcess.length}`);
-    }
-
+  const processUser = async (user: (typeof USERS_NEEDING_ADD)[number]): Promise<UserResult> => {
     try {
       const buzzApiData = await queryBuzzApiForUser(user.userId);
 
       const bonusCountDiff = buzzApiData.bonusTransactions.length - user.clickhouseBonusCount;
       const refundCountDiff = buzzApiData.refundTransactions.length - user.clickhouseRefundCount;
 
-      results.push({
+      return {
+        success: true,
         userId: user.userId,
         prepaidsDiff: user.prepaidsDiff,
         clickhouse: {
@@ -2765,22 +2827,35 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
           bonusCountDiff,
           refundCountDiff,
           missingFromClickhouse: bonusCountDiff > 0 || refundCountDiff > 0,
+          timedOut: buzzApiData.timedOut,
         },
-      });
+      };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[query-buzz-api] Error for user ${user.userId}: ${msg}`);
-      errors.push({ userId: user.userId, error: msg });
+      return { success: false, userId: user.userId, error: msg };
     }
-  }
+  };
+
+  // Process users in parallel with concurrency limit
+  const allResults = await processUsersInParallel(usersToProcess, processUser, concurrency);
+
+  const results = allResults.filter((r): r is Extract<UserResult, { success: true }> => r.success);
+  const errors = allResults
+    .filter((r): r is Extract<UserResult, { success: false }> => !r.success)
+    .map((r) => ({ userId: r.userId, error: r.error }));
+
+  const timedOutCount = results.filter((r) => r.analysis.timedOut).length;
 
   const summary = {
     total: USERS_NEEDING_ADD.length,
     offset,
     limit,
+    concurrency,
     processed: usersToProcess.length,
     successful: results.length,
     errors: errors.length,
+    timedOut: timedOutCount,
     hasMore: offset + limit < USERS_NEEDING_ADD.length,
     nextOffset: offset + limit,
     // Analysis
@@ -2795,6 +2870,7 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
   console.log(`[query-buzz-api] Complete`);
   console.log(`  Successful: ${summary.successful}`);
   console.log(`  Errors: ${summary.errors}`);
+  console.log(`  Timed out: ${summary.timedOut}`);
   console.log(`  Exact match: ${summary.exactMatch}`);
   console.log(`  More in Buzz API: ${summary.moreInBuzzApi}`);
   console.log(`  Less in Buzz API: ${summary.lessInBuzzApi}`);

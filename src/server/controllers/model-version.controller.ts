@@ -421,6 +421,12 @@ export const publishModelVersionHandler = async ({
     }
 
     const versionMeta = version.meta as ModelVersionMeta | null;
+
+    // Prevent non-moderators from re-publishing versions unpublished for violations
+    if (!ctx.user.isModerator && constants.modPublishOnlyStatuses.includes(version.status)) {
+      throw throwAuthorizationError('You are not authorized to publish this model version');
+    }
+
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =

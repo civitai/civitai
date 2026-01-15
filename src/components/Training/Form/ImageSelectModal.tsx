@@ -668,6 +668,8 @@ const ImageGridMedia = ({
     );
   }
 
+  const safeParsedMeta = imageMetaSchema.safeParse(img.params);
+
   return (
     <div
       className={`relative cursor-pointer${
@@ -697,7 +699,7 @@ const ImageGridMedia = ({
       {type === 'generation' || !!img.meta ? (
         <div className="absolute bottom-2 right-2">
           <ImageMetaPopover
-            meta={type === 'generation' ? imageMetaSchema.parse(img.params) : img.meta!}
+            meta={type === 'generation' && safeParsedMeta.success ? safeParsedMeta.data : img.meta!}
             hideSoftware
           >
             <LegacyActionIcon variant="transparent" size="md">

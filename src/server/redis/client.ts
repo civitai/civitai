@@ -7,6 +7,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -180,6 +181,51 @@ declare global {
 
 const log = createLogger('redis', 'green');
 
+// Track topology refresh intervals for cleanup
+const clusterRefreshIntervals = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Trigger topology rediscovery on a cluster client.
+ * Uses internal _slots.rediscover() method - this is undocumented but stable.
+ * See: https://github.com/redis/node-redis/issues/2806
+ */
+function triggerTopologyRediscovery(client: any, reason: string) {
+  try {
+    if (client._slots?.rediscover) {
+      log(`Triggering topology rediscovery: ${reason}`);
+      client._slots.rediscover().catch((err: Error) => {
+        log(`Topology rediscovery failed: ${err.message}`);
+      });
+    }
+  } catch (err) {
+    // Silently ignore if rediscover is not available
+  }
+}
+
+/**
+ * Parse cluster node URLs from environment variable.
+ * Falls back to single URL if REDIS_CLUSTER_NODES is not set.
+ */
+function parseClusterNodes(fallbackUrl: string): { url: string }[] {
+  if (env.REDIS_CLUSTER_NODES) {
+    const nodes = env.REDIS_CLUSTER_NODES.split(',')
+      .map((nodeUrl) => nodeUrl.trim())
+      .filter(Boolean)
+      .map((nodeUrl) => {
+        const url = new URL(nodeUrl);
+        return { url: `${url.protocol}//${url.host}` };
+      });
+
+    if (nodes.length > 0) {
+      log(`Using ${nodes.length} cluster root nodes from REDIS_CLUSTER_NODES`);
+      return nodes;
+    }
+  }
+
+  log('Using single cluster root node from REDIS_URL');
+  return [{ url: fallbackUrl }];
+}
+
 function getBaseClient(type: 'cache' | 'system') {
   log(`Creating Redis client (${type})`);
 
@@ -209,14 +255,16 @@ function getBaseClient(type: 'cache' | 'system') {
 
   const baseClient = isCluster
     ? createCluster({
-        rootNodes: [
-          {
-            url: connectionUrl,
-            socket: socketConfig,
-            pingInterval,
-          },
-        ],
-        defaults: authConfig,
+        // Use multiple root nodes for redundant topology discovery
+        rootNodes: parseClusterNodes(connectionUrl),
+        defaults: {
+          ...authConfig,
+          socket: socketConfig,
+          pingInterval,
+        },
+        // Increase max redirections for stability during failover
+        // Default is 16, we increase to handle longer failover scenarios
+        maxCommandRedirections: 32,
       })
     : createClient({
         url: connectionUrl,
@@ -225,10 +273,118 @@ function getBaseClient(type: 'cache' | 'system') {
         pingInterval,
       });
 
+  // Common event handlers
   baseClient.on('error', (err: Error) => log(`Redis Error`, err));
   baseClient.on('connect', () => log('Redis connected'));
   baseClient.on('reconnecting', () => log('Redis reconnecting'));
   baseClient.on('ready', () => log('Redis ready!'));
+
+  // Cluster-specific event handlers for failover detection
+  // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
+  // The flag uses the "is-next" segment (hostname == next.civitai.com) to enable by default on next
+  if (isCluster) {
+    // Extract hostname for Flipt context (used for segment matching)
+    const getFliptHostname = (): string => {
+      try {
+        // NEXTAUTH_URL contains the full URL like https://next.civitai.com
+        const nextAuthUrl = env.NEXTAUTH_URL;
+        if (nextAuthUrl) {
+          return new URL(nextAuthUrl).hostname;
+        }
+      } catch {
+        // Ignore URL parsing errors
+      }
+      return 'unknown';
+    };
+    const fliptHostname = getFliptHostname();
+    const fliptContext = { hostname: fliptHostname };
+    log(`Flipt context for enhanced failover flag: hostname=${fliptHostname}`);
+
+    // Helper to check feature flag before triggering rediscovery
+    const maybeRediscover = async (reason: string) => {
+      const isEnhancedFailoverEnabled = await isFlipt(
+        FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+        'redis-cluster', // entityId
+        fliptContext // context for segment matching
+      );
+      if (isEnhancedFailoverEnabled) {
+        triggerTopologyRediscovery(baseClient, reason);
+      }
+    };
+
+    // Triggered when a specific node encounters an error
+    baseClient.on('node-error', (err: Error, node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node error [${nodeAddr}]: ${err.message}`);
+      // Trigger topology rediscovery when a node fails (if feature enabled)
+      maybeRediscover(`node-error on ${nodeAddr}`);
+    });
+
+    // Triggered when a node disconnects
+    // This is critical for detecting failovers where the old master goes down
+    baseClient.on('node-disconnect', (node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node disconnected: ${nodeAddr}`);
+      // Trigger topology rediscovery to find the new master (if feature enabled)
+      maybeRediscover(`node-disconnect on ${nodeAddr}`);
+    });
+
+    // Triggered when a node reconnects
+    baseClient.on('node-connect', (node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node connected: ${nodeAddr}`);
+    });
+
+    // Triggered when a node is ready
+    baseClient.on('node-ready', (node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node ready: ${nodeAddr}`);
+    });
+
+    // Set up periodic topology refresh after client is ready and feature flag is checked
+    // This ensures we don't rely solely on MOVED/ASK errors for discovery
+    // See: https://github.com/redis/node-redis/issues/2806
+    baseClient.once('ready', async () => {
+      const isEnhancedFailoverEnabled = await isFlipt(
+        FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+        'redis-cluster', // entityId
+        fliptContext // context for segment matching
+      );
+
+      if (!isEnhancedFailoverEnabled) {
+        log('Enhanced cluster failover handling is DISABLED (feature flag off)');
+        return;
+      }
+
+      log('Enhanced cluster failover handling is ENABLED');
+
+      const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
+      if (refreshInterval > 0) {
+        const intervalId = setInterval(() => {
+          triggerTopologyRediscovery(baseClient, 'periodic refresh');
+        }, refreshInterval);
+
+        // Store interval for cleanup
+        clusterRefreshIntervals.set(type, intervalId);
+
+        // Wrap close to clean up interval
+        const originalClose = baseClient.close?.bind(baseClient);
+        if (originalClose) {
+          (baseClient as any).close = async () => {
+            const interval = clusterRefreshIntervals.get(type);
+            if (interval) {
+              clearInterval(interval);
+              clusterRefreshIntervals.delete(type);
+              log(`Cleared topology refresh interval for ${type}`);
+            }
+            return originalClose();
+          };
+        }
+
+        log(`Topology refresh scheduled every ${refreshInterval}ms`);
+      }
+    });
+  }
 
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
@@ -618,7 +774,7 @@ export const REDIS_KEYS = {
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
-    USER_DOWNLOADS: 'packed:caches:user-downloads',
+    USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',
       IMAGES: 'packed:caches:mod-rules:images',

@@ -93,7 +93,8 @@ export type SubscriptionPlan = Awaited<ReturnType<typeof getPlans>>[number];
 export const getUserSubscription = async ({
   userId,
   buzzType,
-}: GetUserSubscriptionInput & { buzzType?: string }) => {
+  includeBadState,
+}: GetUserSubscriptionInput & { buzzType?: string; includeBadState?: boolean }) => {
   // If buzzType is provided, use the composite unique key
   // Otherwise, get the first subscription (backward compatibility - defaults to yellow)
   const subscription = await dbWrite.customerSubscription.findFirst({
@@ -133,11 +134,18 @@ export const getUserSubscription = async ({
     },
   });
 
-  if (
-    !subscription ||
-    ['canceled', 'incomplete_expired', 'past_due', 'unpaid'].some((s) => s === subscription.status)
-  )
-    return null;
+  // Statuses that always exclude a subscription (terminal states)
+  const terminalStatuses = ['canceled', 'incomplete_expired'];
+  // Statuses that are bad but can be recovered (show to user if includeBadState is true)
+  const recoverableBadStatuses = ['past_due', 'unpaid'];
+
+  if (!subscription) return null;
+
+  // Always exclude terminal statuses
+  if (terminalStatuses.includes(subscription.status)) return null;
+
+  // Exclude recoverable bad statuses unless includeBadState is true
+  if (!includeBadState && recoverableBadStatuses.includes(subscription.status)) return null;
 
   const productMeta = subscriptionProductMetadataSchema.parse(subscription.product.metadata);
 

@@ -18,13 +18,13 @@ import {
   minUploadSize,
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
-import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
 import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';
-import type { Blob as ImageBlob } from '@civitai/client';
 import { almostEqual, formatBytes } from '~/utils/number-helpers';
 import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -374,8 +374,7 @@ export function SourceImageUploadMultiple({
 
   // handle drawing upload for individual images
   async function handleDrawingUpload(index: number, drawingBlob: Blob, elements: DrawingElement[]) {
-    const base64 = await getBase64(drawingBlob);
-    const response = await uploadOrchestratorImage(base64, getRandomId());
+    const response = await uploadOrchestratorImage(drawingBlob, getRandomId());
 
     if (response.url && response.available) {
       const newImage = { url: response.url, width: response.width, height: response.height };
@@ -961,10 +960,23 @@ SourceImageUploadMultiple.Image = function ImagePreview({
 };
 
 export async function uploadOrchestratorImage(src: string | Blob | File, id: string) {
-  let body: string;
+  const size = await getImageDimensions(src);
+
+  // If already an orchestrator URL, return it directly
   if (typeof src === 'string' && isOrchestratorUrl(src)) {
-    body = src;
-  } else {
+    return {
+      url: src,
+      ...size,
+      available: true,
+      type: 'image',
+      id: '',
+    };
+  }
+
+  try {
+    setImageUploading(id, true);
+
+    // Resize and convert to JPEG blob
     const resized = await resizeImage(src, {
       maxHeight: maxUpscaleSize,
       maxWidth: maxUpscaleSize,
@@ -972,29 +984,18 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
       minHeight: minUploadSize,
     });
     const jpegBlob = await imageToJpegBlob(resized);
-    body = await getBase64(jpegBlob);
-  }
-  try {
-    setImageUploading(id, true);
-    const response = await fetch('/api/orchestrator/uploadImage', { method: 'POST', body });
+
+    // Upload using presigned URL
+    const blob = await uploadConsumerBlob(jpegBlob);
     setImageUploading(id, false);
 
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error(await response.text());
-      } else {
-        throw new Error(response.statusText);
-      }
-    }
-    const blob: ImageBlob = await response.json();
-    const size = await getImageDimensions(src);
     return { ...blob, ...size };
   } catch (e) {
+    setImageUploading(id, false);
     const error = e as Error;
-    const size = await getImageDimensions(src);
 
     return {
-      url: body,
+      url: typeof src === 'string' ? src : URL.createObjectURL(src),
       ...size,
       available: false,
       blockedReason: error.message,

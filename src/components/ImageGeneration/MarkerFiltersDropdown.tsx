@@ -100,7 +100,7 @@ export function DumbMarkerFiltersDropdown({
         </Indicator>
         <Popover.Dropdown maw={576} w="100%">
           <ScrollArea.Autosize mah={'calc(90vh - var(--header-height) - 56px)'} type="hover">
-            <Stack gap={8}>
+            <Stack gap={8} pb="xl">
               {/* Clear all filters button */}
               {filterLength > 0 && (
                 <Button
@@ -113,6 +113,24 @@ export function DumbMarkerFiltersDropdown({
                   Clear all filters
                 </Button>
               )}
+
+              <Divider label="Reactions" className="text-sm font-bold" />
+              <div className="flex gap-2">
+                {Object.values(GenerationReactType).map((marker) => {
+                  return (
+                    <FilterChip
+                      key={marker}
+                      checked={marker === filters.marker}
+                      onChange={(checked) => {
+                        setMarker(checked ? marker : undefined);
+                        setFilters({ marker: checked ? marker : undefined });
+                      }}
+                    >
+                      <span>{titleCase(marker)}</span>
+                    </FilterChip>
+                  );
+                })}
+              </div>
 
               {!hideMediaTypes && (
                 <>
@@ -153,9 +171,7 @@ export function DumbMarkerFiltersDropdown({
                   <FilterChip
                     key={group}
                     checked={filters.baseModel === group}
-                    onChange={(checked) =>
-                      setFilters({ baseModel: checked ? group : undefined })
-                    }
+                    onChange={(checked) => setFilters({ baseModel: checked ? group : undefined })}
                   >
                     {baseModelGroupConfig[group as BaseModelGroup]?.name ?? group}
                   </FilterChip>
@@ -175,9 +191,7 @@ export function DumbMarkerFiltersDropdown({
                   <FilterChip
                     key={value}
                     checked={filters.processType === value}
-                    onChange={(checked) =>
-                      setFilters({ processType: checked ? value : undefined })
-                    }
+                    onChange={(checked) => setFilters({ processType: checked ? value : undefined })}
                   >
                     {label}
                   </FilterChip>
@@ -216,24 +230,6 @@ export function DumbMarkerFiltersDropdown({
                 >
                   Hide Failed
                 </FilterChip>
-              </div>
-
-              <Divider label="Reactions" className="text-sm font-bold" />
-              <div className="flex gap-2">
-                {Object.values(GenerationReactType).map((marker) => {
-                  return (
-                    <FilterChip
-                      key={marker}
-                      checked={marker === filters.marker}
-                      onChange={(checked) => {
-                        setMarker(checked ? marker : undefined);
-                        setFilters({ marker: checked ? marker : undefined });
-                      }}
-                    >
-                      <span>{titleCase(marker)}</span>
-                    </FilterChip>
-                  );
-                })}
               </div>
             </Stack>
           </ScrollArea.Autosize>

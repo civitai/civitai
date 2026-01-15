@@ -274,6 +274,7 @@ export const getFileForModelVersion = async ({
     return {
       status: 'success',
       url,
+      fileId: file.id,
       modelId: modelVersion.model.id,
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
@@ -347,6 +348,7 @@ type ModelVersionFileResult =
   | {
       status: 'success';
       url: string;
+      fileId: number;
       modelId: number;
       modelVersionId: number;
       nsfw: boolean;
