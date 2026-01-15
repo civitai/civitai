@@ -297,7 +297,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
       SELECT
         arrayJoin(resourcesUsed) as modelVersionId
       FROM orchestration.jobs
-      WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'falFlux2Image')
+      WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'falFlux2Image', 'QwenImageEditStableDiffusionCpp', 'QwenStableDiffusionCpp')
         AND createdAt >= ${ctx.lastUpdate}
     )
   `;
