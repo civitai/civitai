@@ -96,6 +96,33 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
   return result;
 };
 
+export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
+  if (ids.length === 0) return [];
+
+  const results = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      name: true,
+      baseModel: true,
+      model: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  return results.map((v) => ({
+    id: v.id,
+    name: v.name,
+    baseModel: v.baseModel,
+    modelId: v.model.id,
+    modelName: v.model.name,
+  }));
+};
+
 export const getDefaultModelVersion = async ({
   modelId,
   modelVersionId,

@@ -1,5 +1,4 @@
 import {
-  Alert,
   Button,
   Divider,
   Group,
@@ -7,32 +6,23 @@ import {
   Paper,
   Select,
   Stack,
-  Text,
   Textarea,
   TextInput,
   Title,
 } from '@mantine/core';
 import { DateTimePicker } from '@mantine/dates';
-import { IconAlertCircle, IconSparkles } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
+import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
 import type { Prize } from '~/server/schema/challenge.schema';
-
-// NSFW level options (bitwise flags)
-const nsfwLevelOptions = [
-  { value: '1', label: 'PG Only' },
-  { value: '3', label: 'PG + PG-13' },
-  { value: '7', label: 'PG + PG-13 + R' },
-  { value: '15', label: 'PG through X' },
-  { value: '31', label: 'All levels' },
-];
 
 // Form data type (explicit, no zod inference issues)
 type ChallengeFormData = {
@@ -107,7 +97,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     control,
     handleSubmit,
     watch,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<ChallengeFormData>({
     defaultValues: {
@@ -137,7 +126,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const upsertMutation = trpc.challenge.upsert.useMutation({
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryUtils.challenge.getModeratorList.invalidate();
       showSuccessNotification({
         message: isEditing ? 'Challenge updated successfully' : 'Challenge created successfully',
@@ -192,7 +181,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const prize1 = watch('prize1Buzz');
   const prize2 = watch('prize2Buzz');
   const prize3 = watch('prize3Buzz');
-  const entryPrize = watch('entryPrizeBuzz');
   const totalPrizePool = (prize1 || 0) + (prize2 || 0) + (prize3 || 0);
 
   return (
@@ -243,28 +231,18 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
         {/* Model Version Selection */}
         <Paper withBorder p="md">
-          <Stack gap="md">
-            <Title order={4}>Required Model Versions</Title>
-            <Text size="sm" c="dimmed">
-              Optionally require specific model versions for entries. Leave empty to allow any model.
-            </Text>
-
-            {/* TODO: Add proper ModelVersionSelector component */}
-            <Controller
-              name="modelVersionIds"
-              control={control}
-              render={({ field }) => (
-                <Text size="sm" c="dimmed">
-                  {field.value.length > 0
-                    ? `${field.value.length} model version(s) selected`
-                    : 'No model versions required (any model allowed)'}
-                </Text>
-              )}
-            />
-            <Text size="xs" c="dimmed">
-              Model version selection UI coming soon. For now, challenges allow any model.
-            </Text>
-          </Stack>
+          <Controller
+            name="modelVersionIds"
+            control={control}
+            render={({ field }) => (
+              <ModelVersionMultiSelect
+                value={field.value}
+                onChange={field.onChange}
+                label="Required Model Versions"
+                description="Optionally require specific model versions for entries. Entries must use at least one of these models (OR logic). Leave empty to allow any model."
+              />
+            )}
+          />
         </Paper>
 
         {/* Timing */}
@@ -393,27 +371,26 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           <Stack gap="md">
             <Title order={4}>Entry Requirements</Title>
 
-            <Group grow>
-              <Controller
-                name="allowedNsfwLevel"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    label="Allowed Content Ratings"
-                    description="Which NSFW levels are allowed for entries"
-                    data={nsfwLevelOptions}
-                    value={String(field.value)}
-                    onChange={(value) => field.onChange(Number(value))}
-                  />
-                )}
-              />
+            {/* Content Rating Selection */}
+            <Controller
+              name="allowedNsfwLevel"
+              control={control}
+              render={({ field }) => (
+                <ContentRatingSelect value={field.value} onChange={field.onChange} />
+              )}
+            />
 
+            <Divider />
+
+            {/* Entry Limits */}
+            <Group grow>
               <Controller
                 name="maxEntriesPerUser"
                 control={control}
                 render={({ field }) => (
                   <NumberInput
                     label="Max Entries Per User"
+                    description="Maximum submissions per participant"
                     min={1}
                     max={100}
                     value={field.value}

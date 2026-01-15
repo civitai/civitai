@@ -5,9 +5,9 @@
  * during an active challenge.
  */
 
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
@@ -53,7 +53,7 @@ export async function checkAndAwardEntryPrize({
       SELECT COUNT(*) as count
       FROM "BuzzTransaction"
       WHERE "toUserId" = ${userId}
-      AND type = ${TransactionType.Award}
+      AND type = ${TransactionType.Reward}
       AND description LIKE ${'%challenge-entry-prize:' + challenge.id + '%'}
     `;
 
@@ -81,7 +81,7 @@ export async function checkAndAwardEntryPrize({
       fromAccountId: 0, // System account
       toAccountId: userId,
       amount: challenge.entryPrize.buzz,
-      type: TransactionType.Award,
+      type: TransactionType.Reward,
       description: `Challenge participation prize (challenge-entry-prize:${challenge.id})`,
       details: {
         challengeId: challenge.id,
@@ -89,7 +89,9 @@ export async function checkAndAwardEntryPrize({
       },
     });
 
-    log(`Awarded entry prize of ${challenge.entryPrize.buzz} buzz to user ${userId} for challenge ${challenge.id}`);
+    log(
+      `Awarded entry prize of ${challenge.entryPrize.buzz} buzz to user ${userId} for challenge ${challenge.id}`
+    );
 
     return true;
   } catch (error) {

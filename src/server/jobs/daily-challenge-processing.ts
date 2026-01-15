@@ -8,10 +8,7 @@ import { eventEngine } from '~/server/events';
 import {
   createChallengeRecord,
   createChallengeWinner,
-  getChallengeById,
-  getScheduledChallengeFromDb,
   updateChallengeStatus,
-  type ChallengeDetails,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -31,7 +28,7 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
@@ -173,6 +170,17 @@ export async function createUpcomingChallenge() {
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
+  // Get published model version IDs for this model
+  const modelVersionIds = (
+    await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT mv.id
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ${resource.modelId}
+      AND mv.status = 'Published'
+      ORDER BY mv.index ASC
+    `
+  ).map((v) => v.id);
+
   // Get cover of resource
   const image = await getCoverOfModel(resource.modelId);
 
@@ -281,7 +289,8 @@ export async function createUpcomingChallenge() {
     invitation: articleDetails.invitation,
     coverImageId,
     nsfwLevel: 1,
-    modelId: resource.modelId,
+    allowedNsfwLevel: 1, // PG only for auto-generated challenges
+    modelVersionIds,
     collectionId: collection.id,
     maxEntriesPerUser: config.entryPrizeRequirement * 2,
     prizes: prizeConfig.prizes,
@@ -337,9 +346,7 @@ async function reviewEntries() {
 
     // Get the Challenge record to check allowedNsfwLevel (new system)
     // Fall back to PG-only (1) for old article-based challenges
-    const [challengeRecord] = await dbRead.$queryRaw<
-      [{ allowedNsfwLevel: number } | undefined]
-    >`
+    const [challengeRecord] = await dbRead.$queryRaw<[{ allowedNsfwLevel: number } | undefined]>`
       SELECT "allowedNsfwLevel"
       FROM "Challenge"
       WHERE "collectionId" = ${currentChallenge.collectionId}

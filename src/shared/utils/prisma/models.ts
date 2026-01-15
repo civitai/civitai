@@ -627,7 +627,6 @@ export interface Model {
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
   coveredCheckpoints?: CoveredCheckpoint[];
-  challenges?: Challenge[];
 }
 
 export interface ModelFlag {
@@ -741,7 +740,6 @@ export interface ModelVersion {
   featuredInfo?: FeaturedModelVersion[];
   ImageResourceNew?: ImageResourceNew[];
   coveredCheckpoints?: CoveredCheckpoint[];
-  challenges?: Challenge[];
 }
 
 export interface ModelVersionEngagement {
@@ -2791,18 +2789,17 @@ export interface Challenge {
   coverImageId: number | null;
   coverImage?: Image | null;
   nsfwLevel: number;
-  modelId: number | null;
-  model?: Model | null;
-  modelVersionId: number | null;
-  modelVersion?: ModelVersion | null;
+  modelVersionIds: number[];
+  allowedNsfwLevel: number;
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxReviews: number | null;
-  collectionId: number;
-  collection?: Collection;
+  collectionId: number | null;
+  collection?: Collection | null;
   maxEntriesPerUser: number;
   prizes: JsonValue;
   entryPrize: JsonValue | null;
+  entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
   operationSpent: number;

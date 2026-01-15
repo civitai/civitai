@@ -8,7 +8,7 @@
  * Or add as a job and run via job runner.
  */
 
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -88,6 +88,19 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
       return null;
     }
 
+    // Get model version IDs for the model (if modelId exists)
+    let modelVersionIds: number[] = [];
+    if (article.modelId) {
+      const versions = await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT mv.id
+        FROM "ModelVersion" mv
+        WHERE mv."modelId" = ${article.modelId}
+        AND mv.status = 'Published'
+        ORDER BY mv.index ASC
+      `;
+      modelVersionIds = versions.map((v) => v.id);
+    }
+
     // Create Challenge record
     const challenge = await dbWrite.challenge.create({
       data: {
@@ -100,9 +113,11 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
         invitation: article.invitation,
         coverImageId: article.coverId,
         nsfwLevel: 1,
-        modelId: article.modelId,
+        allowedNsfwLevel: 1, // PG only for migrated challenges
+        modelVersionIds,
         collectionId: article.collectionId,
         maxEntriesPerUser: entryPrizeRequirement * 2,
+        entryPrizeRequirement,
         prizes: prizes as Prisma.InputJsonValue,
         entryPrize: entryPrize as Prisma.InputJsonValue,
         prizePool: prizes.reduce((sum: number, p: { buzz: number }) => sum + p.buzz, 0),
@@ -111,6 +126,7 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
         status,
         metadata: {
           articleId: article.articleId,
+          modelId: article.modelId, // Keep original modelId in metadata for reference
           migratedAt: new Date().toISOString(),
         } as Prisma.InputJsonValue,
       },

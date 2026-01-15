@@ -68,6 +68,7 @@ export type ChallengeDetail = {
   entryPrize: Prize | null;
   entryPrizeRequirement: number; // Min entries for participation prize
   prizePool: number;
+  operationBudget: number; // Budget for AI review costs
   entryCount: number;
   createdBy: {
     id: number;
@@ -316,6 +317,7 @@ async function getChallengeDetail(
     entryPrize: challenge.entryPrize,
     entryPrizeRequirement: challenge.entryPrizeRequirement,
     prizePool: challenge.prizePool,
+    operationBudget: challenge.operationBudget,
     entryCount,
     createdBy: creator,
     winners,
