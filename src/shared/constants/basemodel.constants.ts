@@ -1077,7 +1077,7 @@ export const workflows: WorkflowRecord[] = [
     ecosystemIds: TXT2IMG_IDS,
   },
   {
-    key: 'draft',
+    key: 'txt2img:draft',
     label: 'Draft',
     inputType: 'text',
     category: 'text-to-image',

@@ -390,7 +390,7 @@ export type CheckpointVersionOption = {
  *   .merge(
  *     (ctx) => createCheckpointGraph({
  *       versions: fluxModeVersionOptions,
- *       modelLocked: ctx.workflow === 'draft',
+ *       modelLocked: ctx.workflow === 'txt2img:draft',
  *     }),
  *     ['workflow']
  *   );

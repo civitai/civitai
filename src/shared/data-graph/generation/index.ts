@@ -14,6 +14,12 @@ export { stableDiffusionGraph } from './stable-diffusion-graph';
 export { fluxGraph } from './flux-graph';
 export { viduGraph, viduAspectRatios, viduStyles, viduMovementAmplitudes } from './vidu-graph';
 export {
+  openaiGraph,
+  openaiModeVersionOptions,
+  openaiVersionIds,
+  qualityOptions as openaiQualityOptions,
+} from './openai-graph';
+export {
   videoInterpolationGraph,
   type VideoInterpolationGraphCtx,
 } from './video-interpolation-graph';

@@ -92,7 +92,11 @@ export function Controller<
   CtxMeta extends Record<string, unknown>,
   CtxValues extends Record<string, unknown>,
   K extends string
->({ graph, name, render }: ControllerProps<Ctx, ExternalCtx, CtxMeta, CtxValues, K>): ReactElement | null {
+>({
+  graph,
+  name,
+  render,
+}: ControllerProps<Ctx, ExternalCtx, CtxMeta, CtxValues, K>): ReactElement | null {
   // Subscribe to this specific node
   const subscribe = useCallback(
     (cb: () => void) => graph.subscribe(name as string, cb),

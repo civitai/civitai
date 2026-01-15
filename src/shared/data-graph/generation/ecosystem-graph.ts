@@ -34,6 +34,7 @@ import { chromaGraph } from './chroma-graph';
 import { hiDreamGraph } from './hi-dream-graph';
 import { ponyV7Graph } from './pony-v7-graph';
 import { viduGraph } from './vidu-graph';
+import { openaiGraph } from './openai-graph';
 import { isWorkflowAvailable, getDefaultEcosystemForWorkflow } from './workflows';
 
 // =============================================================================
@@ -130,7 +131,7 @@ export const ecosystemGraph = new DataGraph<
   .node(
     'quantity',
     (ctx, ext) => {
-      const isDraft = ctx.workflow === 'draft';
+      const isDraft = ctx.workflow === 'txt2img:draft';
       return quantityNode({ min: isDraft ? 4 : 1, step: isDraft ? 4 : 1 })(ctx, ext);
     },
     ['workflow']
@@ -170,6 +171,7 @@ export const ecosystemGraph = new DataGraph<
       if (ctx.baseModel === 'HiDream') return 'hi-dream';
       if (ctx.baseModel === 'PonyV7') return 'pony-v7';
       if (ctx.baseModel === 'Vidu') return 'vidu';
+      if (ctx.baseModel === 'OpenAI') return 'openai';
       return undefined;
     },
     ['baseModel']
@@ -189,6 +191,7 @@ export const ecosystemGraph = new DataGraph<
     'hi-dream': hiDreamGraph,
     'pony-v7': ponyV7Graph,
     vidu: viduGraph,
+    openai: openaiGraph,
   });
 
 type ImageConfig = {

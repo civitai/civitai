@@ -35,6 +35,8 @@ export interface NamedStorageGroup extends BaseStorageGroup {
 
 /** Catch-all group for remaining keys */
 export interface CatchAllStorageGroup extends BaseStorageGroup {
+  /** Group name - used as part of storage key. Optional. */
+  name?: string;
   /** Use '*' to catch all ungrouped keys */
   keys: '*';
 }
@@ -122,13 +124,12 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     }
 
     const allValues: Record<string, unknown> = {};
+    // Track keys that are explicitly listed in named groups
+    // These should be excluded from wildcard groups
+    const explicitKeys = this.getExplicitKeys();
 
     for (const group of this.options.groups) {
-      const storageKey = this.buildStorageKey(
-        group.keys === '*' ? undefined : group.name,
-        group.scope,
-        allValues as Ctx
-      );
+      const storageKey = this.buildStorageKey(group.name, group.scope, allValues as Ctx);
       if (!storageKey) {
         continue;
       }
@@ -138,7 +139,12 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
         try {
           const values = JSON.parse(stored);
           if (group.keys === '*') {
-            Object.assign(allValues, values);
+            // For wildcard groups, exclude keys that are explicitly defined in other groups
+            for (const key of Object.keys(values)) {
+              if (!explicitKeys.has(key)) {
+                allValues[key] = values[key];
+              }
+            }
           } else {
             for (const key of group.keys) {
               if (key in values) {
@@ -155,6 +161,19 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     return allValues as Partial<Ctx>;
   }
 
+  /** Get all keys that are explicitly listed in named groups (non-wildcard) */
+  private getExplicitKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const group of this.options.groups) {
+      if (group.keys !== '*') {
+        for (const key of group.keys) {
+          keys.add(key);
+        }
+      }
+    }
+    return keys;
+  }
+
   onBeforeEvaluate(): void {
     this.setupValueProvider();
   }
@@ -168,27 +187,60 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
   save(): void {
     const ctx = this.graph.ctx;
-    const claimedKeys = new Set<string>();
     const activeKeys = new Set(Object.keys(ctx));
+
+    // Pre-compute keys claimed by conditional scoped groups whose conditions match.
+    // These keys are excluded from unconditional groups but NOT from other conditional groups.
+    const conditionalClaimedKeys = new Set<string>();
+    for (const group of this.options.groups) {
+      if (!group.condition || !group.scope) continue;
+      if (!group.condition(ctx)) continue;
+      if (group.keys === '*') continue;
+
+      const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
+      if (!storageKey) continue;
+
+      for (const key of group.keys) {
+        if (activeKeys.has(key)) {
+          conditionalClaimedKeys.add(key);
+        }
+      }
+    }
+
+    // Track keys claimed by unconditional groups (prevents duplicate saves)
+    const unconditionalClaimedKeys = new Set<string>();
 
     for (const group of this.options.groups) {
       if (group.condition && !group.condition(ctx)) continue;
 
+      const isConditionalScoped = group.condition && group.scope;
+
       let keysToSave: string[];
       if (group.keys === '*') {
-        keysToSave = Array.from(activeKeys).filter((k) => !claimedKeys.has(k));
+        // Wildcard: exclude both conditional and unconditional claimed keys
+        keysToSave = Array.from(activeKeys).filter(
+          (k) => !conditionalClaimedKeys.has(k) && !unconditionalClaimedKeys.has(k)
+        );
+      } else if (isConditionalScoped) {
+        // Conditional scoped: only exclude keys claimed by other unconditional groups
+        keysToSave = group.keys.filter(
+          (k) => activeKeys.has(k) && !unconditionalClaimedKeys.has(k)
+        );
       } else {
-        keysToSave = group.keys.filter((k) => activeKeys.has(k) && !claimedKeys.has(k));
+        // Unconditional: exclude keys claimed by conditional groups and other unconditional groups
+        keysToSave = group.keys.filter(
+          (k) =>
+            activeKeys.has(k) && !conditionalClaimedKeys.has(k) && !unconditionalClaimedKeys.has(k)
+        );
       }
 
-      const storageKey = this.buildStorageKey(
-        group.keys === '*' ? undefined : group.name,
-        group.scope,
-        ctx
-      );
+      const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
       if (!storageKey) continue;
 
-      keysToSave.forEach((k) => claimedKeys.add(k));
+      // Only unconditional groups claim keys (conditional groups can overlap)
+      if (!isConditionalScoped) {
+        keysToSave.forEach((k) => unconditionalClaimedKeys.add(k));
+      }
 
       // Start with existing values to retain keys from inactive nodes
       let values: Record<string, unknown> = {};
@@ -198,6 +250,16 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
           values = JSON.parse(stored);
         } catch {
           // Invalid JSON, start fresh
+        }
+      }
+
+      // For wildcard groups, remove any keys that are explicitly defined in named groups
+      // This cleans up stale data when keys are moved to explicit groups
+      if (group.keys === '*') {
+        // Get all explicitly listed keys to remove from wildcard group storage
+        const explicitKeys = this.getExplicitKeys();
+        for (const key of explicitKeys) {
+          delete values[key];
         }
       }
 
@@ -217,11 +279,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     const ctx = this.graph.ctx;
 
     for (const group of this.options.groups) {
-      const storageKey = this.buildStorageKey(
-        group.keys === '*' ? undefined : group.name,
-        group.scope,
-        ctx
-      );
+      const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
       if (storageKey) {
         this.options.storage.removeItem(storageKey);
       }
@@ -233,11 +291,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     const keys: string[] = [];
 
     for (const group of this.options.groups) {
-      const storageKey = this.buildStorageKey(
-        group.keys === '*' ? undefined : group.name,
-        group.scope,
-        ctx
-      );
+      const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
       if (storageKey && !keys.includes(storageKey)) {
         keys.push(storageKey);
       }
@@ -250,34 +304,79 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     const hasScopedGroups = this.options.groups.some((g) => g.scope);
     if (!hasScopedGroups) return;
 
-    const namedScopedKeys = new Set<string>();
-    for (const group of this.options.groups) {
-      if (group.scope && group.keys !== '*') {
-        group.keys.forEach((k) => namedScopedKeys.add(k));
-      }
-    }
+    // Get all explicitly listed keys (from any named group, not just scoped ones)
+    // These should be excluded from wildcard groups
+    const explicitKeys = this.getExplicitKeys();
 
     // Register scope dependencies with the graph
     // When a scope key changes, dependent keys will be re-evaluated
     this.registerScopeDependencies();
 
     this.graph.setValueProvider((key, ctx) => {
+      // First, check conditional scoped groups (highest priority when condition matches)
       for (const group of this.options.groups) {
-        if (!group.scope) continue;
+        if (!group.scope || !group.condition) continue;
 
         if (group.keys === '*') {
-          if (namedScopedKeys.has(key)) continue;
+          if (explicitKeys.has(key)) continue;
         } else {
           if (!group.keys.includes(key)) continue;
         }
 
-        if (group.condition && !group.condition(ctx)) continue;
+        if (!group.condition(ctx)) continue;
 
-        const storageKey = this.buildStorageKey(
-          group.keys === '*' ? undefined : group.name,
-          group.scope,
-          ctx
-        );
+        const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
+        if (!storageKey) continue;
+        const stored = this.options.storage.getItem(storageKey);
+        if (stored) {
+          try {
+            const values = JSON.parse(stored);
+            if (key in values) {
+              return values[key];
+            }
+          } catch {
+            // Invalid JSON, skip
+          }
+        }
+      }
+
+      // Then check unconditional scoped groups
+      for (const group of this.options.groups) {
+        if (!group.scope || group.condition) continue;
+
+        if (group.keys === '*') {
+          if (explicitKeys.has(key)) continue;
+        } else {
+          if (!group.keys.includes(key)) continue;
+        }
+
+        const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
+        if (!storageKey) continue;
+        const stored = this.options.storage.getItem(storageKey);
+        if (stored) {
+          try {
+            const values = JSON.parse(stored);
+            if (key in values) {
+              return values[key];
+            }
+          } catch {
+            // Invalid JSON, skip
+          }
+        }
+      }
+
+      // Finally, fall back to unscoped groups for keys that exist in conditional scoped groups
+      // but whose condition doesn't currently match
+      for (const group of this.options.groups) {
+        if (group.scope) continue; // Only check unscoped groups
+
+        if (group.keys === '*') {
+          if (explicitKeys.has(key)) continue;
+        } else {
+          if (!group.keys.includes(key)) continue;
+        }
+
+        const storageKey = this.buildStorageKey(group.name, undefined, ctx);
         if (!storageKey) continue;
         const stored = this.options.storage.getItem(storageKey);
         if (stored) {
@@ -330,6 +429,11 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
   ): string | null {
     const parts = [this.options.prefix];
 
+    // Group name comes before scope values: prefix.groupName.scopeValue
+    if (groupName) {
+      parts.push(groupName);
+    }
+
     if (scope) {
       const scopeKeys = Array.isArray(scope) ? scope : [scope];
       for (const scopeKey of scopeKeys) {
@@ -340,10 +444,6 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
           return null;
         }
       }
-    }
-
-    if (groupName) {
-      parts.push(groupName);
     }
 
     return parts.join('.');

@@ -79,7 +79,7 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
  */
 export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   // Workflow is the primary selector - determines input type, output type, and available ecosystems
-  // Workflow values are workflow keys (e.g., 'txt2img', 'draft', 'img2img:face-fix')
+  // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'img2img:face-fix')
   .node(
     'workflow',
     () => {
@@ -172,7 +172,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
   .discriminator('workflow', {
     // Text to image workflows
     txt2img: ecosystemGraph,
-    draft: ecosystemGraph,
+    'txt2img:draft': ecosystemGraph,
     'txt2img:face-fix': ecosystemGraph,
     'txt2img:hires-fix': ecosystemGraph,
     // Image to image workflows
@@ -212,7 +212,7 @@ if ('test'.length > 5) {
         console.log(data.images);
       }
     }
-    if (data.workflow === 'draft') {
+    if (data.workflow === 'txt2img:draft') {
       console.log(data.baseModel);
       if (data.modelFamily === 'flux') {
         console.log(data.fluxMode);

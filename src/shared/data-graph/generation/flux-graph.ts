@@ -179,7 +179,7 @@ const ultraModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  * - ultra: aspectRatio (different options), fluxUltraRaw, seed
  *
  * Draft workflow behavior:
- * - When workflow is 'draft', model defaults to draft version and is locked
+ * - When workflow is 'txt2img:draft', model defaults to draft version and is locked
  * - If user changes model to a non-draft version, workflow switches to txt2img
  */
 
@@ -188,12 +188,12 @@ export const fluxGraph = new DataGraph<
   GenerationCtx
 >()
   // Merge checkpoint graph with dynamic modelLocked based on workflow
-  // When workflow is 'draft', force the model to draft version (overrides any existing value)
+  // When workflow is 'txt2img:draft', force the model to draft version (overrides any existing value)
   .merge(
     (ctx) =>
       createCheckpointGraph({
         versions: fluxModeVersionOptions,
-        modelLocked: ctx.workflow === 'draft',
+        modelLocked: ctx.workflow === 'txt2img:draft',
         defaultModelId: fluxVersionIds.standard,
       }),
     ['workflow']
@@ -204,7 +204,7 @@ export const fluxGraph = new DataGraph<
   .effect(
     (ctx, _ext, set) => {
       const isDraftModel = ctx.model?.id === fluxVersionIds.draft;
-      const isDraftWorkflow = ctx.workflow === 'draft';
+      const isDraftWorkflow = ctx.workflow === 'txt2img:draft';
 
       if (isDraftWorkflow && !isDraftModel) {
         set('model', { id: fluxVersionIds.draft } as ModelValue);
@@ -229,13 +229,13 @@ export const fluxGraph = new DataGraph<
       if (!model?.id) return;
 
       const isDraftModel = model.id === fluxVersionIds.draft;
-      const isDraftWorkflow = ctx.workflow === 'draft';
+      const isDraftWorkflow = ctx.workflow === 'txt2img:draft';
 
       // Only sync if there's an actual mismatch that needs fixing
       // This prevents loops: if Effect 1 set model to standard because workflow
       // changed to txt2img, isDraftWorkflow is already false, so no action needed
       if (isDraftModel && !isDraftWorkflow) {
-        set('workflow', 'draft');
+        set('workflow', 'txt2img:draft');
       } else if (!isDraftModel && isDraftWorkflow) {
         set('workflow', 'txt2img');
       }

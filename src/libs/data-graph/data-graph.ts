@@ -985,6 +985,10 @@ export class DataGraph<
     const entryKeys = new Set<string>();
     const newEntries: ActiveEntry[] = [];
 
+    if (this._debug) {
+      console.log(`  📥 activating branch "${source}", ${branchGraph.entries.length} entries`);
+    }
+
     for (const entry of branchGraph.entries) {
       const activeEntry: ActiveEntry = { ...entry, source };
       newEntries.push(activeEntry);
@@ -999,6 +1003,10 @@ export class DataGraph<
 
     // Insert new entries after the discriminator entry
     this.activeEntries.splice(insertAfterIndex + 1, 0, ...newEntries);
+
+    if (this._debug) {
+      console.log(`  📥 activated entryKeys:`, [...entryKeys]);
+    }
 
     return { entryKeys, insertedCount: newEntries.length };
   }
@@ -1041,6 +1049,7 @@ export class DataGraph<
         if (entry.kind === 'computed') {
           this.computedNodes.delete(entry.key);
         }
+        // Notify watchers - batched during evaluation to prevent UI flicker
         this.notifyNodeWatchers(entry.key);
       }
       if (entry.kind === 'discriminator') {
@@ -1114,9 +1123,13 @@ export class DataGraph<
         const isScopeDependencyChange = Array.from(this.scopeDependencies.entries()).some(
           ([scopeKey, dependentKeys]) => changed.has(scopeKey) && dependentKeys.has(entry.key)
         );
+        // Check if this node was just activated from a branch switch
+        // (its key is in changed, meaning activateBranch just added it)
+        const isFromBranchActivation = changed.has(entry.key);
         const shouldProcess =
           isDirectUpdate ||
           isScopeDependencyChange ||
+          isFromBranchActivation ||
           entry.deps.length === 0 ||
           entry.deps.some((dep) => changed.has(dep));
 
@@ -1188,7 +1201,12 @@ export class DataGraph<
           typeof def.meta === 'function' ? def.meta(this._ctx, this._ext) : def.meta ?? {};
         this.updateMeta(entry.key, metaValue);
       } else if (entry.kind === 'computed') {
-        const shouldProcess = entry.deps.length === 0 || entry.deps.some((dep) => changed.has(dep));
+        // Check if this node was just activated from a branch switch
+        const isFromBranchActivation = changed.has(entry.key);
+        const shouldProcess =
+          isFromBranchActivation ||
+          entry.deps.length === 0 ||
+          entry.deps.some((dep) => changed.has(dep));
         if (!shouldProcess) {
           currentIndex++;
           continue;
@@ -1280,8 +1298,7 @@ export class DataGraph<
             changed.add(key);
           }
 
-          // Continue to next entry (the first of the newly inserted entries)
-          // Don't increment currentIndex since we want to process the new entries
+          // Fall through to increment currentIndex, which will point to the first inserted entry
         }
       } else if (entry.kind === 'effect') {
         const depsChanged = entry.deps.some((dep) => changed.has(dep));

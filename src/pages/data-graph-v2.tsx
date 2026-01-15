@@ -46,7 +46,10 @@ import { WorkflowInput } from '~/components/generation_v2/inputs/WorkflowInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
 import { PromptInput } from '~/components/generation_v2/inputs/PromptInput';
-import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
+import {
+  AspectRatioInput,
+  type AspectRatioValue,
+} from '~/components/generation_v2/inputs/AspectRatioInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
@@ -107,6 +110,7 @@ function FormFooter() {
               onChange={(val) => onChange(Number(val) || 1)}
               min={meta.min}
               max={meta.max}
+              step={meta.step}
               size="md"
               variant="unstyled"
               styles={{
@@ -360,7 +364,7 @@ function GenerationForm() {
               return (
                 <AspectRatioInput
                   value={value}
-                  onChange={onChange}
+                  onChange={onChange as (value: AspectRatioValue) => void}
                   label="Aspect Ratio"
                   options={meta.options}
                   priorityOptions={priorityOptions}
@@ -546,6 +550,34 @@ function GenerationForm() {
                 />
               )}
             />
+
+            {/* OpenAI Transparent Background toggle */}
+            <Controller
+              graph={graph}
+              name="transparent"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  checked={value}
+                  onChange={(e) => onChange(e.target.checked)}
+                  label="Transparent Background"
+                  description="Generate image with transparent background"
+                />
+              )}
+            />
+
+            {/* OpenAI Quality selector */}
+            <Controller
+              graph={graph}
+              name="quality"
+              render={({ value, meta, onChange }) => (
+                <SelectInput
+                  value={value}
+                  onChange={onChange as (v: string) => void}
+                  label="Quality"
+                  options={meta.options}
+                />
+              )}
+            />
           </AccordionLayout>
         </Stack>
       </div>
@@ -562,15 +594,21 @@ const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,
   groups: [
     // Workflow is the primary selector - stored globally
-    { keys: ['workflow', 'outputFormat', 'priority'] },
-    // baseModel is scoped to workflow (different workflows may use different ecosystems)
-    { keys: ['baseModel'], scope: 'workflow' },
-    // Common settings shared across all workflows
+    { keys: ['workflow', 'outputFormat', 'priority', 'baseModel'] },
     { name: 'common', keys: ['prompt', 'negativePrompt', 'seed', 'quantity'] },
+    // baseModel is scoped to workflow (different workflows may use different ecosystems)
+    // { name: 'workflow', keys: ['baseModel'], scope: 'workflow' },
+    {
+      name: 'workflow',
+      keys: ['quantity'],
+      scope: 'workflow',
+      condition: (ctx) => ctx.workflow === 'txt2img:draft',
+    },
+    // Common settings shared across all workflows
     // Model-family specific settings scoped to baseModel
     // Values for inactive nodes are automatically retained in storage
     // (e.g., cfgScale/steps when switching to Ultra mode which doesn't have them)
-    { keys: '*', scope: 'baseModel' },
+    { name: 'scoped', keys: '*', scope: 'baseModel' },
   ],
 });
 
