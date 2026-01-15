@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Chip,
   CloseButton,
   Divider,
   Group,
@@ -22,9 +23,9 @@ import {
   IconTag,
   IconTrash,
 } from '@tabler/icons-react';
-import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { DownloadFilters, DownloadPeriod } from './download.utils';
@@ -98,38 +99,16 @@ function ChipSelector({
   selected: string[];
   onChange: (values: string[]) => void;
 }) {
-  const toggleValue = (value: string) => {
-    if (selected.includes(value)) {
-      onChange(selected.filter((v) => v !== value));
-    } else {
-      onChange([...selected, value]);
-    }
-  };
-
   return (
-    <Group gap={6}>
-      {options.map((option) => {
-        const isSelected = selected.includes(option.value);
-        return (
-          <Button
-            key={option.value}
-            size="xs"
-            radius="xl"
-            variant={isSelected ? 'filled' : 'light'}
-            color={isSelected ? 'blue' : 'gray'}
-            onClick={() => toggleValue(option.value)}
-            classNames={{
-              root: clsx(
-                'transition-colors',
-                !isSelected && 'border border-gray-3 dark:border-dark-4'
-              ),
-            }}
-          >
+    <Chip.Group value={selected} onChange={onChange} multiple>
+      <Group gap={6}>
+        {options.map((option) => (
+          <FilterChip key={option.value} value={option.value}>
             {option.label}
-          </Button>
-        );
-      })}
-    </Group>
+          </FilterChip>
+        ))}
+      </Group>
+    </Chip.Group>
   );
 }
 
@@ -173,6 +152,9 @@ export function DownloadFilterBar({ filters, availableOptions, onFiltersChange }
   const [debouncedSearch] = useDebouncedValue(searchValue, 300);
 
   // Update filters when debounced value changes
+  // Note: We intentionally exclude filters.query and onFiltersChange from deps:
+  // - Including filters.query would cause a cycle (change → effect → change)
+  // - The guard `newQuery !== filters.query` prevents unnecessary updates
   useEffect(() => {
     const newQuery = debouncedSearch || undefined;
     if (newQuery !== filters.query) {

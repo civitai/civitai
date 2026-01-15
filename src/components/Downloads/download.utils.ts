@@ -5,6 +5,7 @@ import dayjs from '~/shared/utils/dayjs';
 import type { DownloadHistoryItem } from '~/server/services/download.service';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { parseStringArray } from '~/utils/query-string-helpers';
 
 // Period options for time-based filtering
 export const downloadPeriods = ['all', 'day', 'week', 'month', 'year'] as const;
@@ -47,10 +48,10 @@ export function useDownloadFilters() {
     const { query, modelTypes, fileTypes, formats, baseModels, period } = router.query;
     return {
       query: typeof query === 'string' ? query : undefined,
-      modelTypes: typeof modelTypes === 'string' ? modelTypes.split(',') : undefined,
-      fileTypes: typeof fileTypes === 'string' ? fileTypes.split(',') : undefined,
-      formats: typeof formats === 'string' ? formats.split(',') : undefined,
-      baseModels: typeof baseModels === 'string' ? baseModels.split(',') : undefined,
+      modelTypes: parseStringArray(modelTypes),
+      fileTypes: parseStringArray(fileTypes),
+      formats: parseStringArray(formats),
+      baseModels: parseStringArray(baseModels),
       period:
         typeof period === 'string' && downloadPeriods.includes(period as DownloadPeriod)
           ? (period as DownloadPeriod)

@@ -15,39 +15,12 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { useInView } from '~/hooks/useInView';
+import { getBaseModelColor, getModelTypeColor } from '~/shared/constants/badge-color.constants';
 import type { DownloadHistoryItem } from '~/server/services/download.service';
 
 type Props = {
   download: DownloadHistoryItem;
   onHide: (download: DownloadHistoryItem) => void;
-};
-
-// Color mapping for model types
-const modelTypeColors: Record<string, string> = {
-  Checkpoint: 'blue',
-  TextualInversion: 'yellow',
-  Hypernetwork: 'cyan',
-  AestheticGradient: 'grape',
-  LORA: 'violet',
-  LoCon: 'violet',
-  DoRA: 'orange',
-  Controlnet: 'green',
-  Upscaler: 'lime',
-  VAE: 'teal',
-  Poses: 'pink',
-  Wildcards: 'gray',
-  Workflows: 'indigo',
-  MotionModule: 'red',
-};
-
-// Color mapping for base models
-const baseModelColors: Record<string, string> = {
-  'SD 1.5': 'cyan',
-  'SD 2.1': 'blue',
-  'SDXL 1.0': 'indigo',
-  Pony: 'pink',
-  Flux: 'rose',
-  Other: 'gray',
 };
 
 export function DownloadCard({ download, onHide }: Props) {
@@ -62,8 +35,8 @@ export function DownloadCard({ download, onHide }: Props) {
 
   // Link to specific model version
   const modelUrl = `/models/${model.id}/${slugit(model.name)}?modelVersionId=${modelVersion.id}`;
-  const modelTypeColor = modelTypeColors[model.type] ?? 'gray';
-  const baseModelColor = baseModelColors[modelVersion.baseModel] ?? 'gray';
+  const modelTypeColor = getModelTypeColor(model.type);
+  const baseModelColor = getBaseModelColor(modelVersion.baseModel);
 
   return (
     <div ref={ref} className="h-32">
@@ -114,56 +87,67 @@ export function DownloadCard({ download, onHide }: Props) {
                   {modelVersion.name}
                 </Text>
 
-                {/* Badges */}
-                <Group gap={6} mt={8} wrap="wrap">
-                  {/* Model Type Badge */}
-                  <Badge
-                    size="md"
-                    color={modelTypeColor}
-                    variant="light"
-                    radius="sm"
-                    leftSection={<IconBox size={14} />}
-                  >
-                    {getDisplayName(model.type)}
-                  </Badge>
-
-                  {/* Base Model Badge */}
-                  <Badge
-                    size="md"
-                    color={baseModelColor}
-                    variant="light"
-                    radius="sm"
-                    leftSection={<IconCpu size={14} />}
-                  >
-                    {modelVersion.baseModel}
-                  </Badge>
-
-                  {/* File Type Badge */}
-                  {file && (
+                {/* Badges - no wrap, fade out on overflow (mobile only) */}
+                <div className="relative mt-2 cursor-pointer">
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-8 pointer-events-none z-10 md:hidden
+                      bg-gradient-to-r from-transparent to-white group-hover:to-gray-0
+                      dark:to-dark-7 dark:group-hover:to-dark-5"
+                  />
+                  <Group gap={6} wrap="nowrap" className="overflow-hidden">
+                    {/* Model Type Badge */}
                     <Badge
                       size="md"
-                      color="gray"
+                      color={modelTypeColor}
                       variant="light"
                       radius="sm"
-                      leftSection={<IconTag size={14} />}
+                      leftSection={<IconBox size={14} />}
+                      className="cursor-pointer"
                     >
-                      {file.type}
+                      {getDisplayName(model.type)}
                     </Badge>
-                  )}
 
-                  {/* Format Badge (always last) */}
-                  {file?.format && (
+                    {/* Base Model Badge */}
                     <Badge
                       size="md"
-                      color="gray"
+                      color={baseModelColor}
                       variant="light"
                       radius="sm"
-                      leftSection={<IconFileCode size={14} />}
+                      leftSection={<IconCpu size={14} />}
+                      className="cursor-pointer"
                     >
-                      {file.format}
+                      {modelVersion.baseModel}
                     </Badge>
-                  )}
-                </Group>
+
+                    {/* File Type Badge */}
+                    {file && (
+                      <Badge
+                        size="md"
+                        color="gray"
+                        variant="light"
+                        radius="sm"
+                        leftSection={<IconTag size={14} />}
+                        className="cursor-pointer"
+                      >
+                        {file.type}
+                      </Badge>
+                    )}
+
+                    {/* Format Badge (always last) */}
+                    {file?.format && (
+                      <Badge
+                        size="md"
+                        color="gray"
+                        variant="light"
+                        radius="sm"
+                        leftSection={<IconFileCode size={14} />}
+                        className="cursor-pointer"
+                      >
+                        {file.format}
+                      </Badge>
+                    )}
+                  </Group>
+                </div>
               </div>
 
               {/* Date */}

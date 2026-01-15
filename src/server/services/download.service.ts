@@ -142,9 +142,16 @@ export const getUserDownloads = async ({
   // Fetch images for model versions from cache
   const imageCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
 
-  // Combine the data
-  const items: DownloadHistoryItem[] = visibleDownloads.map((dh) => {
+  // Combine the data, filtering out downloads where the model version no longer exists
+  const items: DownloadHistoryItem[] = [];
+
+  for (const dh of visibleDownloads) {
     const version = versionMap.get(dh.modelVersionId);
+
+    // Skip downloads where the model version has been deleted
+    if (!version) {
+      continue;
+    }
 
     // Get file info - handle fileId=0 for historical downloads
     let fileInfo: DownloadHistoryItem['file'] = null;
@@ -153,7 +160,7 @@ export const getUserDownloads = async ({
       if (file) {
         fileInfo = file;
       }
-    } else if (version) {
+    } else {
       // For historical downloads (fileId=0), find the primary model file
       const primaryFile = version.files.find((f) => f.type === 'Model') ?? version.files[0];
       if (primaryFile) {
@@ -171,16 +178,16 @@ export const getUserDownloads = async ({
     const versionImages = imageCache[dh.modelVersionId]?.images ?? [];
     const firstImage = versionImages[0];
 
-    return {
+    items.push({
       downloadAt: new Date(dh.lastDownloaded),
       modelVersion: {
         id: dh.modelVersionId,
-        name: version?.name ?? 'Unknown',
-        baseModel: (version?.baseModel ?? 'Other') as BaseModel,
+        name: version.name,
+        baseModel: version.baseModel as BaseModel,
         model: {
-          id: version?.model.id ?? 0,
-          name: version?.model.name ?? 'Unknown',
-          type: version?.model.type ?? 'Checkpoint',
+          id: version.model.id,
+          name: version.model.name,
+          type: version.model.type,
         },
       },
       file: fileInfo,
@@ -197,8 +204,8 @@ export const getUserDownloads = async ({
             metadata: firstImage.metadata,
           }
         : null,
-    };
-  });
+    });
+  }
 
   return { items };
 };
