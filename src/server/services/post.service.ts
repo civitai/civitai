@@ -323,29 +323,55 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.raw(`${excluded.join(',')}`)})`);
   }
 
-  // sorting
-  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC';
+  // sorting - always include id as tiebreaker for stable pagination
+  let orderBy = draftOnly ? 'p."createdAt" DESC, p.id DESC' : 'p."publishedAt" DESC, p.id DESC';
+  let primarySortProp = draftOnly ? 'p."createdAt"' : 'p."publishedAt"';
+  let isDateSort = true;
+
   if (sort === PostSort.MostComments) {
-    orderBy = `p."commentCount" DESC`;
+    orderBy = `p."commentCount" DESC, p.id DESC`;
+    primarySortProp = 'p."commentCount"';
+    isDateSort = false;
     AND.push(Prisma.sql`p."commentCount" > 0`);
   } else if (sort === PostSort.MostReactions) {
-    orderBy = `p."reactionCount" DESC`;
+    orderBy = `p."reactionCount" DESC, p.id DESC`;
+    primarySortProp = 'p."reactionCount"';
+    isDateSort = false;
     AND.push(Prisma.sql`p."reactionCount" > 0`);
   } else if (sort === PostSort.MostCollected) {
-    orderBy = `p."collectedCount" DESC`;
+    orderBy = `p."collectedCount" DESC, p.id DESC`;
+    primarySortProp = 'p."collectedCount"';
+    isDateSort = false;
     AND.push(Prisma.sql`p."collectedCount" > 0`);
   }
 
-  // cursor
-  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  // cursor - supports composite cursor format "value|id" for keyset pagination
   if (cursor) {
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    const cursorValue =
-      cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"'
-        ? new Date(cursor)
-        : Number(cursor);
-    if (cursorProp)
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
+    let primaryValue: Date | number;
+    let cursorId: number | null = null;
+
+    // Parse composite cursor (format: "value|id") or legacy single value
+    if (typeof cursor === 'string' && cursor.includes('|')) {
+      const [valueStr, idStr] = cursor.split('|');
+      primaryValue = isDateSort ? new Date(valueStr) : Number(valueStr);
+      cursorId = Number(idStr);
+    } else {
+      // Legacy single-value cursor (backward compatibility)
+      primaryValue = isDateSort ? new Date(cursor) : Number(cursor);
+    }
+
+    if (cursorId !== null) {
+      // Composite cursor: use keyset pagination for stable results
+      // (primary < cursor) OR (primary = cursor AND id < cursor_id)
+      AND.push(
+        Prisma.sql`(${Prisma.raw(primarySortProp)} < ${primaryValue} OR (${Prisma.raw(
+          primarySortProp
+        )} = ${primaryValue} AND p.id <= ${cursorId}))`
+      );
+    } else {
+      // Legacy single cursor
+      AND.push(Prisma.sql`${Prisma.raw(primarySortProp)} < ${primaryValue}`);
+    }
   }
 
   if (clubId) {
@@ -385,14 +411,13 @@ export const getPostsInfinite = async ({
       p."modelVersionId",
       p."collectionId",
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
-      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+      ${Prisma.raw(primarySortProp)} "cursorId"
     FROM "Post" p
     ${Prisma.raw(joins.join('\n'))}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
 
-  console.log(postsRawQuery);
   if (
     query ||
     isOwnerRequest ||
@@ -409,10 +434,17 @@ export const getPostsInfinite = async ({
     tag: cacheTags,
   });
 
-  let nextCursor: number | Date | undefined | null;
+  let nextCursor: string | undefined;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    nextCursor = nextItem?.cursorId;
+    if (nextItem?.cursorId !== null && nextItem?.cursorId !== undefined) {
+      // Return composite cursor format: "value|id"
+      const cursorValue =
+        nextItem.cursorId instanceof Date
+          ? nextItem.cursorId.toISOString()
+          : String(nextItem.cursorId);
+      nextCursor = `${cursorValue}|${nextItem.id}`;
+    }
   }
 
   // Filter to published model versions:
