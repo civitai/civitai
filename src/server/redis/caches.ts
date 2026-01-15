@@ -1095,6 +1095,7 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
 
 type UserDownloadItem = {
   modelVersionId: number;
+  fileId: number;
   lastDownloaded: number; // timestamp in ms
 };
 
@@ -1115,22 +1116,27 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
     const results = await clickhouse.$query<{
       userId: number;
       modelVersionId: number;
+      fileId: number;
       lastDownloaded: string;
     }>`
       SELECT
         userId,
         modelVersionId,
+        fileId,
         max(lastDownloaded) as lastDownloaded
       FROM userModelDownloads
       WHERE userId IN (${userIds.join(',')})
-      GROUP BY userId, modelVersionId
+      GROUP BY userId, modelVersionId, fileId
+      ORDER BY lastDownloaded DESC
+      LIMIT 2000 BY userId
     `;
 
     // Group by userId
-    const grouped = results.reduce((acc, { userId, modelVersionId, lastDownloaded }) => {
+    const grouped = results.reduce((acc, { userId, modelVersionId, fileId, lastDownloaded }) => {
       acc[userId] ??= { userId, downloads: [] };
       acc[userId].downloads.push({
         modelVersionId,
+        fileId,
         // ClickHouse returns dates as strings without timezone - append 'Z' to parse as UTC
         lastDownloaded: new Date(lastDownloaded.replace(' ', 'T') + 'Z').getTime(),
       });
