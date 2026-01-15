@@ -275,16 +275,40 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         authorization: {
           params: { scope: 'identify email role_connections.write' },
         },
+        profile(profile) {
+          return {
+            id: profile.id,
+            name: profile.username,
+            email: profile.email,
+            image: null, // Don't store Discord avatar
+          } as any;
+        },
       }),
       GithubProvider({
         clientId: env.GITHUB_CLIENT_ID,
         clientSecret: env.GITHUB_CLIENT_SECRET,
         allowDangerousEmailAccountLinking: true,
+        profile(profile) {
+          return {
+            id: String(profile.id),
+            name: profile.name ?? profile.login,
+            email: profile.email,
+            image: null, // Don't store GitHub avatar
+          } as any;
+        },
       }),
       GoogleProvider({
         clientId: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_CLIENT_SECRET,
         allowDangerousEmailAccountLinking: true,
+        profile(profile) {
+          return {
+            id: profile.sub,
+            name: profile.name,
+            email: profile.email,
+            image: null, // Don't store Google avatar
+          } as any;
+        },
       }),
       RedditProvider({
         clientId: env.REDDIT_CLIENT_ID,
@@ -293,6 +317,14 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           params: {
             duration: 'permanent',
           },
+        },
+        profile(profile) {
+          return {
+            id: profile.id,
+            name: profile.name,
+            email: null, // Reddit doesn't provide email
+            image: null, // Don't store Reddit avatar
+          } as any;
         },
       }),
       EmailProvider({
