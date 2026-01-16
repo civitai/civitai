@@ -192,6 +192,14 @@ function ImageCard({
   onVote,
   hotkeyLabel,
 }: ImageCardProps) {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (disabled) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onVote();
+    }
+  };
+
   if (!entry) {
     return <Skeleton radius="lg" style={{ aspectRatio: '4 / 5' }} />;
   }
@@ -200,12 +208,18 @@ function ImageCard({
     <Paper
       className={clsx(
         'cursor-pointer overflow-hidden rounded-xl border-2 transition-all duration-200',
+        'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#1a1b1e]',
         isSelected
           ? 'border-green-500 shadow-[0_0_20px_rgba(64,192,87,0.3)]'
           : 'border-transparent hover:border-blue-500 hover:-translate-y-0.5'
       )}
       bg="dark.7"
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={`Vote for ${position} image`}
+      aria-disabled={disabled}
       onClick={disabled ? undefined : onVote}
+      onKeyDown={handleKeyDown}
     >
       {/* Image wrapper with 4:5 aspect ratio */}
       <Box className="relative bg-[#1a1b1e]" style={{ aspectRatio: '4 / 5' }}>
