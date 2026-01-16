@@ -48,8 +48,11 @@ function getClickHouse() {
     username: env.CLICKHOUSE_USERNAME,
     password: env.CLICKHOUSE_PASSWORD,
     clickhouse_settings: {
+      // Enable async inserts for batching - ClickHouse buffers inserts server-side
+      // and flushes periodically. This prevents "Too many parts" errors from
+      // high-frequency individual inserts.
       async_insert: 1,
-      wait_for_async_insert: 0,
+      wait_for_async_insert: 0, // Fire-and-forget, don't block on insert completion
       output_format_json_quote_64bit_integers: 0, // otherwise they come as strings
     },
   }) as CustomClickHouseClient;
@@ -275,6 +278,15 @@ export class Tracker {
     }
   }
 
+  /**
+   * Send a single tracking event to the external tracker service.
+   *
+   * **Batching:** The tracker service at CLICKHOUSE_TRACKER_URL handles batching
+   * internally. Individual HTTP requests are fire-and-forget, and the tracker
+   * batches them before inserting into ClickHouse to prevent "Too many parts" errors.
+   *
+   * This is safe for high-volume scenarios like crucible voting.
+   */
   private async send(
     table: string,
     data: object | ((args: { session: Session | null; actor: TrackRequest }) => object)
@@ -285,7 +297,7 @@ export class Tracker {
     const body =
       typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
 
-    // Perform the clickhouse insert in the background
+    // Fire-and-forget to external tracker service (handles batching)
     fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -620,6 +632,16 @@ export class Tracker {
     return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
   }
 
+  /**
+   * Track a crucible vote in ClickHouse for analytics.
+   *
+   * **Batching behavior:**
+   * - Sends to external tracker service at CLICKHOUSE_TRACKER_URL (fire-and-forget)
+   * - Tracker service handles batching internally to prevent "Too many parts" errors
+   * - If CLICKHOUSE_TRACKER_URL is not set, this is a no-op
+   *
+   * @see docs/features/crucible/clickhouse-tables.md for schema and buffer table details
+   */
   public crucibleVote(values: {
     crucibleId: number;
     winnerEntryId: number;
