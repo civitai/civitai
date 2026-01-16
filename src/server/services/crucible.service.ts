@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
 import type {
@@ -16,7 +16,7 @@ export const createCrucible = async ({
   userId,
   name,
   description,
-  imageId,
+  coverImage,
   nsfwLevel,
   entryFee,
   entryLimit,
@@ -30,28 +30,47 @@ export const createCrucible = async ({
   const startAt = now;
   const endAt = dayjs(now).add(duration, 'hours').toDate();
 
-  const crucible = await dbWrite.crucible.create({
-    data: {
-      userId,
-      name,
-      description: description ?? null,
-      imageId,
-      nsfwLevel,
-      entryFee,
-      entryLimit,
-      maxTotalEntries: maxTotalEntries ?? null,
-      prizePositions: prizePositions as Prisma.JsonObject,
-      allowedResources: allowedResources
-        ? (allowedResources as Prisma.JsonArray)
-        : Prisma.JsonNull,
-      judgeRequirements: judgeRequirements
-        ? (judgeRequirements as Prisma.JsonObject)
-        : Prisma.JsonNull,
-      duration: duration * 60, // Convert hours to minutes for storage
-      startAt,
-      endAt,
-      status: CrucibleStatus.Active,
-    },
+  // Create the crucible with cover image in a transaction
+  const crucible = await dbWrite.$transaction(async (tx) => {
+    // First, create the Image record from the CF upload data
+    const image = await tx.image.create({
+      data: {
+        userId,
+        url: coverImage.url,
+        width: coverImage.width,
+        height: coverImage.height,
+        hash: coverImage.hash ?? null,
+        nsfwLevel,
+        type: MediaType.image,
+      },
+    });
+
+    // Then create the crucible with the image reference
+    const newCrucible = await tx.crucible.create({
+      data: {
+        userId,
+        name,
+        description: description ?? null,
+        imageId: image.id,
+        nsfwLevel,
+        entryFee,
+        entryLimit,
+        maxTotalEntries: maxTotalEntries ?? null,
+        prizePositions: prizePositions as Prisma.JsonObject,
+        allowedResources: allowedResources
+          ? (allowedResources as Prisma.JsonArray)
+          : Prisma.JsonNull,
+        judgeRequirements: judgeRequirements
+          ? (judgeRequirements as Prisma.JsonObject)
+          : Prisma.JsonNull,
+        duration: duration * 60, // Convert hours to minutes for storage
+        startAt,
+        endAt,
+        status: CrucibleStatus.Active,
+      },
+    });
+
+    return newCrucible;
   });
 
   return crucible;

@@ -5,6 +5,7 @@ import {
   Grid,
   Group,
   Input,
+  Loader,
   Paper,
   Progress,
   SimpleGrid,
@@ -17,7 +18,9 @@ import {
 import {
   IconArrowBackUp,
   IconArrowLeft,
+  IconCalendar,
   IconCheck,
+  IconClock,
   IconCoin,
   IconInfoCircle,
   IconPencil,
@@ -53,6 +56,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 // Duration options with pricing
@@ -128,6 +132,26 @@ export default function CrucibleCreate() {
 
   // Form state
   const [formData, setFormData] = useState<FormData>(formSchema);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // tRPC mutation for creating crucible
+  const createCrucibleMutation = trpc.crucible.create.useMutation({
+    onSuccess: (data) => {
+      showSuccessNotification({
+        title: 'Crucible Created!',
+        message: 'Your crucible has been created successfully. Redirecting...',
+      });
+      // Redirect to crucible detail page
+      router.push(`/crucibles/${data.id}`);
+    },
+    onError: (error) => {
+      setIsSubmitting(false);
+      showErrorNotification({
+        title: 'Failed to create crucible',
+        error: { message: error.message },
+      });
+    },
+  });
 
   // Prize distribution edit mode
   const [prizeEditMode, setPrizeEditMode] = useState(false);
@@ -227,6 +251,39 @@ export default function CrucibleCreate() {
     if (currentStep === 2 && !isStep2Valid()) return;
     if (currentStep === 3 && !isStep3Valid()) return;
     goToNextStep();
+  };
+
+  // Submit the crucible creation form
+  const handleSubmit = async () => {
+    if (isSubmitting) return;
+
+    // Validate image upload is complete
+    if (!imageFile || imageFile.status !== 'success') {
+      showErrorNotification({
+        title: 'Missing Cover Image',
+        error: { message: 'Please upload a cover image for your crucible.' },
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    createCrucibleMutation.mutate({
+      name: formData.name.trim(),
+      description: formData.description.trim() || 'No description provided',
+      coverImage: {
+        url: imageFile.url,
+        width: imageFile.width,
+        height: imageFile.height,
+        hash: imageFile.hash,
+      },
+      nsfwLevel: formData.nsfwLevel,
+      entryFee: formData.entryFee,
+      entryLimit: formData.entryLimit,
+      maxTotalEntries: formData.maxTotalEntries,
+      prizePositions: formData.prizePositions,
+      duration: parseInt(formData.duration),
+    });
   };
 
   // Step content components
@@ -698,80 +755,128 @@ export default function CrucibleCreate() {
     );
   };
 
-  const renderStep4 = () => (
-    <Stack gap="xl">
-      <Title order={3}>Review Your Crucible</Title>
+  const renderStep4 = () => {
+    // Calculate estimated start and end times
+    const now = new Date();
+    const estimatedStartAt = now;
+    const durationHours = parseInt(formData.duration) || 8;
+    const estimatedEndAt = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
 
-      {/* Basic Info Summary */}
-      <Paper p="lg" className="border border-dark-4">
-        <Group gap="xs" mb="md">
-          <IconInfoCircle size={20} className="text-blue-5" />
-          <Text fw={600}>Basic Information</Text>
-        </Group>
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Text c="dimmed">Name</Text>
-            <Text fw={500}>{formData.name || 'Not set'}</Text>
-          </Group>
-          <Group justify="space-between">
-            <Text c="dimmed">Duration</Text>
-            <Text fw={500}>
-              {durationOptions.find((d) => d.value === formData.duration)?.label || '8 hours'}
-            </Text>
-          </Group>
-          <Group justify="space-between">
-            <Text c="dimmed">Description</Text>
-            <Text fw={500} lineClamp={2} style={{ maxWidth: 300, textAlign: 'right' }}>
-              {formData.description || 'None'}
-            </Text>
-          </Group>
-        </Stack>
-      </Paper>
+    // Format dates for display
+    const formatDateTime = (date: Date) => {
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+    };
 
-      {/* Entry Rules Summary */}
-      <Paper p="lg" className="border border-dark-4">
-        <Group gap="xs" mb="md">
-          <IconTicket size={20} className="text-blue-5" />
-          <Text fw={600}>Entry Settings</Text>
-        </Group>
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Text c="dimmed">Entry Fee</Text>
-            <CurrencyBadge unitAmount={formData.entryFee} currency={Currency.BUZZ} />
-          </Group>
-          <Group justify="space-between">
-            <Text c="dimmed">Entry Limit per User</Text>
-            <Text fw={500}>{formData.entryLimit} entries</Text>
-          </Group>
-          <Group justify="space-between">
-            <Text c="dimmed">Max Total Entries</Text>
-            <Text fw={500}>{formData.maxTotalEntries || 'Unlimited'}</Text>
-          </Group>
-        </Stack>
-      </Paper>
+    return (
+      <Stack gap="xl">
+        <Title order={3}>Review Your Crucible</Title>
 
-      {/* Prize Distribution Summary */}
-      <Paper p="lg" className="border border-dark-4">
-        <Group gap="xs" mb="md">
-          <IconTrophy size={20} className="text-blue-5" />
-          <Text fw={600}>Prize Distribution</Text>
-        </Group>
-        <Stack gap="sm">
-          {Object.entries(formData.prizePositions)
-            .sort(([a], [b]) => parseInt(a) - parseInt(b))
-            .map(([position, percentage]) => (
-              <Group key={position} justify="space-between">
-                <Text c="dimmed">
-                  {position}
-                  {getOrdinalSuffix(parseInt(position))} Place
-                </Text>
-                <Text fw={500}>{percentage}%</Text>
+        {/* Timing Estimate */}
+        <Paper p="lg" className="border border-blue-500/30 bg-blue-500/5">
+          <Group gap="xs" mb="md">
+            <IconCalendar size={20} className="text-blue-5" />
+            <Text fw={600}>Estimated Schedule</Text>
+          </Group>
+          <Stack gap="sm">
+            <Group justify="space-between">
+              <Group gap="xs">
+                <IconClock size={16} className="text-green-5" />
+                <Text c="dimmed">Starts</Text>
               </Group>
-            ))}
-        </Stack>
-      </Paper>
-    </Stack>
-  );
+              <Text fw={500} c="green">
+                {formatDateTime(estimatedStartAt)} (Immediately)
+              </Text>
+            </Group>
+            <Group justify="space-between">
+              <Group gap="xs">
+                <IconClock size={16} className="text-orange-5" />
+                <Text c="dimmed">Ends</Text>
+              </Group>
+              <Text fw={500} c="orange">
+                {formatDateTime(estimatedEndAt)}
+              </Text>
+            </Group>
+          </Stack>
+        </Paper>
+
+        {/* Basic Info Summary */}
+        <Paper p="lg" className="border border-dark-4">
+          <Group gap="xs" mb="md">
+            <IconInfoCircle size={20} className="text-blue-5" />
+            <Text fw={600}>Basic Information</Text>
+          </Group>
+          <Stack gap="sm">
+            <Group justify="space-between">
+              <Text c="dimmed">Name</Text>
+              <Text fw={500}>{formData.name || 'Not set'}</Text>
+            </Group>
+            <Group justify="space-between">
+              <Text c="dimmed">Duration</Text>
+              <Text fw={500}>
+                {durationOptions.find((d) => d.value === formData.duration)?.label || '8 hours'}
+              </Text>
+            </Group>
+            <Group justify="space-between">
+              <Text c="dimmed">Description</Text>
+              <Text fw={500} lineClamp={2} style={{ maxWidth: 300, textAlign: 'right' }}>
+                {formData.description || 'None'}
+              </Text>
+            </Group>
+          </Stack>
+        </Paper>
+
+        {/* Entry Rules Summary */}
+        <Paper p="lg" className="border border-dark-4">
+          <Group gap="xs" mb="md">
+            <IconTicket size={20} className="text-blue-5" />
+            <Text fw={600}>Entry Settings</Text>
+          </Group>
+          <Stack gap="sm">
+            <Group justify="space-between">
+              <Text c="dimmed">Entry Fee</Text>
+              <CurrencyBadge unitAmount={formData.entryFee} currency={Currency.BUZZ} />
+            </Group>
+            <Group justify="space-between">
+              <Text c="dimmed">Entry Limit per User</Text>
+              <Text fw={500}>{formData.entryLimit} entries</Text>
+            </Group>
+            <Group justify="space-between">
+              <Text c="dimmed">Max Total Entries</Text>
+              <Text fw={500}>{formData.maxTotalEntries || 'Unlimited'}</Text>
+            </Group>
+          </Stack>
+        </Paper>
+
+        {/* Prize Distribution Summary */}
+        <Paper p="lg" className="border border-dark-4">
+          <Group gap="xs" mb="md">
+            <IconTrophy size={20} className="text-blue-5" />
+            <Text fw={600}>Prize Distribution</Text>
+          </Group>
+          <Stack gap="sm">
+            {Object.entries(formData.prizePositions)
+              .sort(([a], [b]) => parseInt(a) - parseInt(b))
+              .map(([position, percentage]) => (
+                <Group key={position} justify="space-between">
+                  <Text c="dimmed">
+                    {position}
+                    {getOrdinalSuffix(parseInt(position))} Place
+                  </Text>
+                  <Text fw={500}>{percentage}%</Text>
+                </Group>
+              ))}
+          </Stack>
+        </Paper>
+      </Stack>
+    );
+  };
 
   // Get the current step component
   const renderCurrentStep = () => {
@@ -941,15 +1046,15 @@ export default function CrucibleCreate() {
                 size="lg"
                 mb="md"
                 className="bg-gradient-to-r from-yellow-500 to-yellow-600"
-                leftSection={<IconCoin size={20} />}
-                onClick={() => {
-                  // TODO: Submit form in US-020
-                  console.log('Create crucible', formData);
-                }}
+                leftSection={isSubmitting ? <Loader size={20} color="dark" /> : <IconCoin size={20} />}
+                onClick={handleSubmit}
+                disabled={isSubmitting}
               >
-                {getTotalCost() === 0
-                  ? 'Create Crucible - Free'
-                  : `Create Crucible - ${getTotalCost().toLocaleString()} Buzz`}
+                {isSubmitting
+                  ? 'Creating Crucible...'
+                  : getTotalCost() === 0
+                    ? 'Create Crucible - Free'
+                    : `Create Crucible - ${getTotalCost().toLocaleString()} Buzz`}
               </Button>
             )}
 
