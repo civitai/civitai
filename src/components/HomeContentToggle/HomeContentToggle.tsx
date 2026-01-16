@@ -65,6 +65,11 @@ export const homeOptions: HomeOption[] = [
     grouped: true,
   },
   {
+    key: 'crucibles',
+    url: '/crucibles',
+    icon: (props: IconProps) => <IconTrophy {...props} />,
+  },
+  {
     key: 'articles',
     url: '/articles',
     icon: (props: IconProps) => <IconFileText {...props} />,
@@ -111,6 +116,7 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === 'shop' && !features.cosmeticShop,
         key === 'articles' && !features.articles,
         key === 'tools' && !features.toolSearch,
+        key === 'crucibles' && !features.crucible,
       ].some((b) => b)
   );
 }
