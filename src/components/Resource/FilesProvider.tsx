@@ -458,14 +458,32 @@ const metadataSchema = modelFileMetadataSchema
     error: 'Quant type is required for GGUF files',
     path: ['quantType'],
   })
-  .array();
+  .array()
+  .refine(
+    (files) => {
+      // Check if this is a component-only model (no Model type files)
+      const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type));
+      const requiredComponentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
+      const requiredComponents = files.filter((f) => requiredComponentTypes.includes(f.type));
+
+      // If no model files, must have at least 2 required components
+      if (modelFiles.length === 0 && requiredComponents.length < 2) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message:
+        'Component-only models (without a main model file) require at least 2 required components',
+    }
+  );
 
 // TODO.manuel: This is a hacky way to check for duplicates
 export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   const conflictCount: Record<string, number> = {};
 
   files.forEach((item) => {
-    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name)]
+    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
       .filter(Boolean)
       .join('-');
     if (conflictCount[key]) conflictCount[key] += 1;
