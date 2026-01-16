@@ -1,17 +1,55 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userDownloadsCache } from '~/server/redis/caches';
-import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import type { HideDownloadInput } from '~/server/schema/download.schema';
+import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
-import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+
+type FileMetadata = {
+  format?: ModelFileFormat;
+  size?: string;
+  fp?: string;
+};
+
+export type DownloadHistoryItem = {
+  downloadAt: Date;
+  modelVersion: {
+    id: number;
+    name: string;
+    baseModel: BaseModel;
+    model: {
+      id: number;
+      name: string;
+      type: ModelType;
+    };
+  };
+  file: {
+    id: number;
+    name: string;
+    type: string;
+    format: ModelFileFormat | null;
+  } | null;
+  image: {
+    id: number;
+    url: string;
+    name: string;
+    type: MediaType;
+    nsfwLevel: number;
+    width: number;
+    height: number;
+    hash: string | null;
+    metadata: ImageMetadata | VideoMetadata | null;
+  } | null;
+};
 
 export const getUserDownloads = async ({
-  limit = DEFAULT_PAGE_SIZE,
   userId,
-  cursor,
-}: Partial<GetUserDownloadsSchema> & {
+}: {
   userId: number;
-}) => {
+}): Promise<{ items: DownloadHistoryItem[] }> => {
   // Fetch cached downloads and user settings in parallel
   const [cached, { hideDownloadsSince }] = await Promise.all([
     userDownloadsCache.fetch([userId]),
@@ -25,35 +63,16 @@ export const getUserDownloads = async ({
     downloads = downloads.filter((d) => d.lastDownloaded > hideDownloadsSince);
   }
 
-  // Filter by cursor (downloads older than cursor)
-  if (cursor) {
-    const cursorTime = new Date(cursor).getTime();
-    downloads = downloads.filter((d) => d.lastDownloaded < cursorTime);
-  }
-
-  // Sort by lastDownloaded DESC
+  // Sort by lastDownloaded DESC (cache already limits to 2000)
   downloads = downloads.sort((a, b) => b.lastDownloaded - a.lastDownloaded);
 
-  // Paginate: fetch limit + 1 to detect if there's more data
-  const fetchLimit = limit + 1;
-  const paginatedDownloads = downloads.slice(0, fetchLimit);
-
-  // Determine pagination
-  const hasMore = paginatedDownloads.length > limit;
-  let nextCursor: Date | undefined;
-  if (hasMore) {
-    nextCursor = new Date(paginatedDownloads[limit].lastDownloaded);
+  if (downloads.length === 0) {
+    return { items: [] };
   }
 
-  // Work with only the first `limit` items for filtering
-  const itemsToProcess = paginatedDownloads.slice(0, limit);
-
-  if (itemsToProcess.length === 0) {
-    return { items: [], nextCursor: undefined };
-  }
-
-  // Get model/version IDs from download history
-  const downloadedVersionIds = itemsToProcess.map((dh) => dh.modelVersionId);
+  // Get unique model version IDs and file IDs
+  const downloadedVersionIds = [...new Set(downloads.map((dh) => dh.modelVersionId))];
+  const downloadedFileIds = [...new Set(downloads.map((dh) => dh.fileId).filter((id) => id > 0))];
 
   // Check which of these downloads are hidden
   const hiddenDownloads = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
@@ -62,53 +81,133 @@ export const getUserDownloads = async ({
     WHERE "userId" = ${userId}
       AND "modelVersionId" IN (${Prisma.join(downloadedVersionIds)})
   `;
-  const hiddenIds = hiddenDownloads.map((h) => h.modelVersionId);
+  const hiddenIds = new Set(hiddenDownloads.map((h) => h.modelVersionId));
 
   // Filter out hidden downloads
-  const visibleDownloads = itemsToProcess.filter((dh) => !hiddenIds.includes(dh.modelVersionId));
+  const visibleDownloads = downloads.filter((dh) => !hiddenIds.has(dh.modelVersionId));
 
   if (visibleDownloads.length === 0) {
-    // No visible items on this page, but there may be more pages
-    return { items: [], nextCursor };
+    return { items: [] };
   }
 
-  // Get model/version names from PostgreSQL in a separate query
-  const modelVersionIds = visibleDownloads.map((dh) => dh.modelVersionId);
+  // Get model/version data from PostgreSQL
+  const modelVersionIds = [...new Set(visibleDownloads.map((dh) => dh.modelVersionId))];
+  const fileIds = [...new Set(visibleDownloads.map((dh) => dh.fileId).filter((id) => id > 0))];
 
+  // Fetch model versions with model data
   const modelVersions = await dbRead.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: {
       id: true,
       name: true,
+      baseModel: true,
       model: {
         select: {
           id: true,
           name: true,
+          type: true,
+        },
+      },
+      files: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          metadata: true,
         },
       },
     },
   });
 
-  // Create a map for quick lookup
+  // Fetch specific files if we have fileIds
+  const filesMap = new Map<
+    number,
+    { id: number; name: string; type: string; format: ModelFileFormat | null }
+  >();
+  for (const mv of modelVersions) {
+    for (const file of mv.files) {
+      const metadata = file.metadata as FileMetadata | null;
+      filesMap.set(file.id, {
+        id: file.id,
+        name: file.name,
+        type: file.type,
+        format: metadata?.format ?? null,
+      });
+    }
+  }
+
+  // Create a map for model versions
   const versionMap = new Map(modelVersions.map((mv) => [mv.id, mv]));
 
-  // Combine the data
-  const items = visibleDownloads.map((dh) => {
+  // Fetch images for model versions from cache
+  const imageCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+
+  // Combine the data, filtering out downloads where the model version no longer exists
+  const items: DownloadHistoryItem[] = [];
+
+  for (const dh of visibleDownloads) {
     const version = versionMap.get(dh.modelVersionId);
-    return {
+
+    // Skip downloads where the model version has been deleted
+    if (!version) {
+      continue;
+    }
+
+    // Get file info - handle fileId=0 for historical downloads
+    let fileInfo: DownloadHistoryItem['file'] = null;
+    if (dh.fileId > 0) {
+      const file = filesMap.get(dh.fileId);
+      if (file) {
+        fileInfo = file;
+      }
+    } else {
+      // For historical downloads (fileId=0), find the primary model file
+      const primaryFile = version.files.find((f) => f.type === 'Model') ?? version.files[0];
+      if (primaryFile) {
+        const metadata = primaryFile.metadata as FileMetadata | null;
+        fileInfo = {
+          id: primaryFile.id,
+          name: primaryFile.name,
+          type: primaryFile.type,
+          format: metadata?.format ?? null,
+        };
+      }
+    }
+
+    // Get first image for thumbnail
+    const versionImages = imageCache[dh.modelVersionId]?.images ?? [];
+    const firstImage = versionImages[0];
+
+    items.push({
       downloadAt: new Date(dh.lastDownloaded),
       modelVersion: {
         id: dh.modelVersionId,
-        name: version?.name ?? 'Unknown',
+        name: version.name,
+        baseModel: version.baseModel as BaseModel,
         model: {
-          id: version?.model.id ?? 0,
-          name: version?.model.name ?? 'Unknown',
+          id: version.model.id,
+          name: version.model.name,
+          type: version.model.type,
         },
       },
-    };
-  });
+      file: fileInfo,
+      image: firstImage
+        ? {
+            id: firstImage.id,
+            url: firstImage.url,
+            name: firstImage.name,
+            type: firstImage.type,
+            nsfwLevel: firstImage.nsfwLevel,
+            width: firstImage.width,
+            height: firstImage.height,
+            hash: firstImage.hash,
+            metadata: firstImage.metadata,
+          }
+        : null,
+    });
+  }
 
-  return { items, nextCursor };
+  return { items };
 };
 
 export const hideDownload = async ({

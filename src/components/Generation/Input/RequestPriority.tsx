@@ -1,7 +1,7 @@
 import { Priority } from '@civitai/client';
-import { Input } from '@mantine/core';
+import { Box, Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
 import { useEffect } from 'react';
-import { IconBolt, IconDiamond } from '@tabler/icons-react';
+import { IconBolt, IconDiamond, IconRocket } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
@@ -262,3 +262,104 @@ function PriorityLabel({
 // }
 
 export const InputRequestPriority = withController(RequestPriority);
+
+export function RequestPriorityCompact({
+  value,
+  onChange,
+  modifier = 'fixed',
+}: {
+  value?: Priority;
+  onChange?: (priority: Priority) => void;
+  modifier?: 'fixed' | 'multiplier';
+}) {
+  const currentUser = useCurrentUser();
+  const isMember = currentUser?.isPaidMember ?? false;
+  const selected = value ? priorityOptionsMap[value] : undefined;
+
+  // Auto-select High priority for members if Standard is selected or no value
+  useEffect(() => {
+    if (isMember && (!value || value === 'low')) {
+      onChange?.('normal' as Priority);
+    } else if (!isMember && value === 'high') {
+      onChange?.('low');
+    }
+  }, [value, isMember]);
+
+  return (
+    <Menu position="bottom-start" withinPortal>
+      <Tooltip label="Request Priority" position="top" withArrow>
+        <Menu.Target>
+          <UnstyledButton
+            className={clsx(
+              'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
+              'bg-gray-1 hover:bg-gray-2',
+              'dark:bg-dark-5 dark:hover:bg-dark-4'
+            )}
+          >
+            <IconRocket size={16} className="text-gray-6 dark:text-dark-2" />
+            <span className="font-medium">{selected?.label ?? 'Standard'}</span>
+            {selected && selected.offset > 0 && (
+              <span
+                className={clsx(
+                  'flex items-center',
+                  isMember && value === 'normal' && 'line-through opacity-50'
+                )}
+              >
+                <span className="text-xs">+</span>
+                <IconBolt className="fill-yellow-7 stroke-yellow-7" size={14} />
+                <span className="text-xs">
+                  {selected.offset}
+                  {modifier === 'multiplier' ? '%' : ''}
+                </span>
+              </span>
+            )}
+          </UnstyledButton>
+        </Menu.Target>
+      </Tooltip>
+      <Menu.Dropdown>
+        {Object.values(Priority)
+          .reverse()
+          .filter((priority) => {
+            // Hide Standard option for members
+            if (isMember && priority === 'low') return false;
+            return true;
+          })
+          .map((priority) => {
+            const options = priorityOptionsMap[priority];
+            const disabled = options.memberOnly && !currentUser?.isPaidMember;
+
+            if (disabled)
+              return (
+                <div key={priority} className="px-1 pt-1">
+                  <RequireMembership>
+                    <SupportButtonPolymorphic
+                      icon={IconDiamond}
+                      position="right"
+                      className="w-full !px-3 !py-2"
+                    >
+                      <PriorityLabel {...options} modifier={modifier} />
+                    </SupportButtonPolymorphic>
+                  </RequireMembership>
+                </div>
+              );
+
+            return (
+              <Menu.Item
+                key={priority}
+                onClick={() => onChange?.(priority)}
+                className={clsx(value === priority && 'bg-blue-5/10 dark:bg-blue-8/20')}
+              >
+                <PriorityLabel
+                  {...options}
+                  modifier={modifier}
+                  isFreeForMember={isMember && priority === 'normal'}
+                />
+              </Menu.Item>
+            );
+          })}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+export const InputRequestPriorityCompact = withController(RequestPriorityCompact);

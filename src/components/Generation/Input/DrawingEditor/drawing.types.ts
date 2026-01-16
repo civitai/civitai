@@ -132,6 +132,7 @@ export interface DrawingToolbarProps {
   onUndo: () => void;
   canUndo: boolean;
   onDownload?: () => void;
+  isMobile?: boolean;
 }
 
 // Updated modal props - accepts legacy format, outputs new format

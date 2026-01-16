@@ -892,8 +892,8 @@ export const generationConfig = {
   Qwen: {
     aspectRatios: qwenSizes,
     checkpoint: {
-      id: 2113658,
-      name: 'Qwen-Image Full BF16',
+      id: 2552908,
+      name: 'fp8_e4m3fn',
       trainedWords: [],
       baseModel: 'Qwen',
       strength: 1,
@@ -902,8 +902,8 @@ export const generationConfig = {
       canGenerate: true,
       hasAccess: true,
       model: {
-        id: 1864281,
-        name: 'Qwen-Image',
+        id: 2268063,
+        name: 'Qwen-Image-2512',
         type: 'Checkpoint',
       },
     } as GenerationResource,

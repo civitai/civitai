@@ -59,10 +59,11 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         },
       });
       // Get ALL user subscriptions (one per buzzType)
+      // Include past_due and unpaid so users can still see and manage their membership
       const allSubscriptions = await dbWrite.customerSubscription.findMany({
         where: {
           userId,
-          status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
+          status: { notIn: ['canceled', 'incomplete_expired'] },
         },
         include: {
           product: true,
@@ -95,9 +96,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         const metadata = sub.product.metadata as any;
         const tier = metadata?.[env.TIER_METADATA_KEY] as UserTier | undefined;
         const isActive = ['active', 'trialing'].includes(sub.status);
-        const isBadState = ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
-          sub.status
-        );
+        const isBadState = ['incomplete', 'past_due', 'unpaid'].includes(sub.status);
 
         if (isBadState) memberInBadState = true;
 
@@ -110,8 +109,14 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
           };
 
           // Track highest tier for backward compatibility
-          if (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0)) {
+          // Only set highest tier for active subscriptions (not bad state)
+          if (isActive && (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0))) {
             highestTier = tier;
+            primarySubscriptionId = sub.id;
+          }
+
+          // For bad state subscriptions, still track the subscriptionId so user can manage it
+          if (isBadState && !primarySubscriptionId) {
             primarySubscriptionId = sub.id;
           }
         }

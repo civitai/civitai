@@ -13,7 +13,7 @@ import {
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import { WORKFLOW_TAGS, samplersToSchedulers, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -123,6 +123,7 @@ export async function createTextToImage(
   const { params, tips, user, experimental, isGreen, allowMatureContent, currencies } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
+  const processTag = getProcessTagFromWorkflow(params.workflow, !!params.sourceImage, 'image');
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
@@ -132,6 +133,7 @@ export async function createTextToImage(
         params.workflow,
         baseModel,
         process,
+        processTag,
         ...args.tags,
       ].filter(isDefined),
       steps: [step],

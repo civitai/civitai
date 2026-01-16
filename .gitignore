@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules
 /.pnp
 .pnp.js
 
@@ -36,6 +36,7 @@ yarn-error.log*
 .env
 .env*
 !.env-example
+!.env.example
 
 # vercel
 .vercel
@@ -47,6 +48,11 @@ yarn-error.log*
 /postgres*
 /redis
 /minio
+
+# browser automation sessions (local exploration data)
+.browser/sessions
+.browser/profiles/*.json
+!.browser/profiles/profiles.meta.json
 /clickhouse*
 /undefined
 /.docker
@@ -96,3 +102,4 @@ local/
 nul
 
 scripts/local-dev/
+.direnv

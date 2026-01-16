@@ -14,6 +14,7 @@ import {
   Notification,
   Paper,
   SegmentedControl,
+  Select,
   Stack,
   Text,
   useMantineTheme,
@@ -38,7 +39,7 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { GenForm } from '~/components/Generation/Form/GenForm';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputRequestPriorityCompact } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
@@ -119,10 +120,10 @@ import {
   imageGenModelVersionMap,
 } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import {
-  qwenModelModeOptions,
   getIsQwen,
   qwenModelVersionToModelMap,
-  getIsQwenEditModel,
+  getIsQwenImageEditModel,
+  qwenGroupedOptions,
 } from '~/shared/orchestrator/ImageGen/qwen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -157,7 +158,7 @@ import {
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
-import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { InputPreferredImageFormatCompact } from '~/components/Generation/Input/OutputFormat';
 import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
 import {
   getHiDreamResourceFromPrecisionAndVariant,
@@ -203,7 +204,6 @@ export function GenerationFormContent() {
   const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
-  const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -217,9 +217,13 @@ export function GenerationFormContent() {
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const baseModel = form.watch('baseModel');
   const model = form.watch('model');
+  const fluxMode = form.watch('fluxMode');
   const [sourceImage] = form.watch(['sourceImage']);
   const [images, imageAnnotations] = form.watch(['images', 'imageAnnotations']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
+
+  const runsOnFalAI =
+    model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir;
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
@@ -380,17 +384,13 @@ export function GenerationFormContent() {
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
   useEffect(() => {
-    const subscription = form.watch(({ model, resources, vae, fluxMode }, { name }) => {
+    const subscription = form.watch(({ model, resources, vae }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources(
           [model, ...(resources ?? []), vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor)
             .length > 0
         );
       }
-
-      setRunsOnFalAI(
-        model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir
-      );
     });
     return () => {
       subscription.unsubscribe();
@@ -475,11 +475,11 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const isQwenEdit = getIsQwenEditModel(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || (isQwen && !isQwenEdit);
+  const isQwenImageEdit = getIsQwenImageEditModel(model.id);
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
-  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
+  const disablePriority = false;
 
   // Model mode configuration - add new models here
   const modelModeConfig = useMemo(
@@ -508,11 +508,8 @@ export function GenerationFormContent() {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') ||
-
               (isImageGen && (sourceImage || !!images?.length)) ||
-
-              isFluxKontext ||
-              isQwenEdit;
+              isFluxKontext;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir
@@ -579,7 +576,6 @@ export function GenerationFormContent() {
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
-              isQwen ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
@@ -624,9 +620,9 @@ export function GenerationFormContent() {
                 !isOpenAI &&
                 !isPonyV7 &&
                 !isNanoBanana &&
-                !isSeedream) ||
-              isFluxKontext ||
-              isQwenEdit;
+                !isSeedream &&
+                !isQwenImageEdit) ||
+              isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
               isFlux ||
@@ -665,7 +661,8 @@ export function GenerationFormContent() {
               (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
               !isSeedream &&
               !isNanoBananaPro &&
-              !isFlux2 && !isQwen &&
+              !isFlux2 &&
+              !isQwen &&
               !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
@@ -693,9 +690,6 @@ export function GenerationFormContent() {
                                 limited workflows that cover some of the most important use cases.
                                 Community workflows coming soon.
                               </InfoPopover>
-                              <Badge color="yellow" size="xs">
-                                New
-                              </Badge>
                             </div>
                           }
                           className="flex-1"
@@ -1001,15 +995,17 @@ export function GenerationFormContent() {
                   )}
 
                   {isQwen && (
-                    <SegmentedControl
-                      value={model.id ? String(model.id) : undefined}
-                      data={qwenModelModeOptions}
+                    <Select
+                      label="Mode"
+                      value={model.id ? String(model.id) : null}
+                      data={qwenGroupedOptions}
                       onChange={(stringModelId) => {
+                        if (!stringModelId) return;
                         const modelVersionId = Number(stringModelId);
                         const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
                         form.setValue('model', {
                           ...model,
-                          id: Number(stringModelId),
+                          id: modelVersionId,
                           model: selectedOption
                             ? { ...model.model, id: selectedOption.modelId }
                             : model.model,
@@ -1031,7 +1027,7 @@ export function GenerationFormContent() {
                       <InputSourceImageUploadMultiple
                         name="images"
                         aspect="video"
-                        max={7}
+                        max={isQwen ? 1 : 7}
                         warnOnMissingAiMetadata
                         enableDrawing
                         annotations={imageAnnotations}
@@ -1508,10 +1504,13 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
-                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
-                  {!disablePriority && (
-                    <InputRequestPriority name="priority" label="Request Priority" />
-                  )}
+                  <div className="flex flex-col gap-1">
+                    <Input.Label>Output Settings</Input.Label>
+                    <div className="flex items-center gap-2">
+                      <InputPreferredImageFormatCompact name="outputFormat" />
+                      {!disablePriority && <InputRequestPriorityCompact name="priority" />}
+                    </div>
+                  </div>
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"

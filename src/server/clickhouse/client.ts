@@ -421,6 +421,7 @@ export class Tracker {
     nsfw: boolean;
     earlyAccess?: boolean;
     time?: Date;
+    fileId?: number;
   }) {
     return this.track('modelVersionEvents', values);
   }

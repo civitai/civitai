@@ -158,6 +158,7 @@ export default PublicEndpoint(
         type: 'Download',
         modelId: fileResult.modelId,
         modelVersionId,
+        fileId: fileResult.fileId,
         nsfw: fileResult.nsfw,
         earlyAccess: fileResult.inEarlyAccess,
         time: now,

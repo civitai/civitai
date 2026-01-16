@@ -714,10 +714,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'NanoBanana',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Nano Banana'] }],
   },
-  // {
-  //   group: 'Qwen',
-  //   support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
-  // },
+  {
+    group: 'Qwen',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
+  },
   {
     group: 'Seedream',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedream'] }],

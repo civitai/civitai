@@ -19,6 +19,7 @@ import {
   IconBolt,
   IconBuildingStore,
   IconArrowRight,
+  IconAlertTriangle,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
@@ -31,6 +32,7 @@ import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getVendorDiscount } from '~/utils/gift-cards/discount-utils';
 import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
+import { trpc } from '~/utils/trpc';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 
@@ -168,6 +170,10 @@ export default function GiftCardsPage() {
   const router = useRouter();
   const [selectedVendor, setSelectedVendor] = useState<Vendor | undefined>();
   const enabledVendors = getEnabledVendors();
+  const { data: kinguinPaymentWarning } = trpc.system.getDbKV.useQuery({
+    key: 'kinguinPaymentWarning',
+  });
+  const showKinguinPaymentWarning = !!kinguinPaymentWarning;
 
   // Kinguin checkout states
   const [showKinguinCheckout, setShowKinguinCheckout] = useState(false);
@@ -402,6 +408,20 @@ export default function GiftCardsPage() {
             >
               Your gift card purchase has been completed successfully. You should receive your gift
               card code via email shortly.
+            </Alert>
+          )}
+
+          {/* Payment Method Warning */}
+          {!showKinguinCheckout && selectedVendor.id === 'kinguin' && showKinguinPaymentWarning && (
+            <Alert icon={<IconAlertTriangle size={30} />} color="red" radius="md">
+              <Text>
+                Due to current technical limitations on Kinguin, Credit Cards, and some other
+                payment methods, are temporarily unavailable for Civitai Gift Cards.{' '}
+                <Text component={NextLink} href="/purchase/buzz" c="blue" td="underline" inherit>
+                  Alternative Buzz purchase options
+                </Text>{' '}
+                remain available. We&apos;re working with Kinguin to restore full payment support.
+              </Text>
             </Alert>
           )}
 

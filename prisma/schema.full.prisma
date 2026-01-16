@@ -693,6 +693,7 @@ model Model {
   threads            Thread[]
   resourceReviews    ResourceReview[]
   metricsDaily       ModelMetricDaily[]
+  baseModelMetrics   ModelBaseModelMetric[]
   associatedFrom     ModelAssociations[]  @relation("ToModelAssociation")
   associations       ModelAssociations[]  @relation("FromModelAssociation")
   collectionItems    CollectionItem[]
@@ -1004,6 +1005,26 @@ model ModelVersionMetric {
   updatedAt         DateTime     @default(now())
 
   @@id(modelVersionId)
+}
+
+model ModelBaseModelMetric {
+  model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId      Int
+  baseModel    String
+  // Sort columns (aggregated from ModelVersionMetric)
+  thumbsUpCount Int            @default(0)
+  downloadCount Int            @default(0)
+  imageCount    Int            @default(0)
+  // Denormalized filter columns (synced from Model via trigger)
+  status       ModelStatus     @default(Draft)
+  availability Availability    @default(Public)
+  nsfwLevel    Int             @default(0)
+  mode         ModelModifier?
+  poi          Boolean         @default(false)
+  minor        Boolean         @default(false)
+  updatedAt    DateTime        @default(now())
+
+  @@id([modelId, baseModel])
 }
 
 model ModelMetricDaily {
@@ -3274,6 +3295,8 @@ enum JobQueueType {
   UpdateSearchIndex
   CleanIfEmpty
   ModerationRequest
+  BlockedImageDelete
+  ImageScan
 }
 
 model JobQueue {

@@ -1,5 +1,5 @@
-import { Input } from '@mantine/core';
-import { IconBolt, IconDiamond } from '@tabler/icons-react';
+import { Box, Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { IconBolt, IconDiamond, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
@@ -137,3 +137,56 @@ function FormatLabel({
 }
 
 export const InputPreferredImageFormat = withController(PreferredImageFormat);
+
+export function PreferredImageFormatCompact({
+  value,
+  onChange,
+}: {
+  value?: Format;
+  onChange?: (format: Format) => void;
+}) {
+  const currentUser = useCurrentUser();
+  const isMember = currentUser?.isPaidMember ?? false;
+  const selected = value ? formatOptions.find((x) => x.value === value) : undefined;
+
+  return (
+    <Menu position="bottom-start" withinPortal>
+      <Tooltip label="Output Format" position="top" withArrow>
+        <Menu.Target>
+          <UnstyledButton
+            className={clsx(
+              'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
+              'bg-gray-1 hover:bg-gray-2',
+              'dark:bg-dark-5 dark:hover:bg-dark-4'
+            )}
+          >
+            <IconPhoto size={16} className="text-gray-6 dark:text-dark-2" />
+            <span className="font-medium">{selected?.label ?? 'JPEG'}</span>
+            {selected && selected.offset > 0 && (
+              <span
+                className={clsx('flex items-center', isMember && 'line-through opacity-50')}
+              >
+                <span className="text-xs">+</span>
+                <IconBolt className="fill-yellow-7 stroke-yellow-7" size={14} />
+                <span className="text-xs">{selected.offset}</span>
+              </span>
+            )}
+          </UnstyledButton>
+        </Menu.Target>
+      </Tooltip>
+      <Menu.Dropdown>
+        {formatOptions.map((option) => (
+          <Menu.Item
+            key={option.value}
+            onClick={() => onChange?.(option.value)}
+            className={clsx(value === option.value && 'bg-blue-5/10 dark:bg-blue-8/20')}
+          >
+            <FormatLabel {...option} isFreeForMember={isMember && option.value === 'png'} />
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+export const InputPreferredImageFormatCompact = withController(PreferredImageFormatCompact);
