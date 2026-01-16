@@ -250,6 +250,53 @@ export const isCrucibleEntryTransactionPrefix = (prefix: string): boolean => {
 };
 
 /**
+ * Get Redis lock key for entry submission
+ * Pattern: lock:crucible-entry:{crucibleId}:{userId}
+ */
+function getEntryLockKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `lock:crucible-entry:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
+/**
+ * Acquire a distributed lock for entry submission
+ * Uses SET NX with short TTL to prevent race conditions
+ * @returns true if lock acquired, false if already locked
+ */
+async function acquireEntryLock(crucibleId: number, userId: number): Promise<boolean> {
+  const lockKey = getEntryLockKey(crucibleId, userId);
+  const lockValue = `${Date.now()}-${Math.random()}`;
+
+  try {
+    // SET NX with 5 second TTL to prevent deadlocks
+    const result = await sysRedis.set(lockKey, lockValue, {
+      PX: 5000, // 5 second TTL in milliseconds
+      NX: true, // Only set if not exists
+    });
+
+    return result === 'OK';
+  } catch (error) {
+    log(`Failed to acquire entry lock for crucible ${crucibleId}, user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // On Redis failure, allow the operation to proceed (fail-open)
+    // The database transaction will still provide some protection
+    return true;
+  }
+}
+
+/**
+ * Release a distributed lock for entry submission
+ */
+async function releaseEntryLock(crucibleId: number, userId: number): Promise<void> {
+  const lockKey = getEntryLockKey(crucibleId, userId);
+
+  try {
+    await sysRedis.del(lockKey);
+  } catch (error) {
+    log(`Failed to release entry lock for crucible ${crucibleId}, user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Lock will auto-expire due to TTL, so failure is not critical
+  }
+}
+
+/**
  * Submit an entry to a crucible
  */
 export const submitEntry = async ({
@@ -257,207 +304,220 @@ export const submitEntry = async ({
   imageId,
   userId,
 }: SubmitEntrySchema & { userId: number }) => {
-  // Fetch the crucible with required validation data
-  const crucible = await dbRead.crucible.findUnique({
-    where: { id: crucibleId },
-    select: {
-      id: true,
-      name: true,
-      userId: true, // Crucible creator for notification
-      status: true,
-      nsfwLevel: true,
-      entryFee: true,
-      entryLimit: true,
-      maxTotalEntries: true,
-      allowedResources: true,
-      endAt: true,
-      _count: {
-        select: { entries: true },
-      },
-    },
-  });
-
-  if (!crucible) {
-    return throwNotFoundError('Crucible not found');
-  }
-
-  // Validate crucible is active
-  if (crucible.status !== CrucibleStatus.Active) {
-    return throwBadRequestError('This crucible is not accepting entries');
-  }
-
-  // Validate crucible hasn't ended
-  if (crucible.endAt && new Date() > crucible.endAt) {
-    return throwBadRequestError('This crucible has ended');
-  }
-
-  // Validate max total entries hasn't been reached
-  if (crucible.maxTotalEntries && crucible._count.entries >= crucible.maxTotalEntries) {
-    return throwBadRequestError('This crucible has reached its maximum number of entries');
-  }
-
-  // Check user's entry count for this crucible
-  const userEntryCount = await dbRead.crucibleEntry.count({
-    where: {
-      crucibleId,
-      userId,
-    },
-  });
-
-  if (userEntryCount >= crucible.entryLimit) {
+  // Acquire distributed lock to prevent race conditions on entry limit
+  const lockAcquired = await acquireEntryLock(crucibleId, userId);
+  if (!lockAcquired) {
     return throwBadRequestError(
-      `You have reached the maximum of ${crucible.entryLimit} ${crucible.entryLimit === 1 ? 'entry' : 'entries'} for this crucible`
+      'Entry submission in progress. Please wait a moment and try again.'
     );
   }
 
-  // Fetch the image to validate requirements
-  const image = await dbRead.image.findUnique({
-    where: { id: imageId },
-    select: {
-      id: true,
-      userId: true,
-      nsfwLevel: true,
-    },
-  });
-
-  if (!image) {
-    return throwNotFoundError('Image not found');
-  }
-
-  // Validate user owns the image
-  if (image.userId !== userId) {
-    return throwBadRequestError('You can only submit your own images');
-  }
-
-  // Validate image NSFW level is compatible with crucible
-  // The image's NSFW level must intersect with the crucible's allowed NSFW levels
-  if (!Flags.intersects(image.nsfwLevel, crucible.nsfwLevel)) {
-    return throwBadRequestError(
-      'This image does not meet the content level requirements for this crucible'
-    );
-  }
-
-  // Check if image is already submitted to this crucible
-  const existingEntry = await dbRead.crucibleEntry.findFirst({
-    where: {
-      crucibleId,
-      imageId,
-    },
-  });
-
-  if (existingEntry) {
-    return throwBadRequestError('This image has already been submitted to this crucible');
-  }
-
-  // Validate allowed resources if specified
-  // allowedResources is an array of model version IDs that the crucible restricts entries to
-  const allowedResources = crucible.allowedResources as number[] | null;
-  if (allowedResources && allowedResources.length > 0) {
-    // Fetch the image's resources from cache
-    const resourcesData = await imageResourcesCache.fetch([imageId]);
-    const imageResources = resourcesData[imageId]?.resources ?? [];
-
-    if (imageResources.length === 0) {
-      return throwBadRequestError(
-        'This image has no detected resources. Images submitted to this crucible must use specific resources.'
-      );
-    }
-
-    // Check if any of the image's resources are in the allowed list
-    const imageVersionIds = imageResources.map((r) => r.modelVersionId);
-    const hasAllowedResource = imageVersionIds.some((versionId) =>
-      allowedResources.includes(versionId)
-    );
-
-    if (!hasAllowedResource) {
-      return throwBadRequestError(
-        'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.'
-      );
-    }
-  }
-
-  // Handle entry fee collection (if entryFee > 0)
-  let buzzTransactionId: string | null = null;
-
-  if (crucible.entryFee > 0) {
-    // Check if user has sufficient Buzz
-    const userAccount = await getUserBuzzAccount({ accountId: userId, accountTypes: ['yellow', 'green'] });
-    const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
-
-    if (totalBalance < crucible.entryFee) {
-      const shortage = crucible.entryFee - totalBalance;
-      return throwInsufficientFundsError(
-        `You need ${crucible.entryFee.toLocaleString()} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
-      );
-    }
-
-    // Generate transaction prefix for potential refunds
-    const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
-
-    // Create multi-account transaction to collect entry fee
-    // Transfers from user's yellow/green Buzz to central bank (account 0)
-    await createMultiAccountBuzzTransaction({
-      fromAccountId: userId,
-      fromAccountTypes: ['yellow', 'green'], // Allow both yellow and green Buzz
-      toAccountId: 0, // Central bank
-      amount: crucible.entryFee,
-      type: TransactionType.Fee,
-      externalTransactionIdPrefix: transactionPrefix,
-      description: 'Crucible entry fee',
-      details: {
-        entityId: crucibleId,
-        entityType: 'Crucible',
-      },
-    });
-
-    buzzTransactionId = transactionPrefix;
-  }
-
-  // Create the entry with default ELO score (1500)
-  const entry = await dbWrite.crucibleEntry.create({
-    data: {
-      crucibleId,
-      userId,
-      imageId,
-      score: 1500, // Default ELO score
-      buzzTransactionId,
-    },
-    select: {
-      id: true,
-      crucibleId: true,
-      userId: true,
-      imageId: true,
-      score: true,
-      position: true,
-      buzzTransactionId: true,
-      createdAt: true,
-      user: {
-        select: {
-          username: true,
+  try {
+    // Fetch the crucible with required validation data
+    const crucible = await dbRead.crucible.findUnique({
+      where: { id: crucibleId },
+      select: {
+        id: true,
+        name: true,
+        userId: true, // Crucible creator for notification
+        status: true,
+        nsfwLevel: true,
+        entryFee: true,
+        entryLimit: true,
+        maxTotalEntries: true,
+        allowedResources: true,
+        endAt: true,
+        _count: {
+          select: { entries: true },
         },
       },
-    },
-  });
-
-  // Send notification to crucible creator (don't notify if creator is submitting to their own crucible)
-  if (crucible.userId !== userId) {
-    // Fire-and-forget notification
-    createNotification({
-      userId: crucible.userId,
-      type: 'crucible-entry-submitted',
-      category: NotificationCategory.Crucible,
-      key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
-      details: {
-        crucibleId,
-        crucibleName: crucible.name,
-        entrantUsername: entry.user.username ?? 'Anonymous',
-      },
-    }).catch((err) => {
-      log(`Failed to send entry notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
     });
-  }
 
-  return entry;
+    if (!crucible) {
+      return throwNotFoundError('Crucible not found');
+    }
+
+    // Validate crucible is active
+    if (crucible.status !== CrucibleStatus.Active) {
+      return throwBadRequestError('This crucible is not accepting entries');
+    }
+
+    // Validate crucible hasn't ended
+    if (crucible.endAt && new Date() > crucible.endAt) {
+      return throwBadRequestError('This crucible has ended');
+    }
+
+    // Validate max total entries hasn't been reached
+    if (crucible.maxTotalEntries && crucible._count.entries >= crucible.maxTotalEntries) {
+      return throwBadRequestError('This crucible has reached its maximum number of entries');
+    }
+
+    // Check user's entry count for this crucible
+    const userEntryCount = await dbRead.crucibleEntry.count({
+      where: {
+        crucibleId,
+        userId,
+      },
+    });
+
+    if (userEntryCount >= crucible.entryLimit) {
+      return throwBadRequestError(
+        `You have reached the maximum of ${crucible.entryLimit} ${crucible.entryLimit === 1 ? 'entry' : 'entries'} for this crucible`
+      );
+    }
+
+    // Fetch the image to validate requirements
+    const image = await dbRead.image.findUnique({
+      where: { id: imageId },
+      select: {
+        id: true,
+        userId: true,
+        nsfwLevel: true,
+      },
+    });
+
+    if (!image) {
+      return throwNotFoundError('Image not found');
+    }
+
+    // Validate user owns the image
+    if (image.userId !== userId) {
+      return throwBadRequestError('You can only submit your own images');
+    }
+
+    // Validate image NSFW level is compatible with crucible
+    // The image's NSFW level must intersect with the crucible's allowed NSFW levels
+    if (!Flags.intersects(image.nsfwLevel, crucible.nsfwLevel)) {
+      return throwBadRequestError(
+        'This image does not meet the content level requirements for this crucible'
+      );
+    }
+
+    // Check if image is already submitted to this crucible
+    const existingEntry = await dbRead.crucibleEntry.findFirst({
+      where: {
+        crucibleId,
+        imageId,
+      },
+    });
+
+    if (existingEntry) {
+      return throwBadRequestError('This image has already been submitted to this crucible');
+    }
+
+    // Validate allowed resources if specified
+    // allowedResources is an array of model version IDs that the crucible restricts entries to
+    const allowedResources = crucible.allowedResources as number[] | null;
+    if (allowedResources && allowedResources.length > 0) {
+      // Fetch the image's resources from cache
+      const resourcesData = await imageResourcesCache.fetch([imageId]);
+      const imageResources = resourcesData[imageId]?.resources ?? [];
+
+      if (imageResources.length === 0) {
+        return throwBadRequestError(
+          'This image has no detected resources. Images submitted to this crucible must use specific resources.'
+        );
+      }
+
+      // Check if any of the image's resources are in the allowed list
+      const imageVersionIds = imageResources.map((r) => r.modelVersionId);
+      const hasAllowedResource = imageVersionIds.some((versionId) =>
+        allowedResources.includes(versionId)
+      );
+
+      if (!hasAllowedResource) {
+        return throwBadRequestError(
+          'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.'
+        );
+      }
+    }
+
+    // Handle entry fee collection (if entryFee > 0)
+    let buzzTransactionId: string | null = null;
+
+    if (crucible.entryFee > 0) {
+      // Check if user has sufficient Buzz
+      const userAccount = await getUserBuzzAccount({ accountId: userId, accountTypes: ['yellow', 'green'] });
+      const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
+
+      if (totalBalance < crucible.entryFee) {
+        const shortage = crucible.entryFee - totalBalance;
+        return throwInsufficientFundsError(
+          `You need ${crucible.entryFee.toLocaleString()} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
+        );
+      }
+
+      // Generate transaction prefix for potential refunds
+      const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
+
+      // Create multi-account transaction to collect entry fee
+      // Transfers from user's yellow/green Buzz to central bank (account 0)
+      await createMultiAccountBuzzTransaction({
+        fromAccountId: userId,
+        fromAccountTypes: ['yellow', 'green'], // Allow both yellow and green Buzz
+        toAccountId: 0, // Central bank
+        amount: crucible.entryFee,
+        type: TransactionType.Fee,
+        externalTransactionIdPrefix: transactionPrefix,
+        description: 'Crucible entry fee',
+        details: {
+          entityId: crucibleId,
+          entityType: 'Crucible',
+        },
+      });
+
+      buzzTransactionId = transactionPrefix;
+    }
+
+    // Create the entry with default ELO score (1500)
+    const entry = await dbWrite.crucibleEntry.create({
+      data: {
+        crucibleId,
+        userId,
+        imageId,
+        score: 1500, // Default ELO score
+        buzzTransactionId,
+      },
+      select: {
+        id: true,
+        crucibleId: true,
+        userId: true,
+        imageId: true,
+        score: true,
+        position: true,
+        buzzTransactionId: true,
+        createdAt: true,
+        user: {
+          select: {
+            username: true,
+          },
+        },
+      },
+    });
+
+    // Send notification to crucible creator (don't notify if creator is submitting to their own crucible)
+    if (crucible.userId !== userId) {
+      // Fire-and-forget notification
+      createNotification({
+        userId: crucible.userId,
+        type: 'crucible-entry-submitted',
+        category: NotificationCategory.Crucible,
+        key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
+        details: {
+          crucibleId,
+          crucibleName: crucible.name,
+          entrantUsername: entry.user.username ?? 'Anonymous',
+        },
+      }).catch((err) => {
+        log(`Failed to send entry notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      });
+    }
+
+    return entry;
+  } finally {
+    // Always release the lock, even if an error occurs
+    await releaseEntryLock(crucibleId, userId);
+  }
 };
 
 // ELO deviation thresholds for estimating vote activity
