@@ -84,18 +84,7 @@ Examples:
   }
 }
 
-// Read prompt template
-const promptPath = resolve(__dirname, 'prompt.md');
-if (!existsSync(promptPath)) {
-  console.error(`Error: prompt.md not found at ${promptPath}`);
-  process.exit(1);
-}
-const promptTemplate = readFileSync(promptPath, 'utf-8');
-
-// Read progress file path (in same directory as PRD)
-const progressPath = resolve(dirname(prdPath), 'progress.txt');
-
-// Validate PRD exists
+// Validate PRD exists first (need to read it to determine prompt type)
 if (!existsSync(prdPath)) {
   console.error(`Error: PRD not found at ${prdPath}`);
   console.error('Create a PRD first using the /ralph skill');
@@ -106,6 +95,51 @@ if (!existsSync(prdPath)) {
 function readPrd() {
   const content = readFileSync(prdPath, 'utf-8');
   return JSON.parse(content);
+}
+
+// Determine PRD type and load prompt
+const initialPrd = readPrd();
+const prdType = initialPrd.type || 'code';
+
+// Progress file path (in same directory as PRD)
+const progressPath = resolve(dirname(prdPath), 'progress.txt');
+
+// Load prompts
+const promptsDir = resolve(__dirname, 'prompts');
+let promptTemplate;
+
+if (prdType === 'original') {
+  // Original type uses the monolithic prompt directly (no composition)
+  const originalPromptPath = resolve(promptsDir, 'original.md');
+  if (!existsSync(originalPromptPath)) {
+    console.error(`Error: original.md not found at ${originalPromptPath}`);
+    process.exit(1);
+  }
+  promptTemplate = readFileSync(originalPromptPath, 'utf-8')
+    .replace(/`\.claude\/skills\/ralph\/prd\.json`/g, `\`${prdPath}\``)
+    .replace(/`\.claude\/skills\/ralph\/progress\.txt`/g, `\`${progressPath}\``);
+} else {
+  // Composite prompt: base + specialized
+  const basePromptPath = resolve(promptsDir, 'base.md');
+  const specializedPromptPath = resolve(promptsDir, `${prdType}.md`);
+
+  if (!existsSync(basePromptPath)) {
+    console.error(`Error: base.md not found at ${basePromptPath}`);
+    process.exit(1);
+  }
+  if (!existsSync(specializedPromptPath)) {
+    console.error(`Error: ${prdType}.md not found at ${specializedPromptPath}`);
+    process.exit(1);
+  }
+
+  const basePrompt = readFileSync(basePromptPath, 'utf-8');
+  const specializedPrompt = readFileSync(specializedPromptPath, 'utf-8');
+
+  // Inject paths into base prompt
+  promptTemplate = basePrompt
+    .replace(/\{\{PRD_PATH\}\}/g, prdPath)
+    .replace(/\{\{PROGRESS_PATH\}\}/g, progressPath)
+    + '\n\n---\n\n' + specializedPrompt;
 }
 
 // Write PRD
@@ -154,15 +188,12 @@ function printBanner(iteration, maxIterations, story) {
   console.log('');
 }
 
-// Build the prompt with PRD and progress paths injected
+// Build the final prompt (paths already injected at load time)
 function buildPrompt() {
-  // Replace placeholder paths in prompt template with actual paths
-  let prompt = promptTemplate
-    .replace(/`[^`]*prd\.json`/g, `\`${prdPath}\``)
-    .replace(/`[^`]*progress\.txt`/g, `\`${progressPath}\``);
+  let prompt = promptTemplate;
 
-  // Add no-commit instruction if flag is set
-  if (noCommit) {
+  // Add no-commit instruction if flag is set (only relevant for code PRDs)
+  if (noCommit && prdType === 'code') {
     prompt += `
 
 ## TESTING MODE - NO COMMITS
@@ -170,8 +201,8 @@ function buildPrompt() {
 **DO NOT commit any changes.** This is a test run.
 - Make the code changes as normal
 - Run typecheck as normal
-- Update prd.json to mark story as passing
-- Update progress.txt as normal
+- Update the PRD to mark story as passing
+- Update progress log as normal
 - But SKIP the git commit step entirely
 `;
   }
