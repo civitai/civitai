@@ -1,4 +1,4 @@
-import { Container, Paper, Text, Title, Group, Button, Box, Anchor, Loader } from '@mantine/core';
+import { Container, Group, Paper, Text, Title, Button, Box, Anchor, Loader } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -205,6 +205,29 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   }
 
   const entryCount = crucible._count?.entries ?? 0;
+
+  // Check if there are enough entries to judge (need at least 2)
+  if (entryCount < 2) {
+    return (
+      <Container size="lg" className="py-16 text-center">
+        <IconUsers className="mx-auto mb-4 h-16 w-16 text-gray-500" />
+        <Title order={2} mb="md">
+          Not Enough Entries Yet
+        </Title>
+        <Text c="dimmed" mb="xl" maw={400} className="mx-auto">
+          This crucible needs at least 2 entries before judging can begin.
+          {entryCount === 0
+            ? ' Be the first to submit an entry!'
+            : ' Check back soon or submit your own entry!'}
+        </Text>
+        <Group justify="center">
+          <Button component={Link} href={`/crucibles/${id}/${slugit(crucible.name)}`}>
+            Back to Crucible
+          </Button>
+        </Group>
+      </Container>
+    );
+  }
   const totalPrizePool = crucible.entryFee * entryCount;
   const timeRemaining = crucible.endAt ? getTimeRemaining(crucible.endAt) : null;
 
