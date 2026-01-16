@@ -1361,6 +1361,7 @@ export const cancelCrucible = async ({
       id: true,
       status: true,
       entryFee: true,
+      buzzTransactionId: true, // Creator setup fee transaction
       entries: {
         select: {
           id: true,
@@ -1425,6 +1426,32 @@ export const cancelCrucible = async ({
     }
   }
 
+  // Refund creator setup fee if transaction ID exists
+  let creatorSetupFeeRefunded = false;
+  if (crucible.buzzTransactionId) {
+    try {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: crucible.buzzTransactionId,
+        description: 'Crucible creator setup fee refund - crucible cancelled',
+        details: {
+          entityId: crucible.id,
+          entityType: 'Crucible',
+          reason: 'cancellation',
+        },
+      });
+
+      creatorSetupFeeRefunded = true;
+      log(`Refunded creator setup fee for crucible ${id} (transaction: ${crucible.buzzTransactionId})`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      log(`Failed to refund creator setup fee for crucible ${id}: ${errorMessage}`);
+      // Note: We don't add this to failedRefunds array as it's separate from entry refunds
+      // The cancellation should still proceed even if the setup fee refund fails
+    }
+  } else {
+    log(`No creator setup fee to refund for crucible ${id} (free crucible or legacy)`);
+  }
+
   // Update crucible status to cancelled
   await dbWrite.crucible.update({
     where: { id },
@@ -1437,7 +1464,7 @@ export const cancelCrucible = async ({
   await crucibleEloRedis.setTTL(id, 24 * 60 * 60); // 24 hours
 
   log(
-    `Cancelled crucible ${id}: ${refundedEntries} entries refunded, ${totalRefunded} Buzz total, ${failedRefunds.length} failed`
+    `Cancelled crucible ${id}: ${refundedEntries} entries refunded, ${totalRefunded} Buzz total, ${failedRefunds.length} failed, setup fee refunded: ${creatorSetupFeeRefunded}`
   );
 
   return {
