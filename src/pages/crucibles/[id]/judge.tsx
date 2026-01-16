@@ -258,7 +258,25 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     );
   }
   const totalPrizePool = crucible.entryFee * entryCount;
-  const timeRemaining = crucible.endAt ? getTimeRemaining(crucible.endAt) : null;
+
+  // Use client-side state for time remaining to avoid hydration mismatch
+  // (new Date() returns different values on server vs client)
+  const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
+
+  useEffect(() => {
+    const endAt = crucible.endAt;
+    if (!endAt) return;
+
+    // Calculate immediately on client hydration
+    setTimeRemaining(getTimeRemaining(endAt));
+
+    // Update every minute
+    const interval = setInterval(() => {
+      setTimeRemaining(getTimeRemaining(endAt));
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [crucible.endAt]);
 
   return (
     <>
