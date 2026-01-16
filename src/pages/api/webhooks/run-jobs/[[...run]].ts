@@ -71,6 +71,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
+import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -147,6 +148,7 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  ...crucibleJobs,
 ];
 
 const log = createLogger('jobs', 'green');
