@@ -1,4 +1,4 @@
-import { Button, Kbd, Paper, Text, Loader, Box, SimpleGrid, Skeleton } from '@mantine/core';
+import { Button, Kbd, Paper, Text, Loader, Box, SimpleGrid, Skeleton, Tooltip } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { IconPlayerSkipForward, IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -138,22 +138,28 @@ export function CrucibleJudgingUI({
       </SimpleGrid>
 
       {/* Skip Button */}
-      <Button
-        variant="default"
-        size="lg"
-        fullWidth
-        onClick={handleSkip}
-        disabled={isDisabled}
-        className="border-[#495057] bg-[#373a40] text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
-        leftSection={<IconPlayerSkipForward size={18} />}
-        rightSection={
-          <span className="ml-auto flex items-center gap-2">
-            <Kbd>Space</Kbd>
-          </span>
-        }
+      <Tooltip
+        label="Skips this pair without voting. The pair may appear again later."
+        position="top"
+        withArrow
       >
-        Skip Pair (counts as equal)
-      </Button>
+        <Button
+          variant="default"
+          size="lg"
+          fullWidth
+          onClick={handleSkip}
+          disabled={isDisabled}
+          className="border-[#495057] bg-[#373a40] text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
+          leftSection={<IconPlayerSkipForward size={18} />}
+          rightSection={
+            <span className="ml-auto flex items-center gap-2">
+              <Kbd>Space</Kbd>
+            </span>
+          }
+        >
+          Skip Pair
+        </Button>
+      </Tooltip>
 
       {/* Keyboard shortcut hint */}
       <Text size="xs" c="dimmed" ta="center" className="hidden md:block">
