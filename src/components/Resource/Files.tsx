@@ -11,6 +11,8 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
+  Badge,
+  Title,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { useViewportSize } from '@mantine/hooks';
@@ -24,6 +26,9 @@ import {
   IconRefresh,
   IconTrash,
   IconX,
+  IconFile3d,
+  IconPuzzle,
+  IconFileSettings,
 } from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
@@ -62,6 +67,15 @@ export function Files() {
     [files.length]
   );
   const resizeObserver = useResizeObserver(positioner);
+
+  // Categorize files by type
+  const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type ?? ''));
+  const requiredComponents = files.filter((f) =>
+    ['VAE', 'Text Encoder'].includes(f.type ?? '')
+  );
+  const optionalFiles = files.filter(
+    (f) => !['Model', 'Pruned Model', 'VAE', 'Text Encoder'].includes(f.type ?? '')
+  );
 
   return (
     <Stack>
@@ -130,15 +144,67 @@ export function Files() {
           Start Upload
         </Button>
       ) : null}
-      <MasonryScroller
-        containerRef={masonryRef}
-        positioner={positioner}
-        resizeObserver={resizeObserver}
-        offset={offset}
-        height={height}
-        items={files}
-        render={FileCard}
-      />
+
+      {/* Model Files Section */}
+      {modelFiles.length > 0 && (
+        <Stack gap="md">
+          <Group gap="xs">
+            <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
+            <Title order={4}>Model Files</Title>
+          </Group>
+          <Text size="sm" c="dimmed">
+            The main model files users will download. We'll show the best match based on their
+            preferences.
+          </Text>
+          <Stack gap="md">
+            {modelFiles.map((file, index) => (
+              <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+            ))}
+          </Stack>
+        </Stack>
+      )}
+
+      {/* Required Components Section */}
+      {requiredComponents.length > 0 && (
+        <Card withBorder style={{ borderColor: 'var(--mantine-color-yellow-6)', backgroundColor: 'rgba(250, 176, 5, 0.03)' }}>
+          <Stack gap="md">
+            <Group gap="xs">
+              <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-6)' }} />
+              <Title order={4}>Required Components</Title>
+              <Badge color="yellow" variant="light">
+                Users must download
+              </Badge>
+            </Group>
+            <Text size="sm" c="dimmed">
+              Additional files users need to run this model. Add multiple precision variants if
+              available.
+            </Text>
+            <Stack gap="md">
+              {requiredComponents.map((file, index) => (
+                <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+              ))}
+            </Stack>
+          </Stack>
+        </Card>
+      )}
+
+      {/* Optional Files Section */}
+      {optionalFiles.length > 0 && (
+        <Stack gap="md">
+          <Group gap="xs">
+            <IconFileSettings size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
+            <Title order={4}>Optional Files</Title>
+          </Group>
+          <Text size="sm" c="dimmed">
+            Workflows, configs, and other helpful files. Not required to use the model.
+          </Text>
+          <Stack gap="md">
+            {optionalFiles.map((file, index) => (
+              <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+            ))}
+          </Stack>
+        </Stack>
+      )}
     </Stack>
   );
 }
