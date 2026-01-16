@@ -12,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconCheck, IconLink, IconPuzzle } from '@tabler/icons-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { QuickSearchDropdownProps } from '~/components/Search/QuickSearchDropdown';
@@ -85,11 +85,15 @@ export default function LinkComponentModal({
   );
 
   // Get files from version data - filter to relevant file types based on component type
-  const files =
-    versionData?.files?.filter((f: VersionFile) => {
-      // For component linking, we want non-Model files
-      return f.type !== 'Model' && f.type !== 'Pruned Model';
-    }) ?? [];
+  // Memoized to maintain reference equality for useEffect dependencies
+  const files = useMemo(
+    () =>
+      versionData?.files?.filter((f: VersionFile) => {
+        // For component linking, we want non-Model files
+        return f.type !== 'Model' && f.type !== 'Pruned Model';
+      }) ?? [],
+    [versionData?.files]
+  );
 
   function handleClose() {
     dialog.onClose();
