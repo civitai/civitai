@@ -24,6 +24,7 @@ type SchemaError = {
   size?: ZodErrorSchema;
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
+  quantType?: ZodErrorSchema;
 };
 
 export type FileFromContextProps = {
@@ -35,6 +36,7 @@ export type FileFromContextProps = {
   size?: 'full' | 'pruned' | null;
   fp?: ModelFileFp | null;
   format?: ModelFileFormat | null;
+  quantType?: ModelFileQuantType | null;
   versionId?: number;
   file?: File;
   uuid: string;
@@ -87,6 +89,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       size: file.metadata?.size,
       fp: file.metadata?.fp,
       format: file.metadata?.format,
+      quantType: file.metadata?.quantType,
       versionId: version.id,
       uuid: randomId(),
       modelType: model?.type ?? null,
@@ -324,6 +327,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     size,
     fp,
     format,
+    quantType,
     versionId,
     file,
     uuid,
@@ -342,7 +346,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
-          meta: { versionId, type, size, fp, format, uuid },
+          meta: { versionId, type, size, fp, format, quantType, uuid },
         },
         async ({ meta, size, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {
@@ -433,6 +437,7 @@ const metadataSchema = modelFileMetadataSchema
     versionId: z.number(),
     type: z.enum(constants.modelFileTypes),
     modelType: z.enum(ModelType),
+    name: z.string(),
   })
   .refine(
     (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
@@ -444,6 +449,10 @@ const metadataSchema = modelFileMetadataSchema
   .refine((data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.fp : true), {
     error: 'Floating point is required for model files',
     path: ['fp'],
+  })
+  .refine((data) => (data.name.endsWith('.gguf') ? !!data.quantType : true), {
+    error: 'Quant type is required for GGUF files',
+    path: ['quantType'],
   })
   .array();
 
