@@ -12,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconCheck, IconLink, IconPuzzle } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { QuickSearchDropdownProps } from '~/components/Search/QuickSearchDropdown';
@@ -73,6 +73,10 @@ export default function LinkComponentModal({
     id: number;
     name: string;
   } | null>(null);
+
+  // Track if auto-selection has already been performed for the current version
+  // This prevents re-triggering auto-selection when dependencies change
+  const hasAutoSelectedFileRef = useRef<number | null>(null);
 
   // Fetch model versions when model is selected
   const { data: versionData, isLoading: versionsLoading } = trpc.modelVersion.getById.useQuery(
@@ -160,22 +164,40 @@ export default function LinkComponentModal({
         setSelectedModel(null);
         setSelectedVersion(null);
         setSelectedFile(null);
+        hasAutoSelectedFileRef.current = null;
       } else if (active === 2) {
         setSelectedVersion(null);
         setSelectedFile(null);
+        hasAutoSelectedFileRef.current = null;
       } else if (active === 3) {
         setSelectedFile(null);
+        hasAutoSelectedFileRef.current = null;
       }
     }
   }
 
-  // Auto-select file if only one exists
-  if (active === 3 && files.length === 1 && !selectedFile) {
-    setSelectedFile({
-      id: files[0].id,
-      name: files[0].name,
-    });
-  }
+  // Auto-select file if only one exists - uses useEffect to avoid state update during render
+  useEffect(() => {
+    // Only auto-select when:
+    // 1. We're on step 3 (file selection)
+    // 2. Data is fully loaded (not loading)
+    // 3. There's exactly one file
+    // 4. No file is currently selected
+    // 5. We haven't already auto-selected for this version (prevents re-triggering)
+    if (
+      active === 3 &&
+      !versionsLoading &&
+      files.length === 1 &&
+      !selectedFile &&
+      hasAutoSelectedFileRef.current !== selectedVersion?.id
+    ) {
+      hasAutoSelectedFileRef.current = selectedVersion?.id ?? null;
+      setSelectedFile({
+        id: files[0].id,
+        name: files[0].name,
+      });
+    }
+  }, [active, versionsLoading, files, selectedFile, selectedVersion?.id]);
 
   const canSave = componentType && selectedModel && selectedVersion && selectedFile;
 
