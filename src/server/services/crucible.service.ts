@@ -20,6 +20,7 @@ import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getEntryElo, CRUCIBLE_DEFAULT_ELO, processVote as processEloVote } from './crucible-elo.service';
 import { shuffle } from '~/utils/array-helpers';
+import { Tracker } from '~/server/clickhouse/client';
 
 /**
  * Create a new crucible
@@ -706,6 +707,14 @@ export const submitVote = async ({
 
   // Mark pair as voted in Redis
   await markPairVoted(crucibleId, userId, winnerEntryId, loserEntryId);
+
+  // Track vote in ClickHouse (fire-and-forget)
+  const tracker = new Tracker();
+  tracker.crucibleVote({
+    crucibleId,
+    winnerEntryId,
+    loserEntryId,
+  });
 
   return {
     winnerElo,
