@@ -19,10 +19,10 @@ export const crucibleNotifications = createNotificationProcessor({
     category: NotificationCategory.Crucible,
     toggleable: true,
     prepareMessage: ({ details }) => {
-      if (details.position === 0) {
-        // Participation without winning
+      // If prizeAmount is 0, user participated but didn't win a prize
+      if (!details.prizeAmount || details.prizeAmount === 0) {
         return {
-          message: `The crucible "${details.crucibleName}" has ended. Your entry finished at position ${details.position + 1}. Thanks for participating!`,
+          message: `The crucible "${details.crucibleName}" has ended. Your entry finished at position ${details.position}. Thanks for participating!`,
           url: `/crucibles/${details.crucibleId}`,
         };
       }
