@@ -1,0 +1,14 @@
+# Ralph working files - these are ephemeral state, not permanent artifacts
+# The source of truth is the original plan.md and CLAUDE.md
+
+# Task state (regenerate with /ralph <plan.md>)
+prd.json
+
+# Session learnings (important patterns should be moved to CLAUDE.md)
+progress.txt
+
+# Branch tracking
+.last-branch
+
+# Archives of previous runs
+archive/
