@@ -11,13 +11,15 @@
  * @file crucible-elo.service.test.ts
  */
 
-// ============================================================
-// CONSTANTS (must match crucible-elo.service.ts)
-// ============================================================
-const K_FACTOR_PROVISIONAL = 64;
-const K_FACTOR_ESTABLISHED = 32;
-const PROVISIONAL_VOTE_THRESHOLD = 10;
-const CRUCIBLE_DEFAULT_ELO = 1500;
+// Wrap in IIFE to scope variables (avoids conflicts with other test files during typecheck)
+(function runEloTests() {
+  // ============================================================
+  // CONSTANTS (must match crucible-elo.service.ts)
+  // ============================================================
+  const K_FACTOR_PROVISIONAL = 64;
+  const K_FACTOR_ESTABLISHED = 32;
+  const PROVISIONAL_VOTE_THRESHOLD = 10;
+  const CRUCIBLE_DEFAULT_ELO = 1500;
 
 // ============================================================
 // PURE FUNCTIONS UNDER TEST (must match crucible-elo.service.ts)
@@ -253,9 +255,10 @@ console.log(`Failed: ${testsFailed}`);
 console.log(`Total: ${testsPassed + testsFailed}`);
 
 if (testsFailed > 0) {
-  console.log('\nSome tests FAILED');
-  process.exit(1);
-} else {
-  console.log('\nAll tests PASSED');
-  process.exit(0);
-}
+    console.log('\nSome tests FAILED');
+    process.exit(1);
+  } else {
+    console.log('\nAll tests PASSED');
+    process.exit(0);
+  }
+})();
