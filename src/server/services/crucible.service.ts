@@ -3,10 +3,16 @@ import dayjs from '~/shared/utils/dayjs';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
+import { Flags } from '~/shared/utils/flags';
+import {
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import type {
   GetCruciblesInfiniteSchema,
   GetCrucibleByIdSchema,
   CreateCrucibleInputSchema,
+  SubmitEntrySchema,
 } from '../schema/crucible.schema';
 
 /**
@@ -145,4 +151,129 @@ export const getCrucibleEntries = async <TSelect extends Prisma.CrucibleEntrySel
     orderBy: { score: 'desc' },
     select,
   });
+};
+
+/**
+ * Submit an entry to a crucible
+ */
+export const submitEntry = async ({
+  crucibleId,
+  imageId,
+  userId,
+}: SubmitEntrySchema & { userId: number }) => {
+  // Fetch the crucible with required validation data
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: {
+      id: true,
+      status: true,
+      nsfwLevel: true,
+      entryLimit: true,
+      maxTotalEntries: true,
+      allowedResources: true,
+      endAt: true,
+      _count: {
+        select: { entries: true },
+      },
+    },
+  });
+
+  if (!crucible) {
+    return throwNotFoundError('Crucible not found');
+  }
+
+  // Validate crucible is active
+  if (crucible.status !== CrucibleStatus.Active) {
+    return throwBadRequestError('This crucible is not accepting entries');
+  }
+
+  // Validate crucible hasn't ended
+  if (crucible.endAt && new Date() > crucible.endAt) {
+    return throwBadRequestError('This crucible has ended');
+  }
+
+  // Validate max total entries hasn't been reached
+  if (crucible.maxTotalEntries && crucible._count.entries >= crucible.maxTotalEntries) {
+    return throwBadRequestError('This crucible has reached its maximum number of entries');
+  }
+
+  // Check user's entry count for this crucible
+  const userEntryCount = await dbRead.crucibleEntry.count({
+    where: {
+      crucibleId,
+      userId,
+    },
+  });
+
+  if (userEntryCount >= crucible.entryLimit) {
+    return throwBadRequestError(
+      `You have reached the maximum of ${crucible.entryLimit} ${crucible.entryLimit === 1 ? 'entry' : 'entries'} for this crucible`
+    );
+  }
+
+  // Fetch the image to validate requirements
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: {
+      id: true,
+      userId: true,
+      nsfwLevel: true,
+    },
+  });
+
+  if (!image) {
+    return throwNotFoundError('Image not found');
+  }
+
+  // Validate user owns the image
+  if (image.userId !== userId) {
+    return throwBadRequestError('You can only submit your own images');
+  }
+
+  // Validate image NSFW level is compatible with crucible
+  // The image's NSFW level must intersect with the crucible's allowed NSFW levels
+  if (!Flags.intersects(image.nsfwLevel, crucible.nsfwLevel)) {
+    return throwBadRequestError(
+      'This image does not meet the content level requirements for this crucible'
+    );
+  }
+
+  // Check if image is already submitted to this crucible
+  const existingEntry = await dbRead.crucibleEntry.findFirst({
+    where: {
+      crucibleId,
+      imageId,
+    },
+  });
+
+  if (existingEntry) {
+    return throwBadRequestError('This image has already been submitted to this crucible');
+  }
+
+  // TODO: Validate allowed resources if specified (future feature)
+  // if (crucible.allowedResources) {
+  //   const resources = crucible.allowedResources as number[];
+  //   // Check image generation resources against allowed list
+  // }
+
+  // Create the entry with default ELO score (1500)
+  const entry = await dbWrite.crucibleEntry.create({
+    data: {
+      crucibleId,
+      userId,
+      imageId,
+      score: 1500, // Default ELO score
+    },
+    select: {
+      id: true,
+      crucibleId: true,
+      userId: true,
+      imageId: true,
+      score: true,
+      position: true,
+      createdAt: true,
+    },
+  });
+
+  return entry;
 };
