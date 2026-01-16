@@ -94,6 +94,7 @@ export const modelFileMetadataSchema = z.object({
   size: z.enum(constants.modelFileSizes).nullish(),
   fp: z.enum(constants.modelFileFp).nullish(),
   quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+  componentType: z.enum(constants.modelFileComponentTypes).nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
   shareDataset: z.boolean().nullish(),

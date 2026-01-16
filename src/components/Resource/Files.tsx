@@ -424,6 +424,7 @@ function FileEditForm({
           size: versionFile.size ?? undefined,
           format: versionFile.format ?? undefined,
           quantType: versionFile.quantType ?? undefined,
+          componentType: versionFile.componentType ?? undefined,
         },
       });
     }
@@ -458,6 +459,7 @@ function FileEditForm({
       size: initialFile.size,
       fp: initialFile.fp,
       quantType: initialFile.quantType,
+      componentType: initialFile.componentType,
     });
   };
 
@@ -474,15 +476,43 @@ function FileEditForm({
           value: x,
         }))}
         value={versionFile.type ?? null}
-        onChange={(value) =>
+        onChange={(value) => {
+          const newType = value as ModelFileType | null;
+          // Auto-suggest componentType based on file type
+          let suggestedComponentType: ModelFileComponentType | null = null;
+          if (newType === 'VAE') suggestedComponentType = 'VAE';
+          else if (newType === 'Text Encoder') suggestedComponentType = 'TextEncoder';
+          else if (newType === 'Config') suggestedComponentType = 'Config';
+
           updateFile(versionFile.uuid, {
-            type: value as ModelFileType | null,
+            type: newType,
             size: null,
             fp: null,
-          })
-        }
+            componentType: suggestedComponentType,
+          });
+        }}
         withAsterisk
       />
+
+      {versionFile.type && !['Model', 'Pruned Model'].includes(versionFile.type) && (
+        <Tooltip
+          label="Specify what type of component this file is for users who need to download it separately."
+          multiline
+          w={300}
+        >
+          <Select
+            label="Component Type"
+            placeholder="VAE, Text Encoder, UNet..."
+            data={constants.modelFileComponentTypes}
+            error={error?.componentType?._errors[0]}
+            value={versionFile.componentType ?? null}
+            onChange={(value) => {
+              updateFile(versionFile.uuid, { componentType: value as ModelFileComponentType | null });
+            }}
+          />
+        </Tooltip>
+      )}
+
       {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' && (
         <>
           <Select

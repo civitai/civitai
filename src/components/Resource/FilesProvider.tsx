@@ -25,6 +25,7 @@ type SchemaError = {
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
   quantType?: ZodErrorSchema;
+  componentType?: ZodErrorSchema;
 };
 
 export type FileFromContextProps = {
@@ -37,6 +38,7 @@ export type FileFromContextProps = {
   fp?: ModelFileFp | null;
   format?: ModelFileFormat | null;
   quantType?: ModelFileQuantType | null;
+  componentType?: ModelFileComponentType | null;
   versionId?: number;
   file?: File;
   uuid: string;
@@ -90,6 +92,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       fp: file.metadata?.fp,
       format: file.metadata?.format,
       quantType: file.metadata?.quantType,
+      componentType: file.metadata?.componentType,
       versionId: version.id,
       uuid: randomId(),
       modelType: model?.type ?? null,
@@ -328,6 +331,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     fp,
     format,
     quantType,
+    componentType,
     versionId,
     file,
     uuid,
@@ -346,7 +350,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
-          meta: { versionId, type, size, fp, format, quantType, uuid },
+          meta: { versionId, type, size, fp, format, quantType, componentType, uuid },
         },
         async ({ meta, size, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {
