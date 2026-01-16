@@ -11,7 +11,7 @@ type FileFormatType = {
 };
 
 export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
-  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16', quantType: 'Q4_K_M' },
 };
 
 type FileMetaKey = keyof BasicFileMetadata;
@@ -19,6 +19,7 @@ const preferenceWeight: Partial<Record<FileMetaKey, number>> = {
   format: 100,
   size: 10,
   fp: 1,
+  quantType: 0.5,
 };
 
 export function getPrimaryFile<T extends FileFormatType>(
