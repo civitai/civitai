@@ -345,43 +345,48 @@ function getBaseClient(type: 'cache' | 'system') {
     // This ensures we don't rely solely on MOVED/ASK errors for discovery
     // See: https://github.com/redis/node-redis/issues/2806
     baseClient.once('ready', async () => {
-      const isEnhancedFailoverEnabled = await isFlipt(
-        FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
-        'redis-cluster', // entityId
-        fliptContext // context for segment matching
-      );
+      try {
+        log('Checking enhanced failover feature flag...');
+        const isEnhancedFailoverEnabled = await isFlipt(
+          FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+          'redis-cluster', // entityId
+          fliptContext // context for segment matching
+        );
 
-      if (!isEnhancedFailoverEnabled) {
-        log('Enhanced cluster failover handling is DISABLED (feature flag off)');
-        return;
-      }
-
-      log('Enhanced cluster failover handling is ENABLED');
-
-      const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
-      if (refreshInterval > 0) {
-        const intervalId = setInterval(() => {
-          triggerTopologyRediscovery(baseClient, 'periodic refresh');
-        }, refreshInterval);
-
-        // Store interval for cleanup
-        clusterRefreshIntervals.set(type, intervalId);
-
-        // Wrap close to clean up interval
-        const originalClose = baseClient.close?.bind(baseClient);
-        if (originalClose) {
-          (baseClient as any).close = async () => {
-            const interval = clusterRefreshIntervals.get(type);
-            if (interval) {
-              clearInterval(interval);
-              clusterRefreshIntervals.delete(type);
-              log(`Cleared topology refresh interval for ${type}`);
-            }
-            return originalClose();
-          };
+        if (!isEnhancedFailoverEnabled) {
+          log('Enhanced cluster failover handling is DISABLED (feature flag off)');
+          return;
         }
 
-        log(`Topology refresh scheduled every ${refreshInterval}ms`);
+        log('Enhanced cluster failover handling is ENABLED');
+
+        const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
+        if (refreshInterval > 0) {
+          const intervalId = setInterval(() => {
+            triggerTopologyRediscovery(baseClient, 'periodic refresh');
+          }, refreshInterval);
+
+          // Store interval for cleanup
+          clusterRefreshIntervals.set(type, intervalId);
+
+          // Wrap close to clean up interval
+          const originalClose = baseClient.close?.bind(baseClient);
+          if (originalClose) {
+            (baseClient as any).close = async () => {
+              const interval = clusterRefreshIntervals.get(type);
+              if (interval) {
+                clearInterval(interval);
+                clusterRefreshIntervals.delete(type);
+                log(`Cleared topology refresh interval for ${type}`);
+              }
+              return originalClose();
+            };
+          }
+
+          log(`Topology refresh scheduled every ${refreshInterval}ms`);
+        }
+      } catch (err) {
+        log(`Enhanced failover setup failed: ${err instanceof Error ? err.message : err}`);
       }
     });
   }
