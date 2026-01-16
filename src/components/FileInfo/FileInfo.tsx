@@ -22,8 +22,7 @@ export function FileInfo({ file }: Props) {
   if (!file.hashes || !file.hashes.length) return null;
 
   const isGGUF = file.name?.toLowerCase().endsWith('.gguf');
-  const isComponentFile =
-    file.type && !['Model', 'Pruned Model'].includes(file.type as string);
+  const isComponentFile = file.type && !['Model', 'Pruned Model'].includes(file.type as string);
 
   const items = [
     { label: 'Hashes', value: <ModelHash hashes={file.hashes} /> },
