@@ -423,6 +423,7 @@ function FileEditForm({
           fp: versionFile.fp ?? undefined,
           size: versionFile.size ?? undefined,
           format: versionFile.format ?? undefined,
+          quantType: versionFile.quantType ?? undefined,
         },
       });
     }
@@ -456,6 +457,7 @@ function FileEditForm({
       type: initialFile.type,
       size: initialFile.size,
       fp: initialFile.fp,
+      quantType: initialFile.quantType,
     });
   };
 
@@ -509,6 +511,26 @@ function FileEditForm({
             }}
             withAsterisk
           />
+
+          {versionFile.name.endsWith('.gguf') && (
+            <Tooltip
+              label="Quantization level - Q8 offers best quality, Q4/Q2 are smaller. Users with GGUF preference will auto-select their preferred quant."
+              multiline
+              w={300}
+            >
+              <Select
+                label="Quant Type"
+                placeholder="Q8_0, Q6_K, Q4_K_M..."
+                data={constants.modelFileQuantTypes}
+                error={error?.quantType?._errors[0]}
+                value={versionFile.quantType ?? null}
+                onChange={(value) => {
+                  updateFile(versionFile.uuid, { quantType: value as ModelFileQuantType | null });
+                }}
+                withAsterisk
+              />
+            </Tooltip>
+          )}
 
           {versionFile.name.endsWith('.zip') && (
             <Select
