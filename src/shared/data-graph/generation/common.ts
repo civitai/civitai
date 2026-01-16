@@ -281,6 +281,59 @@ export function seedNode() {
 }
 
 // =============================================================================
+// Enum Node Builder
+// =============================================================================
+
+/** Option type for enum node */
+export type EnumOption<T extends string> = {
+  label: string;
+  value: T;
+};
+
+/**
+ * Creates an enum node with type-safe options.
+ * Input validates against allowed values, output is the enum type.
+ * Meta contains: options (for UI rendering)
+ *
+ * @example
+ * // Simple usage with string array
+ * .node('style', enumNode({
+ *   options: [
+ *     { label: 'General', value: 'general' },
+ *     { label: 'Anime', value: 'anime' },
+ *   ],
+ *   defaultValue: 'general',
+ * }))
+ *
+ * // With explicit type
+ * .node('mode', enumNode<'fast' | 'standard'>({
+ *   options: [
+ *     { label: 'Fast', value: 'fast' },
+ *     { label: 'Standard', value: 'standard' },
+ *   ],
+ *   defaultValue: 'fast',
+ * }))
+ */
+export function enumNode<T extends string>({
+  options,
+  defaultValue,
+}: {
+  options: readonly EnumOption<T>[];
+  defaultValue: T;
+}) {
+  const values = options.map((o) => o.value) as [T, ...T[]];
+
+  return {
+    input: z.enum(values).optional(),
+    output: z.enum(values),
+    defaultValue,
+    meta: {
+      options,
+    },
+  };
+}
+
+// =============================================================================
 // Quantity Node Builder
 // =============================================================================
 

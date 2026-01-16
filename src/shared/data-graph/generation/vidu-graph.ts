@@ -15,7 +15,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode } from './common';
+import { seedNode, aspectRatioNode, enumNode } from './common';
 
 // =============================================================================
 // Constants
@@ -71,18 +71,13 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
   // Style node - only for txt2vid workflow
   .node(
     'style',
-    (ctx) => {
-      const isTxt2Vid = ctx.workflow === 'txt2vid';
-      return {
-        input: z.enum(['general', 'anime']).optional(),
-        output: z.enum(['general', 'anime']),
-        defaultValue: 'general' as const,
-        meta: {
-          options: viduStyles,
-        },
-        when: isTxt2Vid,
-      };
-    },
+    (ctx) => ({
+      ...enumNode({
+        options: viduStyles,
+        defaultValue: 'general',
+      }),
+      when: ctx.workflow === 'txt2vid',
+    }),
     ['workflow']
   )
 
@@ -100,14 +95,13 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
   )
 
   // Movement amplitude node - always shown
-  .node('movementAmplitude', {
-    input: z.enum(['auto', 'small', 'medium', 'large']).optional(),
-    output: z.enum(['auto', 'small', 'medium', 'large']),
-    defaultValue: 'auto' as const,
-    meta: {
+  .node(
+    'movementAmplitude',
+    enumNode({
       options: viduMovementAmplitudes,
-    },
-  });
+      defaultValue: 'auto',
+    })
+  );
 
 // Export constants for use in components
 export { viduAspectRatios, viduStyles, viduMovementAmplitudes };

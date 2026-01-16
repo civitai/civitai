@@ -218,6 +218,7 @@ if ('test'.length > 5) {
       if (data.modelFamily === 'stable-diffusion') {
         console.log(data.aspectRatio);
         console.log(data.seed);
+        console.log(data.model);
       }
     }
 
@@ -225,6 +226,12 @@ if ('test'.length > 5) {
     if (data.workflow === 'img2img:upscale') {
       console.log(data.images);
       console.log(data.scaleFactor);
+    }
+
+    if (data.workflow === 'txt2vid') {
+      if (data.modelFamily === 'vidu') {
+        console.log(data.movementAmplitude);
+      }
     }
   }
 }

@@ -413,7 +413,9 @@ function GenerationForm() {
                   <SegmentedControl
                     value={value?.toString()}
                     onChange={(v) => onChange(Number(v))}
-                    data={options?.map((o) => ({ label: o.label, value: o.value.toString() })) ?? []}
+                    data={
+                      options?.map((o) => ({ label: o.label, value: o.value.toString() })) ?? []
+                    }
                     disabled={disabled}
                   />
                 </div>
@@ -522,6 +524,25 @@ function GenerationForm() {
                   step={meta.step}
                   presets={meta.presets}
                 />
+              )}
+            />
+
+            {/* Movement amplitude (Vidu) */}
+            <Controller
+              graph={graph}
+              name="movementAmplitude"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Movement Amplitude</Input.Label>
+                  <SegmentedControl
+                    value={value}
+                    onChange={onChange}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
               )}
             />
 
