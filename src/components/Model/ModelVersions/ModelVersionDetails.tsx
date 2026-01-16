@@ -39,7 +39,7 @@ import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
@@ -70,6 +70,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
 import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
@@ -105,7 +106,7 @@ import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/co
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
+import { getFileDisplayName, getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
 import {
   Availability,
   CollectionType,
@@ -182,6 +183,21 @@ export function ModelVersionDetails({
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
+
+  // Group files by variant for the download dropdown
+  const groupedFiles = useMemo(() => groupFilesByVariant(filesVisible), [filesVisible]);
+
+  // Get model files (not component files) for the download dropdown
+  const modelFilesVisible = useMemo(() => {
+    return [
+      ...groupedFiles.safeTensorVariants,
+      ...groupedFiles.ggufVariants,
+      ...groupedFiles.otherFormatVariants,
+    ];
+  }, [groupedFiles]);
+
+  // Check if this is a multi-variant model (more than 1 model file)
+  const hasMultipleModelVariants = modelFilesVisible.length > 1;
 
   const displayCivitaiLink =
     civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
@@ -1001,6 +1017,28 @@ export function ModelVersionDetails({
                 </Group>
               </Group>
               {primaryFileDetails}
+              {/* Variant dropdown for multiple model files */}
+              {hasMultipleModelVariants && !hideDownload && (
+                <Card withBorder p="sm" mt="sm">
+                  <DownloadVariantDropdown
+                    files={filesVisible}
+                    modelType={model.type}
+                    versionId={version.id}
+                    userPreferences={user?.filePreferences}
+                    canDownload={canDownload}
+                    downloadPrice={
+                      !hasDownloadPermissions &&
+                      !isLoadingAccess &&
+                      earlyAccessConfig?.chargeForDownload
+                        ? earlyAccessConfig?.downloadPrice
+                        : undefined
+                    }
+                    isLoadingAccess={isLoadingAccess}
+                    archived={archived}
+                    onPurchase={() => onPurchase('download')}
+                  />
+                </Card>
+              )}
             </Stack>
           )}
           {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
