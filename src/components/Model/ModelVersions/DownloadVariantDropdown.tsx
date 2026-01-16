@@ -39,7 +39,6 @@ interface DownloadVariantDropdownProps {
 
 export function DownloadVariantDropdown({
   files,
-  modelType,
   versionId,
   userPreferences,
   canDownload,
