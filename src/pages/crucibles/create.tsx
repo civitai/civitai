@@ -18,6 +18,7 @@ import {
   IconCoin,
   IconInfoCircle,
   IconPhoto,
+  IconPlus,
   IconTicket,
   IconTrash,
   IconTrophy,
@@ -390,6 +391,31 @@ export default function CrucibleCreate() {
           }
         />
       </Input.Wrapper>
+
+      {/* Resource Requirements - Coming Soon */}
+      <Tooltip label="Coming Soon - Premium feature" withArrow>
+        <Input.Wrapper
+          label="Resource Requirements"
+          description="Models/LoRAs required for submissions"
+          className="cursor-not-allowed opacity-50"
+        >
+          <Paper p="md" mt={8} className="border border-dark-4">
+            <Group gap={8} mb="sm">
+              <Input
+                placeholder="Search models, LoRAs..."
+                disabled
+                style={{ flex: 1 }}
+              />
+              <ActionIcon variant="light" disabled>
+                <IconPlus size={16} />
+              </ActionIcon>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Require specific models or LoRAs for entries (Premium feature)
+            </Text>
+          </Paper>
+        </Input.Wrapper>
+      </Tooltip>
     </Stack>
   );
 
