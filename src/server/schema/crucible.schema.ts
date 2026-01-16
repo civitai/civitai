@@ -20,12 +20,21 @@ export const getCrucibleByIdSchema = z.object({
   id: z.number(),
 });
 
+// Schema for crucible cover image (accepts CF upload data)
+export const crucibleImageSchema = z.object({
+  url: z.string().uuid('Cover image did not upload properly, please try again'),
+  width: z.number(),
+  height: z.number(),
+  hash: z.string().optional(),
+});
+export type CrucibleImageSchema = z.infer<typeof crucibleImageSchema>;
+
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
 export const createCrucibleInputSchema = z.object({
   name: z.string().trim().nonempty(),
   description: z.string().nonempty(),
-  imageId: z.number(),
+  coverImage: crucibleImageSchema,
   nsfwLevel: z.number(),
   entryFee: z.number().min(0),
   entryLimit: z.number().min(1).max(10),
