@@ -29,6 +29,30 @@ export const crucibleImageSchema = z.object({
 });
 export type CrucibleImageSchema = z.infer<typeof crucibleImageSchema>;
 
+// Crucible setup fee pricing constants (in Buzz)
+export const CRUCIBLE_DURATION_COSTS: Record<number, number> = {
+  8: 0, // 8 hours - free
+  24: 500, // 24 hours
+  72: 1000, // 3 days
+  168: 2000, // 7 days
+};
+export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 1000;
+
+/**
+ * Calculate the total setup cost for creating a crucible
+ * @param duration - Duration in hours
+ * @param prizeCustomized - Whether prize distribution was customized
+ * @returns Total Buzz cost
+ */
+export function calculateCrucibleSetupCost(
+  duration: number,
+  prizeCustomized: boolean
+): number {
+  const durationCost = CRUCIBLE_DURATION_COSTS[duration] ?? 0;
+  const prizeCustomizationCost = prizeCustomized ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST : 0;
+  return durationCost + prizeCustomizationCost;
+}
+
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
 export const createCrucibleInputSchema = z.object({
@@ -46,6 +70,7 @@ export const createCrucibleInputSchema = z.object({
     },
     { message: 'Prize percentages must sum to 100% or less' }
   ),
+  prizeCustomized: z.boolean().default(false), // Whether prize distribution was customized from default
   allowedResources: z.array(z.number()).optional(),
   judgeRequirements: z.record(z.string(), z.any()).optional(),
   duration: z.number().min(1), // duration in hours

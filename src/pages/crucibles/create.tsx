@@ -282,6 +282,7 @@ export default function CrucibleCreate() {
       entryLimit: formData.entryLimit,
       maxTotalEntries: formData.maxTotalEntries,
       prizePositions: formData.prizePositions,
+      prizeCustomized, // Pass whether prize distribution was customized
       duration: parseInt(formData.duration),
     });
   };
