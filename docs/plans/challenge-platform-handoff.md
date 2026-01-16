@@ -23,31 +23,67 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 - Entries stored as `CollectionItems` in Contest Mode collections (no separate ChallengeEntry table)
 
 #### API Layer (tRPC)
-- **Router**: `src/server/routers/challenge.router.ts`
-- Public endpoints:
-  - `getInfinite` - Paginated challenge feed with filters
-  - `getDetail` - Single challenge details
-  - `getWinners` - Challenge winners
-- Moderator endpoints:
-  - `getModeratorChallenges` - All challenges including drafts
-  - `upsert` - Create/update challenges (auto-creates collection)
-  - `updateStatus` - Change challenge status
-  - `delete` - Remove challenge
+- **Router**: `src/server/routers/challenge.router.ts` (slim, delegates to service)
+- **Service**: `src/server/services/challenge.service.ts` (business logic)
+- **Schema**: `src/server/schema/challenge.schema.ts` (types and Zod schemas)
+
+**Public endpoints:**
+- `getInfinite` - Paginated challenge feed with filters
+- `getById` - Single challenge details
+- `getUpcomingThemes` - Preview widget for upcoming challenges
+- `getWinners` - Challenge winners
+
+**Moderator endpoints:**
+- `getModeratorList` - All challenges including drafts
+- `upsert` - Create/update challenges (auto-creates collection, handles cover image)
+- `updateStatus` - Change challenge status
+- `delete` - Remove challenge (with entry validation)
 
 #### Background Jobs
 - `challenge-auto-queue.ts` - Maintains 30-day horizon of scheduled challenges
 - `daily-challenge-processing.ts` - Reviews entries, picks winners (uses OpenRouter)
 
 #### UI Components
-- `src/components/Cards/ChallengeCard.tsx` - Card for challenge feed
+- `src/components/Cards/ChallengeCard.tsx` - Card for challenge feed (displays cover image)
 - `src/components/Challenge/ChallengesInfinite.tsx` - Infinite scroll feed
 - `src/components/Challenge/ChallengeUpsertForm.tsx` - Moderator create/edit form
+- `src/components/Challenge/challenge.utils.ts` - React Query hooks
 - `src/pages/challenges/index.tsx` - Public challenges page
+- `src/pages/challenges/[id]/[[...slug]].tsx` - Challenge details page (displays cover image)
 - `src/pages/moderator/challenges/index.tsx` - Mod management page
+- `src/pages/moderator/challenges/create.tsx` - Mod create page
 - `src/pages/moderator/challenges/[id]/edit.tsx` - Mod edit page
 
 #### Navigation
 - Challenges tab added to `HomeContentToggle.tsx` (grouped under "More" menu)
+- "Manage Challenge" button on details page links directly to edit page
+
+---
+
+## What's Been Completed
+
+### Cover Image Upload ✅ Complete
+- [x] Added `SimpleImageUpload` component to `ChallengeUpsertForm.tsx`
+- [x] Schema accepts full `coverImage` object (like Article does)
+- [x] Backend creates `Image` record when uploading new cover image
+- [x] Edit page transforms `coverImageId`/`coverUrl` to `coverImage` object for form
+- [x] Challenge details page displays cover image with `EdgeMedia2`
+- [x] ChallengeCard displays cover image as background
+
+### Form Improvements ✅ Complete
+- [x] Add proper `ModelVersionSelector` component → `ModelVersionMultiSelect.tsx`
+- [x] Style the NSFW level selector appropriately → `ContentRatingSelect.tsx`
+- [x] Add date pickers for startsAt/endsAt/visibleAt → Using `DateTimePicker`
+
+### "Enter Challenge" Resource Loading ✅ Complete
+- [x] Changed button from Link to Button with onClick handler
+- [x] Calls `generationPanel.open()` with model version ID from `modelVersionIds[0]`
+- [x] Sets generator type to 'image' (default for challenges)
+
+### Code Organization ✅ Complete
+- [x] Separated business logic into `challenge.service.ts`
+- [x] Moved types to `challenge.schema.ts`
+- [x] Router is now slim (~65 lines) and delegates to service functions
 
 ---
 
@@ -63,17 +99,13 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 
 2. **UI Review & Testing**
    - [ ] Test the `/challenges` page loads correctly
-   - [ ] Test challenge cards render properly
+   - [ ] Test challenge cards render properly with cover images
    - [ ] Test `/moderator/challenges` page (requires mod account)
-   - [ ] Test create/edit form functionality
+   - [ ] Test create/edit form functionality with cover image upload
    - [ ] Test filtering and sorting on challenge feed
+   - [ ] Test "Manage Challenge" button links to edit page
 
-3. **Form Improvements** ✅ Complete
-   - [x] Add proper `ModelVersionSelector` component → `ModelVersionMultiSelect.tsx`
-   - [x] Style the NSFW level selector appropriately → `ContentRatingSelect.tsx`
-   - [x] Add date pickers for startsAt/endsAt/visibleAt → Using `DateTimePicker`
-
-4. **Data Migration** (if needed)
+3. **Data Migration** (if needed)
    - Script exists at `src/server/jobs/migrate-challenges.ts`
    - Migrates old Article-based challenges to new Challenge table
 
@@ -94,7 +126,8 @@ See `docs/features/challenge-platform.md` for full roadmap:
 |---------|------|
 | Database schema | `prisma/migrations/20260113113902_add_challenge_system/migration.sql` |
 | API router | `src/server/routers/challenge.router.ts` |
-| Schema validation | `src/server/schema/challenge.schema.ts` |
+| Business logic | `src/server/services/challenge.service.ts` |
+| Types & Zod schemas | `src/server/schema/challenge.schema.ts` |
 | Helper functions | `src/server/games/daily-challenge/challenge-helpers.ts` |
 | Auto-queue job | `src/server/jobs/challenge-auto-queue.ts` |
 | Processing job | `src/server/jobs/daily-challenge-processing.ts` |
@@ -103,6 +136,27 @@ See `docs/features/challenge-platform.md` for full roadmap:
 | Create/edit form | `src/components/Challenge/ChallengeUpsertForm.tsx` |
 | Model version selector | `src/components/Challenge/ModelVersionMultiSelect.tsx` |
 | NSFW level selector | `src/components/Challenge/ContentRatingSelect.tsx` |
+| React Query hooks | `src/components/Challenge/challenge.utils.ts` |
+
+---
+
+## Architecture Overview
+
+```
+challenge.schema.ts          # Types (ChallengeDetail, ChallengeListItem, etc.)
+       ↓                     # Zod schemas (upsertChallengeSchema, etc.)
+
+challenge.service.ts         # Business logic functions
+       ↓                     # getInfiniteChallenges(), upsertChallenge(), etc.
+
+challenge.router.ts          # tRPC endpoints (slim, delegates to service)
+       ↓                     # Re-exports types for backward compatibility
+
+challenge.utils.ts           # React Query hooks (useQueryChallenges, etc.)
+       ↓
+
+UI Components                # ChallengeCard, ChallengesInfinite, etc.
+```
 
 ---
 
@@ -117,6 +171,7 @@ All design decisions are documented in `docs/challenge-design-questions.md` with
 5. **allowedNsfwLevel is bitwise** - Filter entries by NSFW level using bitwise flags
 6. **Entry prizes distributed immediately** - When user reaches entry count threshold
 7. **Cancelled challenges hidden** - Not visible in public feed
+8. **Cover image uses Image table** - Like Article, creates Image record for cover uploads
 
 ---
 
@@ -136,15 +191,17 @@ DATABASE_URL=your_connection_string
 
 ### As a Regular User
 - [ ] Navigate to `/challenges` from the home page "More" menu
-- [ ] View active challenges in the feed
+- [ ] View active challenges in the feed with cover images
 - [ ] Click a challenge card to view details
+- [ ] See cover image displayed on challenge details page
 - [ ] Filter challenges by status (Active, Upcoming, Completed)
 
 ### As a Moderator
 - [ ] Navigate to `/moderator/challenges`
 - [ ] View all challenges including Drafts
-- [ ] Create a new challenge with the form
-- [ ] Edit an existing challenge
+- [ ] Create a new challenge with cover image upload
+- [ ] Edit an existing challenge (cover image loads correctly)
+- [ ] Click "Manage Challenge" on details page → goes to edit page
 - [ ] Change challenge status (Draft → Scheduled → Active)
 - [ ] Delete a draft challenge
 

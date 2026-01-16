@@ -1,13 +1,10 @@
-import type { BadgeProps } from '@mantine/core';
 import {
   Accordion,
   Badge,
   Button,
-  Center,
   Container,
   Divider,
   Group,
-  Loader,
   ScrollArea,
   SimpleGrid,
   Stack,
@@ -18,7 +15,7 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
+import React from 'react';
 import * as z from 'zod';
 
 import { Page } from '~/components/AppLayout/Page';
@@ -32,18 +29,15 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { trpc } from '~/utils/trpc';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
-  IconCalendar,
   IconClockHour4,
   IconPhoto,
   IconShare3,
   IconSparkles,
   IconTrophy,
-  IconUsers,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -55,14 +49,13 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-// import { TrackView } from '~/components/TrackView/TrackView'; // TODO: Add Challenge entity type
 import { env } from '~/env/client';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { NoContent } from '~/components/NoContent/NoContent';
-import type { ChallengeDetail } from '~/server/routers/challenge.router';
+import type { ChallengeDetail } from '~/server/schema/challenge.schema';
+import { generationFormStore, generationPanel } from '~/store/generation.store';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -84,13 +77,11 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const mobile = useContainerSmallerThan('sm');
   const { data: challenge, isLoading } = useQueryChallenge(id);
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
 
-  const now = new Date();
   const isActive = challenge.status === ChallengeStatus.Active;
   const isCompleted = challenge.status === ChallengeStatus.Completed;
   const isScheduled = challenge.status === ChallengeStatus.Scheduled;
@@ -99,10 +90,14 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     <>
       <Meta
         title={`${challenge.title} | Civitai Challenges`}
-        description={challenge.description || `Participate in the ${challenge.title} challenge on Civitai`}
+        description={
+          challenge.description || `Participate in the ${challenge.title} challenge on Civitai`
+        }
         links={[
           {
-            href: `${env.NEXT_PUBLIC_BASE_URL as string}/challenges/${challenge.id}/${slugit(challenge.title)}`,
+            href: `${env.NEXT_PUBLIC_BASE_URL as string}/challenges/${challenge.id}/${slugit(
+              challenge.title
+            )}`,
             rel: 'canonical',
           },
         ]}
@@ -158,12 +153,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                       <DaysFromNow date={challenge.endsAt} withoutSuffix />
                     </IconBadge>
                   )}
-                  <IconBadge
-                    size="lg"
-                    radius="sm"
-                    icon={<IconPhoto size={18} />}
-                    color="gray"
-                  >
+                  <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
                     {abbreviateNumber(challenge.entryCount)} entries
                   </IconBadge>
                 </Group>
@@ -175,13 +165,17 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.theme && (
                 <>
                   <Text c="dimmed" size="sm">
-                    Theme: <Text component="span" fw={600}>{challenge.theme}</Text>
+                    Theme:{' '}
+                    <Text component="span" fw={600}>
+                      {challenge.theme}
+                    </Text>
                   </Text>
                   <Divider orientation="vertical" />
                 </>
               )}
               <Text c="dimmed" size="sm">
-                {formatDate(challenge.startsAt, undefined, true)} - {formatDate(challenge.endsAt, undefined, true)}
+                {formatDate(challenge.startsAt, undefined, true)} -{' '}
+                {formatDate(challenge.endsAt, undefined, true)}
               </Text>
             </Group>
           </Stack>
@@ -234,9 +228,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         </Container>
 
         {/* Winners Section (for completed challenges) */}
-        {isCompleted && challenge.winners.length > 0 && (
-          <ChallengeWinners challenge={challenge} />
-        )}
+        {isCompleted && challenge.winners.length > 0 && <ChallengeWinners challenge={challenge} />}
 
         {/* Entries Section */}
         <ChallengeEntries challenge={challenge} />
@@ -246,13 +238,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 }
 
 function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const router = useRouter();
   const currentUser = useCurrentUser();
 
   const isActive = challenge.status === ChallengeStatus.Active;
-  const isCompleted = challenge.status === ChallengeStatus.Completed;
 
   const challengeDetails: DescriptionTableProps['items'] = [
     {
@@ -271,10 +261,14 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       label: 'Featured Model',
       value: challenge.model ? (
         <Link href={`/models/${challenge.model.id}`}>
-          <Text size="sm" c="blue">{challenge.model.name}</Text>
+          <Text size="sm" c="blue">
+            {challenge.model.name}
+          </Text>
         </Link>
       ) : (
-        <Text size="sm" c="dimmed">Any model</Text>
+        <Text size="sm" c="dimmed">
+          Any model
+        </Text>
       ),
     },
   ];
@@ -283,7 +277,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const prizeItems: DescriptionTableProps['items'] = challenge.prizes.map((prize, index) => ({
     label: (
       <Group gap={4}>
-        <ThemeIcon size="sm" color={index === 0 ? 'yellow' : index === 1 ? 'gray.4' : 'orange.7'} variant="light">
+        <ThemeIcon
+          size="sm"
+          color={index === 0 ? 'yellow' : index === 1 ? 'gray.4' : 'orange.7'}
+          variant="light"
+        >
           <IconTrophy size={14} />
         </ThemeIcon>
         <Text size="sm">{getPlaceLabel(index + 1)}</Text>
@@ -319,8 +317,19 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       <Group gap={8} wrap="nowrap">
         {isActive && !currentUser?.muted && (
           <Button
-            component={Link}
-            href={`/generate?challengeId=${challenge.id}`}
+            onClick={() => {
+              const modelVersionId = challenge.modelVersionIds?.[0];
+              if (modelVersionId) {
+                generationPanel.open({
+                  type: 'modelVersion',
+                  id: modelVersionId,
+                });
+              } else {
+                generationPanel.open();
+              }
+              // Set generator type based on model (image by default)
+              generationFormStore.setType('image');
+            }}
             leftSection={<IconSparkles size={16} />}
             variant="filled"
             color="blue"
@@ -343,7 +352,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       {currentUser?.isModerator && (
         <Button
           component={Link}
-          href={`/moderator/challenges?id=${challenge.id}`}
+          href={`/moderator/challenges/${challenge.id}/edit`}
           variant="light"
           size="xs"
         >
@@ -417,11 +426,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel>
             <div className="p-3">
-              <UserAvatar
-                user={challenge.createdBy}
-                withUsername
-                linkToProfile
-              />
+              <UserAvatar user={challenge.createdBy} withUsername linkToProfile />
             </div>
           </Accordion.Panel>
         </Accordion.Item>
@@ -466,7 +471,9 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                 <Group justify="space-between">
                   <Badge
                     size="lg"
-                    color={winner.place === 1 ? 'yellow' : winner.place === 2 ? 'gray.4' : 'orange.7'}
+                    color={
+                      winner.place === 1 ? 'yellow' : winner.place === 2 ? 'gray.4' : 'orange.7'
+                    }
                     leftSection={<IconTrophy size={14} />}
                   >
                     {getPlaceLabel(winner.place)}
@@ -483,15 +490,19 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                       src={winner.imageUrl}
                       type={MediaType.image}
                       width={400}
-                      className="h-full w-full object-cover"
+                      className="size-full object-cover"
                     />
                   </div>
                 )}
                 <Link href={`/user/${winner.username}`}>
-                  <Text size="sm" fw={600}>{winner.username}</Text>
+                  <Text size="sm" fw={600}>
+                    {winner.username}
+                  </Text>
                 </Link>
                 {winner.reason && (
-                  <Text size="xs" c="dimmed" lineClamp={2}>{winner.reason}</Text>
+                  <Text size="xs" c="dimmed" lineClamp={2}>
+                    {winner.reason}
+                  </Text>
                 )}
               </div>
             ))}
@@ -508,10 +519,8 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
 
   const isActive = challenge.status === ChallengeStatus.Active;
-  const displaySubmitAction = isActive && !currentUser?.muted;
-
-  // Entries are stored in the challenge's collection
-  const collectionUrl = `/collections/${challenge.collectionId}`;
+  const hasCollection = !!challenge.collectionId;
+  const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
 
   return (
     <Container
@@ -541,7 +550,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
             </Text>
           </Group>
 
-          {challenge.entryCount === 0 ? (
+          {challenge.entryCount === 0 || !hasCollection ? (
             <NoContent
               message={
                 isActive
@@ -551,12 +560,10 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
             />
           ) : (
             <Stack gap="md">
-              <Text c="dimmed">
-                View all entries in the challenge collection.
-              </Text>
+              <Text c="dimmed">View all entries in the challenge collection.</Text>
               <Button
                 component={Link}
-                href={collectionUrl}
+                href={`/collections/${challenge.collectionId}`}
                 variant="light"
                 leftSection={<IconPhoto size={16} />}
               >

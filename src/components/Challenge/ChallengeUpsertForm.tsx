@@ -19,10 +19,18 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
+import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
 import type { Prize } from '~/server/schema/challenge.schema';
+
+// Cover image type for the form
+type CoverImageData = {
+  id?: number;
+  url: string;
+  name?: string;
+} | null;
 
 // Form data type (explicit, no zod inference issues)
 type ChallengeFormData = {
@@ -30,6 +38,7 @@ type ChallengeFormData = {
   description: string;
   theme: string;
   invitation: string;
+  coverImage: CoverImageData;
   modelVersionIds: number[]; // Array of allowed model version IDs
   nsfwLevel: number;
   allowedNsfwLevel: number; // Bitwise NSFW levels for entries
@@ -56,6 +65,7 @@ type ChallengeForEdit = {
   description: string | null;
   theme: string | null;
   invitation: string | null;
+  coverImage: { id: number; url: string } | null;
   modelVersionIds: number[];
   nsfwLevel: number;
   allowedNsfwLevel: number;
@@ -104,6 +114,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       description: challenge?.description ?? '',
       theme: challenge?.theme ?? '',
       invitation: challenge?.invitation ?? '',
+      coverImage: challenge?.coverImage ?? null,
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? 1,
@@ -158,6 +169,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       description: data.description || undefined,
       theme: data.theme || undefined,
       invitation: data.invitation || undefined,
+      coverImage: data.coverImage ?? undefined, // Send full image object, server creates Image record if needed
       modelVersionIds: data.modelVersionIds,
       nsfwLevel: data.nsfwLevel,
       allowedNsfwLevel: data.allowedNsfwLevel,
@@ -225,6 +237,20 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               minRows={4}
               error={errors.description?.message}
               {...register('description')}
+            />
+
+            <Controller
+              name="coverImage"
+              control={control}
+              render={({ field }) => (
+                <SimpleImageUpload
+                  label="Cover Image"
+                  description="Suggested resolution: 1200 x 630 (optional)"
+                  value={field.value ?? undefined}
+                  onChange={field.onChange}
+                  withNsfwLevel={false}
+                />
+              )}
             />
           </Stack>
         </Paper>

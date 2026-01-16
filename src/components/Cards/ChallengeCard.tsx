@@ -18,7 +18,7 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import clsx from 'clsx';
 import { Currency, ChallengeStatus, ChallengeSource, MediaType } from '~/shared/utils/prisma/enums';
-import type { ChallengeListItem } from '~/server/routers/challenge.router';
+import type { ChallengeListItem } from '~/server/schema/challenge.schema';
 
 const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   radius: 'xl',

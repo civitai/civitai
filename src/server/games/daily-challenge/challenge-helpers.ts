@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
@@ -19,6 +19,7 @@ export type ChallengeDetails = {
   description: string | null;
   theme: string | null;
   invitation: string | null;
+  coverImageId: number | null;
   coverUrl: string | null;
   nsfwLevel: number;
   allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
@@ -42,9 +43,10 @@ export type ChallengeDetails = {
 
 type ChallengeDbRow = Omit<
   ChallengeDetails,
-  'modelVersionIds' | 'coverUrl' | 'prizes' | 'entryPrize'
+  'modelVersionIds' | 'coverImageId' | 'coverUrl' | 'prizes' | 'entryPrize'
 > & {
   modelVersionIds: number[] | null; // Can be null from DB
+  coverImageId: number | null;
   coverUrl: string | null;
   prizes: Prize[] | string; // JSON comes as string or parsed
   entryPrize: Prize | string | null;
@@ -62,6 +64,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c.description,
       c.theme,
       c.invitation,
+      c."coverImageId",
       (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
       c."nsfwLevel",
       c."allowedNsfwLevel",
