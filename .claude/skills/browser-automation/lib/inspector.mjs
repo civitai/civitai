@@ -6,7 +6,6 @@
  */
 
 import { chromium } from 'playwright';
-import { createContextCollector } from './context.mjs';
 
 /**
  * Inspect a page and return structured data about what's visible
@@ -163,7 +162,6 @@ export class BrowserSession {
     this.browser = null;
     this.context = null;
     this.page = null;
-    this.collector = null;
     this.headless = options.headless ?? false;
     this.slowMo = options.slowMo ?? 0;
     this.actions = []; // Record actions for recipe building
@@ -179,7 +177,6 @@ export class BrowserSession {
     });
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(30000);
-    this.collector = createContextCollector(this.page);
   }
 
   async close() {

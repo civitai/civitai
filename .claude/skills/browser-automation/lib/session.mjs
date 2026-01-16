@@ -177,8 +177,8 @@ export async function startExploreRepl(url, options = {}) {
   const page = await context.newPage();
   page.setDefaultTimeout(30000);
 
-  // Navigate to starting URL
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  // Navigate to starting URL (use longer timeout for slow dev servers)
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForTimeout(2000);
 
   // Session state
