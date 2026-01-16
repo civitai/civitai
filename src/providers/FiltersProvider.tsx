@@ -10,6 +10,7 @@ import {
   BuzzWithdrawalRequestSort,
   // ClubSort,
   CollectionSort,
+  CrucibleSort,
   GenerationReactType,
   GenerationSort,
   ImageSort,
@@ -27,6 +28,7 @@ import {
   Availability,
   BountyType,
   CheckpointType,
+  CrucibleStatus,
   ImageGenerationProcess,
   MediaType,
   MetricTimeframe,
@@ -138,6 +140,12 @@ const bountyFilterSchema = z.object({
   excludedUserIds: z.number().array().optional(),
 });
 
+type CrucibleFilterSchema = z.infer<typeof crucibleFilterSchema>;
+const crucibleFilterSchema = z.object({
+  status: z.nativeEnum(CrucibleStatus).optional(),
+  sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.Newest),
+});
+
 // type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
 // const clubFilterSchema = z.object({
 //   sort: z.enum(ClubSort).default(ClubSort.Newest),
@@ -200,6 +208,7 @@ type StorageState = {
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
+  crucibles: CrucibleFilterSchema;
   // clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
@@ -227,6 +236,7 @@ type StoreState = FilterState & {
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
+  setCrucibleFilters: (filters: Partial<CrucibleFilterSchema>) => void;
   // setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
@@ -247,6 +257,7 @@ const localStorageSchemas: LocalStorageSchema = {
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
+  crucibles: { key: 'crucibles-filters', schema: crucibleFilterSchema },
   // clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
@@ -324,6 +335,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
+      setCrucibleFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'crucibles', data, state })),
       // setClubFilters: (data) =>
       //   set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
       setVideoFilters: (data) =>
@@ -387,6 +400,7 @@ export function useSetFilters(type: FilterSubTypes) {
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
+          crucibles: state.setCrucibleFilters,
           // clubs: state.setClubFilters,
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,

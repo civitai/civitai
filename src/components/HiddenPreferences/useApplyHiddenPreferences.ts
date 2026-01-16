@@ -544,6 +544,64 @@ function filterPreferences<
         .filter(isDefined);
 
       return { items: bounties, hidden };
+    case 'crucibles':
+      const crucibles = value
+        .filter((crucible) => {
+          const userId = crucible.user.id;
+          const isOwner = userId === currentUser?.id;
+          if (!canViewNsfw && hasNsfwWords(crucible.name)) return false;
+          if ((isOwner || isModerator) && crucible.nsfwLevel === 0) return true;
+          if (!Flags.intersects(crucible.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+          if (hiddenUsers.get(crucible.user.id)) {
+            hidden.users++;
+            return false;
+          }
+          if (crucible.image && hiddenImages.get(crucible.image.id)) {
+            hidden.images++;
+            return false;
+          }
+          for (const tag of crucible.tags ?? []) {
+            if (hiddenTags.get(tag)) {
+              hidden.tags++;
+              return false;
+            }
+
+            if (systemHiddenTags.get(tag) && !isOwner) {
+              hidden.tags++;
+              return false;
+            }
+          }
+
+          const image = crucible.image;
+          if (image) {
+            if (!Flags.intersects(image.nsfwLevel, browsingLevel)) {
+              hidden.browsingLevel++;
+              return false;
+            }
+            if (hiddenImages.get(image.id)) {
+              hidden.images++;
+              return false;
+            }
+            for (const tag of image.tagIds ?? []) {
+              if (hiddenTags.get(tag)) {
+                hidden.tags++;
+                return false;
+              }
+              if (systemHiddenTags.get(tag) && !isOwner) {
+                hidden.tags++;
+                return false;
+              }
+            }
+          }
+
+          return true;
+        })
+        .filter(isDefined);
+
+      return { items: crucibles, hidden };
     case 'posts':
       const posts = value
         .filter((post) => {
@@ -757,6 +815,22 @@ type BaseTool = {
   id: number;
 };
 
+type BaseCrucible = {
+  id: number;
+  user: { id: number };
+  tags?: number[];
+  nsfwLevel: number;
+  nsfw?: boolean;
+  name?: string | null;
+  image?: {
+    id: number;
+    tagIds?: number[];
+    nsfwLevel: number;
+    nsfw?: boolean;
+    userId?: number;
+  } | null;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -764,6 +838,7 @@ export type BaseDataTypeMap = {
   users: BaseUser[];
   collections: BaseCollection[];
   bounties: BaseBounty[];
+  crucibles: BaseCrucible[];
   posts: BasePost[];
   tags: BaseTag[];
   tools: BaseTool[];
