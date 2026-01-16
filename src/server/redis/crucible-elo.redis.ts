@@ -104,7 +104,64 @@ export class CrucibleEloRedisClient {
    */
   async setTTL(crucibleId: number, seconds: number): Promise<boolean> {
     const key = this.getKey(crucibleId);
-    return await this.redis.expire(key, seconds);
+    const votesKey = this.getVotesKey(crucibleId);
+    // Set TTL on both ELO and votes hashes
+    const [eloResult] = await Promise.all([
+      this.redis.expire(key, seconds),
+      this.redis.expire(votesKey, seconds),
+    ]);
+    return eloResult;
+  }
+
+  // ============================================================================
+  // Vote Count Tracking
+  // ============================================================================
+
+  /**
+   * Get the Redis key for a crucible's vote counts hash
+   */
+  private getVotesKey(crucibleId: number): RedisKeyTemplateSys {
+    return `${REDIS_SYS_KEYS.CRUCIBLE.ELO}:${crucibleId}:votes` as RedisKeyTemplateSys;
+  }
+
+  /**
+   * Get the vote count for an entry in a crucible
+   * Returns 0 if the entry doesn't exist in Redis
+   */
+  async getVoteCount(crucibleId: number, entryId: number): Promise<number> {
+    const key = this.getVotesKey(crucibleId);
+    const value = await this.redis.hGet<string>(key, entryId.toString());
+    return value ? parseInt(value, 10) : 0;
+  }
+
+  /**
+   * Increment vote count for an entry (called when entry participates in a vote)
+   * Returns the new vote count
+   */
+  async incrementVoteCount(crucibleId: number, entryId: number): Promise<number> {
+    const key = this.getVotesKey(crucibleId);
+    const newValue = await this.redis.hIncrBy(key, entryId.toString(), 1);
+    return newValue;
+  }
+
+  /**
+   * Get all vote counts for a crucible
+   * Returns a map of entryId -> vote count
+   */
+  async getAllVoteCounts(crucibleId: number): Promise<Record<number, number>> {
+    const key = this.getVotesKey(crucibleId);
+    const values = await this.redis.hGetAll<string>(key);
+
+    const result: Record<number, number> = {};
+    for (const [entryIdStr, countStr] of Object.entries(values)) {
+      const entryId = parseInt(entryIdStr, 10);
+      const count = parseInt(countStr as string, 10);
+      if (!isNaN(entryId) && !isNaN(count)) {
+        result[entryId] = count;
+      }
+    }
+
+    return result;
   }
 
   /**
