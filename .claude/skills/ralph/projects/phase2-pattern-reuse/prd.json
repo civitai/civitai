@@ -1,0 +1,116 @@
+{
+  "project": "Model UI Overhaul - Phase 2: Pattern Reuse Audit",
+  "branchName": "feature/model-ui-overhaul",
+  "description": "Deep audit to ensure all new code follows existing patterns and reuses established utilities, components, and services.",
+  "userStories": [
+    {
+      "id": "PAT-001",
+      "title": "Verify modal patterns",
+      "description": "Ensure all new modals follow the dialogStore.trigger() pattern and existing modal conventions.",
+      "acceptanceCriteria": [
+        "Read src/components/Resource/LinkComponentModal.tsx",
+        "Search for existing modal patterns in codebase (dialogStore.trigger, Dialog components)",
+        "Verify LinkComponentModal uses dialogStore.trigger() correctly (same as Chat, CreatorProgramV2, etc.)",
+        "Verify Modal component usage matches other modals (props, styling)",
+        "Document any deviations or improvements needed in progress.txt"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "PAT-002",
+      "title": "Verify search patterns",
+      "description": "Ensure QuickSearchDropdown is used correctly and not reinvented.",
+      "acceptanceCriteria": [
+        "Read src/components/Resource/LinkComponentModal.tsx - find QuickSearchDropdown usage",
+        "Search for other QuickSearchDropdown usages in codebase",
+        "Verify supportedIndexes prop is used correctly",
+        "Verify search results handling matches existing patterns (AssociateModels, NewChat)",
+        "Document any deviations in progress.txt"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "PAT-003",
+      "title": "Verify form validation patterns",
+      "description": "Ensure Zod validation in FilesProvider follows existing patterns.",
+      "acceptanceCriteria": [
+        "Read src/components/Resource/FilesProvider.tsx - find validation logic",
+        "Search for similar validation patterns in codebase (Zod schemas, refine)",
+        "Verify error notification pattern matches showErrorNotification usage elsewhere",
+        "Verify schema extension follows existing patterns",
+        "Document any deviations in progress.txt"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "PAT-004",
+      "title": "Verify Select component patterns",
+      "description": "Ensure Select components in new UI match existing patterns.",
+      "acceptanceCriteria": [
+        "Read src/components/Resource/Files.tsx - find Select usages",
+        "Read src/components/Account/SettingsCard.tsx - verify quant preference Select",
+        "Compare with existing Select usage patterns in the codebase",
+        "Verify consistent styling, props, and event handling",
+        "Document any deviations in progress.txt"
+      ],
+      "priority": 4,
+      "passes": true
+    },
+    {
+      "id": "PAT-005",
+      "title": "Verify accordion patterns",
+      "description": "Ensure RequiredComponentsSection follows existing accordion patterns.",
+      "acceptanceCriteria": [
+        "Read src/components/Model/ModelVersions/RequiredComponentsSection.tsx",
+        "Read src/components/Model/ModelVersions/ModelVersionDetails.tsx - find accordion usage",
+        "Compare accordion structure with existing patterns",
+        "Verify consistent Accordion.Item/Control/Panel structure",
+        "Document any deviations in progress.txt"
+      ],
+      "priority": 5,
+      "passes": true
+    },
+    {
+      "id": "PAT-006",
+      "title": "Verify download button patterns",
+      "description": "Ensure DownloadVariantDropdown follows existing download button patterns.",
+      "acceptanceCriteria": [
+        "Read src/components/Model/ModelVersions/DownloadVariantDropdown.tsx",
+        "Search for existing DownloadButton usage patterns",
+        "Verify createModelFileDownloadUrl usage matches other usages",
+        "Verify formatKBytes usage is consistent",
+        "Document any deviations in progress.txt"
+      ],
+      "priority": 6,
+      "passes": true
+    },
+    {
+      "id": "PAT-007",
+      "title": "Verify trpc patterns",
+      "description": "Ensure tRPC usage follows existing patterns.",
+      "acceptanceCriteria": [
+        "Search for trpc usage in the changed files",
+        "Verify mutation patterns (useMutation with onSuccess/onError)",
+        "Verify query patterns match existing usage",
+        "Verify loading state handling is consistent",
+        "Document any deviations in progress.txt"
+      ],
+      "priority": 7
+    },
+    {
+      "id": "PAT-008",
+      "title": "Run agent-review on pattern compliance",
+      "description": "Get external validation of pattern compliance.",
+      "acceptanceCriteria": [
+        "Run /agent-review on the key new components",
+        "Ask reviewer to check for reinvented wheels and pattern deviations",
+        "Document findings in progress.txt",
+        "If critical issues found, note them for follow-up"
+      ],
+      "priority": 8
+    }
+  ]
+}
