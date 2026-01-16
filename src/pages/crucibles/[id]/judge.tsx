@@ -1,0 +1,472 @@
+import { Container, Paper, Text, Title, Group, Button, Box, Anchor, Loader } from '@mantine/core';
+import type { InferGetServerSidePropsType } from 'next';
+import { useRouter } from 'next/router';
+import Link from 'next/link';
+import * as z from 'zod';
+import { IconArrowLeft, IconClock, IconTrophy, IconCoin, IconUsers, IconLayoutGrid } from '@tabler/icons-react';
+import { useState, useCallback, useEffect } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { Page } from '~/components/AppLayout/Page';
+import { Meta } from '~/components/Meta/Meta';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
+import { env } from '~/env/client';
+import { slugit } from '~/utils/string-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CrucibleJudgingUI, CrucibleJudgingUISkeleton } from '~/components/Crucible/CrucibleJudgingUI';
+import type { JudgingPairData } from '~/components/Crucible/CrucibleJudgingUI';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+
+const querySchema = z.object({
+  id: z.coerce.number(),
+});
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx, ssg, features }) => {
+    if (!features?.crucible) return { notFound: true };
+
+    const result = querySchema.safeParse(ctx.query);
+    if (!result.success) return { notFound: true };
+
+    if (ssg) {
+      await ssg.crucible.getById.prefetch({ id: result.data.id });
+    }
+
+    return { props: removeEmpty(result.data) };
+  },
+});
+
+function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
+  const utils = trpc.useUtils();
+
+  // Session stats
+  const [sessionVotes, setSessionVotes] = useState(0);
+  const [sessionSkips, setSessionSkips] = useState(0);
+  const [isVoting, setIsVoting] = useState(false);
+  const [allPairsJudged, setAllPairsJudged] = useState(false);
+
+  // Fetch crucible details
+  const { data: crucible, isLoading: isLoadingCrucible } = trpc.crucible.getById.useQuery({ id });
+
+  // Fetch judging pair
+  const {
+    data: pairData,
+    isLoading: isLoadingPair,
+    refetch: refetchPair,
+  } = trpc.crucible.getJudgingPair.useQuery(
+    { crucibleId: id },
+    {
+      enabled: !!currentUser && !!crucible,
+      refetchOnWindowFocus: false,
+    }
+  );
+
+  // Submit vote mutation
+  const submitVoteMutation = trpc.crucible.submitVote.useMutation({
+    onError: (error) => {
+      showErrorNotification({ error: new Error(error.message) });
+      setIsVoting(false);
+    },
+  });
+
+  // Transform pair data to match component types
+  const pair: JudgingPairData = pairData
+    ? {
+        left: {
+          id: pairData.left.id,
+          imageId: pairData.left.imageId,
+          userId: pairData.left.userId,
+          score: pairData.left.score,
+          image: pairData.left.image,
+          user: {
+            id: pairData.left.user.id,
+            username: pairData.left.user.username,
+            deletedAt: pairData.left.user.deletedAt,
+            image: pairData.left.user.image,
+          },
+        },
+        right: {
+          id: pairData.right.id,
+          imageId: pairData.right.imageId,
+          userId: pairData.right.userId,
+          score: pairData.right.score,
+          image: pairData.right.image,
+          user: {
+            id: pairData.right.user.id,
+            username: pairData.right.user.username,
+            deletedAt: pairData.right.user.deletedAt,
+            image: pairData.right.user.image,
+          },
+        },
+      }
+    : null;
+
+  // Handle vote
+  const handleVote = useCallback(
+    async (winnerId: number, loserId: number) => {
+      if (isVoting || !pair) return;
+
+      setIsVoting(true);
+      try {
+        await submitVoteMutation.mutateAsync({
+          crucibleId: id,
+          winnerEntryId: winnerId,
+          loserEntryId: loserId,
+        });
+
+        setSessionVotes((prev) => prev + 1);
+        // Small delay for visual feedback before loading next pair
+        setTimeout(async () => {
+          const result = await refetchPair();
+          if (!result.data) {
+            setAllPairsJudged(true);
+          }
+          setIsVoting(false);
+        }, 300);
+      } catch {
+        setIsVoting(false);
+      }
+    },
+    [isVoting, pair, id, submitVoteMutation, refetchPair]
+  );
+
+  // Handle skip (counts as equal - no vote submitted, just get next pair)
+  const handleSkip = useCallback(async () => {
+    if (isVoting || !pair) return;
+
+    setIsVoting(true);
+    setSessionSkips((prev) => prev + 1);
+
+    // For skip, we can either submit a vote for both (draw) or just get next pair
+    // For simplicity, we'll just get the next pair without recording a vote
+    setTimeout(async () => {
+      const result = await refetchPair();
+      if (!result.data) {
+        setAllPairsJudged(true);
+      }
+      setIsVoting(false);
+    }, 300);
+  }, [isVoting, pair, refetchPair]);
+
+  // Check if all pairs judged on initial load
+  useEffect(() => {
+    if (currentUser && !isLoadingPair && pairData === null) {
+      setAllPairsJudged(true);
+    }
+  }, [currentUser, isLoadingPair, pairData]);
+
+  // Loading state
+  if (isLoadingCrucible) return <PageLoader />;
+  if (!crucible) return <NotFound />;
+
+  // Check if user is logged in
+  if (!currentUser) {
+    return (
+      <LoginRedirect reason="judge-crucible">
+        <Container size="lg" className="py-16 text-center">
+          <Title order={2} mb="md">
+            Sign in to Judge
+          </Title>
+          <Text c="dimmed" mb="xl">
+            You need to be signed in to participate in crucible judging.
+          </Text>
+          <Button component={Link} href={`/login?returnUrl=/crucibles/${id}/judge`}>
+            Sign In
+          </Button>
+        </Container>
+      </LoginRedirect>
+    );
+  }
+
+  // Check if crucible is active
+  const isActive = crucible.status === CrucibleStatus.Active;
+  if (!isActive) {
+    return (
+      <Container size="lg" className="py-16 text-center">
+        <Title order={2} mb="md">
+          Judging Not Available
+        </Title>
+        <Text c="dimmed" mb="xl">
+          This crucible is not currently accepting votes.
+        </Text>
+        <Button component={Link} href={`/crucibles/${id}/${slugit(crucible.name)}`}>
+          Back to Crucible
+        </Button>
+      </Container>
+    );
+  }
+
+  const entryCount = crucible._count?.entries ?? 0;
+  const totalPrizePool = crucible.entryFee * entryCount;
+  const timeRemaining = crucible.endAt ? getTimeRemaining(crucible.endAt) : null;
+
+  return (
+    <>
+      <Meta
+        title={`Judging: ${crucible.name} | Civitai Crucible`}
+        description={`Help judge ${crucible.name} - vote on image pairs to determine the winner.`}
+        links={[
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/crucibles/${crucible.id}/judge`,
+            rel: 'canonical',
+          },
+        ]}
+      />
+
+      {/* Header Section */}
+      <Box className="border-b border-[#373a40] bg-[#25262b] py-4">
+        <Container size="xl">
+          {/* Back Link */}
+          <Link
+            href={`/crucibles/${id}/${slugit(crucible.name)}`}
+            className="mb-4 flex items-center gap-2 text-blue-500 transition-colors hover:text-blue-400"
+          >
+            <IconArrowLeft size={16} />
+            Back to Crucible
+          </Link>
+
+          {/* Title Row */}
+          <div className="mt-4 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <Title order={2} className="text-white">
+                Judging: {crucible.name}
+              </Title>
+              <Text size="sm" c="dimmed" mt={4}>
+                Compare pairs and vote for your favorite
+              </Text>
+            </div>
+
+            {/* Time Remaining Badge */}
+            {timeRemaining && (
+              <Paper
+                className="flex items-center gap-2 border border-red-500/30 bg-red-500/10 px-4 py-2"
+                radius="md"
+              >
+                <IconClock size={16} className="text-red-400" />
+                <Text size="sm" fw={600} className="text-red-400">
+                  {timeRemaining} remaining
+                </Text>
+              </Paper>
+            )}
+          </div>
+        </Container>
+      </Box>
+
+      {/* Stats Bar */}
+      {!allPairsJudged && (
+        <Box className="border-b border-[#373a40] bg-[#25262b] py-6">
+          <Container size="xl">
+            <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+              <StatItem
+                label="Pairs Rated This Session"
+                value={sessionVotes.toString()}
+                secondary={sessionSkips > 0 ? `${sessionSkips} skipped` : undefined}
+              />
+              <StatItem
+                label="Total Entries"
+                value={abbreviateNumber(entryCount)}
+                secondary={`${Math.max(0, Math.floor((entryCount * (entryCount - 1)) / 2))} possible pairs`}
+              />
+              <StatItem
+                label="Prize Pool"
+                value={abbreviateNumber(totalPrizePool)}
+                secondary="Buzz"
+              />
+              <StatItem
+                label="Session Progress"
+                value={sessionVotes > 0 ? 'Active' : 'Starting'}
+                secondary={sessionVotes > 0 ? `Keep going!` : 'Make your first vote'}
+              />
+            </div>
+          </Container>
+        </Box>
+      )}
+
+      {/* Main Voting Area or End State */}
+      <Container size="xl" className="py-8">
+        {allPairsJudged ? (
+          <EndCrucibleState crucibleId={id} crucibleName={crucible.name} sessionVotes={sessionVotes} />
+        ) : (
+          <CrucibleJudgingUI
+            pair={pair}
+            isLoading={isLoadingPair || isVoting}
+            disabled={isVoting}
+            onVote={handleVote}
+            onSkip={handleSkip}
+          />
+        )}
+      </Container>
+    </>
+  );
+}
+
+// Helper Components
+
+type StatItemProps = {
+  label: string;
+  value: string;
+  secondary?: string;
+};
+
+function StatItem({ label, value, secondary }: StatItemProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Text size="xs" c="dimmed" fw={600} tt="uppercase" className="tracking-wider">
+        {label}
+      </Text>
+      <Text className="text-2xl font-bold text-white">{value}</Text>
+      {secondary && (
+        <Text size="xs" className="text-green-400">
+          {secondary}
+        </Text>
+      )}
+    </div>
+  );
+}
+
+type EndCrucibleStateProps = {
+  crucibleId: number;
+  crucibleName: string;
+  sessionVotes: number;
+};
+
+function EndCrucibleState({ crucibleId, crucibleName, sessionVotes }: EndCrucibleStateProps) {
+  const router = useRouter();
+
+  // Fetch other active crucibles to suggest
+  const { data: otherCrucibles, isLoading } = trpc.crucible.getInfinite.useQuery(
+    { status: CrucibleStatus.Active, limit: 4 },
+    { refetchOnWindowFocus: false }
+  );
+
+  // Filter out current crucible
+  const suggestedCrucibles = otherCrucibles?.items.filter((c) => c.id !== crucibleId) ?? [];
+
+  return (
+    <div className="mx-auto max-w-4xl py-8 text-center">
+      <div className="mb-2 text-4xl">
+        <IconTrophy className="mx-auto h-16 w-16 text-green-400" />
+      </div>
+      <Title order={2} className="mb-2 text-white">
+        You've rated all available pairs!
+      </Title>
+      <Text c="dimmed" mb="xl">
+        {sessionVotes > 0
+          ? `Great judging session! You rated ${sessionVotes} pairs.`
+          : 'Check back soon for new pairs to judge.'}
+      </Text>
+
+      <Button
+        variant="light"
+        size="lg"
+        component={Link}
+        href={`/crucibles/${crucibleId}/${slugit(crucibleName)}`}
+        mb="xl"
+      >
+        Back to {crucibleName}
+      </Button>
+
+      {/* Suggested Crucibles */}
+      {suggestedCrucibles.length > 0 && (
+        <>
+          <Title order={4} className="mb-6 mt-8 text-left text-white">
+            Continue Judging These Crucibles
+          </Title>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {suggestedCrucibles.slice(0, 4).map((c) => (
+              <SuggestedCrucibleCard
+                key={c.id}
+                id={c.id}
+                name={c.name}
+                entryFee={c.entryFee}
+                entryCount={c._count?.entries ?? 0}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {isLoading && (
+        <div className="flex justify-center py-8">
+          <Loader size="md" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+type SuggestedCrucibleCardProps = {
+  id: number;
+  name: string;
+  entryFee: number;
+  entryCount: number;
+};
+
+function SuggestedCrucibleCard({ id, name, entryFee, entryCount }: SuggestedCrucibleCardProps) {
+  const totalPrizePool = entryFee * entryCount;
+  const pairsToJudge = Math.max(0, Math.floor((entryCount * (entryCount - 1)) / 2));
+
+  return (
+    <Paper className="rounded-xl border border-[#373a40] p-6 text-left transition-all hover:border-blue-500 hover:-translate-y-0.5" bg="dark.7">
+      <Text className="mb-4 text-lg font-bold text-white" lineClamp={1}>
+        {name}
+      </Text>
+
+      <div className="mb-4 flex flex-col gap-3">
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <IconCoin size={16} className="text-blue-500" />
+          <span>Prize Pool: {abbreviateNumber(totalPrizePool)} Buzz</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <IconLayoutGrid size={16} className="text-blue-500" />
+          <span>{abbreviateNumber(pairsToJudge)} pairs to judge</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <IconUsers size={16} className="text-blue-500" />
+          <span>{entryCount} entries</span>
+        </div>
+      </div>
+
+      <Button
+        component={Link}
+        href={`/crucibles/${id}/judge`}
+        fullWidth
+        className="bg-blue-600 hover:bg-blue-500"
+      >
+        Start Judging
+      </Button>
+    </Paper>
+  );
+}
+
+function getTimeRemaining(endAt: Date): string {
+  const now = new Date();
+  const end = new Date(endAt);
+  const diff = end.getTime() - now.getTime();
+
+  if (diff <= 0) return 'Ended';
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+
+  if (days > 0) {
+    return `${days} days ${hours} hrs`;
+  }
+
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  if (hours > 0) {
+    return `${hours} hrs ${minutes} min`;
+  }
+
+  return `${minutes} min`;
+}
+
+export default Page(CrucibleJudgePage);
