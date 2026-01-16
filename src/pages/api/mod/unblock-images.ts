@@ -32,18 +32,18 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
 
   try {
     let batchCount = 0;
-    let offset = 0;
+    let cursor: string | undefined;
 
     while (true) {
       console.log(
-        `[unblock-images] Fetching images: offset=${offset}, limit=${BATCH_LIMIT}, batch=${
-          batchCount + 1
-        }}`
+        `[unblock-images] Fetching images: cursor=${
+          cursor ?? 'none'
+        }, limit=${BATCH_LIMIT}, batch=${batchCount + 1}}`
       );
-      const { data: images } = await getImagesFromSearch({
+      const { data: images, nextCursor } = await getImagesFromSearch({
         browsingLevel: allBrowsingLevelsFlag,
         limit: BATCH_LIMIT,
-        offset,
+        cursor,
         period: MetricTimeframe.AllTime,
         periodMode: 'published',
         sort: ImageSort.Newest,
@@ -54,7 +54,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       });
       if (!images.length) {
         console.log(
-          `[unblock-images] No more images to update. Finished at offset=${offset}, total batches=${batchCount}.`
+          `[unblock-images] No more images to update. Finished after ${batchCount} batches.`
         );
         break;
       }
@@ -80,7 +80,13 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       }
 
       batchCount++;
-      offset += BATCH_LIMIT;
+      cursor = nextCursor;
+
+      // If no more cursor, we've reached the end
+      if (!nextCursor) {
+        console.log(`[unblock-images] No more pages. Finished after ${batchCount} batches.`);
+        break;
+      }
     }
 
     console.log(`[unblock-images] Updating ${updatedIds.length} images in the database...`);
