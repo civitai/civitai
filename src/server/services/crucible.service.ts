@@ -18,9 +18,13 @@ import type {
 } from '../schema/crucible.schema';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { getEntryElo, CRUCIBLE_DEFAULT_ELO, processVote as processEloVote } from './crucible-elo.service';
+import { getEntryElo, CRUCIBLE_DEFAULT_ELO, processVote as processEloVote, getAllEntryElos } from './crucible-elo.service';
+import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
 import { shuffle } from '~/utils/array-helpers';
 import { Tracker } from '~/server/clickhouse/client';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('crucible-service', 'cyan');
 
 /**
  * Create a new crucible
@@ -722,4 +726,223 @@ export const submitVote = async ({
     winnerEntryId,
     loserEntryId,
   };
+};
+
+// ============================================================================
+// Crucible Finalization
+// ============================================================================
+
+/**
+ * Prize position type from database JSON
+ */
+type PrizePosition = {
+  position: number;
+  percentage: number;
+};
+
+/**
+ * Entry with final score and position after finalization
+ */
+export type FinalizedEntry = {
+  entryId: number;
+  userId: number;
+  finalScore: number;
+  position: number;
+  prizeAmount: number;
+};
+
+/**
+ * Result of crucible finalization
+ */
+export type FinalizeCrucibleResult = {
+  crucibleId: number;
+  totalPrizePool: number;
+  finalEntries: FinalizedEntry[];
+  totalPrizesDistributed: number;
+};
+
+/**
+ * Parse prize positions JSON from database
+ */
+function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
+  if (!prizePositionsJson || !Array.isArray(prizePositionsJson)) {
+    return [];
+  }
+
+  return prizePositionsJson
+    .filter(
+      (item): item is { position: number; percentage: number } =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.position === 'number' &&
+        typeof item.percentage === 'number'
+    )
+    .map((item) => ({
+      position: item.position,
+      percentage: item.percentage,
+    }));
+}
+
+/**
+ * Finalize a crucible after it has ended
+ *
+ * This function:
+ * 1. Copies ELO scores from Redis to PostgreSQL CrucibleEntry.score
+ * 2. Calculates final positions from ELO scores (entry time as tiebreaker)
+ * 3. Updates CrucibleEntry records with final positions
+ * 4. Calculates prize amounts based on configured percentages
+ * 5. Updates crucible status to 'completed'
+ * 6. Cleans up Redis ELO data (sets TTL for eventual cleanup)
+ *
+ * @param crucibleId - The crucible ID to finalize
+ * @returns Finalization results including final standings and prize amounts
+ */
+export const finalizeCrucible = async (
+  crucibleId: number
+): Promise<FinalizeCrucibleResult> => {
+  // Fetch the crucible with all entries
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: {
+      id: true,
+      status: true,
+      entryFee: true,
+      prizePositions: true,
+      endAt: true,
+      entries: {
+        select: {
+          id: true,
+          userId: true,
+          score: true,
+          createdAt: true, // For tiebreaker
+        },
+        orderBy: { createdAt: 'asc' }, // Ordered by entry time for tiebreaker
+      },
+    },
+  });
+
+  if (!crucible) {
+    throw throwNotFoundError('Crucible not found');
+  }
+
+  // Validate crucible can be finalized
+  if (crucible.status === CrucibleStatus.Completed) {
+    throw throwBadRequestError('This crucible has already been finalized');
+  }
+
+  if (crucible.status === CrucibleStatus.Cancelled) {
+    throw throwBadRequestError('Cannot finalize a cancelled crucible');
+  }
+
+  // Calculate total prize pool
+  const totalPrizePool = crucible.entryFee * crucible.entries.length;
+
+  // Parse prize positions from JSON
+  const prizePositions = parsePrizePositions(crucible.prizePositions);
+
+  // Sort prize positions by position number
+  const sortedPrizePositions = [...prizePositions].sort((a, b) => a.position - b.position);
+
+  // Get all ELO scores from Redis
+  const redisElos = await getAllEntryElos(crucibleId);
+
+  // Combine database entries with Redis ELO scores
+  // If an entry doesn't have a Redis score, use the database score (1500 default)
+  const entriesWithElo = crucible.entries.map((entry) => ({
+    entryId: entry.id,
+    userId: entry.userId,
+    finalScore: redisElos[entry.id] ?? entry.score,
+    createdAt: entry.createdAt,
+  }));
+
+  // Sort entries by ELO score (descending), with entry time as tiebreaker (earlier = higher rank)
+  const sortedEntries = [...entriesWithElo].sort((a, b) => {
+    if (b.finalScore !== a.finalScore) {
+      return b.finalScore - a.finalScore; // Higher score = better position
+    }
+    // Tiebreaker: earlier entry wins
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
+
+  // Assign positions and calculate prize amounts
+  const finalizedEntries: FinalizedEntry[] = sortedEntries.map((entry, index) => {
+    const position = index + 1;
+
+    // Find prize percentage for this position
+    const prizeConfig = sortedPrizePositions.find((p) => p.position === position);
+    const prizeAmount = prizeConfig
+      ? Math.floor((prizeConfig.percentage / 100) * totalPrizePool)
+      : 0;
+
+    return {
+      entryId: entry.entryId,
+      userId: entry.userId,
+      finalScore: entry.finalScore,
+      position,
+      prizeAmount,
+    };
+  });
+
+  // Calculate total prizes distributed (for verification)
+  const totalPrizesDistributed = finalizedEntries.reduce(
+    (sum, entry) => sum + entry.prizeAmount,
+    0
+  );
+
+  // Update all entries and crucible status in a transaction
+  await dbWrite.$transaction(async (tx) => {
+    // Update each entry with final score and position
+    for (const entry of finalizedEntries) {
+      await tx.crucibleEntry.update({
+        where: { id: entry.entryId },
+        data: {
+          score: entry.finalScore,
+          position: entry.position,
+        },
+      });
+    }
+
+    // Update crucible status to completed
+    await tx.crucible.update({
+      where: { id: crucibleId },
+      data: {
+        status: CrucibleStatus.Completed,
+      },
+    });
+  });
+
+  // Set TTL on Redis ELO hash for cleanup (7 days)
+  // This keeps data available for a while in case of issues
+  await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
+
+  log(`Finalized crucible ${crucibleId}: ${finalizedEntries.length} entries, ${totalPrizesDistributed} Buzz in prizes`);
+
+  return {
+    crucibleId,
+    totalPrizePool,
+    finalEntries: finalizedEntries,
+    totalPrizesDistributed,
+  };
+};
+
+/**
+ * Get crucibles that are ready for finalization
+ * (Active status with endAt in the past)
+ */
+export const getCruciblesForFinalization = async (): Promise<number[]> => {
+  const now = new Date();
+
+  const crucibles = await dbRead.crucible.findMany({
+    where: {
+      status: CrucibleStatus.Active,
+      endAt: {
+        lt: now,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return crucibles.map((c) => c.id);
 };
