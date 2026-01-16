@@ -97,17 +97,18 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     Write-Host "=======================================================" -ForegroundColor Magenta
     Write-Host ""
 
-    # Read the prompt and pipe to Claude Code
+    # Read the prompt content
     $PromptContent = Get-Content $PromptFile -Raw
 
-    # Run claude with the prompt, capture output
+    # Run claude with the prompt as an argument (not piped to stdin)
     # Using --dangerously-skip-permissions to allow autonomous operation
-    # The -p flag sends a prompt directly
+    # The -p flag enables print mode (non-interactive)
     try {
-        $Output = $PromptContent | claude --dangerously-skip-permissions -p - 2>&1 | Tee-Object -Variable ClaudeOutput
+        # Use Start-Process to capture output properly, or invoke directly
+        $Output = & claude --dangerously-skip-permissions -p $PromptContent 2>&1
 
-        # Also display output to console
-        $ClaudeOutput | ForEach-Object { Write-Host $_ }
+        # Display output to console
+        $Output | ForEach-Object { Write-Host $_ }
     }
     catch {
         Write-Host "Error running Claude: $_" -ForegroundColor Red
