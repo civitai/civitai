@@ -4807,17 +4807,18 @@ model Crucible {
 }
 
 model CrucibleEntry {
-  id         Int       @id @default(autoincrement())
-  crucibleId Int
-  crucible   Crucible  @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
-  userId     Int
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  imageId    Int
-  image      Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  score      Int       @default(1500)
-  voteCount  Int       @default(0)
-  position   Int?
-  createdAt  DateTime  @default(now())
+  id                Int       @id @default(autoincrement())
+  crucibleId        Int
+  crucible          Crucible  @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId           Int
+  image             Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  score             Int       @default(1500)
+  voteCount         Int       @default(0)
+  position          Int?
+  buzzTransactionId String?   // Transaction prefix for potential refunds
+  createdAt         DateTime  @default(now())
 
   @@index([crucibleId], type: Hash)
   @@index([userId], type: Hash)

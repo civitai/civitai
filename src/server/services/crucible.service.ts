@@ -7,7 +7,13 @@ import { Flags } from '~/shared/utils/flags';
 import {
   throwBadRequestError,
   throwNotFoundError,
+  throwInsufficientFundsError,
 } from '~/server/utils/errorHandling';
+import {
+  createMultiAccountBuzzTransaction,
+  getUserBuzzAccount,
+} from '~/server/services/buzz.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   GetCruciblesInfiniteSchema,
   GetCrucibleByIdSchema,
@@ -165,6 +171,24 @@ export const getCrucibleEntries = async <TSelect extends Prisma.CrucibleEntrySel
 };
 
 /**
+ * Generate a unique transaction prefix for crucible entry fees
+ * This prefix is used to identify and refund transactions if needed
+ */
+export const getCrucibleEntryTransactionPrefix = (
+  crucibleId: number,
+  userId: number
+): string => {
+  return `crucible-entry-${crucibleId}-${userId}-${Date.now()}`;
+};
+
+/**
+ * Check if a string is a valid crucible entry transaction prefix
+ */
+export const isCrucibleEntryTransactionPrefix = (prefix: string): boolean => {
+  return prefix.startsWith('crucible-entry-') && prefix.split('-').length >= 5;
+};
+
+/**
  * Submit an entry to a crucible
  */
 export const submitEntry = async ({
@@ -179,6 +203,7 @@ export const submitEntry = async ({
       id: true,
       status: true,
       nsfwLevel: true,
+      entryFee: true,
       entryLimit: true,
       maxTotalEntries: true,
       allowedResources: true,
@@ -267,6 +292,42 @@ export const submitEntry = async ({
   //   // Check image generation resources against allowed list
   // }
 
+  // Handle entry fee collection (if entryFee > 0)
+  let buzzTransactionId: string | null = null;
+
+  if (crucible.entryFee > 0) {
+    // Check if user has sufficient Buzz
+    const userAccount = await getUserBuzzAccount({ accountId: userId, accountTypes: ['yellow', 'green'] });
+    const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
+
+    if (totalBalance < crucible.entryFee) {
+      return throwInsufficientFundsError(
+        `You need ${crucible.entryFee} Buzz to enter this crucible. You currently have ${totalBalance} Buzz.`
+      );
+    }
+
+    // Generate transaction prefix for potential refunds
+    const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
+
+    // Create multi-account transaction to collect entry fee
+    // Transfers from user's yellow/green Buzz to central bank (account 0)
+    await createMultiAccountBuzzTransaction({
+      fromAccountId: userId,
+      fromAccountTypes: ['yellow', 'green'], // Allow both yellow and green Buzz
+      toAccountId: 0, // Central bank
+      amount: crucible.entryFee,
+      type: TransactionType.Fee,
+      externalTransactionIdPrefix: transactionPrefix,
+      description: 'Crucible entry fee',
+      details: {
+        entityId: crucibleId,
+        entityType: 'Crucible',
+      },
+    });
+
+    buzzTransactionId = transactionPrefix;
+  }
+
   // Create the entry with default ELO score (1500)
   const entry = await dbWrite.crucibleEntry.create({
     data: {
@@ -274,6 +335,7 @@ export const submitEntry = async ({
       userId,
       imageId,
       score: 1500, // Default ELO score
+      buzzTransactionId,
     },
     select: {
       id: true,
@@ -282,6 +344,7 @@ export const submitEntry = async ({
       imageId: true,
       score: true,
       position: true,
+      buzzTransactionId: true,
       createdAt: true,
     },
   });

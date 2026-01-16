@@ -3733,6 +3733,7 @@ export interface CrucibleEntry {
   score: number;
   voteCount: number;
   position: number | null;
+  buzzTransactionId: string | null;
   createdAt: Date;
 }
 
