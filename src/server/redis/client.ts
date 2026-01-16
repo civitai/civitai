@@ -751,6 +751,9 @@ export const REDIS_SYS_KEYS = {
   CACHES: {
     IMAGE_EXISTS: 'feed:image:exists',
   },
+  CRUCIBLE: {
+    ELO: 'crucible:elo', // Hash: entryId -> elo score
+  },
 } as const;
 
 // Cached data
