@@ -19,6 +19,7 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
+import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 
@@ -34,57 +35,6 @@ interface DownloadVariantDropdownProps {
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
-}
-
-function getFileLabel(file: FileType): string {
-  const { fp, quantType, format, size } = file.metadata ?? {};
-
-  // For GGUF files, show quant type
-  if (format === 'GGUF' && quantType) {
-    return quantType;
-  }
-
-  // For SafeTensor and others, show fp precision
-  if (fp) {
-    return fp;
-  }
-
-  // Fallback to size
-  if (size) {
-    return size === 'pruned' ? 'Pruned' : 'Full';
-  }
-
-  return 'Standard';
-}
-
-function getFileDescription(file: FileType): string {
-  const { fp, quantType, format, size } = file.metadata ?? {};
-
-  const parts: string[] = [];
-
-  if (format === 'GGUF') {
-    if (quantType === 'Q8_0') parts.push('8-bit GGUF, highest quality');
-    else if (quantType === 'Q6_K') parts.push('6-bit GGUF, high quality');
-    else if (quantType === 'Q5_K_M') parts.push('5-bit GGUF, balanced');
-    else if (quantType === 'Q4_K_M') parts.push('4-bit GGUF, smaller file');
-    else if (quantType === 'Q4_K_S') parts.push('4-bit small GGUF');
-    else if (quantType === 'Q3_K_M') parts.push('3-bit GGUF, compact');
-    else if (quantType === 'Q2_K') parts.push('2-bit GGUF, smallest');
-    else if (quantType) parts.push(`${quantType} quantization`);
-  } else {
-    if (fp === 'fp32') parts.push('Full precision, largest file');
-    else if (fp === 'fp16') parts.push('Half precision, best balance');
-    else if (fp === 'bf16') parts.push('Brain float, good balance');
-    else if (fp === 'fp8') parts.push('8-bit, smaller file');
-    else if (fp === 'nf4') parts.push('4-bit normalized');
-    else if (fp) parts.push(`${fp} precision`);
-  }
-
-  if (size === 'pruned') {
-    parts.push(parts.length ? '(pruned)' : 'Pruned model');
-  }
-
-  return parts.join(' ') || 'Standard variant';
 }
 
 export function DownloadVariantDropdown({
