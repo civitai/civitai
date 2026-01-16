@@ -37,6 +37,7 @@ export const loginRedirectReasons = {
   'switch-accounts': 'Log into the account you wish to add',
   shop: 'You need to be logged in to preview and purchase cosmetics',
   'knights-new-order': 'You need to be logged in to join Knights of the New Order',
+  'create-crucible': 'You need to be logged in to create a crucible',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
