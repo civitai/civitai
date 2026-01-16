@@ -4,6 +4,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useState } from 'react';
 import * as z from 'zod';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
 import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
@@ -51,6 +52,7 @@ type FilesContextState = {
   hasPending: boolean;
   errors: SchemaError[] | null;
   files: FileFromContextProps[];
+  linkedComponents: LinkedComponent[];
   modelId?: number;
   fileExtensions: string[];
   fileTypes: ModelFileType[];
@@ -61,6 +63,8 @@ type FilesContextState = {
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
   validationCheck: () => boolean;
+  addLinkedComponent: (component: LinkedComponent) => void;
+  removeLinkedComponent: (componentType: ModelFileComponentType) => void;
 };
 
 type FilesProviderProps = {
@@ -126,6 +130,17 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const removeFile = (uuid: string) => {
     setFiles((state) => state.filter((x) => x.uuid !== uuid));
+  };
+
+  // Linked components state (components from other models on Civitai)
+  const [linkedComponents, setLinkedComponents] = useState<LinkedComponent[]>([]);
+
+  const addLinkedComponent = (component: LinkedComponent) => {
+    setLinkedComponents((prev) => [...prev, component]);
+  };
+
+  const removeLinkedComponent = (componentType: ModelFileComponentType) => {
+    setLinkedComponents((prev) => prev.filter((c) => c.componentType !== componentType));
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
@@ -417,6 +432,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     <FilesContext.Provider
       value={{
         files,
+        linkedComponents,
         onDrop,
         startUpload,
         errors: errors,
@@ -429,6 +445,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         modelId: model?.id,
         maxFiles,
         validationCheck: checkValidation,
+        addLinkedComponent,
+        removeLinkedComponent,
       }}
     >
       {children}
