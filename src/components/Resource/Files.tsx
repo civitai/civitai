@@ -23,6 +23,7 @@ import {
   IconCircleCheck,
   IconCloudUpload,
   IconFileUpload,
+  IconLink,
   IconRefresh,
   IconTrash,
   IconX,
@@ -50,6 +51,8 @@ import { trpc } from '~/utils/trpc';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
+import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
+import { openLinkComponentModal } from '~/components/Resource/LinkComponentModal';
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
@@ -68,6 +71,12 @@ export function Files() {
   );
   const resizeObserver = useResizeObserver(positioner);
 
+  // State for linked components (components from other models on Civitai)
+  const [linkedComponents, setLinkedComponents] = useState<LinkedComponent[]>([]);
+
+  // Get existing component types to avoid duplicates
+  const existingComponentTypes = linkedComponents.map((c) => c.componentType);
+
   // Categorize files by type
   const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type ?? ''));
   const requiredComponents = files.filter((f) =>
@@ -76,6 +85,14 @@ export function Files() {
   const optionalFiles = files.filter(
     (f) => !['Model', 'Pruned Model', 'VAE', 'Text Encoder'].includes(f.type ?? '')
   );
+
+  const handleLinkComponent = (component: LinkedComponent) => {
+    setLinkedComponents((prev) => [...prev, component]);
+  };
+
+  const handleRemoveLinkedComponent = (componentType: ModelFileComponentType) => {
+    setLinkedComponents((prev) => prev.filter((c) => c.componentType !== componentType));
+  };
 
   return (
     <Stack>
@@ -165,27 +182,66 @@ export function Files() {
       )}
 
       {/* Required Components Section */}
-      {requiredComponents.length > 0 && (
+      {(requiredComponents.length > 0 || linkedComponents.length > 0) && (
         <Card withBorder style={{ borderColor: 'var(--mantine-color-yellow-6)', backgroundColor: 'rgba(250, 176, 5, 0.03)' }}>
           <Stack gap="md">
-            <Group gap="xs">
-              <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-6)' }} />
-              <Title order={4}>Required Components</Title>
-              <Badge color="yellow" variant="light">
-                Users must download
-              </Badge>
+            <Group gap="xs" justify="space-between" wrap="nowrap">
+              <Group gap="xs">
+                <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-6)' }} />
+                <Title order={4}>Required Components</Title>
+                <Badge color="yellow" variant="light">
+                  Users must download
+                </Badge>
+              </Group>
+              <Button
+                variant="light"
+                size="xs"
+                leftSection={<IconLink size={14} />}
+                onClick={() =>
+                  openLinkComponentModal({
+                    onSave: handleLinkComponent,
+                    existingComponentTypes,
+                  })
+                }
+              >
+                Link Existing
+              </Button>
             </Group>
             <Text size="sm" c="dimmed">
-              Additional files users need to run this model. Add multiple precision variants if
-              available.
+              Additional files users need to run this model. Upload files or link to existing models
+              on Civitai.
             </Text>
             <Stack gap="md">
-              {requiredComponents.map((file, index) => (
+              {requiredComponents.map((file) => (
                 <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+              ))}
+              {linkedComponents.map((component) => (
+                <LinkedComponentCard
+                  key={component.componentType}
+                  component={component}
+                  onRemove={handleRemoveLinkedComponent}
+                />
               ))}
             </Stack>
           </Stack>
         </Card>
+      )}
+
+      {/* Link Component Button - shown when no required components yet */}
+      {requiredComponents.length === 0 && linkedComponents.length === 0 && (
+        <Button
+          variant="light"
+          color="yellow"
+          leftSection={<IconLink size={16} />}
+          onClick={() =>
+            openLinkComponentModal({
+              onSave: handleLinkComponent,
+              existingComponentTypes,
+            })
+          }
+        >
+          Link Required Component from Civitai
+        </Button>
       )}
 
       {/* Optional Files Section */}
@@ -214,6 +270,62 @@ export function Files() {
 //   version?: Partial<ModelVersionById>;
 //   onStartUploadClick?: VoidFunction;
 // };
+
+// Card for displaying a linked component from another Civitai model
+function LinkedComponentCard({
+  component,
+  onRemove,
+}: {
+  component: LinkedComponent;
+  onRemove: (componentType: ModelFileComponentType) => void;
+}) {
+  return (
+    <Card withBorder style={{ borderColor: 'var(--mantine-color-blue-4)' }}>
+      <Stack gap={4} pb="xs">
+        <Group justify="space-between" gap={4} wrap="nowrap">
+          <Group gap="xs">
+            <IconLink size={16} style={{ color: 'var(--mantine-color-blue-4)' }} />
+            <Text lineClamp={1} style={{ display: 'inline-block' }}>
+              {component.modelName}
+            </Text>
+            <Badge size="xs" color="blue" variant="light">
+              Linked
+            </Badge>
+          </Group>
+          <Tooltip label="Remove linked component" position="left">
+            <LegacyActionIcon color="red" onClick={() => onRemove(component.componentType)}>
+              <IconTrash />
+            </LegacyActionIcon>
+          </Tooltip>
+        </Group>
+        <Stack gap={0}>
+          <Text size="sm" fw="bold">
+            Component Type
+          </Text>
+          <Text size="sm" c="dimmed">
+            {component.componentType}
+          </Text>
+        </Stack>
+        <Stack gap={0}>
+          <Text size="sm" fw="bold">
+            Version
+          </Text>
+          <Text size="sm" c="dimmed">
+            {component.versionName}
+          </Text>
+        </Stack>
+        <Stack gap={0}>
+          <Text size="sm" fw="bold">
+            File
+          </Text>
+          <Text size="sm" c="dimmed">
+            {component.fileName}
+          </Text>
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
 
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
