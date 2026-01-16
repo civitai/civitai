@@ -273,11 +273,11 @@ function getBaseClient(type: 'cache' | 'system') {
         pingInterval,
       });
 
-  // Common event handlers
-  baseClient.on('error', (err: Error) => log(`Redis Error`, err));
-  baseClient.on('connect', () => log('Redis connected'));
-  baseClient.on('reconnecting', () => log('Redis reconnecting'));
-  baseClient.on('ready', () => log('Redis ready!'));
+  // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
+  baseClient.on('error', (err: Error) => log(`Redis Error (${type})`, err));
+  baseClient.on('connect', () => log(`Redis connected (${type})`));
+  baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
+  baseClient.on('ready', () => log(`Redis ready! (${type})`));
 
   // Cluster-specific event handlers for failover detection
   // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
@@ -344,7 +344,8 @@ function getBaseClient(type: 'cache' | 'system') {
     // Set up periodic topology refresh after client is ready and feature flag is checked
     // This ensures we don't rely solely on MOVED/ASK errors for discovery
     // See: https://github.com/redis/node-redis/issues/2806
-    baseClient.once('ready', async () => {
+    // Helper function to set up enhanced failover after connection
+    const setupEnhancedFailover = async () => {
       try {
         log('Checking enhanced failover feature flag...');
         const isEnhancedFailoverEnabled = await isFlipt(
@@ -388,13 +389,33 @@ function getBaseClient(type: 'cache' | 'system') {
       } catch (err) {
         log(`Enhanced failover setup failed: ${err instanceof Error ? err.message : err}`);
       }
+    };
+
+    // Note: node-redis v4.x cluster clients don't emit 'ready' event (known bug)
+    // So we set up enhanced failover in the connect() promise callback instead
+    // See: https://github.com/redis/node-redis/issues/1855
+
+    // Don't await here - let connection happen in background
+    // The client will queue commands until connected
+    log(`Calling connect() for ${type} (cluster) client...`);
+    baseClient.connect().then(async () => {
+      log(`${type} cluster client connected`);
+      await setupEnhancedFailover();
+    }).catch((err) => {
+      log(`Redis connection failed (${type})`, err);
     });
+
+    return baseClient;
   }
 
+  // Non-cluster client - use the normal flow
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
-  baseClient.connect().catch((err) => {
-    log(`Redis connection failed`, err);
+  log(`Calling connect() for ${type} (single) client...`);
+  baseClient.connect().then(() => {
+    log(`${type} single client connected`);
+  }).catch((err) => {
+    log(`Redis connection failed (${type})`, err);
   });
 
   return baseClient;
