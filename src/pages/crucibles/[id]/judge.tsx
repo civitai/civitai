@@ -167,7 +167,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     }
   }, [lastVoteAttempt, isVoting, handleVote]);
 
-  // Handle skip (counts as equal - no vote submitted, just get next pair)
+  // Handle skip - no vote submitted, just get next pair (pair may return later)
   const handleSkip = useCallback(async () => {
     if (isVoting || !pair) return;
 
