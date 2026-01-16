@@ -277,12 +277,21 @@ node .claude/skills/ralph/ralph.mjs [options]
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--prd <path>` | `-p` | `.claude/skills/ralph/prd.json` | Path to PRD |
-| `--max-iterations <n>` | `-n` | story count | Max iterations |
+| `--max-iterations <n>` | `-n` | story count | Max iterations (fresh contexts) |
+| `--max-turns <n>` | `-t` | 100 | Max tool calls per iteration |
 | `--model <model>` | `-m` | opus | Model: opus, sonnet, haiku |
 | `--cwd <path>` | `-C` | script location | Working directory for Ralph |
 | `--quiet` | `-q` | | Suppress banners |
 | `--dry-run` | | | Preview without executing |
 | `--no-commit` | | | Skip git commits (for testing) |
+
+### Turn Budget & Context Management
+
+Ralph tracks tool calls (turns) within each iteration and injects warnings:
+- **70% used**: Warning to consider checkpointing progress
+- **90% used**: Critical warning to wrap up immediately
+
+This prevents context rot by encouraging graceful handoffs before the context degrades.
 
 ### Recommended Usage
 
@@ -527,3 +536,17 @@ node .claude/skills/ralph/ralph.mjs \
 ```
 
 Ralph will work entirely within the worktree - it has no knowledge of where it was spawned from.
+
+### Spawning Ralph from an Agent
+
+When invoking Ralph from another agent, use `run_in_background: true` to avoid timeout issues:
+
+```javascript
+// Ralph can take 20-60+ minutes - don't use a short timeout
+Bash({
+  command: "node .claude/skills/ralph/ralph.mjs --prd .../prd.json",
+  run_in_background: true  // Ralph continues independently
+})
+```
+
+Without `run_in_background`, a bash timeout will KILL Ralph mid-execution, leaving uncommitted changes.

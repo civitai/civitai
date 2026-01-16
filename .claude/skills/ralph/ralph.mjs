@@ -35,6 +35,7 @@ let dryRun = false;
 let debugMode = false;
 let noCommit = false;
 let cwdOverride = null;
+let maxTurns = 100;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -54,6 +55,8 @@ for (let i = 0; i < args.length; i++) {
     noCommit = true;
   } else if (arg === '--cwd' || arg === '-C') {
     cwdOverride = resolve(process.cwd(), args[++i]);
+  } else if (arg === '--max-turns' || arg === '-t') {
+    maxTurns = parseInt(args[++i], 10);
   } else if (arg === '--help' || arg === '-h') {
     console.log(`
 Ralph - Autonomous AI agent loop using Claude Agent SDK
@@ -63,6 +66,7 @@ Usage: node .claude/skills/ralph/ralph.mjs [options]
 Options:
   --prd, -p <path>         Path to prd.json (default: .claude/skills/ralph/prd.json)
   --max-iterations, -n <n> Maximum iterations (default: number of stories)
+  --max-turns, -t <n>      Max tool calls per iteration (default: 100)
   --model, -m <model>      Model: opus, sonnet, haiku (default: opus)
   --cwd, -C <path>         Working directory for Ralph (default: script location)
   --quiet, -q              Suppress iteration banners
@@ -203,6 +207,49 @@ async function runIteration(prd, story) {
   let lastWasToolCall = false;
   let pendingNewline = false;
 
+  // Turn tracking for context-aware warnings
+  let turnCount = 0;
+  let warned70 = false;
+  let warned90 = false;
+
+  // Create turn-tracking hook that injects warnings at thresholds
+  const turnTrackingHook = async () => {
+    turnCount++;
+    const percentUsed = (turnCount / maxTurns) * 100;
+
+    if (!quietMode) {
+      // Log turn count periodically
+      if (turnCount % 10 === 0) {
+        console.log(`  [Turn ${turnCount}/${maxTurns} - ${Math.round(percentUsed)}%]`);
+      }
+    }
+
+    // 70% warning - suggest checkpoint
+    if (percentUsed >= 70 && !warned70) {
+      warned70 = true;
+      return {
+        systemMessage: `⚠️ TURN BUDGET WARNING: You've used ${turnCount} of ${maxTurns} turns (${Math.round(percentUsed)}%). If you're not close to completing this story, consider:
+1. Documenting your current progress in progress.txt
+2. Noting what's left to do
+3. Preparing for a clean handoff to the next iteration`
+      };
+    }
+
+    // 90% warning - force wrap-up
+    if (percentUsed >= 90 && !warned90) {
+      warned90 = true;
+      return {
+        systemMessage: `🚨 TURN BUDGET CRITICAL: You've used ${turnCount} of ${maxTurns} turns (${Math.round(percentUsed)}%). You MUST wrap up NOW:
+1. Stop any new work
+2. Document exactly what's done and what's remaining in progress.txt
+3. If the story isn't complete, leave it as passes: false
+4. Exit gracefully - another iteration will continue the work`
+      };
+    }
+
+    return {};
+  };
+
   // Change to project root so file paths resolve correctly
   const projectRoot = cwdOverride || defaultProjectRoot;
   const originalCwd = process.cwd();
@@ -213,11 +260,17 @@ async function runIteration(prd, story) {
       prompt,
       options: {
         model,
-        maxTurns: 100,
+        maxTurns,
         // Enable project settings so agent has access to skills, CLAUDE.md, etc.
         settingSources: ['project'],
         // Allow the agent to use all tools for autonomous operation
         permissionMode: 'bypassPermissions',
+        // Hook to track turns and inject warnings
+        hooks: {
+          PostToolUse: [{
+            hooks: [turnTrackingHook]
+          }]
+        }
       },
     })) {
       if (debugMode) {
@@ -351,7 +404,7 @@ async function main() {
 ║                         RALPH                                 ║
 ║           Autonomous AI Agent Loop                            ║
 ║                                                               ║
-║  Model: ${model.padEnd(10)} Max Iterations: ${String(maxIterations).padEnd(4)}              ║
+║  Model: ${model.padEnd(10)} Iterations: ${String(maxIterations).padEnd(4)} Turns: ${String(maxTurns).padEnd(4)}     ║
 ╚══════════════════════════════════════════════════════════════╝
 `);
 
