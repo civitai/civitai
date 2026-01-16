@@ -619,4 +619,12 @@ export class Tracker {
   }) {
     return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
   }
+
+  public crucibleVote(values: {
+    crucibleId: number;
+    winnerEntryId: number;
+    loserEntryId: number;
+  }) {
+    return this.track('crucible_votes', { ...values, createdAt: new Date() }, { skipActorMeta: true });
+  }
 }
