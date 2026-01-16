@@ -189,16 +189,35 @@ const clusterRefreshIntervals = new Map<string, NodeJS.Timeout>();
  * Uses internal _slots.rediscover() method - this is undocumented but stable.
  * See: https://github.com/redis/node-redis/issues/2806
  */
-function triggerTopologyRediscovery(client: any, reason: string) {
+function triggerTopologyRediscovery(clusterClient: any, reason: string) {
   try {
-    if (client._slots?.rediscover) {
-      log(`Triggering topology rediscovery: ${reason}`);
-      client._slots.rediscover().catch((err: Error) => {
-        log(`Topology rediscovery failed: ${err.message}`);
-      });
+    if (!clusterClient._slots?.rediscover) {
+      return;
     }
+
+    log(`Triggering topology rediscovery: ${reason}`);
+
+    // rediscover() requires a client instance with .options property
+    // Try to get a master client from the cluster to pass to rediscover
+    const masters = clusterClient._slots.masters;
+    if (masters && masters.length > 0) {
+      // Use the first available master client
+      const masterClient = masters[0]?.client;
+      if (masterClient) {
+        clusterClient._slots.rediscover(masterClient).catch((err: Error) => {
+          log(`Topology rediscovery failed: ${err.message}`);
+        });
+        return;
+      }
+    }
+
+    // Fallback: try calling without argument (may fail but worth trying)
+    clusterClient._slots.rediscover().catch((err: Error) => {
+      log(`Topology rediscovery failed (no master client): ${err.message}`);
+    });
   } catch (err) {
     // Silently ignore if rediscover is not available
+    log(`Topology rediscovery error: ${err instanceof Error ? err.message : err}`);
   }
 }
 
