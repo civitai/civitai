@@ -505,7 +505,7 @@ export const getJudgingPair = async ({
   }
 
   // Fetch all entries with their scores and images
-  const entries = await dbRead.crucibleEntry.findMany({
+  const entriesFromDb = await dbRead.crucibleEntry.findMany({
     where: { crucibleId },
     select: {
       id: true,
@@ -533,9 +533,18 @@ export const getJudgingPair = async ({
   });
 
   // Need at least 2 entries to form a pair
-  if (entries.length < 2) {
+  if (entriesFromDb.length < 2) {
     return null;
   }
+
+  // Get real-time ELO scores from Redis (database scores are stale - only updated during finalization)
+  const redisElos = await getAllEntryElos(crucibleId);
+
+  // Merge Redis ELO scores into entries (fallback to database score if Redis entry is missing)
+  const entries: EntryForJudging[] = entriesFromDb.map((entry) => ({
+    ...entry,
+    score: redisElos[entry.id] ?? entry.score, // Use Redis ELO if available, else DB fallback (1500)
+  }));
 
   // Get all pairs this user has already voted on
   const votedPairs = await getVotedPairs(crucibleId, userId);
