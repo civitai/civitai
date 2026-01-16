@@ -1,0 +1,579 @@
+# Phase 2: Pattern Reuse Audit Progress Log
+
+## Project: Model UI Overhaul - Pattern Reuse Audit
+## Branch: feature/model-ui-overhaul
+## Started: 2026-01-15
+
+## Codebase Patterns
+- **Modal Pattern 1 (Trigger files)**: Put trigger function in `src/components/Dialog/triggers/` with `dynamic()` import for lazy loading
+- **Modal Pattern 2 (Same file)**: Export `open[Name]Modal` function that uses `dialogStore.trigger({ component, props })`
+- **Modal with custom header**: Use `withCloseButton={false}` when rendering custom headers with CloseButton
+- **useDialogContext**: Always spread `{...dialog}` on Modal component and call `dialog.onClose()` to close
+- **QuickSearchDropdown Pattern**: Use `supportedIndexes` to limit search types, `onItemSelected` callback receives `(item, data)` tuple, `showIndexSelect={false}` when single index
+- **QuickSearchDropdown Entity Type Check**: In `onItemSelected`, check `item.entityType === 'Model'` etc. before casting `data` to correct type
+- **Select Value Pattern**: Always use `value={stateValue ?? null}` - Mantine Select expects `null` for "no selection", not `undefined`
+- **Select Data Pattern**: Transform constant arrays with `.map()` to `{ label, value }` format - e.g., `constants.modelFileSizes.map(size => ({ label: startCase(size), value: size }))`
+- **Select onChange Pattern**: Cast value to appropriate type - `onChange={(value) => setState(value as MyType | null)}`
+- **Accordion Structure**: Always use `Accordion.Item` > `Accordion.Control` > `Accordion.Panel` in that order
+- **Accordion State**: Use `useLocalStorage` for persisted accordion state with `multiple` prop for multi-select
+- **Nested Expand/Collapse**: Use `Collapse` + `useDisclosure` inside accordion panels, NOT nested Accordion components
+
+---
+
+## 2026-01-15 - PAT-001
+
+### What was implemented
+Audit of LinkComponentModal.tsx modal patterns - no code changes needed.
+
+### Files analyzed
+- `src/components/Resource/LinkComponentModal.tsx`
+- `src/components/Dialog/dialogStore.ts`
+- `src/components/Dialog/DialogProvider.tsx`
+- `src/components/Dialog/triggers/*.ts` (11 trigger files)
+- `src/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals.tsx`
+- `src/components/Games/KnightsNewOrder.utils.ts`
+
+### Pattern Compliance Analysis
+
+**LinkComponentModal Pattern Usage:**
+1. **useDialogContext()** - Correctly used at component start
+2. **Modal {...dialog}** - Correctly spreads dialog context
+3. **dialog.onClose()** - Correctly called when closing
+4. **openLinkComponentModal()** - Correctly exports trigger function using `dialogStore.trigger()`
+
+**Comparison with Established Patterns:**
+
+| Pattern | LinkComponentModal | Established Pattern | Status |
+|---------|-------------------|---------------------|--------|
+| useDialogContext | Yes | Yes | MATCH |
+| {...dialog} spread | Yes | Yes | MATCH |
+| dialog.onClose() | Yes | Yes | MATCH |
+| dialogStore.trigger | Yes | Yes | MATCH |
+| dynamic() import | No (direct import) | Varies | ACCEPTABLE |
+| withCloseButton={false} | Uses title="" | withCloseButton={false} | MINOR DEVIATION |
+
+**Findings:**
+
+1. **Core Pattern Compliance: PASS**
+   - The modal correctly follows the dialogStore + useDialogContext pattern
+   - Matches the same structure as CreatorProgramCapsInfoModal
+   - Properly exports an `openLinkComponentModal` trigger function
+
+2. **Minor Deviations:**
+   - Uses `title=""` instead of `withCloseButton={false}` for custom header
+   - Trigger function is in same file, not in `src/components/Dialog/triggers/`
+   - No dynamic() import (acceptable for component-local trigger)
+
+3. **Recommendation:**
+   - The minor deviations don't affect functionality
+   - Could optionally change `title=""` to `withCloseButton={false}` for consistency
+   - Keeping trigger in same file is fine for single-use modals (see KnightsNewOrder.utils.ts pattern)
+
+### Learnings for future iterations
+- Modal patterns in this codebase are flexible - both trigger-file and same-file approaches are valid
+- `withCloseButton={false}` is preferred when adding custom close buttons
+- The `dialogStore.trigger()` + `useDialogContext()` pattern is the canonical approach
+- Pre-existing typecheck errors exist across codebase (e.g., @tabler/icons-react declarations)
+
+---
+
+## 2026-01-15 - PAT-002
+
+### What was implemented
+Audit of QuickSearchDropdown usage in LinkComponentModal.tsx - no code changes needed.
+
+### Files analyzed
+- `src/components/Resource/LinkComponentModal.tsx`
+- `src/components/Search/QuickSearchDropdown.tsx`
+- `src/components/Chat/NewChat.tsx`
+- `src/components/AssociatedModels/AssociateModels.tsx`
+- `src/components/Profile/ShowcaseItemsInput.tsx`
+- `src/components/Club/AddResourceToClubModal.tsx`
+
+### Pattern Compliance Analysis
+
+**QuickSearchDropdown Props Interface:**
+```typescript
+type QuickSearchDropdownProps = {
+  supportedIndexes?: SearchIndexKey[];  // Limit search to specific indexes
+  onItemSelected: (item, data) => void; // Callback with (ShowcaseItemSchema, SearchIndexDataMap[key])
+  filters?: string;                     // Meilisearch filter string
+  dropdownItemLimit?: number;           // Number of results (default 5)
+  showIndexSelect?: boolean;            // Show index selector (default true)
+  placeholder?: string;                 // Custom placeholder text
+  startingIndex?: SearchIndexKey;       // Initial index
+  disableInitialSearch?: boolean;       // Don't search on mount
+  clearable?: boolean;                  // Allow clearing input
+};
+```
+
+**LinkComponentModal Usage (lines 255-261):**
+```tsx
+<QuickSearchDropdown
+  supportedIndexes={['models']}
+  onItemSelected={handleModelSelect}
+  placeholder={`Search for ${componentType ?? 'component'} models...`}
+  showIndexSelect={false}
+  dropdownItemLimit={10}
+/>
+```
+
+**Comparison with Established Patterns:**
+
+| Pattern | LinkComponentModal | NewChat | AssociateModels | Status |
+|---------|-------------------|---------|-----------------|--------|
+| supportedIndexes | ✅ `['models']` | ✅ `['users']` | ✅ `['models', 'articles']` | MATCH |
+| onItemSelected | ✅ Typed handler | ✅ Adds to selectedUsers | ✅ handleSelect | MATCH |
+| showIndexSelect | ✅ `false` | ✅ `false` | Default (true) | MATCH |
+| dropdownItemLimit | ✅ `10` | ✅ `25` | ✅ `25` | MATCH |
+| disableInitialSearch | Not used | ✅ `true` | Not used | N/A |
+| placeholder | ✅ Custom | ✅ "Select users" | Default | MATCH |
+| filters | Not used | ✅ Excludes current user | ✅ onlyMe filter | N/A |
+
+**Result Handler Pattern Comparison:**
+
+| Component | Handler Pattern | Entity Type Check | Type Cast | Status |
+|-----------|----------------|-------------------|-----------|--------|
+| LinkComponentModal | `handleModelSelect` | ✅ `item.entityType === 'Model'` | ✅ `as SearchIndexDataMap['models'][number]` | MATCH |
+| AssociateModels | `handleSelect` | ✅ `item.entityType === 'Model'` | ✅ Casts to models/articles | MATCH |
+| NewChat | Inline handler | N/A (users only) | ✅ `as SearchIndexDataMap['users'][number]` | MATCH |
+
+**Findings:**
+
+1. **Core Pattern Compliance: PASS**
+   - Correctly uses `supportedIndexes={['models']}` to limit search to models
+   - Properly implements `onItemSelected` callback with entity type check
+   - Uses `showIndexSelect={false}` since only one index is supported
+   - Sets appropriate `dropdownItemLimit={10}` for the modal context
+
+2. **Handler Implementation: CORRECT**
+   - `handleModelSelect` follows the same pattern as `AssociateModels.handleSelect`
+   - Checks `item.entityType === 'Model'` before processing
+   - Correctly casts `data as SearchIndexDataMap['models'][number]`
+   - Accesses `modelData.versions` for auto-selection feature
+
+3. **Auto-selection Feature: ENHANCEMENT**
+   - LinkComponentModal adds auto-version-selection when model has only one version
+   - This is a valid enhancement not seen in other usages
+   - Properly uses `modelData.versions` from the search result
+
+### Learnings for future iterations
+- QuickSearchDropdown is well-typed with `QuickSearchDropdownProps` interface
+- `onItemSelected` receives `(item: ShowcaseItemSchema, data: SearchIndexDataMap[key])` tuple
+- Always check `item.entityType` before casting `data` to the specific type
+- `showIndexSelect={false}` is standard when using single `supportedIndexes`
+- Search result data includes related entities (e.g., `versions` in models) for additional features
+- `dropdownItemLimit` varies by context: 5 default, 10 for modals, 25 for main features
+- **Zod Validation Pattern**: Extend base schemas with `.extend()`, use `.refine()` for conditional validation with `path` for field-level errors
+- **showErrorNotification Pattern**: Use `{ title: 'Title', error: new Error(message) }` format, `new Error()` wrapper is required
+
+---
+
+## 2026-01-15 - PAT-003
+
+### What was implemented
+Audit of Zod validation patterns in FilesProvider.tsx - no code changes needed.
+
+### Files analyzed
+- `src/components/Resource/FilesProvider.tsx`
+- `src/server/schema/model-file.schema.ts` (base schema)
+- `src/server/schema/collection.schema.ts` (refine pattern examples)
+- `src/server/schema/model-version.schema.ts` (refine pattern examples)
+- `src/utils/notifications.tsx` (showErrorNotification signature)
+- `src/components/Resource/Files.tsx` (showErrorNotification usage)
+
+### Pattern Compliance Analysis
+
+**Zod Schema Extension Pattern:**
+
+FilesProvider.tsx (lines 457-497):
+```typescript
+const metadataSchema = modelFileMetadataSchema
+  .extend({
+    versionId: z.number(),
+    type: z.enum(constants.modelFileTypes),
+    modelType: z.enum(ModelType),
+    name: z.string(),
+  })
+  .refine(
+    (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
+    { error: 'Model size is required for model files', path: ['size'] }
+  )
+  // ... additional refines
+  .array()
+  .refine(...);
+```
+
+**Comparison with Established Patterns:**
+
+| Pattern | FilesProvider | collection.schema.ts | model-version.schema.ts | Status |
+|---------|--------------|---------------------|-------------------------|--------|
+| `.extend()` | ✅ Extends modelFileMetadataSchema | ✅ Extends collectionItemSchema | N/A | MATCH |
+| `.refine()` with `path` | ✅ Uses `path: ['size']` | ✅ Uses `path: ['submissionStartDate']` | ✅ Uses similar | MATCH |
+| `.refine()` error key | ✅ Uses `error:` | ✅ Uses `error:` (older: `message:`) | ✅ Uses both | MATCH |
+| `.array().refine()` | ✅ Array-level validation | ✅ Similar pattern | N/A | MATCH |
+| Conditional refine | ✅ `data.type === 'Model' ? !!data.size : true` | ✅ Similar conditional logic | ✅ Similar | MATCH |
+
+**showErrorNotification Usage:**
+
+| Location | Usage | Correct Pattern | Status |
+|----------|-------|-----------------|--------|
+| FilesProvider.tsx:155-158 | `showErrorNotification({ title: 'Failed to publish version', error: new Error(error.message) })` | ✅ | MATCH |
+| FilesProvider.tsx:167-170 | `showErrorNotification({ title: 'Failed to publish version', error: new Error(error.message) })` | ✅ | MATCH |
+| FilesProvider.tsx:222-227 | `showErrorNotification({ title: 'Duplicate file types', error: new Error(...) })` | ✅ | MATCH |
+| FilesProvider.tsx:320-324 | `showErrorNotification({ title: 'Failed to save file', reason: '...', error: new Error(...) })` | ✅ with `reason` | MATCH |
+| FilesProvider.tsx:396-399 | `showErrorNotification({ title: 'Failed to upload file', error: e as Error })` | ✅ | MATCH |
+
+**Findings:**
+
+1. **Core Pattern Compliance: PASS**
+   - Correctly extends `modelFileMetadataSchema` using `.extend()`
+   - Properly uses `.refine()` with `path` for field-level error targeting
+   - Uses `error:` key in refine options (newer pattern, valid)
+   - Correctly chains `.array()` for array validation with array-level refine
+
+2. **Error Notification Pattern: PASS**
+   - All `showErrorNotification` calls use correct signature
+   - Properly wraps messages in `new Error()` as required by the utility
+   - Uses optional `reason` prop for additional context where appropriate
+   - Uses `title` prop for user-friendly error headers
+
+3. **Validation Logic: WELL-DESIGNED**
+   - Conditional validation for Model files (size, fp required for Checkpoints)
+   - GGUF-specific validation (quantType required)
+   - Component-only model validation (2+ required components without main model)
+   - All conditions return true for non-applicable cases (correct refine pattern)
+
+4. **Minor Observations:**
+   - Uses `error:` instead of `message:` in refine - both are valid Zod options
+   - Array-level refine message doesn't use `path` - acceptable for array-level errors
+
+### Learnings for future iterations
+- Zod `.refine()` accepts either `message:` or `error:` for the error message (error is newer)
+- Use `path: ['fieldName']` in refine options to target specific field errors
+- Chain `.extend().refine()...refine().array().refine()` for complex validation
+- `showErrorNotification` requires `error: new Error(message)` - don't pass plain strings
+- Optional `reason` prop provides secondary message text below the title
+- Conditional refines should return `true` for non-applicable cases
+
+---
+
+## 2026-01-15 - PAT-004
+
+### What was implemented
+Audit of Select component patterns in Files.tsx and SettingsCard.tsx - no code changes needed.
+
+### Files analyzed
+- `src/components/Resource/Files.tsx` (8 Select usages in FileEditForm)
+- `src/components/Account/SettingsCard.tsx` (6 Select usages)
+- `src/components/Resource/LinkComponentModal.tsx` (2 Select usages)
+- `src/pages/user/transactions.tsx` (reference pattern)
+- `src/pages/models/[id]/reviews.tsx` (reference pattern)
+- `src/libs/form/components/SelectWrapper.tsx` (wrapper pattern)
+
+### Pattern Compliance Analysis
+
+**Mantine Select Standard Props:**
+```typescript
+<Select
+  label="Field Label"           // Optional: label above select
+  placeholder="Placeholder..."  // Optional: placeholder when empty
+  data={array.map(x => ({       // Required: array of options
+    label: 'Display Text',
+    value: 'string_value'
+  }))}
+  value={stateValue ?? null}    // Required: current value or null (NOT undefined)
+  onChange={(value) => ...}     // Required: callback with new value
+  error={error?.message}        // Optional: error message
+  disabled={isLoading}          // Optional: disabled state
+  withAsterisk                  // Optional: required indicator
+  clearable                     // Optional: allow clearing
+/>
+```
+
+**Files.tsx Select Usage (FileEditForm):**
+
+| Select | Label | Data Pattern | Value Pattern | onChange Pattern | Status |
+|--------|-------|--------------|---------------|------------------|--------|
+| File Type | ✅ | `.map(x => ({ label, value }))` | `versionFile.type ?? null` | Casts to `ModelFileType \| null` | MATCH |
+| Component Type | ✅ | Direct array from constants | `versionFile.componentType ?? null` | Casts to `ModelFileComponentType \| null` | MATCH |
+| Model Size | ✅ | `.map(size => ({ label: startCase(size), value: size }))` | `versionFile.size ?? null` | Casts to `'full' \| 'pruned' \| null` | MATCH |
+| Precision | ✅ | Direct array from constants | `versionFile.fp ?? null` | Casts to `ModelFileFp \| null` | MATCH |
+| Quant Type | ✅ | Direct array from constants | `versionFile.quantType ?? null` | Casts to `ModelFileQuantType \| null` | MATCH |
+| Format | ✅ | `.map(x => ({ label: x, value: x }))` | `versionFile.format ?? null` | Casts to `ZipModelFileType \| null` | MATCH |
+
+**SettingsCard.tsx Select Usage:**
+
+| Select | Label | Data Pattern | Value Pattern | onChange Pattern | Status |
+|--------|-------|--------------|---------------|------------------|--------|
+| Preferred Format (image) | ✅ | Inline array definition | `user.filePreferences?.imageFormat ?? 'metadata'` | Casts to `ImageFormat` | MATCH |
+| Preferred Format (model) | ✅ | Direct from constants | `user.filePreferences?.format ?? 'SafeTensor'` | Casts to `ModelFileFormat` | MATCH |
+| Preferred Size | ✅ | `.map(size => ({ value: size, label: titleCase(size) }))` | `user.filePreferences?.size ?? 'pruned'` | Casts to `ModelFileSize` | MATCH |
+| Preferred Precision | ✅ | `.map(value => ({ value, label: value.toUpperCase() }))` | `user.filePreferences?.fp ?? 'fp16'` | Casts to `ModelFileFp` | MATCH |
+| Quant Type | ✅ | Direct from constants | `user.filePreferences?.quantType ?? 'Q4_K_M'` | Casts to `ModelFileQuantType` | MATCH |
+| Personality | ✅ | Inline array definition | `assistantPersonality ?? 'civbot'` | Casts to `UserAssistantPersonality` | MATCH |
+
+**LinkComponentModal.tsx Select Usage:**
+
+| Select | Data Pattern | Value Pattern | onChange Pattern | Status |
+|--------|--------------|---------------|------------------|--------|
+| Version Selector | `.map(v => ({ value: v.id.toString(), label: v.name }))` | `value` prop (string \| null) | Passes to parent handler | MATCH |
+| File Selector | `.map(f => ({ value: f.id.toString(), label: ... }))` | `selectedFile?.id?.toString() ?? null` | Calls handleFileChange | MATCH |
+
+**Findings:**
+
+1. **Core Pattern Compliance: PASS**
+   - All Selects consistently use `value ?? null` pattern (never undefined)
+   - Data arrays properly transformed to `{ label, value }` format
+   - onChange handlers properly cast to expected types
+   - Error prop correctly maps to `error?.fieldName?._errors[0]` from Zod
+
+2. **Data Transformation Patterns:**
+   - For simple arrays: Direct use if already string[] (e.g., `constants.modelFileFp`)
+   - For arrays needing labels: Use `.map(x => ({ label: transform(x), value: x }))`
+   - For inline options: Define array directly with `[{ value, label }, ...]`
+
+3. **Value Handling Patterns:**
+   - For nullable state: `stateValue ?? null`
+   - For state with defaults: `stateValue ?? 'defaultValue'`
+   - For numeric IDs: `numericId?.toString() ?? null`
+
+4. **Optional Features Used:**
+   - `withAsterisk` for required fields (Files.tsx)
+   - `disabled={isLoading}` for loading states (SettingsCard.tsx)
+   - `clearable` for optional filtering (transactions.tsx)
+   - Tooltip wrapper for additional context (SettingsCard.tsx, Files.tsx)
+
+### Learnings for future iterations
+- Mantine Select `value` MUST be `null` for no selection, never `undefined`
+- When values come from constants array, check if they're already strings or need `.map()` transformation
+- For IDs stored as numbers, always use `.toString()` when passing to Select value
+- Use `startCase()` or `titleCase()` from lodash/utils for label formatting
+- Wrapping Select in Tooltip is acceptable pattern for providing additional context
+- Pre-existing typecheck errors in SettingsCard.tsx (lines 233, 241, 250) are unrelated - they involve implicit `any` in mutation handlers
+- **Accordion Pattern**: Use `Accordion.Item`, `Accordion.Control`, `Accordion.Panel` in order; Item must have `value` prop for state management
+- **Accordion Variants**: `variant="separated"` for card-like items, `variant="contained"` for grouped items, `variant="filled"` for flat styling
+- **Accordion State**: Use `useLocalStorage` with `multiple` prop for persistent multi-select accordion state
+- **Accordion within Accordion**: Use `Collapse` with `useDisclosure` for nested expand/collapse (not nested Accordion)
+
+---
+
+## 2026-01-15 - PAT-005
+
+### What was implemented
+Audit of accordion patterns in RequiredComponentsSection.tsx and ModelVersionDetails.tsx - no code changes needed.
+
+### Files analyzed
+- `src/components/Model/ModelVersions/RequiredComponentsSection.tsx`
+- `src/components/Model/ModelVersions/ModelVersionDetails.tsx`
+- `src/components/Article/Detail/Sidebar.tsx` (reference pattern)
+- `src/components/ImageGeneration/GenerationDetails.tsx` (reference pattern)
+- `src/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.tsx` (reference pattern)
+- `src/components/ImageGeneration/GenerationForm/GenerationForm2.tsx` (reference pattern)
+
+### Pattern Compliance Analysis
+
+**Mantine Accordion Standard Structure:**
+```tsx
+<Accordion
+  variant="separated" | "contained" | "filled" | "default"
+  multiple                          // Allow multiple open items
+  value={activeItems}               // Controlled state
+  onChange={setActiveItems}         // State handler
+  styles={(theme) => ({             // Custom styling
+    content: { padding: 0 },
+    item: { overflow: 'hidden', ... },
+    control: { padding: theme.spacing.sm },
+  })}
+>
+  <Accordion.Item value="unique-key">
+    <Accordion.Control>Header Content</Accordion.Control>
+    <Accordion.Panel>Panel Content</Accordion.Panel>
+  </Accordion.Item>
+</Accordion>
+```
+
+**ModelVersionDetails.tsx Accordion Pattern (lines 1226-1244):**
+```tsx
+<Accordion
+  variant="separated"
+  multiple
+  onChange={setDetailAccordions}
+  value={detailAccordions}
+  styles={(theme) => ({
+    content: { padding: 0 },
+    label: { padding: 0 },
+    item: {
+      overflow: 'hidden',
+      borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+      boxShadow: theme.shadows.sm,
+    },
+    control: { padding: theme.spacing.sm, gap: theme.spacing.md },
+  })}
+>
+```
+
+**RequiredComponentsSection.tsx Usage (lines 201-294):**
+- Returns an `Accordion.Item` that integrates into the parent Accordion in ModelVersionDetails
+- Uses `value="required-components"` matching the detailAccordions state default
+- Proper `Accordion.Control` with custom Group content (icon + text + badge)
+- `Accordion.Panel` containing Stack with child components
+
+**Comparison with Established Patterns:**
+
+| Pattern | ModelVersionDetails | Sidebar.tsx | GenerationDetails | Status |
+|---------|---------------------|-------------|-------------------|--------|
+| `variant="separated"` | ✅ | ✅ | Uses "filled" | MATCH |
+| `multiple` prop | ✅ | Single select | Single select | MATCH |
+| State with `useLocalStorage` | ✅ | ✅ | N/A | MATCH |
+| `styles` theming | ✅ | ✅ | ✅ | MATCH |
+| `Accordion.Item value=` | ✅ | ✅ | ✅ | MATCH |
+| `Accordion.Control` | ✅ | ✅ | ✅ | MATCH |
+| `Accordion.Panel` | ✅ | ✅ | ✅ | MATCH |
+
+**RequiredComponentsSection Nested Expand Pattern (ComponentGroup):**
+
+| Pattern | RequiredComponentsSection | Established | Status |
+|---------|---------------------------|-------------|--------|
+| Nested expansion | Uses `Collapse` + `useDisclosure` | ✅ Correct approach | MATCH |
+| Expand/collapse icon | `IconChevronDown` with rotate transform | ✅ Standard pattern | MATCH |
+| Click handler | `onClick={toggle}` on Box | ✅ | MATCH |
+
+**Findings:**
+
+1. **Core Pattern Compliance: PASS**
+   - Correctly uses `Accordion.Item`, `Accordion.Control`, `Accordion.Panel` structure
+   - RequiredComponentsSection returns a single `Accordion.Item` that integrates into parent Accordion
+   - Parent Accordion in ModelVersionDetails correctly manages state with `useLocalStorage`
+   - Both `multiple` and single-select patterns used appropriately for context
+
+2. **Nested Expand/Collapse: CORRECT APPROACH**
+   - RequiredComponentsSection uses `Collapse` component with `useDisclosure` for the variant selector
+   - This is the correct pattern - does NOT nest an Accordion inside an Accordion
+   - Uses `IconChevronDown` with CSS rotation for expand indicator (standard pattern)
+
+3. **Styling Consistency:**
+   - Uses same `styles` configuration as other separated accordions
+   - Consistent `borderColor` theming with colorScheme
+   - Special `borderColor: 'var(--mantine-color-yellow-6)'` for "required" visual emphasis
+
+4. **Integration Pattern:**
+   - RequiredComponentsSection is rendered inside the parent `<Accordion>` in ModelVersionDetails (line 1354-1372)
+   - Correctly passes props (`groupedFiles`, `versionId`, etc.) from parent
+   - Conditional rendering based on `isDownloadable && Object.keys(groupedFiles.components).length > 0`
+
+### Learnings for future iterations
+- When adding items to an existing Accordion, return just `<Accordion.Item>` not a new `<Accordion>` wrapper
+- For nested expand/collapse inside an accordion, use `<Collapse>` with `useDisclosure`, NOT nested Accordion
+- `useLocalStorage` is preferred for Accordion state persistence (user preference)
+- `variant="separated"` creates card-like accordion items with borders and shadows
+- Custom yellow border color for "warning/required" visual emphasis is acceptable pattern
+- **DownloadButton Pattern**: Use `createPolymorphicComponent` for polymorphic button that can render as `<a>` or `<button>`
+- **Download URL Pattern**: Use `createModelFileDownloadUrl({ versionId, type, meta })` - all 3 params supported, `primary: true` for primary file lookup
+- **formatKBytes Pattern**: Import from `~/utils/number-helpers`, pass file's `sizeKB` property directly
+
+---
+
+## 2026-01-15 - PAT-006
+
+### What was implemented
+Audit of download button patterns in DownloadVariantDropdown.tsx - no code changes needed.
+
+### Files analyzed
+- `src/components/Model/ModelVersions/DownloadVariantDropdown.tsx`
+- `src/components/Model/ModelVersions/DownloadButton.tsx`
+- `src/components/Model/ModelVersions/ModelVersionDetails.tsx`
+- `src/components/Model/ModelVersions/RequiredComponentsSection.tsx`
+- `src/components/Training/Form/ImageSelectModal.tsx`
+- `src/server/common/model-helpers.ts` (createModelFileDownloadUrl definition)
+- `src/utils/number-helpers.ts` (formatKBytes definition)
+
+### Pattern Compliance Analysis
+
+**createModelFileDownloadUrl Function Signature:**
+```typescript
+createModelFileDownloadUrl({
+  versionId: number,      // Required: model version ID
+  type?: ModelFileType,   // Optional: file type (e.g., 'Model', 'Training Data')
+  meta?: BasicFileMetadata, // Optional: { format, size, fp }
+  primary?: boolean       // Optional: if true, ignores type/meta and returns primary file URL
+})
+```
+
+**DownloadVariantDropdown Usage (lines 137-143):**
+```tsx
+const downloadUrl = activeFile
+  ? createModelFileDownloadUrl({
+      versionId,
+      type: activeFile.type,
+      meta: activeFile.metadata,
+    })
+  : undefined;
+```
+
+**Comparison with Established Patterns:**
+
+| Pattern | DownloadVariantDropdown | ModelVersionDetails | RequiredComponentsSection | ImageSelectModal | Status |
+|---------|------------------------|---------------------|---------------------------|------------------|--------|
+| `versionId` param | ✅ | ✅ | ✅ | ✅ | MATCH |
+| `type` param | ✅ `activeFile.type` | ✅ `file.type` | ✅ `selectedFile.type` | ✅ `'Training Data'` | MATCH |
+| `meta` param | ✅ `activeFile.metadata` | ✅ `file.metadata` | ✅ `selectedFile.metadata` | N/A (not needed) | MATCH |
+| Conditional URL | ✅ `activeFile ?` | ✅ Conditional | ✅ Conditional | ✅ Always defined | MATCH |
+
+**formatKBytes Usage Comparison:**
+
+| Component | Usage | Source Property | Status |
+|-----------|-------|-----------------|--------|
+| DownloadVariantDropdown | `formatKBytes(file.sizeKB)` | `file.sizeKB` | MATCH |
+| DownloadVariantDropdown | `formatKBytes(activeFile.sizeKB)` | `activeFile.sizeKB` | MATCH |
+| AttachmentCard | `formatKBytes(sizeKB)` | `sizeKB` prop | MATCH |
+| BountyEntryUpsertForm | `formatKBytes(file.sizeKB)` | `file.sizeKB` | MATCH |
+| BountyEntryFilesModal | `formatKBytes(file.sizeKB)` | `file.sizeKB` | MATCH |
+
+**DownloadButton Component Usage:**
+
+| Props | DownloadVariantDropdown | ModelVersionDetails | Status |
+|-------|------------------------|---------------------|--------|
+| `component="a"` | ✅ | ✅ | MATCH |
+| `href={downloadUrl}` | ✅ | ✅ `{...getDownloadProps}` | MATCH |
+| `canDownload` | ✅ | ✅ | MATCH |
+| `downloadPrice` | ✅ | ✅ | MATCH |
+| `disabled` | ✅ `archived \|\| isLoadingAccess` | ✅ various conditions | MATCH |
+| `fullWidth` | ✅ | ❌ (not used) | ACCEPTABLE |
+| `iconOnly` | ❌ (not used) | ✅ (in some cases) | ACCEPTABLE |
+
+**Findings:**
+
+1. **Core Pattern Compliance: PASS**
+   - Correctly imports `createModelFileDownloadUrl` from `~/server/common/model-helpers`
+   - Uses standard parameter pattern: `{ versionId, type, meta }`
+   - Correctly passes `activeFile.type` and `activeFile.metadata`
+   - Conditional URL generation (undefined when no file selected)
+
+2. **formatKBytes Usage: PASS**
+   - Correctly imports from `~/utils/number-helpers`
+   - Uses `file.sizeKB` property directly (same as all other usages)
+   - No transformations or extra parameters needed
+
+3. **DownloadButton Component: PASS**
+   - Uses polymorphic `component="a"` pattern for anchor behavior
+   - Properly passes `href`, `canDownload`, `downloadPrice`, `disabled`
+   - Additional props (`fullWidth`, `variant`, `color`) are valid customizations
+
+4. **VariantItem Sub-component: WELL-DESIGNED**
+   - Follows UnstyledButton pattern for clickable items
+   - Uses consistent theming with colorScheme
+   - Selection state visual feedback with IconCheck
+
+5. **File Grouping Logic: REUSES UTILITIES**
+   - Uses `groupFilesByVariant(files)` from `~/server/utils/model-helpers`
+   - Uses `getPrimaryFile(modelFiles, { metadata: userPreferences })` for best match
+
+### Learnings for future iterations
+- `createModelFileDownloadUrl` returns `/api/download/models/${versionId}?type=...&format=...&size=...&fp=...`
+- When `primary: true` is passed, type/format/size/fp are not included in query string
+- DownloadButton uses `createPolymorphicComponent` - can be used as `<a>` with `component="a"` and `href`
+- DownloadButton automatically shows `JoinPopover` when `canDownload=false` and no `downloadPrice`
+- Pre-existing typecheck errors in @tabler/icons-react and @mantine/hooks are known codebase issues
+
+---
