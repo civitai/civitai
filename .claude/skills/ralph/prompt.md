@@ -87,6 +87,13 @@ Only update CLAUDE.md if you have **genuinely reusable knowledge** that would he
 - Follow existing code patterns in the codebase
 - Use Mantine v7 components, Tailwind CSS, and tRPC patterns
 
+## Git Commit Rules
+
+- **NEVER use `git add -f` or `--force`** - If a file is gitignored, it should NOT be committed
+- The PRD (`prd.json`) and progress log (`progress.txt`) are gitignored intentionally - do not force-add them
+- Only commit source code changes, not Ralph project tracking files
+- If `git add` silently skips files, that's correct behavior - they're gitignored for a reason
+
 ## Project-Specific Commands
 
 Quality checks to run:
