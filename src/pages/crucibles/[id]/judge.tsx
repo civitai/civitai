@@ -55,16 +55,20 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const [voteError, setVoteError] = useState<string | null>(null);
   const [lastVoteAttempt, setLastVoteAttempt] = useState<{ winnerId: number; loserId: number } | null>(null);
 
+  // Track skipped entry IDs to prevent immediate return
+  // Keep last 20 entries (~10 pairs) so skipped pairs can return after showing others
+  const [skippedEntryIds, setSkippedEntryIds] = useState<number[]>([]);
+
   // Fetch crucible details
   const { data: crucible, isLoading: isLoadingCrucible } = trpc.crucible.getById.useQuery({ id });
 
-  // Fetch judging pair
+  // Fetch judging pair (exclude recently skipped entries)
   const {
     data: pairData,
     isLoading: isLoadingPair,
     refetch: refetchPair,
   } = trpc.crucible.getJudgingPair.useQuery(
-    { crucibleId: id },
+    { crucibleId: id, excludeEntryIds: skippedEntryIds.length > 0 ? skippedEntryIds : undefined },
     {
       enabled: !!currentUser && !!crucible,
       refetchOnWindowFocus: false,
@@ -167,15 +171,21 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     }
   }, [lastVoteAttempt, isVoting, handleVote]);
 
-  // Handle skip - no vote submitted, just get next pair (pair may return later)
+  // Handle skip - track skipped entries, then get next pair (pair may return after ~10 others)
   const handleSkip = useCallback(async () => {
     if (isVoting || !pair) return;
 
     setIsVoting(true);
     setSessionSkips((prev) => prev + 1);
 
-    // For skip, we can either submit a vote for both (draw) or just get next pair
-    // For simplicity, we'll just get the next pair without recording a vote
+    // Track skipped entry IDs to exclude from next pair selection
+    // Keep only the last 20 entries (~10 pairs) so skipped pairs can eventually return
+    const newSkippedIds = [...skippedEntryIds, pair.left.id, pair.right.id].slice(-20);
+    setSkippedEntryIds(newSkippedIds);
+
+    // For skip, just get the next pair without recording a vote
+    // The new skippedEntryIds will be used by React Query's automatic refetch
+    // due to query key change, but we also manually refetch for immediate update
     setTimeout(async () => {
       const result = await refetchPair();
       if (!result.data) {
@@ -183,7 +193,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       }
       setIsVoting(false);
     }, 300);
-  }, [isVoting, pair, refetchPair]);
+  }, [isVoting, pair, refetchPair, skippedEntryIds]);
 
   // Check if all pairs judged on initial load
   useEffect(() => {

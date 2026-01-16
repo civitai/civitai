@@ -653,38 +653,67 @@ type RawEntrySample = {
 /**
  * Fetch a random sample of entries for judging from the database
  * Uses ORDER BY RANDOM() LIMIT for efficient sampling
- * Excludes the current user's entries in the SQL query
+ * Excludes the current user's entries and optionally specified entry IDs in the SQL query
  */
 async function fetchEntrySample(
   crucibleId: number,
   userId: number,
-  sampleSize: number
+  sampleSize: number,
+  excludeEntryIds?: number[]
 ): Promise<EntryForJudging[]> {
   // Use raw SQL for efficient random sampling
   // This avoids loading all entries into memory
-  const rawEntries = await dbRead.$queryRaw<RawEntrySample[]>`
-    SELECT
-      ce.id,
-      ce."imageId",
-      ce."userId",
-      ce.score,
-      i.id as image_id,
-      i.url as image_url,
-      i.width as image_width,
-      i.height as image_height,
-      i."nsfwLevel" as "image_nsfwLevel",
-      u.id as user_id,
-      u.username as user_username,
-      u."deletedAt" as "user_deletedAt",
-      u.image as user_image
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    JOIN "User" u ON u.id = ce."userId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ce."userId" != ${userId}
-    ORDER BY RANDOM()
-    LIMIT ${sampleSize}
-  `;
+  // If excludeEntryIds is provided and non-empty, exclude those entries
+  const hasExclusions = excludeEntryIds && excludeEntryIds.length > 0;
+
+  const rawEntries = hasExclusions
+    ? await dbRead.$queryRaw<RawEntrySample[]>`
+        SELECT
+          ce.id,
+          ce."imageId",
+          ce."userId",
+          ce.score,
+          i.id as image_id,
+          i.url as image_url,
+          i.width as image_width,
+          i.height as image_height,
+          i."nsfwLevel" as "image_nsfwLevel",
+          u.id as user_id,
+          u.username as user_username,
+          u."deletedAt" as "user_deletedAt",
+          u.image as user_image
+        FROM "CrucibleEntry" ce
+        JOIN "Image" i ON i.id = ce."imageId"
+        JOIN "User" u ON u.id = ce."userId"
+        WHERE ce."crucibleId" = ${crucibleId}
+          AND ce."userId" != ${userId}
+          AND ce.id NOT IN (${Prisma.join(excludeEntryIds!)})
+        ORDER BY RANDOM()
+        LIMIT ${sampleSize}
+      `
+    : await dbRead.$queryRaw<RawEntrySample[]>`
+        SELECT
+          ce.id,
+          ce."imageId",
+          ce."userId",
+          ce.score,
+          i.id as image_id,
+          i.url as image_url,
+          i.width as image_width,
+          i.height as image_height,
+          i."nsfwLevel" as "image_nsfwLevel",
+          u.id as user_id,
+          u.username as user_username,
+          u."deletedAt" as "user_deletedAt",
+          u.image as user_image
+        FROM "CrucibleEntry" ce
+        JOIN "Image" i ON i.id = ce."imageId"
+        JOIN "User" u ON u.id = ce."userId"
+        WHERE ce."crucibleId" = ${crucibleId}
+          AND ce."userId" != ${userId}
+        ORDER BY RANDOM()
+        LIMIT ${sampleSize}
+      `;
 
   // Transform raw SQL results to EntryForJudging type
   return rawEntries.map((raw) => ({
@@ -729,6 +758,7 @@ async function fetchEntrySample(
 export const getJudgingPair = async ({
   crucibleId,
   userId,
+  excludeEntryIds,
 }: GetJudgingPairSchema & { userId: number }): Promise<JudgingPair> => {
   // Fetch the crucible to validate it's active
   const crucible = await dbRead.crucible.findUnique({
@@ -764,8 +794,8 @@ export const getJudgingPair = async ({
 
   // Try multiple sampling attempts if no valid pair found
   for (let attempt = 0; attempt < MAX_SAMPLE_ATTEMPTS; attempt++) {
-    // Fetch a random sample of entries (excludes user's own entries in SQL)
-    const sampleEntries = await fetchEntrySample(crucibleId, userId, SAMPLE_SIZE);
+    // Fetch a random sample of entries (excludes user's own entries and any specified excluded entries in SQL)
+    const sampleEntries = await fetchEntrySample(crucibleId, userId, SAMPLE_SIZE, excludeEntryIds);
 
     // Need at least 2 entries to form a pair
     if (sampleEntries.length < 2) {
