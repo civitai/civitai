@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Upload - Components with Precision/Quant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background-color: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    .card { background-color: #25262b; border-radius: 8px; border: 1px solid #373a40; }
+    .card-yellow { border-color: rgba(250, 176, 5, 0.3); background-color: rgba(250, 176, 5, 0.03); }
+    .dropzone {
+      border: 2px dashed #4a4d54;
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .dropzone:hover { border-color: #228be6; background-color: rgba(34, 139, 230, 0.05); }
+    .dropzone-sm { padding: 16px; }
+    .btn-primary {
+      background-color: #228be6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-secondary {
+      background-color: #373a40;
+      color: #c1c2c5;
+      border: 1px solid #4a4d54;
+      border-radius: 8px;
+      padding: 10px 16px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-secondary:hover { background-color: #4a4d54; }
+    .select {
+      background-color: #2c2e33;
+      border: 1px solid #4a4d54;
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: #c1c2c5;
+      font-size: 13px;
+    }
+    .label { font-size: 11px; font-weight: 500; color: #909296; text-transform: uppercase; letter-spacing: 0.5px; }
+    .text-muted { color: #909296; }
+    .badge { background-color: #373a40; color: #909296; padding: 4px 10px; border-radius: 12px; font-size: 11px; }
+    .badge-blue { background-color: rgba(34, 139, 230, 0.2); color: #74c0fc; }
+    .badge-yellow { background-color: rgba(250, 176, 5, 0.2); color: #ffd43b; }
+    .badge-green { background-color: rgba(64, 192, 87, 0.2); color: #69db7c; }
+    .section-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: white;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <a href="#" class="text-blue-400 text-sm flex items-center gap-1">
+          <i class="ti ti-arrow-left"></i>
+          Back to Model
+        </a>
+        <h1 class="text-white text-2xl font-bold mt-2">Manage Files</h1>
+        <p class="text-muted text-sm">Wan Video 2.1 14B • v1.0</p>
+      </div>
+      <button class="btn-primary">Save Changes</button>
+    </div>
+
+    <!-- SECTION 1: MODEL FILES -->
+    <div class="card mb-6">
+      <div class="p-4 border-b border-gray-700">
+        <div class="section-header">
+          <i class="ti ti-file-3d text-blue-400"></i>
+          Model Files
+        </div>
+        <p class="text-muted text-sm">The main model files users will download. We'll show the best match based on their preferences.</p>
+      </div>
+
+      <div class="p-4">
+        <div class="space-y-3 mb-4">
+          <!-- SafeTensor fp16 -->
+          <div class="card p-3">
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                <i class="ti ti-file-3d text-blue-400"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-white text-sm font-medium truncate">wan2.1_14B_fp16.safetensors</div>
+                <div class="text-xs text-muted">9.8 GB • SafeTensor</div>
+              </div>
+              <div class="flex items-center gap-2">
+                <div>
+                  <div class="label mb-1">Precision</div>
+                  <select class="select" style="width: 85px;">
+                    <option selected>fp16</option>
+                    <option>fp8</option>
+                    <option>bf16</option>
+                    <option>fp32</option>
+                  </select>
+                </div>
+                <div>
+                  <div class="label mb-1">Size</div>
+                  <select class="select" style="width: 80px;">
+                    <option selected>Full</option>
+                    <option>Pruned</option>
+                  </select>
+                </div>
+                <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- GGUF Q8_0 -->
+          <div class="card p-3">
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                <i class="ti ti-file-3d text-green-400"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-white text-sm font-medium truncate">wan2.1_14B_Q8_0.gguf</div>
+                <div class="text-xs text-muted">5.8 GB • GGUF</div>
+              </div>
+              <div class="flex items-center gap-2">
+                <div>
+                  <div class="label mb-1">Quant</div>
+                  <select class="select" style="width: 85px;">
+                    <option selected>Q8_0</option>
+                    <option>Q6_K</option>
+                    <option>Q5_K_M</option>
+                    <option>Q4_K_M</option>
+                  </select>
+                </div>
+                <div>
+                  <div class="label mb-1">Size</div>
+                  <select class="select" style="width: 80px;">
+                    <option selected>Full</option>
+                  </select>
+                </div>
+                <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dropzone dropzone-sm">
+          <i class="ti ti-plus text-muted mr-2"></i>
+          <span class="text-muted text-sm">Add another model file variant</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 2: REQUIRED COMPONENTS -->
+    <div class="card card-yellow mb-6">
+      <div class="p-4 border-b border-yellow-500/20">
+        <div class="section-header">
+          <i class="ti ti-puzzle text-yellow-500"></i>
+          Required Components
+          <span class="badge badge-yellow">Users must download</span>
+        </div>
+        <p class="text-muted text-sm">Additional files users need to run this model. Add multiple precision variants if available.</p>
+      </div>
+
+      <div class="p-4 space-y-3">
+        <!-- VAE - SafeTensor (uploaded) -->
+        <div class="card p-3">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+              <i class="ti ti-photo-scan text-purple-400"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-white text-sm font-medium truncate">vae_fp16.safetensors</div>
+              <div class="text-xs text-muted">335 MB • SafeTensor • Uploaded</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div>
+                <div class="label mb-1">Type</div>
+                <select class="select" style="width: 110px;">
+                  <option selected>VAE</option>
+                  <option>Text Encoder</option>
+                  <option>UNet</option>
+                  <option>CLIP Vision</option>
+                  <option>ControlNet</option>
+                  <option>Config</option>
+                </select>
+              </div>
+              <div>
+                <div class="label mb-1">Precision</div>
+                <select class="select" style="width: 85px;">
+                  <option selected>fp16</option>
+                  <option>fp8</option>
+                  <option>bf16</option>
+                  <option>fp32</option>
+                </select>
+              </div>
+              <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                <i class="ti ti-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Text Encoder fp16 (linked) -->
+        <div class="card p-3 border-green-500/20 bg-green-500/5">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+              <i class="ti ti-typography text-blue-400"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-white text-sm font-medium truncate">T5 XXL Encoder (fp16)</div>
+              <div class="text-xs text-green-400 flex items-center gap-1">
+                <i class="ti ti-link text-xs"></i>
+                Linked: Wan T5 XXL v1.0 → t5_xxl_fp16.safetensors (9.5 GB)
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div>
+                <div class="label mb-1">Type</div>
+                <select class="select" style="width: 110px;">
+                  <option>VAE</option>
+                  <option selected>Text Encoder</option>
+                  <option>UNet</option>
+                  <option>CLIP Vision</option>
+                  <option>ControlNet</option>
+                  <option>Config</option>
+                </select>
+              </div>
+              <div>
+                <div class="label mb-1">Precision</div>
+                <select class="select" style="width: 85px;" disabled title="Set by linked file">
+                  <option selected>fp16</option>
+                </select>
+              </div>
+              <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                <i class="ti ti-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Text Encoder fp8 (linked) - second variant of same component -->
+        <div class="card p-3 border-green-500/20 bg-green-500/5">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+              <i class="ti ti-typography text-blue-400"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-white text-sm font-medium truncate">T5 XXL Encoder (fp8)</div>
+              <div class="text-xs text-green-400 flex items-center gap-1">
+                <i class="ti ti-link text-xs"></i>
+                Linked: Wan T5 XXL v1.0 → t5_xxl_fp8.safetensors (4.9 GB)
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div>
+                <div class="label mb-1">Type</div>
+                <select class="select" style="width: 110px;">
+                  <option>VAE</option>
+                  <option selected>Text Encoder</option>
+                  <option>UNet</option>
+                  <option>CLIP Vision</option>
+                  <option>ControlNet</option>
+                  <option>Config</option>
+                </select>
+              </div>
+              <div>
+                <div class="label mb-1">Precision</div>
+                <select class="select" style="width: 85px;" disabled title="Set by linked file">
+                  <option selected>fp8</option>
+                </select>
+              </div>
+              <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                <i class="ti ti-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- UNet GGUF (uploaded) - showing GGUF component with Quant dropdown -->
+        <div class="card p-3">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded bg-orange-500/20 flex items-center justify-center flex-shrink-0">
+              <i class="ti ti-brain text-orange-400"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-white text-sm font-medium truncate">wan_unet_Q8_0.gguf</div>
+              <div class="text-xs text-muted">4.2 GB • GGUF • Uploaded</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div>
+                <div class="label mb-1">Type</div>
+                <select class="select" style="width: 110px;">
+                  <option>VAE</option>
+                  <option>Text Encoder</option>
+                  <option selected>UNet</option>
+                  <option>CLIP Vision</option>
+                  <option>ControlNet</option>
+                  <option>Config</option>
+                </select>
+              </div>
+              <div>
+                <div class="label mb-1">Quant</div>
+                <select class="select" style="width: 85px;">
+                  <option selected>Q8_0</option>
+                  <option>Q6_K</option>
+                  <option>Q5_K_M</option>
+                  <option>Q4_K_M</option>
+                </select>
+              </div>
+              <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                <i class="ti ti-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Diffusers ZIP (uploaded) - showing Format dropdown -->
+        <div class="card p-3 border-yellow-500/30 bg-yellow-500/5">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
+              <i class="ti ti-file-zip text-yellow-400"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-white text-sm font-medium truncate">clip_vision_model.zip</span>
+                <span class="badge badge-yellow">Needs info</span>
+              </div>
+              <div class="text-xs text-muted">1.2 GB • ZIP • Uploaded</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div>
+                <div class="label mb-1">Type</div>
+                <select class="select" style="width: 110px;">
+                  <option>VAE</option>
+                  <option>Text Encoder</option>
+                  <option>UNet</option>
+                  <option selected>CLIP Vision</option>
+                  <option>ControlNet</option>
+                  <option>Config</option>
+                </select>
+              </div>
+              <div>
+                <div class="label mb-1">Format <span class="text-red-400">*</span></div>
+                <select class="select" style="width: 85px;">
+                  <option value="">Select...</option>
+                  <option selected>Diffusers</option>
+                  <option>Core ML</option>
+                  <option>ONNX</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div>
+                <div class="label mb-1">Precision</div>
+                <select class="select" style="width: 85px;">
+                  <option selected>fp16</option>
+                  <option>fp8</option>
+                  <option>bf16</option>
+                </select>
+              </div>
+              <button class="text-red-400 hover:text-red-300 p-2 mt-4">
+                <i class="ti ti-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Component -->
+        <div class="dropzone dropzone-sm">
+          <i class="ti ti-upload text-muted mr-2"></i>
+          <span class="text-muted text-sm">Upload a required component file</span>
+        </div>
+
+        <div class="flex justify-center">
+          <span class="text-muted text-xs">or</span>
+        </div>
+
+        <button class="btn-secondary w-full justify-center" onclick="document.getElementById('linkModal').classList.remove('hidden')">
+          <i class="ti ti-link"></i>
+          Link to Existing Model on Civitai
+        </button>
+      </div>
+    </div>
+
+    <!-- SECTION 3: OPTIONAL FILES -->
+    <div class="card mb-6">
+      <div class="p-4 border-b border-gray-700">
+        <div class="section-header">
+          <i class="ti ti-file-settings text-muted"></i>
+          Optional Files
+        </div>
+        <p class="text-muted text-sm">Workflows, configs, and other helpful files. Not required to use the model.</p>
+      </div>
+
+      <div class="p-4 space-y-3">
+        <div class="card p-3">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded bg-gray-600/50 flex items-center justify-center flex-shrink-0">
+              <i class="ti ti-sitemap text-gray-400"></i>
+            </div>
+            <div class="flex-1">
+              <span class="text-white text-sm font-medium">comfyui_workflow.json</span>
+              <div class="text-xs text-muted">ComfyUI Workflow • 12 KB</div>
+            </div>
+            <button class="text-red-400 hover:text-red-300 p-2">
+              <i class="ti ti-trash"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="dropzone dropzone-sm">
+          <i class="ti ti-plus text-muted mr-2"></i>
+          <span class="text-muted text-sm">Add optional file</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tips -->
+    <div class="card p-4 bg-blue-500/5 border-blue-500/20">
+      <div class="flex items-start gap-3">
+        <i class="ti ti-bulb text-blue-400 text-xl"></i>
+        <div>
+          <h3 class="text-white font-medium mb-1">Tips for better organization</h3>
+          <ul class="text-sm text-muted space-y-1">
+            <li>• Add <strong>multiple precision variants</strong> (fp16, fp8) for both model files and components</li>
+            <li>• Users' preferences will auto-select the best match for their setup</li>
+            <li>• Link to existing models when the component already exists on Civitai</li>
+            <li>• Only create a new <strong>version</strong> when you've actually trained/updated the model</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Annotation -->
+    <div class="mt-8 p-4 border border-dashed border-gray-600 rounded-lg">
+      <div class="text-sm text-muted">
+        <strong class="text-white">V4: Components with Precision/Quant/Format</strong>
+        <ul class="list-disc ml-4 mt-2 space-y-1">
+          <li><strong>Component dropdowns match model files:</strong> Type + Precision (SafeTensor), Quant (GGUF), or Format + Precision (ZIP)</li>
+          <li><strong>Multiple variants per component:</strong> Shows two Text Encoder variants (fp16 and fp8) linked from same model</li>
+          <li><strong>GGUF component:</strong> UNet with Quant dropdown</li>
+          <li><strong>ZIP component:</strong> CLIP Vision with Format dropdown (Diffusers/Core ML/ONNX) + Precision</li>
+          <li><strong>Linked files:</strong> Precision dropdown disabled (set by linked file)</li>
+          <li><strong>Conditional dropdowns:</strong> Show Precision for SafeTensor, Quant for GGUF, Format+Precision for ZIP</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Link Modal -->
+  <div id="linkModal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50" onclick="if(event.target === this) this.classList.add('hidden')">
+    <div class="card w-full max-w-lg mx-4">
+      <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+        <h3 class="text-white font-semibold">Link to Existing Model</h3>
+        <button class="text-muted hover:text-white" onclick="document.getElementById('linkModal').classList.add('hidden')">
+          <i class="ti ti-x"></i>
+        </button>
+      </div>
+
+      <div class="p-4 space-y-4">
+        <!-- Step 1: Select Component Type -->
+        <div>
+          <div class="label mb-2">1. What type of component?</div>
+          <div class="grid grid-cols-3 gap-2">
+            <button class="card p-3 text-center hover:border-blue-500/50">
+              <i class="ti ti-photo-scan text-purple-400 text-xl mb-1"></i>
+              <div class="text-white text-sm">VAE</div>
+            </button>
+            <button class="card p-3 text-center border-blue-500 bg-blue-500/10">
+              <i class="ti ti-typography text-blue-400 text-xl mb-1"></i>
+              <div class="text-white text-sm">Text Encoder</div>
+            </button>
+            <button class="card p-3 text-center hover:border-blue-500/50">
+              <i class="ti ti-brain text-orange-400 text-xl mb-1"></i>
+              <div class="text-white text-sm">UNet</div>
+            </button>
+            <button class="card p-3 text-center hover:border-blue-500/50">
+              <i class="ti ti-eye text-green-400 text-xl mb-1"></i>
+              <div class="text-white text-sm">CLIP Vision</div>
+            </button>
+            <button class="card p-3 text-center hover:border-blue-500/50">
+              <i class="ti ti-adjustments text-cyan-400 text-xl mb-1"></i>
+              <div class="text-white text-sm">ControlNet</div>
+            </button>
+            <button class="card p-3 text-center hover:border-blue-500/50">
+              <i class="ti ti-dots text-gray-400 text-xl mb-1"></i>
+              <div class="text-white text-sm">Other</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 2: Search -->
+        <div>
+          <div class="label mb-2">2. Search Text Encoder models</div>
+          <div class="relative">
+            <i class="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-muted"></i>
+            <input type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg py-2 pl-10 pr-4 text-white" placeholder="Search..." value="t5 xxl">
+          </div>
+          <div class="mt-2 card max-h-32 overflow-y-auto">
+            <div class="p-3 border-b border-gray-700 hover:bg-blue-500/10 cursor-pointer bg-blue-500/10">
+              <div class="text-white text-sm font-medium">Wan T5 XXL Encoder</div>
+              <div class="text-xs text-muted">by WanTeam • 89k downloads</div>
+            </div>
+            <div class="p-3 hover:bg-blue-500/10 cursor-pointer">
+              <div class="text-white text-sm font-medium">SDXL T5 Encoder</div>
+              <div class="text-xs text-muted">by StabilityAI • 234k downloads</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Version -->
+        <div>
+          <div class="label mb-2">3. Select version</div>
+          <select class="select w-full">
+            <option selected>v1.0 (Latest)</option>
+          </select>
+        </div>
+
+        <!-- Step 4: File (with precision info) -->
+        <div>
+          <div class="label mb-2">4. Select file variant</div>
+          <div class="card">
+            <div class="p-3 border-b border-gray-700 hover:bg-blue-500/10 cursor-pointer flex items-center justify-between">
+              <div>
+                <div class="text-white text-sm">t5_xxl_fp16.safetensors</div>
+                <div class="text-xs text-muted">9.5 GB • fp16 • SafeTensor</div>
+              </div>
+            </div>
+            <div class="p-3 border-b border-gray-700 hover:bg-blue-500/10 cursor-pointer bg-blue-500/10 flex items-center justify-between">
+              <div>
+                <div class="text-white text-sm">t5_xxl_fp8.safetensors</div>
+                <div class="text-xs text-muted">4.9 GB • fp8 • SafeTensor</div>
+              </div>
+              <i class="ti ti-check text-blue-400"></i>
+            </div>
+            <div class="p-3 hover:bg-blue-500/10 cursor-pointer flex items-center justify-between">
+              <div>
+                <div class="text-white text-sm">t5_xxl_Q8_0.gguf</div>
+                <div class="text-xs text-muted">5.1 GB • Q8_0 • GGUF</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-4 border-t border-gray-700 flex justify-end gap-2">
+        <button class="btn-secondary" onclick="document.getElementById('linkModal').classList.add('hidden')">Cancel</button>
+        <button class="btn-primary" onclick="document.getElementById('linkModal').classList.add('hidden')">Link Component</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
