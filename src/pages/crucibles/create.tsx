@@ -8,15 +8,19 @@ import {
   Paper,
   Progress,
   SimpleGrid,
+  Slider,
   Stack,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
 import {
+  IconArrowBackUp,
   IconArrowLeft,
+  IconCheck,
   IconCoin,
   IconInfoCircle,
+  IconPencil,
   IconPhoto,
   IconPlus,
   IconTicket,
@@ -60,14 +64,32 @@ const durationOptions = [
 ];
 
 // Default prize distribution
-const defaultPrizePositions = {
+const defaultPrizePositions: Record<string, number> = {
   '1': 50,
   '2': 30,
   '3': 20,
 };
 
+// Form data type
+type FormData = {
+  // Step 1: Basic Info
+  name: string;
+  description: string;
+  coverImageId: string;
+  duration: string; // in hours as string
+  nsfwLevel: number;
+
+  // Step 2: Entry Rules
+  entryFee: number;
+  entryLimit: number;
+  maxTotalEntries?: number;
+
+  // Step 3: Prizes
+  prizePositions: Record<string, number>;
+};
+
 // Form schema (client-side validation matching server schema)
-const formSchema = {
+const formSchema: FormData = {
   // Step 1: Basic Info
   name: '',
   description: '',
@@ -78,13 +100,11 @@ const formSchema = {
   // Step 2: Entry Rules
   entryFee: 100,
   entryLimit: 1,
-  maxTotalEntries: undefined as number | undefined,
+  maxTotalEntries: undefined,
 
   // Step 3: Prizes
-  prizePositions: defaultPrizePositions,
+  prizePositions: { ...defaultPrizePositions },
 };
-
-type FormData = typeof formSchema;
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -108,6 +128,10 @@ export default function CrucibleCreate() {
 
   // Form state
   const [formData, setFormData] = useState<FormData>(formSchema);
+
+  // Prize distribution edit mode
+  const [prizeEditMode, setPrizeEditMode] = useState(false);
+  const [prizeCustomized, setPrizeCustomized] = useState(false);
 
   // Image upload
   const { files: imageFiles, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
@@ -151,8 +175,51 @@ export default function CrucibleCreate() {
     return option?.cost ?? 0;
   };
 
+  const getPrizeCustomizationCost = () => {
+    return prizeCustomized ? 1000 : 0;
+  };
+
   const getTotalCost = () => {
-    return getDurationCost(); // For now, only duration has a cost
+    return getDurationCost() + getPrizeCustomizationCost();
+  };
+
+  // Add a new prize position
+  const addPrizePosition = () => {
+    const positions = Object.keys(formData.prizePositions);
+    const nextPosition = positions.length + 1;
+    updateFormData({
+      prizePositions: {
+        ...formData.prizePositions,
+        [nextPosition.toString()]: 0,
+      },
+    });
+  };
+
+  // Remove a prize position
+  const removePrizePosition = (position: string) => {
+    const newPositions = { ...formData.prizePositions };
+    delete newPositions[position];
+    // Renumber positions
+    const renumbered: Record<string, number> = {};
+    Object.entries(newPositions)
+      .sort(([a], [b]) => parseInt(a) - parseInt(b))
+      .forEach(([, value], index) => {
+        renumbered[(index + 1).toString()] = value;
+      });
+    updateFormData({ prizePositions: renumbered });
+  };
+
+  // Reset prize distribution to default
+  const resetPrizeDistribution = () => {
+    updateFormData({ prizePositions: defaultPrizePositions });
+    setPrizeCustomized(false);
+    setPrizeEditMode(false);
+  };
+
+  // Enter prize edit mode
+  const enterPrizeEditMode = () => {
+    setPrizeEditMode(true);
+    setPrizeCustomized(true);
   };
 
   const handleNext = () => {
@@ -424,45 +491,52 @@ export default function CrucibleCreate() {
       (sum, val) => sum + val,
       0
     );
+    const sortedPositions = Object.entries(formData.prizePositions).sort(
+      ([a], [b]) => parseInt(a) - parseInt(b)
+    );
+    const positionColors = [
+      { bg: 'from-blue-500 to-blue-600', text: 'text-blue-4' },
+      { bg: 'from-green-500 to-green-600', text: 'text-green-4' },
+      { bg: 'from-yellow-500 to-yellow-600', text: 'text-yellow-4' },
+    ];
 
-    return (
-      <Stack gap="xl">
-        {/* Visual Progress Bar */}
-        <div>
-          <Text size="sm" c="dimmed" fw={600} mb={8}>
-            Prize Distribution
-          </Text>
-          <div className="mb-3 flex h-8 overflow-hidden rounded border border-dark-4">
-            {Object.entries(formData.prizePositions)
-              .sort(([a], [b]) => parseInt(a) - parseInt(b))
-              .map(([position, percentage], index) => {
-                const colors = [
-                  'from-blue-500 to-blue-600',
-                  'from-green-500 to-green-600',
-                  'from-yellow-500 to-yellow-600',
-                ];
+    // Display Mode - Default view with "Customize" button
+    if (!prizeEditMode) {
+      return (
+        <Stack gap="lg">
+          {/* Visual Progress Bar */}
+          <div>
+            <Text size="xs" c="dimmed" fw={600} mb={8}>
+              {prizeCustomized ? 'Custom Distribution' : 'Default Distribution'}
+            </Text>
+            <div className="mb-3 flex h-8 overflow-hidden rounded border border-dark-4">
+              {sortedPositions.map(([position, percentage], index) => {
+                const colorClass =
+                  positionColors[index]?.bg || 'from-gray-500 to-gray-600';
                 return (
                   <div
                     key={position}
-                    className={`flex items-center justify-center bg-gradient-to-r text-xs font-bold text-white ${
-                      colors[index] || 'from-gray-500 to-gray-600'
-                    }`}
-                    style={{ flex: percentage }}
+                    className={`flex items-center justify-center bg-gradient-to-r text-xs font-bold text-white ${colorClass}`}
+                    style={{ flex: percentage || 0.1 }}
                   >
-                    {percentage > 10 && `${position}${getOrdinalSuffix(parseInt(position))}: ${percentage}%`}
+                    {percentage > 10 &&
+                      `${position}${getOrdinalSuffix(parseInt(position))}: ${percentage}%`}
                   </div>
                 );
               })}
+            </div>
           </div>
-        </div>
 
-        {/* Prize Position Cards */}
-        <SimpleGrid cols={3}>
-          {Object.entries(formData.prizePositions)
-            .sort(([a], [b]) => parseInt(a) - parseInt(b))
-            .map(([position, percentage]) => (
-              <Paper key={position} p="md" className="border border-dark-4 text-center">
-                <Text size="xs" c="dimmed" mb={4}>
+          {/* Distribution Summary Cards */}
+          <SimpleGrid cols={{ base: 2, sm: 3 }}>
+            {sortedPositions.slice(0, 3).map(([position, percentage]) => (
+              <Paper
+                key={position}
+                p="md"
+                className="border border-dark-4 text-center"
+                bg="dark.7"
+              >
+                <Text size="xs" c="dimmed" mb={6}>
                   {position}
                   {getOrdinalSuffix(parseInt(position))} Place
                 </Text>
@@ -471,66 +545,155 @@ export default function CrucibleCreate() {
                 </Text>
               </Paper>
             ))}
-        </SimpleGrid>
+          </SimpleGrid>
+
+          {/* Additional positions if more than 3 */}
+          {sortedPositions.length > 3 && (
+            <Paper p="md" className="border border-dark-4">
+              <Stack gap="xs">
+                {sortedPositions.slice(3).map(([position, percentage]) => (
+                  <Group key={position} justify="space-between">
+                    <Text size="sm" c="dimmed">
+                      {position}
+                      {getOrdinalSuffix(parseInt(position))} Place
+                    </Text>
+                    <Text size="sm" fw={600}>
+                      {percentage}%
+                    </Text>
+                  </Group>
+                ))}
+              </Stack>
+            </Paper>
+          )}
+
+          {/* Customize Distribution Button */}
+          <Button
+            variant="filled"
+            color="blue"
+            onClick={enterPrizeEditMode}
+            leftSection={<IconPencil size={16} />}
+            rightSection={
+              !prizeCustomized && (
+                <span className="ml-2 rounded bg-yellow-500/20 px-2 py-0.5 text-xs font-bold text-yellow-4">
+                  +1,000 Buzz
+                </span>
+              )
+            }
+          >
+            {prizeCustomized ? 'Edit Distribution' : 'Customize Distribution'}
+          </Button>
+        </Stack>
+      );
+    }
+
+    // Edit Mode - Sliders and add/remove functionality
+    return (
+      <Stack gap="lg">
+        {/* Editing Header */}
+        <Group gap="xs">
+          <IconPencil size={16} className="text-blue-5" />
+          <Text size="sm" c="blue" fw={600}>
+            Editing Prize Distribution
+          </Text>
+        </Group>
 
         {/* Prize Rows with Sliders */}
-        {Object.entries(formData.prizePositions)
-          .sort(([a], [b]) => parseInt(a) - parseInt(b))
-          .map(([position, percentage]) => (
-            <Paper key={position} p="md" className="border border-dark-4">
-              <Group justify="space-between" align="center">
-                <Text size="sm" fw={600} style={{ width: 80 }}>
-                  {position}
-                  {getOrdinalSuffix(parseInt(position))} Place
-                </Text>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={percentage}
-                  onChange={(e) => {
-                    const newValue = parseInt(e.target.value);
-                    updateFormData({
-                      prizePositions: {
-                        ...formData.prizePositions,
-                        [position]: newValue,
-                      },
-                    });
-                  }}
-                  className="flex-1"
-                />
-                <Text size="sm" fw={700} style={{ width: 50, textAlign: 'right' }}>
-                  {percentage}%
-                </Text>
-              </Group>
-            </Paper>
-          ))}
+        {sortedPositions.map(([position, percentage], index) => (
+          <Paper key={position} p="md" className="border border-dark-4">
+            <Group justify="space-between" align="center" gap="md">
+              <Text size="sm" fw={600} style={{ width: 90 }}>
+                {position}
+                {getOrdinalSuffix(parseInt(position))} Place
+              </Text>
+              <Slider
+                value={percentage}
+                onChange={(value) => {
+                  updateFormData({
+                    prizePositions: {
+                      ...formData.prizePositions,
+                      [position]: value,
+                    },
+                  });
+                }}
+                min={0}
+                max={100}
+                step={1}
+                style={{ flex: 1 }}
+                color={index === 0 ? 'blue' : index === 1 ? 'green' : index === 2 ? 'yellow' : 'gray'}
+                styles={{
+                  track: { height: 6 },
+                  thumb: { borderWidth: 2 },
+                }}
+              />
+              <Text size="sm" fw={700} style={{ width: 50, textAlign: 'right' }}>
+                {percentage}%
+              </Text>
+              {/* Only show remove button for positions beyond top 3 */}
+              {parseInt(position) > 3 && (
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  size="sm"
+                  onClick={() => removePrizePosition(position)}
+                >
+                  <IconTrash size={14} />
+                </ActionIcon>
+              )}
+            </Group>
+          </Paper>
+        ))}
 
-        {/* Total Indicator */}
-        <Paper p="md" className="border border-dark-4">
+        {/* Add Prize Position Button */}
+        <Button
+          variant="light"
+          color="blue"
+          onClick={addPrizePosition}
+          leftSection={<IconPlus size={16} />}
+        >
+          Add Prize Position
+        </Button>
+
+        {/* Total Distribution Indicator */}
+        <Paper p="md" className="border border-dark-4" bg="dark.7">
           <Group justify="space-between">
             <Text c="dimmed">Total Distribution</Text>
-            <Text size="lg" fw={700} c={totalPercentage === 100 ? 'green' : 'red'}>
-              {totalPercentage}%
-            </Text>
+            <Group gap={4}>
+              <Text size="lg" fw={700} c={totalPercentage <= 100 ? 'green' : 'red'}>
+                {totalPercentage}
+              </Text>
+              <Text size="lg" fw={700} c={totalPercentage <= 100 ? 'green' : 'red'}>
+                %
+              </Text>
+            </Group>
           </Group>
-          {totalPercentage !== 100 && (
+          {totalPercentage > 100 && (
             <Text size="xs" c="red" mt={4}>
-              Prize percentages should sum to 100%
+              Prize percentages cannot exceed 100%
             </Text>
           )}
         </Paper>
 
-        {/* Reset Button */}
-        <Button
-          variant="light"
-          color="gray"
-          onClick={() =>
-            updateFormData({ prizePositions: defaultPrizePositions })
-          }
-        >
-          Reset to Default
-        </Button>
+        {/* Action Buttons */}
+        <Group gap="md">
+          <Button
+            variant="light"
+            color="gray"
+            onClick={resetPrizeDistribution}
+            leftSection={<IconArrowBackUp size={16} />}
+            style={{ flex: 1 }}
+          >
+            Reset to Default
+          </Button>
+          <Button
+            variant="filled"
+            color="blue"
+            onClick={() => setPrizeEditMode(false)}
+            leftSection={<IconCheck size={16} />}
+            style={{ flex: 1 }}
+          >
+            Done Editing
+          </Button>
+        </Group>
       </Stack>
     );
   };
@@ -817,7 +980,9 @@ export default function CrucibleCreate() {
                     Prize Customization
                   </Text>
                   <Text size="sm" c="yellow" fw={600}>
-                    Free
+                    {getPrizeCustomizationCost() === 0
+                      ? 'Free'
+                      : `+${getPrizeCustomizationCost().toLocaleString()} Buzz`}
                   </Text>
                 </Group>
                 <div className="mt-2 border-t border-dark-4 pt-3">
