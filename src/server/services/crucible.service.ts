@@ -36,6 +36,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { imageResourcesCache } from '~/server/redis/caches';
 
 const log = createLogger('crucible-service', 'cyan');
 
@@ -349,11 +350,32 @@ export const submitEntry = async ({
     return throwBadRequestError('This image has already been submitted to this crucible');
   }
 
-  // TODO: Validate allowed resources if specified (future feature)
-  // if (crucible.allowedResources) {
-  //   const resources = crucible.allowedResources as number[];
-  //   // Check image generation resources against allowed list
-  // }
+  // Validate allowed resources if specified
+  // allowedResources is an array of model version IDs that the crucible restricts entries to
+  const allowedResources = crucible.allowedResources as number[] | null;
+  if (allowedResources && allowedResources.length > 0) {
+    // Fetch the image's resources from cache
+    const resourcesData = await imageResourcesCache.fetch([imageId]);
+    const imageResources = resourcesData[imageId]?.resources ?? [];
+
+    if (imageResources.length === 0) {
+      return throwBadRequestError(
+        'This image has no detected resources. Images submitted to this crucible must use specific resources.'
+      );
+    }
+
+    // Check if any of the image's resources are in the allowed list
+    const imageVersionIds = imageResources.map((r) => r.modelVersionId);
+    const hasAllowedResource = imageVersionIds.some((versionId) =>
+      allowedResources.includes(versionId)
+    );
+
+    if (!hasAllowedResource) {
+      return throwBadRequestError(
+        'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.'
+      );
+    }
+  }
 
   // Handle entry fee collection (if entryFee > 0)
   let buzzTransactionId: string | null = null;
