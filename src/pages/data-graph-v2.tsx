@@ -32,12 +32,12 @@ import clsx from 'clsx';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
-import { DataGraphProvider, useGraph } from '~/libs/data-graph/react';
-import { Controller } from '~/libs/data-graph/react';
+import { DataGraphProvider, useGraph, Controller } from '~/libs/data-graph/react';
 import {
   generationGraph,
   type GenerationGraphTypes,
   type GenerationCtx,
+  type VideoValue,
 } from '~/shared/data-graph/generation';
 
 // Input components
@@ -229,37 +229,57 @@ function GenerationForm() {
             )}
           />
 
-          {/* Checkpoint/Model selector */}
+          {/* Checkpoint/Model selector with version selector */}
           <Controller
             graph={graph}
             name="model"
-            render={({ value, meta, onChange }) => (
-              <>
-                <ResourceSelectInput
-                  value={value as any}
-                  onChange={onChange as any}
-                  label="Model"
-                  buttonLabel="Select Model"
-                  modalTitle="Select Model"
-                  options={meta.options}
-                  allowRemove={false}
-                  allowSwap={!meta.modelLocked}
-                />
+            render={({ value, meta, onChange }) => {
+              const versionIds = meta.versions?.map((x) => x.value) ?? [];
+              const showVersionSelector = value?.id !== undefined && versionIds.includes(value.id);
 
-                {meta.versions?.length && (
-                  <OverflowSegmentedControl
-                    value={value?.id?.toString()}
-                    onChange={(stringId) => onChange({ id: Number(stringId) } as any)}
-                    options={
-                      meta.versions?.map(({ label, value }) => ({
+              return (
+                <>
+                  <ResourceSelectInput
+                    value={value as any}
+                    onChange={onChange as any}
+                    label="Model"
+                    buttonLabel="Select Model"
+                    modalTitle="Select Model"
+                    options={meta.options}
+                    allowRemove={false}
+                    allowSwap={!meta.modelLocked}
+                  />
+                  {/* Version selector (for models with multiple versions like Flux modes) */}
+
+                  {showVersionSelector && meta.versions && (
+                    <OverflowSegmentedControl
+                      value={value?.id?.toString()}
+                      onChange={(stringId) => onChange({ id: Number(stringId) } as any)}
+                      options={meta.versions.map(({ label, value }) => ({
                         label,
                         value: value.toString(),
-                      })) ?? []
-                    }
-                    maxVisible={5}
-                  />
-                )}
-              </>
+                      }))}
+                      maxVisible={5}
+                    />
+                  )}
+                </>
+              );
+            }}
+          />
+
+          {/* API version selector (e.g., Veo 3.0 vs 3.1) */}
+          <Controller
+            graph={graph}
+            name="version"
+            render={({ value, meta, onChange }) => (
+              <div className="flex flex-col gap-1">
+                <Input.Label>API Version</Input.Label>
+                <SegmentedControl
+                  value={value}
+                  onChange={onChange}
+                  data={meta.options.map((o) => ({ label: o.label, value: o.value }))}
+                />
+              </div>
             )}
           />
 
@@ -299,7 +319,9 @@ function GenerationForm() {
           <Controller
             graph={graph}
             name="video"
-            render={({ value, onChange }) => <VideoInput value={value} onChange={onChange} />}
+            render={({ value, onChange }) => (
+              <VideoInput value={value} onChange={(v) => onChange(v as VideoValue | undefined)} />
+            )}
           />
 
           {/* Interpolation factor (vid2vid:interpolate only) */}
@@ -364,7 +386,7 @@ function GenerationForm() {
               return (
                 <AspectRatioInput
                   value={value}
-                  onChange={onChange as (value: AspectRatioValue) => void}
+                  onChange={onChange}
                   label="Aspect Ratio"
                   options={meta.options}
                   priorityOptions={priorityOptions}
@@ -372,6 +394,37 @@ function GenerationForm() {
                 />
               );
             }}
+          />
+
+          {/* Duration (video ecosystems) */}
+          <Controller
+            graph={graph}
+            name="duration"
+            render={({ value, meta, onChange }) => (
+              <div className="flex flex-col gap-1">
+                <Input.Label>Duration</Input.Label>
+                <SegmentedControl
+                  value={value?.toString()}
+                  onChange={(v) => onChange(Number(v))}
+                  data={meta.options.map((o) => ({ label: o.label, value: o.value.toString() }))}
+                  disabled={meta.disabled}
+                />
+              </div>
+            )}
+          />
+
+          {/* Generate audio toggle (video ecosystems) */}
+          <Controller
+            graph={graph}
+            name="generateAudio"
+            render={({ value, onChange }) => (
+              <Checkbox
+                label="Generate audio"
+                description="Generate audio along with the video"
+                checked={value}
+                onChange={(e) => onChange(e.currentTarget.checked)}
+              />
+            )}
           />
 
           {/* Output Settings (image output only) */}
@@ -578,6 +631,20 @@ function GenerationForm() {
                 />
               )}
             />
+
+            {/* Prompt enhancer toggle (video ecosystems) */}
+            <Controller
+              graph={graph}
+              name="enablePromptEnhancer"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Enhance prompt"
+                  description="Automatically improve your prompt for better results"
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
           </AccordionLayout>
         </Stack>
       </div>
@@ -594,7 +661,8 @@ const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,
   groups: [
     // Workflow is the primary selector - stored globally
-    { keys: ['workflow', 'outputFormat', 'priority', 'baseModel'] },
+    { keys: ['workflow', 'outputFormat', 'priority'] },
+    { name: 'output', keys: ['baseModel'], scope: 'output' },
     { name: 'common', keys: ['prompt', 'negativePrompt', 'seed', 'quantity'] },
     // baseModel is scoped to workflow (different workflows may use different ecosystems)
     // { name: 'workflow', keys: ['baseModel'], scope: 'workflow' },

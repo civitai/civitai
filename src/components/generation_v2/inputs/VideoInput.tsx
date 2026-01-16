@@ -28,9 +28,8 @@ import { isOrchestratorUrl, maxVideoFileSize } from '~/server/common/constants';
 import { VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
 import { getVideoData } from '~/utils/media-preprocessors';
-import { getBase64 } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
-import type { Blob as OrchestratorBlob } from '@civitai/client';
+import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 
 // =============================================================================
 // Types
@@ -157,24 +156,8 @@ export function VideoInput({
       setUploadError(null);
 
       try {
-        // Convert to base64 for upload
-        const base64 = await getBase64(file);
-
-        // Upload to orchestrator using the same endpoint as images
-        const response = await fetch('/api/orchestrator/uploadImage', {
-          method: 'POST',
-          body: base64,
-        });
-
-        if (!response.ok) {
-          if (response.status === 403) {
-            throw new Error(await response.text());
-          } else {
-            throw new Error(response.statusText);
-          }
-        }
-
-        const blob: OrchestratorBlob = await response.json();
+        // Upload directly to orchestrator using presigned URL
+        const blob = await uploadConsumerBlob(file);
 
         if (blob.blockedReason || !blob.available || !blob.url) {
           throw new Error(blob.blockedReason ?? 'Video upload failed');

@@ -189,6 +189,7 @@ export const fluxGraph = new DataGraph<
 >()
   // Merge checkpoint graph with dynamic modelLocked based on workflow
   // When workflow is 'txt2img:draft', force the model to draft version (overrides any existing value)
+  // Note: showVersionSelector computed in createCheckpointGraph handles visibility based on current model
   .merge(
     (ctx) =>
       createCheckpointGraph({

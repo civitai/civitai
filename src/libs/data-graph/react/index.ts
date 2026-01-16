@@ -3,5 +3,5 @@
  */
 
 export { DataGraphProvider, useGraph, useGraphValue, useGraphValues } from './DataGraphProvider';
-export { Controller } from './Controller';
+export { Controller, LooseController } from './Controller';
 export type { ControllerProps, ControllerRenderProps } from './Controller';

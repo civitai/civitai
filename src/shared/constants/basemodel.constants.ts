@@ -187,6 +187,8 @@ export const ECO = {
   Vidu: 47,
   MiniMax: 48,
   Kling: 49,
+  Haiper: 50,
+  Lightricks: 51,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -578,6 +580,22 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Kling',
     sortOrder: 212,
     // txt2vid + img2vid (no vid2vid support currently)
+  },
+  {
+    id: ECO.Haiper,
+    key: 'Haiper',
+    name: 'haiper',
+    displayName: 'Haiper',
+    sortOrder: 213,
+    // txt2vid + img2vid
+  },
+  {
+    id: ECO.Lightricks,
+    key: 'Lightricks',
+    name: 'lightricks',
+    displayName: 'Lightricks',
+    sortOrder: 214,
+    // txt2vid + img2vid
   },
   { id: ECO.ODOR, key: 'ODOR', name: 'odor', displayName: 'ODOR', sortOrder: 208 },
   {
@@ -1044,6 +1062,8 @@ const TXT2VID_IDS = [
   ECO.Vidu,
   ECO.MiniMax,
   ECO.Kling,
+  ECO.Haiper,
+  ECO.Lightricks,
 ];
 
 /** Video ecosystems that support img2vid (image-to-video) */
@@ -1060,6 +1080,8 @@ const IMG2VID_IDS = [
   ECO.Vidu,
   ECO.MiniMax,
   ECO.Kling,
+  ECO.Haiper,
+  ECO.Lightricks,
 ];
 
 /**

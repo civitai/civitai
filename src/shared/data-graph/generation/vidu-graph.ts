@@ -15,7 +15,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode } from './common';
+import { seedNode, aspectRatioNode } from './common';
 
 // =============================================================================
 // Constants
@@ -92,12 +92,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
     (ctx) => {
       const showAspectRatio = ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid';
       return {
-        input: z.enum(['16:9', '1:1', '9:16']).optional(),
-        output: z.enum(['16:9', '1:1', '9:16']),
-        defaultValue: '1:1' as const,
-        meta: {
-          options: viduAspectRatios,
-        },
+        ...aspectRatioNode({ options: viduAspectRatios, defaultValue: '1:1' }),
         when: showAspectRatio,
       };
     },

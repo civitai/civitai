@@ -82,16 +82,14 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
   // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'img2img:face-fix')
   .node(
     'workflow',
-    () => {
-      return {
-        input: z.string().optional(),
-        output: z.string(),
-        defaultValue: 'txt2img',
-        meta: {
-          // All workflows are shown - compatibility is handled by baseModel filtering
-        },
-      };
-    },
+    () => ({
+      input: z.string().optional(),
+      output: z.string(),
+      defaultValue: 'txt2img',
+      meta: {
+        // All workflows are shown - compatibility is handled by baseModel filtering
+      },
+    }),
     []
   )
   // Output is computed from workflow

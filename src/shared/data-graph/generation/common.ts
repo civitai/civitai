@@ -371,11 +371,83 @@ export type CheckpointVersionOption = {
 };
 
 /**
+ * Workflow-specific version configuration.
+ * Maps workflow names to their version options and default model ID.
+ *
+ * @example
+ * ```ts
+ * const workflowVersions: WorkflowVersionConfig = {
+ *   txt2vid: { versions: txt2vidVersions, defaultModelId: 123 },
+ *   img2vid: { versions: img2vidVersions, defaultModelId: 456 },
+ * };
+ * ```
+ */
+export type WorkflowVersionConfig = Record<
+  string,
+  {
+    versions: CheckpointVersionOption[];
+    defaultModelId: number;
+  }
+>;
+
+/**
+ * Find the workflow config for a given workflow key using prefix matching.
+ * E.g., 'img2vid:first-last-frame' will match the 'img2vid' config.
+ * First tries exact match, then prefix match (workflow starts with config key).
+ */
+function findWorkflowConfig(
+  workflowVersions: WorkflowVersionConfig | undefined,
+  workflow: string | undefined
+): { versions: CheckpointVersionOption[]; defaultModelId: number } | undefined {
+  if (!workflowVersions || !workflow) return undefined;
+
+  // Try exact match first
+  if (workflowVersions[workflow]) {
+    return workflowVersions[workflow];
+  }
+
+  // Try prefix match (e.g., 'img2vid:first-last-frame' matches 'img2vid')
+  for (const key of Object.keys(workflowVersions)) {
+    if (workflow.startsWith(key)) {
+      return workflowVersions[key];
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Get the workflow key for matching in workflowVersions.
+ * Returns the base workflow (before any colon).
+ */
+function getWorkflowKey(
+  workflowVersions: WorkflowVersionConfig | undefined,
+  workflow: string | undefined
+): string {
+  if (!workflowVersions || !workflow) return '';
+
+  // Try exact match first
+  if (workflowVersions[workflow]) {
+    return workflow;
+  }
+
+  // Try prefix match
+  for (const key of Object.keys(workflowVersions)) {
+    if (workflow.startsWith(key)) {
+      return key;
+    }
+  }
+
+  return workflow;
+}
+
+/**
  * Creates a checkpoint graph with model node and baseModel sync effect.
  *
  * This creates a subgraph containing:
  * - A 'model' node for checkpoint selection
  * - An effect to sync baseModel when model changes to a different ecosystem
+ * - Optionally, an effect to sync model versions when workflow changes
  *
  * Use with `.merge()` to include in a parent graph:
  *
@@ -394,6 +466,19 @@ export type CheckpointVersionOption = {
  *     }),
  *     ['workflow']
  *   );
+ *
+ * // Workflow-specific versions with automatic sync
+ * const graph = new DataGraph()
+ *   .merge(
+ *     (ctx) => createCheckpointGraph({
+ *       workflowVersions: {
+ *         txt2vid: { versions: txt2vidVersions, defaultModelId: 123 },
+ *         img2vid: { versions: img2vidVersions, defaultModelId: 456 },
+ *       },
+ *       currentWorkflow: ctx.workflow,
+ *     }),
+ *     ['workflow']
+ *   );
  * ```
  */
 export function createCheckpointGraph(options?: {
@@ -403,14 +488,38 @@ export function createCheckpointGraph(options?: {
   modelLocked?: boolean;
   /** Default model version ID override */
   defaultModelId?: number;
+  /**
+   * Workflow-specific version configurations.
+   * When provided with currentWorkflow, enables automatic model syncing when workflow changes.
+   * Each workflow maps to its available versions and default model ID.
+   */
+  workflowVersions?: WorkflowVersionConfig;
+  /** Current workflow value (required when using workflowVersions) */
+  currentWorkflow?: string;
 }) {
+  // Get versions and defaultModelId from workflowVersions if provided
+  // Use prefix matching: 'img2vid:first-last-frame' matches 'img2vid' config
+  const workflowConfig = findWorkflowConfig(options?.workflowVersions, options?.currentWorkflow);
+  const versions = workflowConfig?.versions ?? options?.versions;
+  const defaultModelId = workflowConfig?.defaultModelId ?? options?.defaultModelId;
+
+  // Build version ID mappings for workflow sync effect
+  // Maps version IDs from one workflow to equivalent versions in other workflows
+  // by matching array index (e.g., fast→fast, standard→standard)
+  const versionMappings = options?.workflowVersions
+    ? buildVersionMappings(options.workflowVersions)
+    : undefined;
+
+  // All valid version IDs across all workflows
+  const allVersionIds = versionMappings ? new Set(versionMappings.keys()) : undefined;
+
   return new DataGraph<{ baseModel: string }, GenerationCtx>()
     .node(
       'model',
       (ctx, ext) => {
         const ecosystem = ecosystemByKey.get(ctx.baseModel);
         const ecosystemDefaults = ecosystem ? getEcosystemDefaults(ecosystem.id) : undefined;
-        const modelVersionId = options?.defaultModelId ?? ecosystemDefaults?.model?.id;
+        const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
         const compatibleBaseModels = ecosystem
           ? getCompatibleBaseModels(ecosystem.id, 'Checkpoint').full.map((m) => m.name)
@@ -453,7 +562,8 @@ export function createCheckpointGraph(options?: {
               excludeIds: ext.resources.map((x) => x.id),
             },
             modelLocked,
-            versions: options?.versions,
+            // Versions are always passed; showVersionSelector computed determines visibility
+            versions,
           },
         };
       },
@@ -470,7 +580,77 @@ export function createCheckpointGraph(options?: {
         set('baseModel', modelEcosystemKey);
       },
       ['model']
+    )
+    .effect(
+      (ctx, _ext, set) => {
+        // Skip if no workflow version mappings configured
+        if (!versionMappings || !allVersionIds || !options?.workflowVersions) return;
+
+        // Cast to access workflow (only present when parent graph has workflow in context)
+        const rawWorkflow = (ctx as { workflow?: string }).workflow ?? '';
+        // Normalize workflow to match config keys (e.g., 'img2vid:first-last-frame' -> 'img2vid')
+        const workflow = getWorkflowKey(options.workflowVersions, rawWorkflow);
+
+        const model = ctx.model as { id?: number } | undefined;
+        const modelId = model?.id;
+        if (!modelId) return;
+
+        // Skip if current model isn't a known version (user selected custom checkpoint)
+        if (!allVersionIds.has(modelId)) return;
+
+        // Get target workflow config using the normalized key
+        const targetConfig = options.workflowVersions[workflow];
+        if (!targetConfig) return;
+
+        // Skip if model is already valid for current workflow
+        const targetVersionIds = new Set(targetConfig.versions.map((v) => v.value));
+        if (targetVersionIds.has(modelId)) return;
+
+        // Find equivalent version in target workflow
+        const mapping = versionMappings.get(modelId);
+        const equivalentVersion = mapping?.[workflow];
+        if (equivalentVersion) {
+          // Cast to any since the model type varies by ecosystem graph
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          set('model', { id: equivalentVersion } as any);
+        }
+      },
+      ['workflow', 'model']
     );
+}
+
+/**
+ * Builds a mapping from each version ID to its equivalent versions in other workflows.
+ * Equivalence is determined by array index (e.g., first version maps to first version).
+ */
+function buildVersionMappings(
+  workflowVersions: WorkflowVersionConfig
+): Map<number, Record<string, number>> {
+  const mappings = new Map<number, Record<string, number>>();
+  const workflows = Object.keys(workflowVersions);
+
+  // For each workflow's versions, map to equivalent versions in other workflows
+  for (const sourceWorkflow of workflows) {
+    const sourceVersions = workflowVersions[sourceWorkflow].versions;
+
+    for (let i = 0; i < sourceVersions.length; i++) {
+      const sourceId = sourceVersions[i].value;
+      const equivalents: Record<string, number> = {};
+
+      // Find equivalent version in each other workflow (same index)
+      for (const targetWorkflow of workflows) {
+        if (targetWorkflow === sourceWorkflow) continue;
+        const targetVersions = workflowVersions[targetWorkflow].versions;
+        if (i < targetVersions.length) {
+          equivalents[targetWorkflow] = targetVersions[i].value;
+        }
+      }
+
+      mappings.set(sourceId, equivalents);
+    }
+  }
+
+  return mappings;
 }
 
 /**

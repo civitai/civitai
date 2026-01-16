@@ -35,6 +35,15 @@ import { hiDreamGraph } from './hi-dream-graph';
 import { ponyV7Graph } from './pony-v7-graph';
 import { viduGraph } from './vidu-graph';
 import { openaiGraph } from './openai-graph';
+import { klingGraph } from './kling-graph';
+import { wanGraph } from './wan-graph';
+import { hunyuanGraph } from './hunyuan-graph';
+import { minimaxGraph } from './minimax-graph';
+import { haiperGraph } from './haiper-graph';
+import { mochiGraph } from './mochi-graph';
+import { lightricksGraph } from './lightricks-graph';
+import { soraGraph } from './sora-graph';
+import { veo3Graph } from './veo3-graph';
 import { isWorkflowAvailable, getDefaultEcosystemForWorkflow } from './workflows';
 
 // =============================================================================
@@ -156,8 +165,22 @@ export const ecosystemGraph = new DataGraph<
       // These are ecosystem keys, not base model names
       const sdFamilyEcosystems = ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'];
       const fluxFamilyEcosystems = ['Flux1', 'FluxKrea'];
+      // Wan family includes all Wan video ecosystems
+      const wanFamilyEcosystems = [
+        'WanVideo',
+        'WanVideo1_3B_T2V',
+        'WanVideo14B_T2V',
+        'WanVideo14B_I2V_480p',
+        'WanVideo14B_I2V_720p',
+        'WanVideo22_TI2V_5B',
+        'WanVideo22_I2V_A14B',
+        'WanVideo22_T2V_A14B',
+        'WanVideo25_T2V',
+        'WanVideo25_I2V',
+      ];
       const baseModel = ctx.baseModel ?? '';
 
+      // Image ecosystems
       if (sdFamilyEcosystems.includes(baseModel)) return 'stable-diffusion';
       if (fluxFamilyEcosystems.includes(baseModel)) return 'flux';
       if (ctx.baseModel === 'Qwen') return 'qwen';
@@ -170,14 +193,27 @@ export const ecosystemGraph = new DataGraph<
       if (ctx.baseModel === 'Chroma') return 'chroma';
       if (ctx.baseModel === 'HiDream') return 'hi-dream';
       if (ctx.baseModel === 'PonyV7') return 'pony-v7';
-      if (ctx.baseModel === 'Vidu') return 'vidu';
       if (ctx.baseModel === 'OpenAI') return 'openai';
+
+      // Video ecosystems
+      if (ctx.baseModel === 'Vidu') return 'vidu';
+      if (ctx.baseModel === 'Kling') return 'kling';
+      if (wanFamilyEcosystems.includes(baseModel)) return 'wan';
+      if (ctx.baseModel === 'HyV1') return 'hunyuan';
+      if (ctx.baseModel === 'MiniMax') return 'minimax';
+      if (ctx.baseModel === 'Haiper') return 'haiper';
+      if (ctx.baseModel === 'Mochi') return 'mochi';
+      if (ctx.baseModel === 'Lightricks') return 'lightricks';
+      if (ctx.baseModel === 'Sora2') return 'sora';
+      if (ctx.baseModel === 'Veo3') return 'veo3';
+
       return undefined;
     },
     ['baseModel']
   )
 
   .discriminator('modelFamily', {
+    // Image ecosystems
     'stable-diffusion': stableDiffusionGraph,
     flux: fluxGraph,
     qwen: qwenGraph,
@@ -190,8 +226,18 @@ export const ecosystemGraph = new DataGraph<
     chroma: chromaGraph,
     'hi-dream': hiDreamGraph,
     'pony-v7': ponyV7Graph,
-    vidu: viduGraph,
     openai: openaiGraph,
+    // Video ecosystems
+    vidu: viduGraph,
+    kling: klingGraph,
+    wan: wanGraph,
+    hunyuan: hunyuanGraph,
+    minimax: minimaxGraph,
+    haiper: haiperGraph,
+    mochi: mochiGraph,
+    lightricks: lightricksGraph,
+    sora: soraGraph,
+    veo3: veo3Graph,
   });
 
 type ImageConfig = {

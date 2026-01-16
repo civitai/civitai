@@ -30,25 +30,26 @@ export interface ControllerRenderProps<Value, Meta> {
  * to avoid TypeScript inference limits. The meta types are still strongly typed
  * via the CtxMeta intersection type. CtxValues is an intersection of all possible
  * value types from discriminator branches, providing reliable type lookups.
+ *
+ * When type inference fails due to graph complexity, use explicit type parameters:
+ * <Controller<Value, Meta> graph={graph} name="key" render={...} />
  */
 export interface ControllerProps<
   Ctx extends Record<string, unknown>,
   ExternalCtx extends Record<string, unknown>,
   CtxMeta extends Record<string, unknown>,
   CtxValues extends Record<string, unknown>,
-  K extends string
+  K extends string,
+  // Explicit type overrides for when inference fails
+  ValueOverride = K extends keyof CtxValues ? CtxValues[K] : unknown,
+  MetaOverride = K extends keyof CtxMeta ? CtxMeta[K] : unknown
 > {
   /** The graph instance */
   graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>;
   /** The node key to control */
   name: K;
   /** Render function that receives the node's state and onChange handler */
-  render: (
-    props: ControllerRenderProps<
-      K extends keyof CtxValues ? CtxValues[K] : unknown,
-      K extends keyof CtxMeta ? CtxMeta[K] : unknown
-    >
-  ) => ReactElement | null;
+  render: (props: ControllerRenderProps<ValueOverride, MetaOverride>) => ReactElement | null;
 }
 
 // ============================================================================
@@ -91,12 +92,22 @@ export function Controller<
   ExternalCtx extends Record<string, unknown>,
   CtxMeta extends Record<string, unknown>,
   CtxValues extends Record<string, unknown>,
-  K extends string
+  K extends string,
+  ValueOverride = K extends keyof CtxValues ? CtxValues[K] : unknown,
+  MetaOverride = K extends keyof CtxMeta ? CtxMeta[K] : unknown
 >({
   graph,
   name,
   render,
-}: ControllerProps<Ctx, ExternalCtx, CtxMeta, CtxValues, K>): ReactElement | null {
+}: ControllerProps<
+  Ctx,
+  ExternalCtx,
+  CtxMeta,
+  CtxValues,
+  K,
+  ValueOverride,
+  MetaOverride
+>): ReactElement | null {
   // Subscribe to this specific node
   const subscribe = useCallback(
     (cb: () => void) => graph.subscribe(name as string, cb),
@@ -115,10 +126,8 @@ export function Controller<
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   // Create onChange handler - must be called before any early returns to maintain hook order
-  // Use CtxValues for the type since it's an intersection of all possible value types
-  type ValueType = K extends keyof CtxValues ? CtxValues[K] : unknown;
   const onChange = useCallback(
-    (newValue: ValueType) => {
+    (newValue: ValueOverride) => {
       graph.set({ [name]: newValue } as unknown as Partial<Ctx>);
     },
     [graph, name]
@@ -129,11 +138,79 @@ export function Controller<
     return null;
   }
 
-  // Call render with strongly-typed props
-  type MetaType = K extends keyof CtxMeta ? CtxMeta[K] : unknown;
+  // Call render with typed props (uses override types when inference fails)
   return render({
-    value: snapshot.value as ValueType,
-    meta: snapshot.meta as MetaType,
+    value: snapshot.value as ValueOverride,
+    meta: snapshot.meta as MetaOverride,
+    error: snapshot.error,
+    onChange,
+    isComputed: snapshot.isComputed,
+  });
+}
+
+/**
+ * Loose Controller for complex graphs where type inference fails.
+ * Use this when the graph has too many discriminator branches and TypeScript
+ * gives up on type inference (values become 'unknown').
+ *
+ * This provides the same runtime behavior as Controller, but with relaxed types.
+ * You can add inline type assertions in the render function as needed.
+ *
+ * @example
+ * ```tsx
+ * <LooseController
+ *   graph={graph}
+ *   name="steps"
+ *   render={({ value, meta, onChange }) => (
+ *     <SliderInput
+ *       value={value as number}  // Add type assertion
+ *       onChange={onChange}
+ *       min={(meta as { min: number }).min}
+ *     />
+ *   )}
+ * />
+ * ```
+ */
+export function LooseController<
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  G extends DataGraph<any, any, any, any>
+>({
+  graph,
+  name,
+  render,
+}: {
+  graph: G;
+  name: string;
+  render: (props: ControllerRenderProps<unknown, unknown>) => ReactElement | null;
+}): ReactElement | null {
+  // Subscribe to this specific node
+  const subscribe = useCallback((cb: () => void) => graph.subscribe(name, cb), [graph, name]);
+
+  const getSnapshot = useCallback(() => {
+    const hasNode = graph.hasNode(name);
+    if (!hasNode) {
+      return null;
+    }
+    return graph.getSnapshot(name);
+  }, [graph, name]);
+
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+  const onChange = useCallback(
+    (newValue: unknown) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      graph.set({ [name]: newValue } as any);
+    },
+    [graph, name]
+  );
+
+  if (snapshot === null) {
+    return null;
+  }
+
+  return render({
+    value: snapshot.value,
+    meta: snapshot.meta,
     error: snapshot.error,
     onChange,
     isComputed: snapshot.isComputed,

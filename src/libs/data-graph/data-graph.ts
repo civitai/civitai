@@ -180,30 +180,68 @@ type BuildDiscriminatedUnion<
 }[keyof Branches & string];
 
 /**
- * Convert a union type to an intersection type.
- * Uses the contravariant position trick to transform union to intersection.
- * Example: UnionToIntersection<A | B | C> = A & B & C
+ * Lazy branch type maps - TypeScript defers evaluation of mapped type
+ * properties until they are directly accessed.
+ *
+ * By using a mapped type over branches, TypeScript only evaluates each branch's
+ * types when that specific property is accessed, rather than eagerly computing
+ * all branches when the type is first encountered.
+ *
+ * @see https://trpc.io/blog/typescript-performance-lessons
  */
-type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (
-  k: infer I
-) => void
-  ? I
-  : never;
+type LazyBranchMetas<Branches extends BranchesRecord> = {
+  [K in keyof Branches]: InferGraphMeta<Branches[K]>;
+};
 
-// Build the discriminated union for CtxMeta - intersects all branch metas
+type LazyBranchValues<Branches extends BranchesRecord> = {
+  [K in keyof Branches]: InferGraphValues<Branches[K]>;
+};
+
+/**
+ * Flatten a union of objects into a single object type.
+ * Creates a type where each key maps to a union of all possible values
+ * for that key across all branches.
+ *
+ * This is more TypeScript-friendly than intersection for Controller lookups because:
+ * 1. It doesn't force eager evaluation of all branch types
+ * 2. The resulting type is simpler (union of values vs intersection of objects)
+ *
+ * Example:
+ *   FlattenUnion<{ a: string } | { a: number, b: boolean }>
+ *   = { a: string | number; b: boolean | never }
+ */
+type FlattenUnion<T> = {
+  [K in T extends unknown ? keyof T : never]: T extends unknown
+    ? K extends keyof T
+      ? T[K]
+      : never
+    : never;
+};
+
+/**
+ * Build the CtxMeta type by combining all branch metas.
+ *
+ * Uses FlattenUnion for better TypeScript performance with large graphs.
+ * Each key maps to a union of all possible meta types for that node.
+ *
+ * Note: We avoid Prettify here to reduce type evaluation overhead.
+ */
 type BuildDiscriminatedMetaUnion<
   ParentCtxMeta extends Record<string, unknown>,
   Branches extends BranchesRecord
-> = Prettify<ParentCtxMeta & UnionToIntersection<InferGraphMeta<Branches[keyof Branches]>>>;
+> = ParentCtxMeta & FlattenUnion<LazyBranchMetas<Branches>[keyof Branches]>;
 
-// Build an intersection of all possible value types from discriminator branches
-// This provides a flat record of all possible node keys and their value types
-// Uses InferGraphValues to get the CtxValues (intersection) from subgraphs,
-// which includes nested discriminator values recursively
+/**
+ * Build the CtxValues type by combining all branch values.
+ * This provides a flat record of all possible node keys and their value types.
+ *
+ * Uses FlattenUnion for better TypeScript performance with large graphs.
+ * Note: We avoid Prettify here to reduce type evaluation overhead.
+ */
 type BuildDiscriminatedValuesUnion<
   ParentCtx extends Record<string, unknown>,
   Branches extends BranchesRecord
-> = Prettify<ParentCtx & UnionToIntersection<InferGraphValues<Branches[keyof Branches]>>>;
+> = ParentCtx & FlattenUnion<LazyBranchValues<Branches>[keyof Branches]>;
 
 // ============================================================================
 // Graph Entry Types (Runtime)
@@ -627,6 +665,10 @@ export class DataGraph<
 
   /**
    * Add a conditional node with a factory function (has `when` boolean - optional in type).
+   *
+   * Note: Ctx uses optional `[P in K]?` because the node may not exist (when=false).
+   * But CtxValues uses required `[P in K]` because when the node IS active (Controller renders),
+   * the value is always defined (uses defaultValue or input value).
    */
   node<const K extends string, const Deps extends readonly string[], T extends AnyZodSchema, M>(
     key: K,
@@ -645,8 +687,8 @@ export class DataGraph<
   ): DataGraph<
     MergeDistributive<Ctx, { [P in K]?: InferOutput<T> }>,
     ExternalCtx,
-    M extends undefined ? CtxMeta : Prettify<CtxMeta & { [P in K]?: M }>,
-    Prettify<CtxValues & { [P in K]?: InferOutput<T> }>
+    M extends undefined ? CtxMeta : Prettify<CtxMeta & { [P in K]: M }>,
+    Prettify<CtxValues & { [P in K]: InferOutput<T> }>
   >;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -761,10 +803,40 @@ export class DataGraph<
             });
             break;
           }
-          case 'computed':
-          case 'effect':
-            this.addEntry({ ...entry, deps: [...new Set([...entry.deps, ...mergeDeps])] });
+          case 'computed': {
+            // Wrap the computed function to re-call merge factory with current context
+            // This ensures computed functions use fresh closure values (e.g., versions)
+            const originalCompute = entry.compute;
+            this.addEntry({
+              kind: 'computed',
+              key: entry.key,
+              compute: (ctx, ext) => {
+                const freshGraph = graphOrFactory(ctx, ext);
+                const freshEntry = freshGraph.entries.find(
+                  (e): e is typeof entry => e.kind === 'computed' && e.key === entry.key
+                );
+                return freshEntry ? freshEntry.compute(ctx, ext) : originalCompute(ctx, ext);
+              },
+              deps: [...new Set([...entry.deps, ...mergeDeps])],
+            });
             break;
+          }
+          case 'effect': {
+            // Wrap the effect function to re-call merge factory with current context
+            const originalRun = entry.run;
+            this.addEntry({
+              kind: 'effect',
+              run: (ctx, ext, set) => {
+                const freshGraph = graphOrFactory(ctx, ext);
+                const freshEntry = freshGraph.entries.find(
+                  (e): e is typeof entry => e.kind === 'effect' && e.run === originalRun
+                );
+                return freshEntry ? freshEntry.run(ctx, ext, set) : originalRun(ctx, ext, set);
+              },
+              deps: [...new Set([...entry.deps, ...mergeDeps])],
+            });
+            break;
+          }
           case 'discriminator':
             this.addEntry(entry);
             break;
@@ -985,10 +1057,6 @@ export class DataGraph<
     const entryKeys = new Set<string>();
     const newEntries: ActiveEntry[] = [];
 
-    if (this._debug) {
-      console.log(`  📥 activating branch "${source}", ${branchGraph.entries.length} entries`);
-    }
-
     for (const entry of branchGraph.entries) {
       const activeEntry: ActiveEntry = { ...entry, source };
       newEntries.push(activeEntry);
@@ -1003,10 +1071,6 @@ export class DataGraph<
 
     // Insert new entries after the discriminator entry
     this.activeEntries.splice(insertAfterIndex + 1, 0, ...newEntries);
-
-    if (this._debug) {
-      console.log(`  📥 activated entryKeys:`, [...entryKeys]);
-    }
 
     return { entryKeys, insertedCount: newEntries.length };
   }
@@ -1207,6 +1271,7 @@ export class DataGraph<
           isFromBranchActivation ||
           entry.deps.length === 0 ||
           entry.deps.some((dep) => changed.has(dep));
+
         if (!shouldProcess) {
           currentIndex++;
           continue;
