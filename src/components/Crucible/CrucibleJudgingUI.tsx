@@ -4,34 +4,17 @@ import { IconPlayerSkipForward, IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import type { RouterOutput } from '~/types/router';
 
 /**
- * Entry type for judging - matches JudgingPair.left/right from service
+ * Type inferred from tRPC router output - stays in sync with backend automatically
  */
-export type JudgingEntry = {
-  id: number;
-  imageId: number;
-  userId: number;
-  score: number;
-  image: {
-    id: number;
-    url: string;
-    width: number | null;
-    height: number | null;
-    nsfwLevel: number;
-  };
-  user: {
-    id: number;
-    username: string | null;
-    deletedAt: Date | null;
-    image: string | null;
-  };
-};
+export type JudgingPairData = RouterOutput['crucible']['getJudgingPair'];
 
-export type JudgingPairData = {
-  left: JudgingEntry;
-  right: JudgingEntry;
-} | null;
+/**
+ * Entry type for judging - extracted from JudgingPairData
+ */
+export type JudgingEntry = NonNullable<JudgingPairData>['left'];
 
 export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
