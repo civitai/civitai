@@ -213,7 +213,7 @@ async function runIteration(prd, story) {
       prompt,
       options: {
         model,
-        maxTurns: 50,
+        maxTurns: 100,
         // Enable project settings so agent has access to skills, CLAUDE.md, etc.
         settingSources: ['project'],
         // Allow the agent to use all tools for autonomous operation
