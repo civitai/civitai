@@ -29,6 +29,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, type GroupedFileVariants } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
+import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
@@ -68,42 +69,6 @@ const requiredComponentTypes: ModelFileComponentType[] = [
   'CLIPVision',
   'ControlNet',
 ];
-
-function getFileLabel(file: FileType): string {
-  const { fp, quantType, format } = file.metadata ?? {};
-
-  // For GGUF files, show quant type
-  if (format === 'GGUF' && quantType) {
-    return `${quantType} GGUF`;
-  }
-
-  // For SafeTensor and others, show fp precision
-  if (fp) {
-    return `${fp}${format ? ` ${format}` : ''}`;
-  }
-
-  return format || 'Standard';
-}
-
-function getFileDescription(file: FileType): string {
-  const { fp, quantType, format } = file.metadata ?? {};
-
-  if (format === 'GGUF') {
-    if (quantType === 'Q8_0') return '8-bit GGUF';
-    if (quantType === 'Q6_K') return '6-bit GGUF';
-    if (quantType === 'Q5_K_M') return '5-bit GGUF';
-    if (quantType === 'Q4_K_M') return '4-bit GGUF';
-    if (quantType) return `${quantType} quantization`;
-  }
-
-  if (fp === 'fp32') return 'Full precision';
-  if (fp === 'fp16') return 'Half precision';
-  if (fp === 'bf16') return 'Brain float';
-  if (fp === 'fp8') return '8-bit quantized';
-  if (fp) return `${fp} precision`;
-
-  return 'Standard variant';
-}
 
 export function RequiredComponentsSection({
   groupedFiles,
