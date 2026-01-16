@@ -98,7 +98,8 @@
         "Verify loading state handling is consistent",
         "Document any deviations in progress.txt"
       ],
-      "priority": 7
+      "priority": 7,
+      "passes": true
     },
     {
       "id": "PAT-008",
@@ -110,7 +111,8 @@
         "Document findings in progress.txt",
         "If critical issues found, note them for follow-up"
       ],
-      "priority": 8
+      "priority": 8,
+      "passes": true
     }
   ]
 }
