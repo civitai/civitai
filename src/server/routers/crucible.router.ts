@@ -4,12 +4,16 @@ import {
   getCrucibleByIdSchema,
   createCrucibleInputSchema,
   submitEntrySchema,
+  getJudgingPairSchema,
+  submitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import {
   createCrucible,
   getCrucible,
   getCrucibles,
   submitEntry,
+  getJudgingPair,
+  submitVote,
 } from '~/server/services/crucible.service';
 import { Prisma } from '@prisma/client';
 
@@ -182,5 +186,29 @@ export const crucibleRouter = router({
       });
 
       return entry;
+    }),
+
+  getJudgingPair: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getJudgingPairSchema)
+    .query(async ({ ctx, input }) => {
+      const pair = await getJudgingPair({
+        ...input,
+        userId: ctx.user.id,
+      });
+
+      return pair;
+    }),
+
+  submitVote: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(submitVoteSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await submitVote({
+        ...input,
+        userId: ctx.user.id,
+      });
+
+      return result;
     }),
 });
