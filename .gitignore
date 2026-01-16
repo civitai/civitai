@@ -51,6 +51,8 @@ yarn-error.log*
 
 # browser automation sessions (local exploration data)
 .browser/sessions
+.browser/profiles/*.json
+!.browser/profiles/profiles.meta.json
 /clickhouse*
 /undefined
 /.docker

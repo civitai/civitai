@@ -1,274 +1,147 @@
 ---
 name: browser-automation
-description: Run saved browser automation flows or explore pages interactively. Use for UI testing, navigation discovery, or automating browser tasks. Flows are reusable Playwright scripts that you build through exploration.
+description: Browser automation via HTTP server. Supports multiple concurrent sessions for multi-user testing, saved flows, and profile-based auth persistence.
 ---
 
 # Browser Automation Skill
 
-Explore pages interactively and save successful paths as reusable flows.
+Explore pages interactively, build reusable flows, and test multi-user scenarios.
 
 ## Quick Start
 
-### Explore a Page (Interactive REPL)
 ```bash
-node .claude/skills/browser-automation/runner.mjs --explore https://civitai.com
-```
-Browser opens. Send JSON commands via stdin to interact:
-```json
-{"cmd": "inspect"}
-{"cmd": "chunk", "label": "Click models", "code": "await page.click('a[href=\"/models\"]');"}
-{"cmd": "review"}
-{"cmd": "save", "name": "my-flow", "keep": [1, 2]}
-{"cmd": "exit"}
+# Start server
+node .claude/skills/browser-automation/server.mjs &
+
+# Check available profiles
+curl http://localhost:9222/profiles
+
+# Create a session
+curl -X POST http://localhost:9222/sessions \
+  -d '{"name": "test", "url": "http://localhost:3000", "profile": "member"}'
+
+# Inspect the page
+curl http://localhost:9222/inspect
+
+# Execute code
+curl -X POST http://localhost:9222/chunk \
+  -d '{"label": "Click button", "code": "await page.click(\"button.submit\");"}'
+
+# Shutdown
+curl -X POST http://localhost:9222/exit
 ```
 
-### Run a Saved Flow
+## Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/profiles` | GET | List auth profiles with descriptions |
+| `/sessions` | GET | List active sessions |
+| `/sessions` | POST | Create session `{ name, url, profile?, headless? }` |
+| `/sessions/:name` | DELETE | Close session |
+| `/flows` | GET | List saved flows |
+| `/flows/:name/run` | POST | Run flow `{ profile?, startUrl?, headless? }` |
+| `/status` | GET | Session status |
+| `/inspect` | GET | Page state + screenshot. Add `?fullPage=true` for full-page screenshot |
+| `/chunk` | POST | Execute code `{ label, code }` |
+| `/navigate` | POST | Navigate `{ url, fullPage? }`. Set `fullPage: true` for full-page screenshot |
+| `/save-auth` | POST | Save auth `{ profile, description }` |
+| `/review` | GET | Review recorded chunks |
+| `/exit` | POST | Shutdown server |
+
+Use `?session=name` when multiple sessions are active.
+
+## Multi-User Testing
+
 ```bash
-node .claude/skills/browser-automation/runner.mjs --run-flow my-flow
+# Create two sessions with different profiles
+curl -X POST http://localhost:9222/sessions \
+  -d '{"name": "creator", "url": "http://localhost:3000", "profile": "creator"}'
+curl -X POST http://localhost:9222/sessions \
+  -d '{"name": "viewer", "url": "http://localhost:3000", "profile": "member"}'
+
+# Creator does something
+curl -X POST "http://localhost:9222/chunk?session=creator" \
+  -d '{"label": "Publish", "code": "await page.click(\"button.publish\");"}'
+
+# Viewer sees it
+curl -X POST "http://localhost:9222/navigate?session=viewer" \
+  -d '{"url": "http://localhost:3000/models"}'
 ```
 
-### List Saved Flows
+## Profiles
+
 ```bash
-node .claude/skills/browser-automation/runner.mjs --list-flows
+# List profiles
+curl http://localhost:9222/profiles
+
+# Create new profile (description required)
+curl -X POST http://localhost:9222/save-auth \
+  -d '{"profile": "moderator", "description": "User with mod permissions"}'
+
+# Refresh existing profile
+curl -X POST http://localhost:9222/save-auth \
+  -d '{"profile": "moderator"}'
 ```
 
-## Exploration Workflow
-
-The core workflow is: **Explore → Record → Curate → Save → Replay**
-
-### 1. Start Exploration
-```bash
-node runner.mjs --explore https://example.com
-```
-- Browser opens at the URL
-- Returns `session_started` with page inspection (buttons, links, inputs, screenshot)
-
-### 2. Execute Code Chunks
-```json
-{"cmd": "chunk", "label": "Click login button", "code": "await page.click('button.login');"}
-```
-- Executes the Playwright code against the page
-- Records the chunk with its label
-- Returns `chunk_executed` with new page inspection
-
-### 3. Run Existing Flows (Chaining)
-```json
-{"cmd": "list-flows"}
-{"cmd": "flow", "name": "browse-to-model"}
-```
-- Runs a saved flow as a chunk
-- Flow's code gets inlined into the recording
-- Enables building on top of existing flows
-
-### 4. Review & Curate
-```json
-{"cmd": "review"}
-```
-Returns all recorded chunks:
-```json
-{
-  "type": "review",
-  "chunks": [
-    {"index": 1, "label": "[flow: browse-to-model]", "code": "await page.click(...)..."},
-    {"index": 2, "label": "Click download", "code": "await page.click('button.download');"}
-  ]
-}
-```
-
-### 5. Save Selected Chunks
-```json
-{"cmd": "save", "name": "download-model", "keep": [1, 2]}
-```
-- Concatenates selected chunks into a `.js` file
-- Saves to `.browser/flows/download-model.js`
-- The saved flow is self-contained (no dependencies)
-
-### 6. Exit
-```json
-{"cmd": "exit"}
-```
-
-## REPL Commands Reference
-
-| Command | Description |
+| Profile | Description |
 |---------|-------------|
-| `{"cmd": "inspect"}` | Get current page state (buttons, links, inputs, screenshot) |
-| `{"cmd": "chunk", "label": "...", "code": "..."}` | Execute Playwright code and record it |
-| `{"cmd": "list-flows"}` | List available saved flows |
-| `{"cmd": "flow", "name": "..."}` | Run a saved flow as a chunk |
-| `{"cmd": "review"}` | Show all recorded chunks |
-| `{"cmd": "save", "name": "...", "keep": [1,2,3]}` | Save selected chunks as a flow |
-| `{"cmd": "save-auth"}` | Save current browser auth (cookies, localStorage) to profile |
-| `{"cmd": "exit"}` | Close browser and end session (auto-saves auth if using profile) |
+| `moderator` | Mod permissions for content review |
+| `creator` | Established user with published content |
+| `member` | Standard logged-in user |
+| `new-user` | Fresh account for onboarding flows |
 
-## Writing Playwright Code
+## Flows
 
-Chunks execute in an async context with `page` available:
+Saved flows are reusable Playwright scripts.
+
+```bash
+# List flows
+curl http://localhost:9222/flows
+
+# Run a flow
+curl -X POST http://localhost:9222/flows/my-flow/run \
+  -d '{"profile": "member"}'
+
+# Run with custom start URL
+curl -X POST http://localhost:9222/flows/my-flow/run \
+  -d '{"profile": "member", "startUrl": "http://localhost:3000"}'
+```
+
+Flows are stored in `.browser/flows/*.js`.
+
+## Playwright Code
+
+Chunks execute with `page` available:
 
 ```javascript
-// Click elements
 await page.click('button.submit');
-await page.click('a[href="/models"]');
-
-// Type text
 await page.fill('input[name="email"]', 'test@example.com');
-
-// Wait for elements
 await page.waitForSelector('h1');
-await page.waitForSelector('.loading', { state: 'hidden' });
-
-// Extract data
-const title = await page.textContent('h1');
-console.log('Title:', title);
-
-// Take screenshots
-await page.screenshot({ path: '/tmp/screenshot.png' });
-
-// Navigate
 await page.goto('https://example.com');
+const title = await page.textContent('h1');
 ```
 
-## Flow Chaining Example
+## Mockup Comparison
 
-Build complex flows by composing simpler ones:
+Open local HTML mockups with `file://` URLs, then compare to live pages:
 
 ```bash
-# Session 1: Create browse-to-model flow
-node runner.mjs --explore https://civitai.com
-```
-```json
-{"cmd": "chunk", "label": "Click models", "code": "await page.click('a[href=\"/models\"]'); await page.waitForSelector('a[href^=\"/models/\"]');"}
-{"cmd": "chunk", "label": "Click first model", "code": "await page.click('a[href^=\"/models/\"]'); await page.waitForSelector('h1');"}
-{"cmd": "save", "name": "browse-to-model", "keep": [1, 2]}
-{"cmd": "exit"}
-```
+# 1. Open mockup and take full-page screenshot
+curl -X POST http://localhost:9222/sessions \
+  -d '{"name": "compare", "url": "file:///C:/path/to/mockup.html"}'
+curl "http://localhost:9222/inspect?session=compare&fullPage=true"
 
-```bash
-# Session 2: Build on browse-to-model to create download-model flow
-node runner.mjs --explore https://civitai.com
-```
-```json
-{"cmd": "flow", "name": "browse-to-model"}
-{"cmd": "chunk", "label": "Click download", "code": "await page.click('button:has-text(\"Download\")');"}
-{"cmd": "save", "name": "download-model", "keep": [1, 2]}
-{"cmd": "exit"}
-```
+# 2. Navigate to live page and screenshot
+curl -X POST "http://localhost:9222/navigate?session=compare" \
+  -d '{"url": "http://localhost:3000/page", "fullPage": true}'
 
-Now `download-model` is self-contained with all the code inlined.
-
-## When Flows Fail
-
-If a chunk or flow fails during exploration, you get:
-- Error message
-- Current page inspection (screenshot, buttons, links, inputs)
-
-This lets you see what's actually on the page and adjust your code.
-
-## One-Shot Inspection (No Session)
-
-For quick page inspection without a full session:
-```bash
-node runner.mjs --inspect https://example.com
-```
-
-## Authentication Persistence
-
-Persist login sessions across browser sessions using profiles:
-
-### Create a Profile and Login
-```bash
-# Start with a profile name
-node runner.mjs --explore https://civitai.com --profile civitai-dev
-```
-
-### During Session - Login Manually
-Navigate to login, enter credentials, complete auth. Then save:
-```json
-{"cmd": "save-auth"}
-```
-
-### Exit Saves Automatically
-When using `--profile`, auth is auto-saved on exit:
-```json
-{"cmd": "exit"}
-```
-
-### Reuse Auth in Future Sessions
-```bash
-# Same profile name loads saved cookies/localStorage
-node runner.mjs --explore https://civitai.com --profile civitai-dev
-```
-
-### Run Flows with Auth
-```bash
-node runner.mjs --run-flow my-flow --profile civitai-dev
-```
-
-### List Profiles
-```bash
-node runner.mjs --list-profiles
-```
-
-Profiles are stored in `.browser/profiles/`.
-
-## CLI Reference
-
-```bash
-# Exploration (interactive REPL)
-node runner.mjs --explore <url>
-node runner.mjs --explore <url> --profile <name>
-
-# Run saved flow
-node runner.mjs --run-flow <name>
-node runner.mjs --run-flow <name> --profile <name>
-
-# List flows
-node runner.mjs --list-flows
-
-# List auth profiles
-node runner.mjs --list-profiles
-
-# One-shot inspect
-node runner.mjs --inspect <url>
-
-# Options
---headless        Run browser without visible window
---timeout <ms>    Default timeout (default: 30000)
---profile, -p     Named profile for persistent auth
+# 3. Compare screenshots in session folder
 ```
 
 ## File Locations
 
-- **Saved flows**: `.browser/flows/*.js`
-- **Auth profiles**: `.browser/profiles/*.json` (cookies, localStorage, sessionStorage)
-- **Session folders**: `.browser/sessions/{session-id}/`
-  - `session.json` - Session metadata
-  - `screenshots/` - All screenshots from the session
-    - `001-session-start.png`
-    - `002-chunk-click-models.png`
-    - `003-flow-browse-to-model.png`
-    - etc.
-
-## Advanced Playwright Code
-
-Since chunks execute arbitrary Playwright code, you can do anything Playwright supports:
-
-```javascript
-// Resize viewport
-await page.setViewportSize({ width: 1920, height: 1080 });
-
-// Listen to console
-page.on('console', msg => console.log('CONSOLE:', msg.text()));
-
-// Get page HTML
-const html = await page.content();
-
-// Execute JavaScript in the page
-const result = await page.evaluate(() => document.title);
-
-// Wait for network idle
-await page.waitForLoadState('networkidle');
-
-// Handle dialogs
-page.on('dialog', dialog => dialog.accept());
-```
+- **Flows**: `.browser/flows/*.js`
+- **Profile metadata**: `.browser/profiles/profiles.meta.json`
+- **Auth state**: `.browser/profiles/*.json` (gitignored)
+- **Screenshots**: `.browser/sessions/{id}/screenshots/`
