@@ -29,7 +29,7 @@ export function FileInfo({ file }: Props) {
     { label: 'File Size', value: formatKBytes(file.sizeKB) },
   ];
   if (file.metadata?.fp) items.push({ label: 'Precision', value: file.metadata.fp });
-  if (file.metadata?.format && file.name.endsWith('.zip'))
+  if (file.metadata?.format && file.name?.toLowerCase().endsWith('.zip'))
     items.push({ label: 'Format', value: file.metadata.format });
   if (file.metadata?.size)
     items.push({ label: 'Model Size', value: startCase(file.metadata.size) });
