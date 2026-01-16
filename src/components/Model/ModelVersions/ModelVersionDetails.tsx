@@ -71,6 +71,7 @@ import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
@@ -142,7 +143,7 @@ export function ModelVersionDetails({
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [detailAccordions, setDetailAccordions] = useLocalStorage({
     key: 'model-version-details-accordions',
-    defaultValue: ['version-details'],
+    defaultValue: ['version-details', 'required-components'],
   });
   const adContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1328,6 +1329,25 @@ export function ModelVersionDetails({
                 />
               </Accordion.Panel>
             </Accordion.Item>
+            {/* Required Components Section - shows when there are component files */}
+            {isDownloadable && Object.keys(groupedFiles.components).length > 0 && (
+              <RequiredComponentsSection
+                groupedFiles={groupedFiles}
+                versionId={version.id}
+                userPreferences={user?.filePreferences}
+                canDownload={canDownload}
+                downloadPrice={
+                  !hasDownloadPermissions &&
+                  !isLoadingAccess &&
+                  earlyAccessConfig?.chargeForDownload
+                    ? earlyAccessConfig?.downloadPrice
+                    : undefined
+                }
+                isLoadingAccess={isLoadingAccess}
+                archived={archived}
+                onPurchase={() => onPurchase('download')}
+              />
+            )}
             {isDownloadable && (
               <Accordion.Item
                 value="version-files"
