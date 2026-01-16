@@ -15,7 +15,7 @@ export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
 };
 
 type FileMetaKey = keyof BasicFileMetadata;
-const preferenceWeight: Record<FileMetaKey, number> = {
+const preferenceWeight: Partial<Record<FileMetaKey, number>> = {
   format: 100,
   size: 10,
   fp: 1,
