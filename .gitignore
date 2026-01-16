@@ -106,3 +106,7 @@ scripts/local-dev/
 # Claude agent temp directories
 tmpclaude-*-cwd
 .claude/skills/flipt/.env
+
+# Ralph agent
+scripts/ralph/prd.json
+scripts/ralph/progress.txt
