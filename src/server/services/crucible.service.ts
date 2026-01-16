@@ -498,12 +498,40 @@ export async function markPairVoted(
 }
 
 /**
- * Get all voted pairs for a user in a crucible
+ * Check if a specific pair has been voted on by a user
+ * Uses SISMEMBER for O(1) lookup instead of fetching all pairs
  */
-async function getVotedPairs(crucibleId: number, userId: number): Promise<Set<string>> {
+async function isPairVoted(
+  crucibleId: number,
+  userId: number,
+  entryId1: number,
+  entryId2: number
+): Promise<boolean> {
   const key = getVotedPairsKey(crucibleId, userId);
-  const pairs = await sysRedis.sMembers(key);
-  return new Set(pairs);
+  const pairKey = createPairKey(entryId1, entryId2);
+  // sIsMember returns 1 if member exists, 0 if not - convert to boolean
+  const result = await sysRedis.sIsMember(key, pairKey);
+  return Boolean(result);
+}
+
+/**
+ * Check multiple pairs for voted status in parallel
+ * Uses SISMEMBER for each pair in parallel for better performance
+ */
+async function arePairsVoted(
+  crucibleId: number,
+  userId: number,
+  pairs: Array<{ entryId1: number; entryId2: number }>
+): Promise<boolean[]> {
+  const key = getVotedPairsKey(crucibleId, userId);
+  const results = await Promise.all(
+    pairs.map(async ({ entryId1, entryId2 }) => {
+      const pairKey = createPairKey(entryId1, entryId2);
+      return await sysRedis.sIsMember(key, pairKey);
+    })
+  );
+  // sIsMember returns 1 if member exists, 0 if not - convert to boolean
+  return results.map((result) => Boolean(result));
 }
 
 /**
@@ -667,9 +695,6 @@ export const getJudgingPair = async ({
     return null;
   }
 
-  // Get all pairs this user has already voted on (small set per user)
-  const votedPairs = await getVotedPairs(crucibleId, userId);
-
   // Get all ELO scores from Redis for this crucible
   // This is efficient as it's a single Redis HGETALL operation
   const redisElos = await getAllEntryElos(crucibleId);
@@ -723,8 +748,8 @@ export const getJudgingPair = async ({
       const candidateA = entries[aIdx];
       const phase = getVotingPhase(getEloDeviation(candidateA.score));
 
-      // Get candidate B pool based on phase, filtering in place
-      const candidateBPool = getCandidateBPool(entries, candidateA, phase, votedPairs);
+      // Get candidate B pool based on phase (excludes imageA, but not voted pairs yet)
+      const candidateBPool = getCandidateBPool(entries, candidateA, phase);
 
       if (candidateBPool.length === 0) {
         continue; // No valid B candidates for this A, try next A
@@ -736,12 +761,18 @@ export const getJudgingPair = async ({
         [candidateBPool[i], candidateBPool[j]] = [candidateBPool[j], candidateBPool[i]];
       }
 
-      // Find first valid B that hasn't been voted on
-      for (const candidateB of candidateBPool) {
-        const pairKey = createPairKey(candidateA.id, candidateB.id);
-        if (!votedPairs.has(pairKey)) {
+      // Batch check which pairs have been voted on using SISMEMBER (O(1) per check, parallel)
+      const pairsToCheck = candidateBPool.map((candidateB) => ({
+        entryId1: candidateA.id,
+        entryId2: candidateB.id,
+      }));
+      const votedStatuses = await arePairsVoted(crucibleId, userId, pairsToCheck);
+
+      // Find first candidate B that hasn't been voted on
+      for (let i = 0; i < candidateBPool.length; i++) {
+        if (!votedStatuses[i]) {
           imageA = candidateA;
-          imageB = candidateB;
+          imageB = candidateBPool[i];
           break;
         }
       }
@@ -785,19 +816,15 @@ function getVotingPhase(deviation: number): 'calibration' | 'discovery' | 'optim
 
 /**
  * Get candidate pool for Image B based on voting phase
+ * Note: Does NOT filter by voted pairs - that check happens asynchronously via SISMEMBER
  */
 function getCandidateBPool(
   entries: EntryForJudging[],
   imageA: EntryForJudging,
-  phase: 'calibration' | 'discovery' | 'optimization',
-  votedPairs: Set<string>
+  phase: 'calibration' | 'discovery' | 'optimization'
 ): EntryForJudging[] {
-  // Filter out Image A and already voted pairs
-  const validCandidates = entries.filter((entry) => {
-    if (entry.id === imageA.id) return false;
-    const pairKey = createPairKey(imageA.id, entry.id);
-    return !votedPairs.has(pairKey);
-  });
+  // Filter out Image A only - voted pair check happens asynchronously
+  const validCandidates = entries.filter((entry) => entry.id !== imageA.id);
 
   if (validCandidates.length === 0) return [];
 
@@ -935,11 +962,10 @@ export const submitVote = async ({
     throw throwBadRequestError('You cannot vote on your own entries');
   }
 
-  // Check if user has already voted on this pair
-  const votedPairs = await getVotedPairs(crucibleId, userId);
-  const pairKey = createPairKey(winnerEntryId, loserEntryId);
+  // Check if user has already voted on this pair using SISMEMBER (O(1) lookup)
+  const alreadyVoted = await isPairVoted(crucibleId, userId, winnerEntryId, loserEntryId);
 
-  if (votedPairs.has(pairKey)) {
+  if (alreadyVoted) {
     throw throwBadRequestError(
       'You have already voted on this pair. Please wait for the next pair to load.'
     );
@@ -948,6 +974,7 @@ export const submitVote = async ({
   // Race condition protection: Try to atomically mark the pair as voted before processing
   // Use SADD to add to the set - if it returns 0, the pair was already added by another request
   const key = getVotedPairsKey(crucibleId, userId);
+  const pairKey = createPairKey(winnerEntryId, loserEntryId);
   const addResult = await sysRedis.sAdd(key, [pairKey]);
   await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
 
