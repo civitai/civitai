@@ -121,9 +121,29 @@ Use this structure:
 |-------|----------|-------------|
 | `description` | Yes | Brief summary of the project |
 | `branchName` | Yes | Git branch to work on |
+| `type` | No | PRD type: `code` (default), `orchestrator`, `testing`, or `original` |
 | `mockups` | No | Array of HTML mockup files with paths and descriptions |
 | `designReferences` | No | Array of images/screenshots referenced in the plan |
 | `userStories` | Yes | Array of stories to implement |
+
+### PRD Types
+
+Ralph supports four PRD types:
+
+| Type | Prompt | Use Case |
+|------|--------|----------|
+| `code` | `base.md` + `code.md` | Code implementation - commits code, runs typecheck |
+| `orchestrator` | `base.md` + `orchestrator.md` | Coordinates sub-Ralphs, manages shared state |
+| `testing` | `base.md` + `testing.md` | Browser automation testing, creates reports |
+| `original` | `original.md` (standalone) | Uses the original monolithic prompt without composition |
+
+The first three types composite `base.md` with their specialized prompt. The `original` type uses the legacy monolithic prompt directly - useful if the new composite prompts cause issues.
+
+**Code (default)**: For implementing features. Commits code, runs typecheck, works on git branches.
+
+**Orchestrator**: For coordinating multiple sub-PRDs. Spawns other Ralph instances, passes data via shared state files, creates summary reports. Does NOT commit code.
+
+**Testing**: For visual comparison testing using browser automation. Takes screenshots, compares against mockups, creates markdown reports. Does NOT commit code.
 
 ### User Story Fields
 
@@ -254,6 +274,74 @@ Reference design: docs/designs/profile-figma.png
         "Typecheck passes"
       ],
       "priority": 3,
+      "passes": false
+    }
+  ]
+}
+```
+
+### Orchestrator PRD Example
+
+For coordinating multiple sub-PRDs:
+
+```json
+{
+  "description": "Master orchestrator for visual testing",
+  "branchName": "feature/testing",
+  "type": "orchestrator",
+  "context": {
+    "sharedStateFile": ".claude/skills/ralph/projects/my-testing/shared-state.json",
+    "subProjects": {
+      "setup": ".claude/skills/ralph/projects/test-setup/prd.json",
+      "verify": ".claude/skills/ralph/projects/test-verify/prd.json"
+    }
+  },
+  "userStories": [
+    {
+      "id": "US001",
+      "title": "Run setup tests first",
+      "description": "As an orchestrator, I want to run setup tests first since they create test data",
+      "acceptanceCriteria": [
+        "Run: node .claude/skills/ralph/ralph.mjs --prd .claude/skills/ralph/projects/test-setup/prd.json",
+        "Wait for completion",
+        "Verify shared state contains expected outputs"
+      ],
+      "priority": 1,
+      "passes": false
+    }
+  ]
+}
+```
+
+### Testing PRD Example
+
+For browser automation visual testing:
+
+```json
+{
+  "description": "Compare login page against mockup",
+  "branchName": "feature/login",
+  "type": "testing",
+  "mockups": [
+    {
+      "path": "docs/mockups/login.html",
+      "description": "Login page mockup"
+    }
+  ],
+  "userStories": [
+    {
+      "id": "US001",
+      "title": "Compare login page against mockup",
+      "description": "As a tester, I want to compare the live login page against the mockup",
+      "acceptanceCriteria": [
+        "Browser session created: curl -X POST http://localhost:9222/sessions -d '{\"name\": \"login-test\", \"url\": \"file:///path/to/mockup.html\", \"profile\": \"my-profile\"}'",
+        "Full-page screenshot of mockup taken and read",
+        "Navigate to live page and screenshot",
+        "Comparison report created at docs/reports/login-findings.md",
+        "Browser session closed"
+      ],
+      "mockupRef": "login.html",
+      "priority": 1,
       "passes": false
     }
   ]
@@ -496,11 +584,25 @@ node .claude/skills/ralph/ralph.mjs --prd .claude/skills/ralph/projects/<project
 | File | Purpose |
 |------|---------|
 | `.claude/skills/ralph/ralph.mjs` | Main loop script |
-| `.claude/skills/ralph/prompt.md` | Instructions for each iteration |
+| `.claude/skills/ralph/prompts/base.md` | Core instructions shared by composite PRD types |
+| `.claude/skills/ralph/prompts/code.md` | Additional instructions for code PRDs |
+| `.claude/skills/ralph/prompts/orchestrator.md` | Additional instructions for orchestrator PRDs |
+| `.claude/skills/ralph/prompts/testing.md` | Additional instructions for testing PRDs |
+| `.claude/skills/ralph/prompts/original.md` | Legacy monolithic prompt (for `type: "original"`) |
 | `.claude/skills/ralph/projects/<name>/prd.json` | Project PRD (you create this) |
 | `.claude/skills/ralph/projects/<name>/progress.txt` | Auto-generated progress log |
 
 The `projects/` folder is gitignored - PRDs are temporary working files.
+
+### Prompt Composition
+
+Ralph composites prompts at runtime:
+1. Loads `base.md` (core task loop, progress format, completion signal)
+2. Loads the specialized prompt based on PRD `type` field
+3. Injects actual paths (`{{PRD_PATH}}`, `{{PROGRESS_PATH}}`) from the `--prd` flag
+4. Concatenates them into the final agent prompt
+
+This allows shared concepts to live in one place while specialized behavior is modular.
 
 ---
 
