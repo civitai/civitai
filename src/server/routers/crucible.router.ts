@@ -3,8 +3,14 @@ import {
   getCruciblesInfiniteSchema,
   getCrucibleByIdSchema,
   createCrucibleInputSchema,
+  submitEntrySchema,
 } from '~/server/schema/crucible.schema';
-import { createCrucible, getCrucible, getCrucibles } from '~/server/services/crucible.service';
+import {
+  createCrucible,
+  getCrucible,
+  getCrucibles,
+  submitEntry,
+} from '~/server/services/crucible.service';
 import { Prisma } from '@prisma/client';
 
 // Select for infinite list - includes essential fields for cards
@@ -164,5 +170,17 @@ export const crucibleRouter = router({
       });
 
       return crucible;
+    }),
+
+  submitEntry: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(submitEntrySchema)
+    .mutation(async ({ ctx, input }) => {
+      const entry = await submitEntry({
+        ...input,
+        userId: ctx.user.id,
+      });
+
+      return entry;
     }),
 });
