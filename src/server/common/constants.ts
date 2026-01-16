@@ -550,6 +550,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
+  LTXV2: baseLicenses['ltxv license'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],

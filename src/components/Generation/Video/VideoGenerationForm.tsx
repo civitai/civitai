@@ -29,6 +29,7 @@ import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput
 import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
 import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
 import { LightricksFormInput } from '~/components/Generation/Video/LightricksFormInput';
+import { Ltx2FormInput } from '~/components/Generation/Video/Ltx2FormInput';
 import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
@@ -305,5 +306,6 @@ const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
   haiper: HaiperFormInput,
   mochi: MochiFormInput,
   lightricks: LightricksFormInput,
+  ltx2: Ltx2FormInput,
   sora: SoraFormInput,
 };
