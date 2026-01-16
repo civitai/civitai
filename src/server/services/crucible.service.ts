@@ -10,6 +10,7 @@ import {
   throwInsufficientFundsError,
 } from '~/server/utils/errorHandling';
 import {
+  createBuzzTransactionMany,
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
@@ -825,6 +826,19 @@ export type FinalizeCrucibleResult = {
 };
 
 /**
+ * Get ordinal suffix for a position (1st, 2nd, 3rd, etc.)
+ */
+function getOrdinalPosition(position: number): string {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const remainder = position % 100;
+  const suffix =
+    remainder >= 11 && remainder <= 13
+      ? 'th'
+      : suffixes[Math.min(position % 10, 4)] || 'th';
+  return `${position}${suffix}`;
+}
+
+/**
  * Parse prize positions JSON from database
  */
 function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
@@ -973,6 +987,47 @@ export const finalizeCrucible = async (
       },
     });
   });
+
+  // Distribute prizes to winners
+  // Filter entries that have a prize amount > 0
+  const prizeWinners = finalizedEntries.filter((entry) => entry.prizeAmount > 0);
+
+  if (prizeWinners.length > 0) {
+    // Build transactions for prize distribution
+    // Transfer from central bank (account 0) to each winner's yellow account
+    const prizeTransactions = prizeWinners.map((winner) => ({
+      fromAccountId: 0, // Central bank
+      fromAccountType: 'yellow' as const,
+      toAccountId: winner.userId,
+      toAccountType: 'yellow' as const,
+      amount: winner.prizeAmount,
+      type: TransactionType.Reward,
+      description: `Crucible prize - ${getOrdinalPosition(winner.position)} place`,
+      details: {
+        entityId: crucibleId,
+        entityType: 'Crucible',
+        position: winner.position,
+      },
+      externalTransactionId: `crucible-prize-${crucibleId}-${winner.entryId}-${winner.position}`,
+    }));
+
+    try {
+      // Execute all prize transactions in a single batch
+      const result = await createBuzzTransactionMany(prizeTransactions);
+      log(
+        `Distributed prizes for crucible ${crucibleId}: ${prizeWinners.length} winners, ${result.transactions.length} transactions`
+      );
+    } catch (error) {
+      // Log the error but don't fail finalization - prizes can be manually distributed
+      log(
+        `Failed to distribute prizes for crucible ${crucibleId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+      // Re-throw to ensure the finalization job knows about the failure
+      throw error;
+    }
+  } else {
+    log(`No prizes to distribute for crucible ${crucibleId} (no winners or 0 prize pool)`);
+  }
 
   // Set TTL on Redis ELO hash for cleanup (7 days)
   // This keeps data available for a while in case of issues
