@@ -6,7 +6,6 @@ import {
   Button,
   Collapse,
   Group,
-  Paper,
   Stack,
   Text,
   ThemeIcon,
@@ -27,7 +26,6 @@ import {
   IconSettings,
 } from '@tabler/icons-react';
 import { useMemo, useState, useEffect } from 'react';
-import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, type GroupedFileVariants } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
