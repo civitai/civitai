@@ -46,6 +46,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { formatDate } from '~/utils/date-helpers';
 import type { Prisma } from '@prisma/client';
+import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -202,7 +203,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     leftSection={<IconUpload size={16} />}
                     className="mb-4"
                     onClick={() => {
-                      // TODO: Open submit entry modal (US-024)
+                      openCrucibleSubmitEntryModal({
+                        crucibleId: crucible.id,
+                        crucibleName: crucible.name,
+                        entryFee: crucible.entryFee,
+                        entryLimit: maxUserEntries,
+                        nsfwLevel: crucible.nsfwLevel,
+                        currentEntryCount: userEntryCount,
+                      });
                     }}
                     disabled={!currentUser}
                   >
