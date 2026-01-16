@@ -26,6 +26,7 @@ import type {
   SubmitVoteSchema,
   CancelCrucibleSchema,
 } from '../schema/crucible.schema';
+import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getEntryElo, CRUCIBLE_DEFAULT_ELO, processVote as processEloVote, getAllEntryElos } from './crucible-elo.service';
@@ -37,6 +38,14 @@ import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
 
 const log = createLogger('crucible-service', 'cyan');
+
+/**
+ * Generate a unique transaction prefix for crucible setup fees
+ * This prefix is used to identify and refund transactions if needed
+ */
+export const getCrucibleSetupTransactionPrefix = (userId: number): string => {
+  return `crucible-setup-${userId}-${Date.now()}`;
+};
 
 /**
  * Create a new crucible
@@ -51,6 +60,7 @@ export const createCrucible = async ({
   entryLimit,
   maxTotalEntries,
   prizePositions,
+  prizeCustomized,
   allowedResources,
   judgeRequirements,
   duration,
@@ -58,6 +68,50 @@ export const createCrucible = async ({
   const now = new Date();
   const startAt = now;
   const endAt = dayjs(now).add(duration, 'hours').toDate();
+
+  // Calculate setup cost based on duration and prize customization
+  const setupCost = calculateCrucibleSetupCost(duration, prizeCustomized ?? false);
+
+  // If there's a setup cost, validate user has sufficient Buzz and charge them
+  let buzzTransactionId: string | null = null;
+
+  if (setupCost > 0) {
+    // Check if user has sufficient Buzz
+    const userAccount = await getUserBuzzAccount({
+      accountId: userId,
+      accountTypes: ['yellow', 'green'],
+    });
+    const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
+
+    if (totalBalance < setupCost) {
+      const shortage = setupCost - totalBalance;
+      throwInsufficientFundsError(
+        `You need ${setupCost.toLocaleString()} Buzz to create this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
+      );
+    }
+
+    // Generate transaction prefix for potential refunds
+    const transactionPrefix = getCrucibleSetupTransactionPrefix(userId);
+
+    // Charge setup fee by transferring from user's yellow/green Buzz to central bank (account 0)
+    await createMultiAccountBuzzTransaction({
+      fromAccountId: userId,
+      fromAccountTypes: ['yellow', 'green'], // Allow both yellow and green Buzz
+      toAccountId: 0, // Central bank
+      amount: setupCost,
+      type: TransactionType.Fee,
+      externalTransactionIdPrefix: transactionPrefix,
+      description: 'Crucible creation fee',
+      details: {
+        entityType: 'Crucible',
+        duration,
+        prizeCustomized: prizeCustomized ?? false,
+      },
+    });
+
+    buzzTransactionId = transactionPrefix;
+    log(`Charged ${setupCost} Buzz setup fee for user ${userId} (transaction: ${transactionPrefix})`);
+  }
 
   // Create the crucible with cover image in a transaction
   const crucible = await dbWrite.$transaction(async (tx) => {
@@ -96,6 +150,7 @@ export const createCrucible = async ({
         startAt,
         endAt,
         status: CrucibleStatus.Active,
+        buzzTransactionId, // Store the setup fee transaction ID for potential refunds
       },
     });
 
