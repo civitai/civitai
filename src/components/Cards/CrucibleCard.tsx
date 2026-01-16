@@ -1,4 +1,4 @@
-import { Badge, Text } from '@mantine/core';
+import { Badge, Skeleton, Text } from '@mantine/core';
 import { IconClockHour4 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
@@ -191,5 +191,54 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
         </div>
       }
     />
+  );
+}
+
+/**
+ * Skeleton loader for CrucibleCard
+ * Matches the card dimensions and layout while data is loading
+ */
+export function CrucibleCardSkeleton() {
+  return (
+    <div
+      className="relative overflow-hidden rounded-lg bg-dark-6"
+      style={{ aspectRatio: '7/9' }}
+    >
+      {/* Background skeleton */}
+      <Skeleton height="100%" width="100%" radius={0} />
+
+      {/* Header - status badge */}
+      <div className="absolute left-0 top-0 flex w-full justify-end p-2">
+        <Skeleton height={26} width={70} radius="xl" />
+      </div>
+
+      {/* Footer */}
+      <div
+        className="absolute bottom-0 left-0 w-full p-2"
+        style={{
+          background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
+        }}
+      >
+        <div className="flex flex-col gap-2">
+          {/* User avatar */}
+          <div className="flex items-center gap-2">
+            <Skeleton height={24} width={24} circle />
+            <Skeleton height={12} width={80} />
+          </div>
+
+          {/* Name */}
+          <Skeleton height={24} width="80%" />
+
+          {/* Prize pool and countdown */}
+          <div className="flex items-center justify-between gap-2">
+            <Skeleton height={26} width={80} radius="xl" />
+            <Skeleton height={26} width={70} radius="xl" />
+          </div>
+
+          {/* Entry count */}
+          <Skeleton height={22} width={70} radius="xl" />
+        </div>
+      </div>
+    </div>
   );
 }
