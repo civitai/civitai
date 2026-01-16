@@ -75,11 +75,10 @@ export default function LinkComponentModal({
   } | null>(null);
 
   // Fetch model versions when model is selected
-  const { data: versionData, isLoading: versionsLoading } =
-    trpc.modelVersion.getById.useQuery(
-      { id: selectedVersion?.id ?? 0, withFiles: true },
-      { enabled: !!selectedVersion?.id }
-    );
+  const { data: versionData, isLoading: versionsLoading } = trpc.modelVersion.getById.useQuery(
+    { id: selectedVersion?.id ?? 0, withFiles: true },
+    { enabled: !!selectedVersion?.id }
+  );
 
   // Get files from version data - filter to relevant file types based on component type
   const files =
@@ -321,7 +320,11 @@ export default function LinkComponentModal({
               Cancel
             </Button>
             {active === 3 && (
-              <Button onClick={handleSave} disabled={!canSave} leftSection={<IconPuzzle size={16} />}>
+              <Button
+                onClick={handleSave}
+                disabled={!canSave}
+                leftSection={<IconPuzzle size={16} />}
+              >
                 Link Component
               </Button>
             )}
@@ -356,7 +359,11 @@ function VersionSelector({
   const versions = model?.modelVersions ?? [];
 
   if (versions.length === 0) {
-    return <Text size="sm" c="dimmed">No versions found for this model.</Text>;
+    return (
+      <Text size="sm" c="dimmed">
+        No versions found for this model.
+      </Text>
+    );
   }
 
   return (

@@ -214,8 +214,8 @@ export function DownloadVariantDropdown({
           borderColor: opened
             ? theme.colors.blue[5]
             : colorScheme === 'dark'
-              ? theme.colors.dark[4]
-              : theme.colors.gray[3],
+            ? theme.colors.dark[4]
+            : theme.colors.gray[3],
         }}
         onClick={toggle}
       >
@@ -300,7 +300,9 @@ export function DownloadVariantDropdown({
               style={{
                 borderTop:
                   groupedFiles.safeTensorVariants.length > 0
-                    ? `1px solid ${colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]}`
+                    ? `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`
                     : undefined,
               }}
             >
@@ -333,9 +335,10 @@ export function DownloadVariantDropdown({
             <Box
               style={{
                 borderTop:
-                  groupedFiles.safeTensorVariants.length > 0 ||
-                  groupedFiles.ggufVariants.length > 0
-                    ? `1px solid ${colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]}`
+                  groupedFiles.safeTensorVariants.length > 0 || groupedFiles.ggufVariants.length > 0
+                    ? `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`
                     : undefined,
               }}
             >
@@ -412,8 +415,8 @@ function VariantItem({
         backgroundColor: isSelected
           ? 'rgba(34, 139, 230, 0.15)'
           : colorScheme === 'dark'
-            ? 'transparent'
-            : 'transparent',
+          ? 'transparent'
+          : 'transparent',
         transition: 'background-color 100ms',
         ':hover': {
           backgroundColor: colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
@@ -423,9 +426,7 @@ function VariantItem({
     >
       <Group justify="space-between" wrap="nowrap">
         <Group gap="sm" wrap="nowrap">
-          <Box w={16}>
-            {isSelected && <IconCheck size={16} color={theme.colors.green[5]} />}
-          </Box>
+          <Box w={16}>{isSelected && <IconCheck size={16} color={theme.colors.green[5]} />}</Box>
           <Box>
             <Group gap={6} wrap="nowrap">
               <Text size="sm" fw={500}>
