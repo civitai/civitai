@@ -1856,7 +1856,7 @@ export const getAllImagesIndex = async (
     };
   });
 
-  // Pass through keyset cursor directly (already in sortAtUnix:id format)
+  // Pass through keyset cursor directly (already in value|id format, where value is sortAtUnix or a metric count)
   let nextCursor: string | undefined;
   if (searchNextCursor) {
     nextCursor = searchNextCursor;
@@ -1911,7 +1911,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
-  cursorSortAt?: number; // Keyset pagination: sortAtUnix of last item
+  cursorSortAt?: number; // Keyset pagination: value of the active sort field (metric count or sortAtUnix) for the last item
   cursorId?: number; // Keyset pagination: id of last item
   blockedFor?: string[];
   // Unhandled
@@ -2392,14 +2392,18 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   sorts.push(makeMeiliImageSearchSort('id', isAscending ? 'asc' : 'desc'));
 
   // Keyset pagination filter: get items "after" the cursor position
+  // NOTE: We use >= / <= (not > / <) for the id comparison because:
+  // - We fetch limit+1 items, then pop the EXTRA item to use as cursor
+  // - The cursor item was NOT returned to the client on the previous page
+  // - Therefore, the next page must INCLUDE the cursor item (it's the first item of the next page)
   if (cursorSortAt !== undefined && cursorId !== undefined) {
     if (isAscending) {
-      // Ascending: get items AFTER cursor (higher value, or same with higher id)
+      // Ascending: get items starting from cursor (same or higher value)
       filters.push(
         `(${primarySortField} > ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id >= ${cursorId}))`
       );
     } else {
-      // Descending: get items BEFORE cursor (lower value, or same with lower id)
+      // Descending: get items starting from cursor (same or lower value)
       filters.push(
         `(${primarySortField} < ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id <= ${cursorId}))`
       );
@@ -2945,14 +2949,18 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   sorts.push(makeMeiliImageSearchSort('id', isAscending ? 'asc' : 'desc'));
 
   // Keyset pagination filter: get items "after" the cursor position
+  // NOTE: We use >= / <= (not > / <) for the id comparison because:
+  // - We fetch limit+1 items, then pop the EXTRA item to use as cursor
+  // - The cursor item was NOT returned to the client on the previous page
+  // - Therefore, the next page must INCLUDE the cursor item (it's the first item of the next page)
   if (cursorSortAt !== undefined && cursorId !== undefined) {
     if (isAscending) {
-      // Ascending: get items AFTER cursor (higher value, or same with higher id)
+      // Ascending: get items starting from cursor (same or higher value)
       filters.push(
         `(${primarySortField} > ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id >= ${cursorId}))`
       );
     } else {
-      // Descending: get items BEFORE cursor (lower value, or same with lower id)
+      // Descending: get items starting from cursor (same or lower value)
       filters.push(
         `(${primarySortField} < ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id <= ${cursorId}))`
       );
@@ -2964,14 +2972,24 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   requestTotal.inc({ route }); // count every request up front
 
   // Iterative fetching with adaptive batch sizing to handle post-filtering
+  // -------------------------------------------------------------------------
+  // PAGINATION STRATEGY (hybrid approach):
+  // - Cross-request pagination: Uses KEYSET filter (sortValue|id cursor from client)
+  //   The keyset filter above positions us at the correct starting point for this page.
+  // - Within-request batching: Uses OFFSET to iterate through the keyset-filtered results
+  //   Post-filtering can reject many items, so we fetch multiple batches to accumulate
+  //   enough results for a single page. Offset is safe here because:
+  //   1. It resets to 0 for each new request (keyset filter handles cross-request position)
+  //   2. Within-request execution is fast, items won't change between batches
+  //   3. The final cursor returned to client is based on last item's keyset values, not offset
+  // -------------------------------------------------------------------------
   const MAX_ITERATIONS = 10;
   const MAX_TOTAL_PROCESSED = limit * 100; // Safety limit to prevent excessive processing
   const MIN_BATCH_SIZE = limit * 2;
   const MAX_BATCH_SIZE = limit * 10;
 
   const accumulatedHits: ImageMetricsSearchIndexRecord[] = [];
-  // Keyset pagination: always start from 0, the keyset filter handles position
-  let currentOffset = 0;
+  let currentOffset = 0; // Resets each request; keyset filter handles cross-request position
   let batchSize = MIN_BATCH_SIZE;
   let iteration = 0;
   let totalProcessed = 0;
@@ -3044,7 +3062,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         batchSize = Math.min(Math.ceil(batchSize * 1.5), MAX_BATCH_SIZE);
       }
 
-      // Update tracking variables
+      // Update tracking variables (offset is for within-request batching only)
       currentOffset += results.length;
       totalProcessed += results.length;
       iteration++;
@@ -3055,7 +3073,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       }
     }
 
-    // Update nextCursor based on whether we have more results than requested
+    // Build KEYSET cursor for cross-request pagination (not offset-based)
+    // The cursor contains the last item's sort value and id, enabling stable pagination
     if (accumulatedHits.length > limit) {
       // We have more results, so there's a next page
       // Use the LAST item that will be returned (item at index limit-1) as the cursor
