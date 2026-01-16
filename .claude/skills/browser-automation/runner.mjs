@@ -26,11 +26,11 @@
  *   --inspect <url>                    One-shot page inspection
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { inspectUrl } from './lib/inspector.mjs';
-import { startExploreRepl, runFlow, listFlows } from './lib/session.mjs';
+import { startExploreRepl, runFlow, listFlows, listProfiles } from './lib/session.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +51,8 @@ function parseArgs() {
     // Options
     headless: process.env.BROWSER_HEADLESS === 'true',
     timeout: parseInt(process.env.BROWSER_TIMEOUT || '30000', 10),
+    profile: null, // Named profile for persistent auth
+    listProfiles: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -80,6 +82,13 @@ function parseArgs() {
         break;
       case '--timeout':
         config.timeout = parseInt(args[++i], 10);
+        break;
+      case '--profile':
+      case '-p':
+        config.profile = args[++i];
+        break;
+      case '--list-profiles':
+        config.listProfiles = true;
         break;
       case '--help':
       case '-h':
@@ -142,7 +151,20 @@ OPTIONS:
 
   --headless        Run browser without visible window
   --timeout <ms>    Default timeout for actions (default: 30000)
+  --profile, -p     Named profile for persistent auth (cookies/localStorage)
+  --list-profiles   List saved auth profiles
   --help, -h        Show this help
+
+AUTHENTICATION PERSISTENCE:
+
+  Save login state to reuse across sessions:
+    node runner.mjs --explore https://civitai.com --profile civitai-dev
+
+  During session, use save-auth command to persist current auth:
+    {"cmd": "save-auth"}
+
+  Future sessions with same profile auto-load saved auth.
+  Profiles stored in .browser/profiles/
 
 EXAMPLE WORKFLOW:
 
@@ -168,9 +190,29 @@ EXAMPLE WORKFLOW:
 async function main() {
   const config = parseArgs();
 
+  // === LIST PROFILES ===
+  if (config.listProfiles) {
+    const profiles = listProfiles();
+    console.log('\n=== SAVED AUTH PROFILES ===\n');
+    if (profiles.length === 0) {
+      console.log('  No profiles saved yet.');
+      console.log('  Use --profile <name> with --explore to create one.');
+    } else {
+      for (const p of profiles) {
+        console.log(`  ${p.name}`);
+        console.log(`    Path: ${p.path}`);
+        console.log();
+      }
+    }
+    return;
+  }
+
   // === REPL EXPLORATION ===
   if (config.explore) {
-    await startExploreRepl(config.explore, { headless: config.headless });
+    await startExploreRepl(config.explore, {
+      headless: config.headless,
+      profile: config.profile,
+    });
     return;
   }
 
@@ -179,7 +221,11 @@ async function main() {
   if (config.runFlow) {
     console.log(`Running flow: ${config.runFlow}`);
     try {
-      const result = await runFlow(config.runFlow, { headless: config.headless, timeout: config.timeout });
+      const result = await runFlow(config.runFlow, {
+        headless: config.headless,
+        timeout: config.timeout,
+        profile: config.profile,
+      });
       console.log('\n--- FLOW RESULT ---');
       console.log(JSON.stringify(result, null, 2));
       process.exit(result.status === 'passed' ? 0 : 1);

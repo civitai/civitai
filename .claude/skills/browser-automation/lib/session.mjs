@@ -17,11 +17,27 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '../../../..');
 const sessionsDir = resolve(projectRoot, '.browser/sessions');
 const flowsDir = resolve(projectRoot, '.browser/flows');
+const profilesDir = resolve(projectRoot, '.browser/profiles');
 
 // Ensure directories exist
 function ensureDirs() {
   if (!existsSync(sessionsDir)) mkdirSync(sessionsDir, { recursive: true });
   if (!existsSync(flowsDir)) mkdirSync(flowsDir, { recursive: true });
+  if (!existsSync(profilesDir)) mkdirSync(profilesDir, { recursive: true });
+}
+
+/**
+ * Get profile file path
+ */
+function getProfilePath(profileName) {
+  return resolve(profilesDir, `${profileName}.json`);
+}
+
+/**
+ * Check if profile exists
+ */
+function profileExists(profileName) {
+  return existsSync(getProfilePath(profileName));
 }
 
 /**
@@ -127,19 +143,37 @@ export async function startExploreRepl(url, options = {}) {
 
   const sessionId = generateSessionId();
   const headless = options.headless ?? false;
+  const profileName = options.profile || null;
 
   // Create session directories
   ensureSessionDirs(sessionId);
 
   console.error(`Starting exploration session: ${sessionId}`);
   console.error(`Session folder: ${getSessionDir(sessionId)}`);
+  if (profileName) {
+    console.error(`Using profile: ${profileName}`);
+    if (profileExists(profileName)) {
+      console.error(`  (loading saved auth)`);
+    } else {
+      console.error(`  (new profile - use {"cmd": "save-auth"} to save)`);
+    }
+  }
   console.error(`Opening: ${url}`);
 
   // Launch browser
   const browser = await chromium.launch({ headless });
-  const context = await browser.newContext({
+
+  // Context options - include storageState if profile exists
+  const contextOptions = {
     viewport: { width: 1280, height: 720 },
-  });
+  };
+
+  // Load profile if it exists
+  if (profileName && profileExists(profileName)) {
+    contextOptions.storageState = getProfilePath(profileName);
+  }
+
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   page.setDefaultTimeout(30000);
 
@@ -394,7 +428,44 @@ export async function startExploreRepl(url, options = {}) {
           break;
         }
 
+        case 'save-auth': {
+          // Save current browser auth state to profile
+          if (!profileName) {
+            outputJson({
+              type: 'error',
+              message: 'No profile specified. Start session with --profile <name> to use auth persistence.',
+            });
+            break;
+          }
+
+          try {
+            const profilePath = getProfilePath(profileName);
+            await context.storageState({ path: profilePath });
+            outputJson({
+              type: 'auth_saved',
+              profile: profileName,
+              path: profilePath,
+            });
+          } catch (saveError) {
+            outputJson({
+              type: 'error',
+              message: `Failed to save auth: ${saveError.message}`,
+            });
+          }
+          break;
+        }
+
         case 'exit': {
+          // Auto-save auth on exit if using a profile
+          if (profileName) {
+            try {
+              const profilePath = getProfilePath(profileName);
+              await context.storageState({ path: profilePath });
+              console.error(`Auth saved to profile: ${profileName}`);
+            } catch (e) {
+              console.error(`Warning: Failed to save auth on exit: ${e.message}`);
+            }
+          }
           outputJson({ type: 'session_ended', sessionId, totalChunks: chunks.length });
           await browser.close();
           process.exit(0);
@@ -423,6 +494,8 @@ function outputJson(obj) {
  * Run a saved flow
  */
 export async function runFlow(flowName, options = {}) {
+  ensureDirs();
+
   const flowPath = resolve(flowsDir, `${flowName}.js`);
 
   if (!existsSync(flowPath)) {
@@ -430,6 +503,7 @@ export async function runFlow(flowName, options = {}) {
   }
 
   const script = readFileSync(flowPath, 'utf-8');
+  const profileName = options.profile || null;
 
   // Extract start URL from script comments
   const urlMatch = script.match(/Start URL: (.+)/);
@@ -444,9 +518,16 @@ export async function runFlow(flowName, options = {}) {
     headless: options.headless ?? false,
   });
 
-  const context = await browser.newContext({
+  // Context options - include storageState if profile exists
+  const contextOptions = {
     viewport: { width: 1280, height: 720 },
-  });
+  };
+
+  if (profileName && profileExists(profileName)) {
+    contextOptions.storageState = getProfilePath(profileName);
+  }
+
+  const context = await browser.newContext(contextOptions);
 
   const page = await context.newPage();
   page.setDefaultTimeout(options.timeout || 30000);
@@ -512,4 +593,20 @@ function listFlowsInternal() {
  */
 export function listFlows() {
   return listFlowsInternal();
+}
+
+/**
+ * List all saved auth profiles
+ */
+export function listProfiles() {
+  ensureDirs();
+  const files = readdirSync(profilesDir).filter(f => f.endsWith('.json'));
+
+  return files.map(f => {
+    const name = f.replace('.json', '');
+    return {
+      name,
+      path: resolve(profilesDir, f),
+    };
+  });
 }

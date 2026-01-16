@@ -98,7 +98,8 @@ Returns all recorded chunks:
 | `{"cmd": "flow", "name": "..."}` | Run a saved flow as a chunk |
 | `{"cmd": "review"}` | Show all recorded chunks |
 | `{"cmd": "save", "name": "...", "keep": [1,2,3]}` | Save selected chunks as a flow |
-| `{"cmd": "exit"}` | Close browser and end session |
+| `{"cmd": "save-auth"}` | Save current browser auth (cookies, localStorage) to profile |
+| `{"cmd": "exit"}` | Close browser and end session (auto-saves auth if using profile) |
 
 ## Writing Playwright Code
 
@@ -170,17 +171,62 @@ For quick page inspection without a full session:
 node runner.mjs --inspect https://example.com
 ```
 
+## Authentication Persistence
+
+Persist login sessions across browser sessions using profiles:
+
+### Create a Profile and Login
+```bash
+# Start with a profile name
+node runner.mjs --explore https://civitai.com --profile civitai-dev
+```
+
+### During Session - Login Manually
+Navigate to login, enter credentials, complete auth. Then save:
+```json
+{"cmd": "save-auth"}
+```
+
+### Exit Saves Automatically
+When using `--profile`, auth is auto-saved on exit:
+```json
+{"cmd": "exit"}
+```
+
+### Reuse Auth in Future Sessions
+```bash
+# Same profile name loads saved cookies/localStorage
+node runner.mjs --explore https://civitai.com --profile civitai-dev
+```
+
+### Run Flows with Auth
+```bash
+node runner.mjs --run-flow my-flow --profile civitai-dev
+```
+
+### List Profiles
+```bash
+node runner.mjs --list-profiles
+```
+
+Profiles are stored in `.browser/profiles/`.
+
 ## CLI Reference
 
 ```bash
 # Exploration (interactive REPL)
 node runner.mjs --explore <url>
+node runner.mjs --explore <url> --profile <name>
 
 # Run saved flow
 node runner.mjs --run-flow <name>
+node runner.mjs --run-flow <name> --profile <name>
 
 # List flows
 node runner.mjs --list-flows
+
+# List auth profiles
+node runner.mjs --list-profiles
 
 # One-shot inspect
 node runner.mjs --inspect <url>
@@ -188,11 +234,13 @@ node runner.mjs --inspect <url>
 # Options
 --headless        Run browser without visible window
 --timeout <ms>    Default timeout (default: 30000)
+--profile, -p     Named profile for persistent auth
 ```
 
 ## File Locations
 
 - **Saved flows**: `.browser/flows/*.js`
+- **Auth profiles**: `.browser/profiles/*.json` (cookies, localStorage, sessionStorage)
 - **Session folders**: `.browser/sessions/{session-id}/`
   - `session.json` - Session metadata
   - `screenshots/` - All screenshots from the session
