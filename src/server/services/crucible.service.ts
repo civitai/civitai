@@ -33,6 +33,8 @@ import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
 import { shuffle } from '~/utils/array-helpers';
 import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
 
 const log = createLogger('crucible-service', 'cyan');
 
@@ -205,6 +207,8 @@ export const submitEntry = async ({
     where: { id: crucibleId },
     select: {
       id: true,
+      name: true,
+      userId: true, // Crucible creator for notification
       status: true,
       nsfwLevel: true,
       entryFee: true,
@@ -350,8 +354,31 @@ export const submitEntry = async ({
       position: true,
       buzzTransactionId: true,
       createdAt: true,
+      user: {
+        select: {
+          username: true,
+        },
+      },
     },
   });
+
+  // Send notification to crucible creator (don't notify if creator is submitting to their own crucible)
+  if (crucible.userId !== userId) {
+    // Fire-and-forget notification
+    createNotification({
+      userId: crucible.userId,
+      type: 'crucible-entry-submitted',
+      category: NotificationCategory.Crucible,
+      key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
+      details: {
+        crucibleId,
+        crucibleName: crucible.name,
+        entrantUsername: entry.user.username ?? 'Anonymous',
+      },
+    }).catch((err) => {
+      log(`Failed to send entry notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    });
+  }
 
   return entry;
 };
@@ -885,6 +912,8 @@ export const finalizeCrucible = async (
     where: { id: crucibleId },
     select: {
       id: true,
+      name: true,
+      userId: true, // Crucible creator for notification
       status: true,
       entryFee: true,
       prizePositions: true,
@@ -1037,6 +1066,56 @@ export const finalizeCrucible = async (
   await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
 
   log(`Finalized crucible ${crucibleId}: ${finalizedEntries.length} entries, ${totalPrizesDistributed} Buzz in prizes`);
+
+  // Send notifications (fire-and-forget, don't block finalization)
+
+  // 1. Send 'crucible-ended' notification to the crucible creator
+  createNotification({
+    userId: crucible.userId,
+    type: 'crucible-ended',
+    category: NotificationCategory.Crucible,
+    key: `crucible-ended:${crucibleId}`,
+    details: {
+      crucibleId,
+      crucibleName: crucible.name,
+      totalEntries: finalizedEntries.length,
+      prizePool: totalPrizePool,
+    },
+  }).catch((err) => {
+    log(`Failed to send crucible-ended notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  });
+
+  // 2. Send 'crucible-won' notifications to all participants with their final position
+  // Group entries by userId to avoid duplicate notifications (one per user, not per entry)
+  const userResults = new Map<number, FinalizedEntry>();
+  for (const entry of finalizedEntries) {
+    const existing = userResults.get(entry.userId);
+    // Keep the best entry (lowest position = better rank)
+    if (!existing || entry.position < existing.position) {
+      userResults.set(entry.userId, entry);
+    }
+  }
+
+  // Send notifications for each unique participant
+  for (const [participantUserId, bestEntry] of userResults) {
+    // Skip notifying the crucible creator about their own entries (they already got crucible-ended)
+    if (participantUserId === crucible.userId) continue;
+
+    createNotification({
+      userId: participantUserId,
+      type: 'crucible-won',
+      category: NotificationCategory.Crucible,
+      key: `crucible-won:${crucibleId}:${participantUserId}`,
+      details: {
+        crucibleId,
+        crucibleName: crucible.name,
+        position: bestEntry.position,
+        prizeAmount: bestEntry.prizeAmount,
+      },
+    }).catch((err) => {
+      log(`Failed to send crucible-won notification to user ${participantUserId}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    });
+  }
 
   return {
     crucibleId,
