@@ -288,6 +288,7 @@ export enum NotificationCategory {
   Buzz = 'Buzz',
   Creator = 'Creator',
   System = 'System',
+  Crucible = 'Crucible',
   Other = 'Other',
 }
 
