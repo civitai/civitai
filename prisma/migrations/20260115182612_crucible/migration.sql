@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS "Crucible" (
     "startAt" TIMESTAMP(3),
     "endAt" TIMESTAMP(3),
     "status" "CrucibleStatus" NOT NULL DEFAULT 'Pending',
+    "buzzTransactionId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -32,7 +33,9 @@ CREATE TABLE IF NOT EXISTS "CrucibleEntry" (
     "userId" INTEGER NOT NULL,
     "imageId" INTEGER NOT NULL,
     "score" INTEGER NOT NULL DEFAULT 1500,
+    "voteCount" INTEGER NOT NULL DEFAULT 0,
     "position" INTEGER,
+    "buzzTransactionId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "CrucibleEntry_pkey" PRIMARY KEY ("id")
