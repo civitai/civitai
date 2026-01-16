@@ -388,7 +388,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 state[index] = { ...state[index], id: saved.id, isUploading: false };
                 return [...state];
               });
-            } catch (e: unknown) {}
+            } catch (e: unknown) {
+              showErrorNotification({
+                title: 'Failed to save file',
+                error: e as Error,
+              });
+            }
           }
         }
       );
