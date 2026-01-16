@@ -501,7 +501,14 @@ export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   const conflictCount: Record<string, number> = {};
 
   files.forEach((item) => {
-    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
+    const key = [
+      item.size,
+      item.type,
+      item.fp,
+      getModelFileFormat(item.name),
+      item.quantType,
+      item.componentType,
+    ]
       .filter(Boolean)
       .join('-');
     if (conflictCount[key]) conflictCount[key] += 1;
