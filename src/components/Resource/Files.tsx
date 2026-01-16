@@ -32,7 +32,7 @@ import {
   IconFileSettings,
 } from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
-import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
+import { useContainerPosition, usePositioner } from 'masonic';
 import { useRef, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -70,8 +70,8 @@ export function Files() {
 
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
-  const { offset, width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
-  const positioner = usePositioner(
+  const { width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
+  usePositioner(
     {
       width: containerWidth,
       maxColumnCount: 2,
@@ -79,7 +79,6 @@ export function Files() {
     },
     [files.length]
   );
-  const resizeObserver = useResizeObserver(positioner);
 
   // Get existing component types to avoid duplicates
   const existingComponentTypes = linkedComponents.map((c) => c.componentType);
@@ -167,11 +166,11 @@ export function Files() {
             <Title order={4}>Model Files</Title>
           </Group>
           <Text size="sm" c="dimmed">
-            The main model files users will download. We'll show the best match based on their
+            The main model files users will download. We&apos;ll show the best match based on their
             preferences.
           </Text>
           <Stack gap="md">
-            {modelFiles.map((file, index) => (
+            {modelFiles.map((file) => (
               <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
             ))}
           </Stack>
@@ -258,7 +257,7 @@ export function Files() {
             Workflows, configs, and other helpful files. Not required to use the model.
           </Text>
           <Stack gap="md">
-            {optionalFiles.map((file, index) => (
+            {optionalFiles.map((file) => (
               <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
             ))}
           </Stack>

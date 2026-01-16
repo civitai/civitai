@@ -277,7 +277,6 @@ interface ComponentGroupProps {
 }
 
 function ComponentGroup({
-  componentType,
   files,
   config,
   versionId,
