@@ -3719,6 +3719,7 @@ export interface Crucible {
   status: CrucibleStatus;
   createdAt: Date;
   updatedAt: Date;
+  buzzTransactionId: string | null;
   entries?: CrucibleEntry[];
 }
 

@@ -4797,6 +4797,7 @@ model Crucible {
   status            CrucibleStatus  @default(Pending)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
+  buzzTransactionId String?         // Transaction ID for creator setup fee refunds
 
   entries CrucibleEntry[]
 
