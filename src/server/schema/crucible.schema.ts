@@ -95,6 +95,9 @@ export const submitVoteSchema = z.object({
 export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
+  // Entry IDs to exclude from pair selection (e.g., recently skipped entries)
+  // These entries won't appear in the returned pair
+  excludeEntryIds: z.array(z.number()).max(50).optional(),
 });
 
 // Schema for cancelling a crucible
