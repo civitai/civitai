@@ -834,3 +834,12 @@ export const EntityMetric_MetricType_Type = {
 } as const;
 
 export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
+
+export const CrucibleStatus = {
+  Pending: 'Pending',
+  Active: 'Active',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+
+export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];

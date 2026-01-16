@@ -174,6 +174,8 @@ export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
 
+export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
+
 export interface Account {
   id: number;
   userId: number;
@@ -438,6 +440,8 @@ export interface User {
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface CustomerSubscription {
@@ -1162,6 +1166,8 @@ export interface Image {
   tagsNew?: TagsOnImageNew[];
   imageResourceNew?: ImageResourceNew[];
   imageTagsForReview?: ImageTagForReview[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface ImageTagForReview {
@@ -3690,6 +3696,43 @@ export interface TagsOnImageDetails {
   reserved_1: boolean;
   reserved_2: boolean;
   confidence: number;
+}
+
+export interface Crucible {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  nsfwLevel: number;
+  entryFee: number;
+  entryLimit: number;
+  maxTotalEntries: number | null;
+  prizePositions: JsonValue;
+  allowedResources: JsonValue | null;
+  judgeRequirements: JsonValue | null;
+  duration: number;
+  startAt: Date | null;
+  endAt: Date | null;
+  status: CrucibleStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  entries?: CrucibleEntry[];
+}
+
+export interface CrucibleEntry {
+  id: number;
+  crucibleId: number;
+  crucible?: Crucible;
+  userId: number;
+  user?: User;
+  imageId: number;
+  image?: Image;
+  score: number;
+  position: number | null;
+  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
