@@ -902,14 +902,15 @@ export const submitVote = async ({
   }
 
   // Validate entries exist and belong to this crucible
+  // Note: voteCount is now read from Redis, not DB
   const [winnerEntry, loserEntry] = await Promise.all([
     dbRead.crucibleEntry.findUnique({
       where: { id: winnerEntryId },
-      select: { id: true, crucibleId: true, userId: true, voteCount: true },
+      select: { id: true, crucibleId: true, userId: true },
     }),
     dbRead.crucibleEntry.findUnique({
       where: { id: loserEntryId },
-      select: { id: true, crucibleId: true, userId: true, voteCount: true },
+      select: { id: true, crucibleId: true, userId: true },
     }),
   ]);
 
@@ -957,25 +958,26 @@ export const submitVote = async ({
     );
   }
 
+  // Get current vote counts from Redis (for K-factor calculation)
+  const [winnerVoteCount, loserVoteCount] = await Promise.all([
+    crucibleEloRedis.getVoteCount(crucibleId, winnerEntryId),
+    crucibleEloRedis.getVoteCount(crucibleId, loserEntryId),
+  ]);
+
   // Update ELO scores in Redis using processVote from crucible-elo.service
   const { winnerElo, loserElo } = await processEloVote(
     crucibleId,
     winnerEntryId,
     loserEntryId,
-    winnerEntry.voteCount,
-    loserEntry.voteCount
+    winnerVoteCount,
+    loserVoteCount
   );
 
-  // Increment voteCount on both entries in database
-  await dbWrite.$transaction([
-    dbWrite.crucibleEntry.update({
-      where: { id: winnerEntryId },
-      data: { voteCount: { increment: 1 } },
-    }),
-    dbWrite.crucibleEntry.update({
-      where: { id: loserEntryId },
-      data: { voteCount: { increment: 1 } },
-    }),
+  // Increment voteCount on both entries in Redis (not DB)
+  // Vote counts are synced to PostgreSQL on finalization
+  await Promise.all([
+    crucibleEloRedis.incrementVoteCount(crucibleId, winnerEntryId),
+    crucibleEloRedis.incrementVoteCount(crucibleId, loserEntryId),
   ]);
 
   // Note: Pair was already marked as voted atomically at the start of this function
@@ -1016,6 +1018,7 @@ export type FinalizedEntry = {
   entryId: number;
   userId: number;
   finalScore: number;
+  voteCount: number;
   position: number;
   prizeAmount: number;
 };
@@ -1175,8 +1178,11 @@ export const finalizeCrucible = async (
     log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${crucible.entries[0].id}`);
   }
 
-  // Get all ELO scores from Redis
-  const redisElos = await getAllEntryElos(crucibleId);
+  // Get all ELO scores and vote counts from Redis
+  const [redisElos, redisVoteCounts] = await Promise.all([
+    getAllEntryElos(crucibleId),
+    crucibleEloRedis.getAllVoteCounts(crucibleId),
+  ]);
 
   // Combine database entries with Redis ELO scores
   // If an entry doesn't have a Redis score, use the database score (1500 default)
@@ -1184,6 +1190,7 @@ export const finalizeCrucible = async (
     entryId: entry.id,
     userId: entry.userId,
     finalScore: redisElos[entry.id] ?? entry.score,
+    voteCount: redisVoteCounts[entry.id] ?? 0,
     createdAt: entry.createdAt,
   }));
 
@@ -1229,6 +1236,7 @@ export const finalizeCrucible = async (
       entryId: entry.entryId,
       userId: entry.userId,
       finalScore: entry.finalScore,
+      voteCount: entry.voteCount,
       position,
       prizeAmount,
     };
@@ -1241,14 +1249,16 @@ export const finalizeCrucible = async (
   );
 
   // Update all entries and crucible status in a transaction
+  // This syncs vote counts from Redis to PostgreSQL for persistence
   await dbWrite.$transaction(async (tx) => {
-    // Update each entry with final score and position
+    // Update each entry with final score, position, and vote count
     for (const entry of finalizedEntries) {
       await tx.crucibleEntry.update({
         where: { id: entry.entryId },
         data: {
           score: entry.finalScore,
           position: entry.position,
+          voteCount: entry.voteCount, // Sync vote count from Redis
         },
       });
     }
