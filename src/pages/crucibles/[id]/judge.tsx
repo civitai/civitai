@@ -149,14 +149,12 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
         setSessionVotes((prev) => prev + 1);
         setLastVoteAttempt(null);
-        // Small delay for visual feedback before loading next pair
-        setTimeout(async () => {
-          const result = await refetchPair();
-          if (!result.data) {
-            setAllPairsJudged(true);
-          }
-          setIsVoting(false);
-        }, 300);
+        // Refetch immediately - UI feedback delay is handled in CrucibleJudgingUI (200ms)
+        const result = await refetchPair();
+        if (!result.data) {
+          setAllPairsJudged(true);
+        }
+        setIsVoting(false);
       } catch {
         setIsVoting(false);
       }
@@ -183,16 +181,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     const newSkippedIds = [...skippedEntryIds, pair.left.id, pair.right.id].slice(-20);
     setSkippedEntryIds(newSkippedIds);
 
-    // For skip, just get the next pair without recording a vote
-    // The new skippedEntryIds will be used by React Query's automatic refetch
-    // due to query key change, but we also manually refetch for immediate update
-    setTimeout(async () => {
-      const result = await refetchPair();
-      if (!result.data) {
-        setAllPairsJudged(true);
-      }
-      setIsVoting(false);
-    }, 300);
+    // For skip, get the next pair immediately without recording a vote
+    // No artificial delay - skip should feel instant
+    const result = await refetchPair();
+    if (!result.data) {
+      setAllPairsJudged(true);
+    }
+    setIsVoting(false);
   }, [isVoting, pair, refetchPair, skippedEntryIds]);
 
   // Check if all pairs judged on initial load
