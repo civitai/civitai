@@ -1741,10 +1741,17 @@ export const getAllImagesIndex = async (
 
   const { include, user } = input;
 
-  // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
-  const cursorParsed = input.cursor?.toString().split('|');
-  const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
-  const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
+  // Keyset pagination: cursor uses "value|id" format like "1724677401898|12345"
+  // where value is sortAtUnix for time sorts or metric count for metric sorts
+  let cursorSortAt: number | undefined;
+  let cursorId: number | undefined;
+
+  if (input.cursor) {
+    const cursorStr = input.cursor.toString();
+    const [value, id] = cursorStr.split('|');
+    cursorSortAt = isNumber(value) ? Number(value) : undefined;
+    cursorId = isNumber(id) ? Number(id) : undefined;
+  }
 
   const currentUserId = user?.id;
 
@@ -1752,8 +1759,8 @@ export const getAllImagesIndex = async (
     ...input,
     currentUserId,
     isModerator: user?.isModerator,
-    offset,
-    entry,
+    cursorSortAt,
+    cursorId,
   });
 
   if (!searchResults.length) {
@@ -1849,9 +1856,10 @@ export const getAllImagesIndex = async (
     };
   });
 
+  // Pass through keyset cursor directly (already in sortAtUnix:id format)
   let nextCursor: string | undefined;
   if (searchNextCursor) {
-    nextCursor = `${offset + input.limit}|${searchNextCursor}`;
+    nextCursor = searchNextCursor;
   }
 
   return {
@@ -1885,12 +1893,26 @@ export const makeMeiliImageSearchSort = (
   return `${field}:${criteria}`;
 };
 
+/** Gets the cursor value from an image based on the current sort type */
+function getCursorValue(item: ImageMetricsSearchIndexRecord, sort: ImageSort | undefined): number {
+  switch (sort) {
+    case ImageSort.MostReactions:
+      return item.reactionCount ?? 0;
+    case ImageSort.MostComments:
+      return item.commentCount ?? 0;
+    case ImageSort.MostCollected:
+      return item.collectedCount ?? 0;
+    default:
+      return item.sortAtUnix;
+  }
+}
+
 type ImageSearchInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
-  offset?: number;
-  entry?: number;
+  cursorSortAt?: number; // Keyset pagination: sortAtUnix of last item
+  cursorId?: number; // Keyset pagination: id of last item
   blockedFor?: string[];
   // Unhandled
   //prioritizedUserIds?: number[];
@@ -2058,8 +2080,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     hidden,
     followed,
     limit = 100,
-    offset,
-    entry,
+    cursorSortAt,
+    cursorId,
     postId,
     reviewId,
     modelId,
@@ -2345,32 +2367,49 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   //------------------------
 
   let searchSort: MeiliImageSort;
+  let primarySortField: string;
+  let isAscending = false;
+
   if (sort === ImageSort.MostComments) {
+    primarySortField = 'commentCount';
     searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
   } else if (sort === ImageSort.MostReactions) {
+    primarySortField = 'reactionCount';
     searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
   } else if (sort === ImageSort.MostCollected) {
+    primarySortField = 'collectedCount';
     searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
   } else if (sort === ImageSort.Oldest) {
+    primarySortField = 'sortAtUnix';
+    isAscending = true;
     searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
   } else {
+    primarySortField = 'sortAtUnix';
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
-    // - to avoid dupes (for any ascending query), we need to filter on that attribute
-    if (entry) {
-      // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
+  }
+  sorts.push(searchSort);
+  // Secondary sort for keyset pagination - same direction as primary
+  sorts.push(makeMeiliImageSearchSort('id', isAscending ? 'asc' : 'desc'));
+
+  // Keyset pagination filter: get items "after" the cursor position
+  if (cursorSortAt !== undefined && cursorId !== undefined) {
+    if (isAscending) {
+      // Ascending: get items AFTER cursor (higher value, or same with higher id)
       filters.push(
-        makeMeiliImageSearchFilter('sortAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
+        `(${primarySortField} > ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id >= ${cursorId}))`
+      );
+    } else {
+      // Descending: get items BEFORE cursor (lower value, or same with lower id)
+      filters.push(
+        `(${primarySortField} < ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id <= ${cursorId}))`
       );
     }
   }
-  sorts.push(searchSort);
-  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
     limit: limit + 1,
-    offset,
   };
 
   const route = 'getImagesFromSearch';
@@ -2382,12 +2421,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       .index(METRICS_SEARCH_INDEX)
       .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
-    let nextCursor: number | undefined;
+    let nextCursor: string | undefined;
     if (results.length > limit) {
+      // Get the last item before removing it to use for cursor
+      const lastItem = results[results.length - 1];
       results.pop();
-      // - if we have no entrypoint, it's the first request, and set one for the future
-      //   else keep it the same
-      nextCursor = !entry ? results[0]?.sortAtUnix : entry;
+      if (lastItem) {
+        nextCursor = `${getCursorValue(lastItem, sort)}|${lastItem.id}`;
+      }
     }
 
     const filteredHits = results.filter((hit) => {
@@ -2609,8 +2650,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     hidden,
     followed,
     limit = 100,
-    offset,
-    entry,
+    cursorSortAt,
+    cursorId,
     postId,
     reviewId,
     modelId,
@@ -2879,19 +2920,44 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   //------------------------
 
   let searchSort: MeiliImageSort;
+  let primarySortField: string;
+  let isAscending = false;
+
   if (sort === ImageSort.MostComments) {
+    primarySortField = 'commentCount';
     searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
   } else if (sort === ImageSort.MostReactions) {
+    primarySortField = 'reactionCount';
     searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
   } else if (sort === ImageSort.MostCollected) {
+    primarySortField = 'collectedCount';
     searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
   } else if (sort === ImageSort.Oldest) {
+    primarySortField = 'sortAtUnix';
+    isAscending = true;
     searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
   } else {
+    primarySortField = 'sortAtUnix';
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
   }
   sorts.push(searchSort);
-  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  // Secondary sort for keyset pagination - same direction as primary
+  sorts.push(makeMeiliImageSearchSort('id', isAscending ? 'asc' : 'desc'));
+
+  // Keyset pagination filter: get items "after" the cursor position
+  if (cursorSortAt !== undefined && cursorId !== undefined) {
+    if (isAscending) {
+      // Ascending: get items AFTER cursor (higher value, or same with higher id)
+      filters.push(
+        `(${primarySortField} > ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id >= ${cursorId}))`
+      );
+    } else {
+      // Descending: get items BEFORE cursor (lower value, or same with lower id)
+      filters.push(
+        `(${primarySortField} < ${cursorSortAt} OR (${primarySortField} = ${cursorSortAt} AND id <= ${cursorId}))`
+      );
+    }
+  }
 
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
@@ -2904,11 +2970,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const MAX_BATCH_SIZE = limit * 10;
 
   const accumulatedHits: ImageMetricsSearchIndexRecord[] = [];
-  let currentOffset = offset || 0;
+  // Keyset pagination: always start from 0, the keyset filter handles position
+  let currentOffset = 0;
   let batchSize = MIN_BATCH_SIZE;
   let iteration = 0;
   let totalProcessed = 0;
-  let nextCursor: number | undefined;
+  let nextCursor: string | undefined;
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
@@ -2991,8 +3058,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // Update nextCursor based on whether we have more results than requested
     if (accumulatedHits.length > limit) {
       // We have more results, so there's a next page
-      const lastResult = accumulatedHits[limit];
-      nextCursor = lastResult?.sortAtUnix || nextCursor;
+      // Use the LAST item that will be returned (item at index limit-1) as the cursor
+      const lastResult = accumulatedHits[limit - 1];
+      if (lastResult) {
+        nextCursor = `${getCursorValue(lastResult, sort)}|${lastResult.id}`;
+      }
     } else {
       // We don't have more results than requested, so no next page
       nextCursor = undefined;
@@ -3032,7 +3102,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
       if (limitedHits.length > limit) {
         const lastItem = filtered.pop();
-        nextCursor = lastItem?.sortAtUnix;
+        nextCursor = lastItem ? `${getCursorValue(lastItem, sort)}|${lastItem.id}` : undefined;
       } else {
         nextCursor = undefined;
       }
@@ -3147,7 +3217,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const filtered = await checkImageExistence(filteredHitIds);
     if (limitedHits.length > limit) {
       const lastItem = filtered.pop();
-      nextCursor = lastItem?.sortAtUnix;
+      nextCursor = lastItem ? `${getCursorValue(lastItem, sort)}|${lastItem.id}` : undefined;
     } else {
       nextCursor = undefined;
     }
