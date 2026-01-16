@@ -7,8 +7,23 @@ import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import type { ModelById } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 
+// Component type display names for user-friendly labels
+const componentTypeDisplayNames: Record<ModelFileComponentType, string> = {
+  VAE: 'VAE',
+  TextEncoder: 'Text Encoder',
+  UNet: 'UNet',
+  CLIPVision: 'CLIP Vision',
+  ControlNet: 'ControlNet',
+  Config: 'Config',
+  Other: 'Other',
+};
+
 export function FileInfo({ file }: Props) {
   if (!file.hashes || !file.hashes.length) return null;
+
+  const isGGUF = file.name?.toLowerCase().endsWith('.gguf');
+  const isComponentFile =
+    file.type && !['Model', 'Pruned Model'].includes(file.type as string);
 
   const items = [
     { label: 'Hashes', value: <ModelHash hashes={file.hashes} /> },
@@ -19,6 +34,17 @@ export function FileInfo({ file }: Props) {
     items.push({ label: 'Format', value: file.metadata.format });
   if (file.metadata?.size)
     items.push({ label: 'Model Size', value: startCase(file.metadata.size) });
+  // Show quantType for GGUF files
+  if (isGGUF && file.metadata?.quantType)
+    items.push({ label: 'Quant Type', value: file.metadata.quantType });
+  // Show componentType for component files
+  if (isComponentFile && file.metadata?.componentType) {
+    const componentType = file.metadata.componentType as ModelFileComponentType;
+    items.push({
+      label: 'Component Type',
+      value: componentTypeDisplayNames[componentType] ?? file.metadata.componentType,
+    });
+  }
 
   return (
     <Popover withinPortal withArrow>
