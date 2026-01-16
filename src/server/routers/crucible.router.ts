@@ -6,6 +6,7 @@ import {
   submitEntrySchema,
   getJudgingPairSchema,
   submitVoteSchema,
+  cancelCrucibleSchema,
 } from '~/server/schema/crucible.schema';
 import {
   createCrucible,
@@ -14,7 +15,9 @@ import {
   submitEntry,
   getJudgingPair,
   submitVote,
+  cancelCrucible,
 } from '~/server/services/crucible.service';
+import { isModerator } from '~/server/routers/base.router';
 import { Prisma } from '@prisma/client';
 
 // Select for infinite list - includes essential fields for cards
@@ -207,6 +210,21 @@ export const crucibleRouter = router({
       const result = await submitVote({
         ...input,
         userId: ctx.user.id,
+      });
+
+      return result;
+    }),
+
+  cancel: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .use(isModerator)
+    .input(cancelCrucibleSchema)
+    .mutation(async ({ ctx, input }) => {
+      // After isModerator middleware, ctx.user.isModerator is guaranteed to be true
+      const result = await cancelCrucible({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: true, // Guaranteed by isModerator middleware
       });
 
       return result;

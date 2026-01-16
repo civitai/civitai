@@ -8,11 +8,13 @@ import {
   throwBadRequestError,
   throwNotFoundError,
   throwInsufficientFundsError,
+  throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import {
   createBuzzTransactionMany,
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
+  refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
@@ -22,6 +24,7 @@ import type {
   SubmitEntrySchema,
   GetJudgingPairSchema,
   SubmitVoteSchema,
+  CancelCrucibleSchema,
 } from '../schema/crucible.schema';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
@@ -1063,4 +1066,136 @@ export const getCruciblesForFinalization = async (): Promise<number[]> => {
   });
 
   return crucibles.map((c) => c.id);
+};
+
+// ============================================================================
+// Crucible Cancellation
+// ============================================================================
+
+/**
+ * Result of crucible cancellation
+ */
+export type CancelCrucibleResult = {
+  crucibleId: number;
+  refundedEntries: number;
+  totalRefunded: number;
+  failedRefunds: Array<{ entryId: number; userId: number; error: string }>;
+};
+
+/**
+ * Cancel a crucible and refund all entry fees
+ *
+ * This function:
+ * 1. Validates the crucible can be cancelled (not already completed/cancelled)
+ * 2. Refunds all entry fees using stored transaction prefixes
+ * 3. Updates crucible status to 'cancelled'
+ * 4. Cleans up Redis ELO data
+ *
+ * @param id - The crucible ID to cancel
+ * @param userId - The user requesting cancellation
+ * @param isModerator - Whether the user is a moderator
+ * @returns Cancellation results including refund counts
+ */
+export const cancelCrucible = async ({
+  id,
+  userId,
+  isModerator,
+}: CancelCrucibleSchema & { userId: number; isModerator: boolean }): Promise<CancelCrucibleResult> => {
+  // Only moderators can cancel crucibles
+  if (!isModerator) {
+    throw throwAuthorizationError('Only moderators can cancel crucibles');
+  }
+
+  // Fetch the crucible with all entries that have transaction IDs
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      entryFee: true,
+      entries: {
+        select: {
+          id: true,
+          userId: true,
+          buzzTransactionId: true,
+        },
+      },
+    },
+  });
+
+  if (!crucible) {
+    throw throwNotFoundError('Crucible not found');
+  }
+
+  // Validate crucible can be cancelled
+  if (crucible.status === CrucibleStatus.Completed) {
+    throw throwBadRequestError('Cannot cancel a completed crucible');
+  }
+
+  if (crucible.status === CrucibleStatus.Cancelled) {
+    throw throwBadRequestError('This crucible has already been cancelled');
+  }
+
+  // Track refund results
+  let refundedEntries = 0;
+  let totalRefunded = 0;
+  const failedRefunds: Array<{ entryId: number; userId: number; error: string }> = [];
+
+  // Refund entry fees for all entries with transaction IDs
+  for (const entry of crucible.entries) {
+    if (!entry.buzzTransactionId) {
+      // Entry has no transaction ID (free crucible or legacy entry)
+      continue;
+    }
+
+    try {
+      // Refund using the stored transaction prefix
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: entry.buzzTransactionId,
+        description: 'Crucible entry fee refund - crucible cancelled',
+        details: {
+          entityId: crucible.id,
+          entityType: 'Crucible',
+          reason: 'cancellation',
+        },
+      });
+
+      refundedEntries++;
+      totalRefunded += crucible.entryFee;
+
+      log(`Refunded entry ${entry.id} for user ${entry.userId}: ${crucible.entryFee} Buzz`);
+    } catch (error) {
+      // Log failed refund but continue with other entries
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      failedRefunds.push({
+        entryId: entry.id,
+        userId: entry.userId,
+        error: errorMessage,
+      });
+
+      log(`Failed to refund entry ${entry.id} for user ${entry.userId}: ${errorMessage}`);
+    }
+  }
+
+  // Update crucible status to cancelled
+  await dbWrite.crucible.update({
+    where: { id },
+    data: {
+      status: CrucibleStatus.Cancelled,
+    },
+  });
+
+  // Clean up Redis ELO data (set short TTL for eventual cleanup)
+  await crucibleEloRedis.setTTL(id, 24 * 60 * 60); // 24 hours
+
+  log(
+    `Cancelled crucible ${id}: ${refundedEntries} entries refunded, ${totalRefunded} Buzz total, ${failedRefunds.length} failed`
+  );
+
+  return {
+    crucibleId: id,
+    refundedEntries,
+    totalRefunded,
+    failedRefunds,
+  };
 };
