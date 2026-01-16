@@ -513,6 +513,42 @@ export function createCheckpointGraph(options?: {
   // All valid version IDs across all workflows
   const allVersionIds = versionMappings ? new Set(versionMappings.keys()) : undefined;
 
+  // Build transform function for workflow version syncing
+  // This is captured by the node factory closure and uses fresh values each time
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const buildModelTransform = (): ((model: any, ctx: any) => any) | undefined => {
+    if (!versionMappings || !allVersionIds || !options?.workflowVersions) return undefined;
+
+    return (model, ctx) => {
+      if (!model?.id) return model;
+
+      // Cast to access workflow (only present when parent graph has workflow in context)
+      const rawWorkflow = ctx.workflow ?? '';
+      // Normalize workflow to match config keys (e.g., 'img2vid:first-last-frame' -> 'img2vid')
+      const workflow = getWorkflowKey(options.workflowVersions, rawWorkflow);
+
+      // Skip if current model isn't a known version (user selected custom checkpoint)
+      if (!allVersionIds.has(model.id)) return model;
+
+      // Get target workflow config using the normalized key
+      const targetConfig = options.workflowVersions![workflow];
+      if (!targetConfig) return model;
+
+      // Skip if model is already valid for current workflow
+      const targetVersionIds = new Set(targetConfig.versions.map((v) => v.value));
+      if (targetVersionIds.has(model.id)) return model;
+
+      // Find equivalent version in target workflow
+      const mapping = versionMappings.get(model.id);
+      const equivalentVersion = mapping?.[workflow];
+      if (equivalentVersion) {
+        return { id: equivalentVersion } as any;
+      }
+
+      return model;
+    };
+  };
+
   return new DataGraph<{ baseModel: string }, GenerationCtx>()
     .node(
       'model',
@@ -565,9 +601,12 @@ export function createCheckpointGraph(options?: {
             // Versions are always passed; showVersionSelector computed determines visibility
             versions,
           },
+          // Transform model version when workflow changes (if workflowVersions configured)
+          transform: buildModelTransform(),
         };
       },
-      ['baseModel']
+      // Include 'workflow' in deps so transform runs when workflow changes
+      options?.workflowVersions ? ['baseModel', 'workflow'] : ['baseModel']
     )
     .effect(
       (ctx, _ext, set) => {
@@ -580,42 +619,6 @@ export function createCheckpointGraph(options?: {
         set('baseModel', modelEcosystemKey);
       },
       ['model']
-    )
-    .effect(
-      (ctx, _ext, set) => {
-        // Skip if no workflow version mappings configured
-        if (!versionMappings || !allVersionIds || !options?.workflowVersions) return;
-
-        // Cast to access workflow (only present when parent graph has workflow in context)
-        const rawWorkflow = (ctx as { workflow?: string }).workflow ?? '';
-        // Normalize workflow to match config keys (e.g., 'img2vid:first-last-frame' -> 'img2vid')
-        const workflow = getWorkflowKey(options.workflowVersions, rawWorkflow);
-
-        const model = ctx.model as { id?: number } | undefined;
-        const modelId = model?.id;
-        if (!modelId) return;
-
-        // Skip if current model isn't a known version (user selected custom checkpoint)
-        if (!allVersionIds.has(modelId)) return;
-
-        // Get target workflow config using the normalized key
-        const targetConfig = options.workflowVersions[workflow];
-        if (!targetConfig) return;
-
-        // Skip if model is already valid for current workflow
-        const targetVersionIds = new Set(targetConfig.versions.map((v) => v.value));
-        if (targetVersionIds.has(modelId)) return;
-
-        // Find equivalent version in target workflow
-        const mapping = versionMappings.get(modelId);
-        const equivalentVersion = mapping?.[workflow];
-        if (equivalentVersion) {
-          // Cast to any since the model type varies by ecosystem graph
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          set('model', { id: equivalentVersion } as any);
-        }
-      },
-      ['workflow', 'model']
     );
 }
 

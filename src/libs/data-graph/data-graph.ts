@@ -630,6 +630,8 @@ export class DataGraph<
       output: T;
       defaultValue?: InferOutput<T>;
       meta?: M;
+      /** Transform value when dependencies change. Runs after parsing input, before setting value. */
+      transform?: (value: InferOutput<T>, ctx: Ctx, ext: ExternalCtx) => InferOutput<T>;
     }
   ): DataGraph<
     MergeDistributive<Ctx, { [P in K]: InferOutput<T> }>,
@@ -654,6 +656,8 @@ export class DataGraph<
       defaultValue?: InferOutput<T>;
       meta?: M;
       when?: undefined | true;
+      /** Transform value when dependencies change. Runs after parsing input, before setting value. */
+      transform?: (value: InferOutput<T>, ctx: Ctx, ext: ExternalCtx) => InferOutput<T>;
     },
     deps: Deps
   ): DataGraph<
@@ -682,6 +686,8 @@ export class DataGraph<
       defaultValue?: InferOutput<T>;
       meta?: M;
       when: boolean;
+      /** Transform value when dependencies change. Runs after parsing input, before setting value. */
+      transform?: (value: InferOutput<T>, ctx: Ctx, ext: ExternalCtx) => InferOutput<T>;
     },
     deps: Deps
   ): DataGraph<
@@ -1248,6 +1254,13 @@ export class DataGraph<
           }
         } catch {
           next = def.defaultValue ?? def.output.parse(def.defaultValue);
+        }
+
+        // Apply transform when deps changed (not on direct input)
+        // Transform allows updating value based on context changes
+        const depsChanged = entry.deps.some((dep) => changed.has(dep));
+        if (def.transform && depsChanged && !isDirectUpdate) {
+          next = def.transform(next, this._ctx, this._ext);
         }
 
         const keyExists = entry.key in this._ctx;

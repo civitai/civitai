@@ -156,6 +156,8 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
             : veo3Durations,
           disabled: isImg2Vid,
         },
+        // Force duration to 8s when workflow changes to img2vid
+        transform: (value: number) => (isImg2Vid ? 8 : value),
       };
     },
     ['workflow']

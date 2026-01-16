@@ -23,6 +23,7 @@ import {
   SegmentedControl,
   Checkbox,
   Input,
+  Radio,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown } from '@tabler/icons-react';
@@ -272,14 +273,17 @@ function GenerationForm() {
             graph={graph}
             name="version"
             render={({ value, meta, onChange }) => (
-              <div className="flex flex-col gap-1">
-                <Input.Label>API Version</Input.Label>
-                <SegmentedControl
-                  value={value}
-                  onChange={onChange}
-                  data={meta.options.map((o) => ({ label: o.label, value: o.value }))}
-                />
-              </div>
+              <Radio.Group
+                value={value}
+                onChange={(v) => onChange(v as typeof value)}
+                label="API Version"
+              >
+                <Group mt="xs">
+                  {meta.options.map((o: { label: string; value: string }) => (
+                    <Radio key={o.value} value={o.value} label={o.label} />
+                  ))}
+                </Group>
+              </Radio.Group>
             )}
           />
 
@@ -400,17 +404,21 @@ function GenerationForm() {
           <Controller
             graph={graph}
             name="duration"
-            render={({ value, meta, onChange }) => (
-              <div className="flex flex-col gap-1">
-                <Input.Label>Duration</Input.Label>
-                <SegmentedControl
-                  value={value?.toString()}
-                  onChange={(v) => onChange(Number(v))}
-                  data={meta.options.map((o) => ({ label: o.label, value: o.value.toString() }))}
-                  disabled={meta.disabled}
-                />
-              </div>
-            )}
+            render={({ value, meta, onChange }) => {
+              const options = (meta as { options: { label: string; value: number }[] })?.options;
+              const disabled = (meta as { disabled?: boolean })?.disabled;
+              return (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Duration</Input.Label>
+                  <SegmentedControl
+                    value={value?.toString()}
+                    onChange={(v) => onChange(Number(v))}
+                    data={options?.map((o) => ({ label: o.label, value: o.value.toString() })) ?? []}
+                    disabled={disabled}
+                  />
+                </div>
+              );
+            }}
           />
 
           {/* Generate audio toggle (video ecosystems) */}
