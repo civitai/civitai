@@ -373,8 +373,18 @@ function ComponentGroup({
       {/* Header - clickable to expand */}
       <Box
         p="sm"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`${config.name}, ${files.length} variants available. Click to ${expanded ? 'collapse' : 'expand'}.`}
         style={{ cursor: 'pointer' }}
         onClick={toggle}
+        onKeyDown={(e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle();
+          }
+        }}
         className="hover:bg-dark-6/50 dark:hover:bg-dark-6/50"
       >
         <Group justify="space-between" wrap="nowrap">
@@ -411,6 +421,8 @@ function ComponentGroup({
       {/* Expanded variants list */}
       <Collapse in={expanded}>
         <Box
+          role="listbox"
+          aria-label={`${config.name} variant options`}
           style={{
             backgroundColor: colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
             borderTop: `1px solid ${
@@ -433,6 +445,10 @@ function ComponentGroup({
                 px="sm"
                 py="xs"
                 pl={56}
+                role="option"
+                tabIndex={0}
+                aria-selected={isSelected}
+                aria-label={`${getFileLabel(file)}${isBestMatch ? ', best match' : ''}, ${getFileDescription(file)}, ${formatKBytes(file.sizeKB)}`}
                 style={{
                   backgroundColor: isSelected ? 'rgba(34, 139, 230, 0.1)' : undefined,
                   borderBottom: `1px solid ${
@@ -441,6 +457,12 @@ function ComponentGroup({
                   cursor: 'pointer',
                 }}
                 onClick={() => onSelectFile(file)}
+                onKeyDown={(e: React.KeyboardEvent) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectFile(file);
+                  }
+                }}
                 className="hover:bg-dark-6/30 dark:hover:bg-dark-6/30"
               >
                 <Group justify="space-between" wrap="nowrap">

@@ -258,6 +258,7 @@ export default function LinkComponentModal({
                 placeholder={`Search for ${componentType ?? 'component'} models...`}
                 showIndexSelect={false}
                 dropdownItemLimit={10}
+                aria-label={`Search for ${componentType ?? 'component'} models to link`}
               />
               {selectedModel && (
                 <Text size="sm" c="green">
@@ -295,6 +296,7 @@ export default function LinkComponentModal({
               ) : files.length > 0 ? (
                 <Select
                   placeholder="Select a file"
+                  aria-label="Select a component file to link"
                   data={files.map((f: VersionFile) => ({
                     value: f.id.toString(),
                     label: `${f.name} (${formatBytes(f.sizeKB * 1024)})`,
@@ -391,6 +393,7 @@ function VersionSelector({
   return (
     <Select
       placeholder="Select a version"
+      aria-label="Select a model version"
       data={versions.map((v: ModelVersion) => ({
         value: v.id.toString(),
         label: v.name,
