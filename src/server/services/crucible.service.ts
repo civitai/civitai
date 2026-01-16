@@ -14,10 +14,11 @@ import type {
   CreateCrucibleInputSchema,
   SubmitEntrySchema,
   GetJudgingPairSchema,
+  SubmitVoteSchema,
 } from '../schema/crucible.schema';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { getEntryElo, CRUCIBLE_DEFAULT_ELO } from './crucible-elo.service';
+import { getEntryElo, CRUCIBLE_DEFAULT_ELO, processVote as processEloVote } from './crucible-elo.service';
 import { shuffle } from '~/utils/array-helpers';
 
 /**
@@ -593,3 +594,123 @@ function getCandidateBPool(
     }
   }
 }
+
+/**
+ * Submit a vote result type
+ */
+export type SubmitVoteResult = {
+  winnerElo: number;
+  loserElo: number;
+  winnerEntryId: number;
+  loserEntryId: number;
+};
+
+/**
+ * Submit a vote on a pair of crucible entries
+ *
+ * @param crucibleId - The crucible ID
+ * @param winnerEntryId - The entry ID that the user selected as the winner
+ * @param loserEntryId - The entry ID that lost the vote
+ * @param userId - The user submitting the vote
+ * @returns Updated ELO scores for both entries
+ */
+export const submitVote = async ({
+  crucibleId,
+  winnerEntryId,
+  loserEntryId,
+  userId,
+}: SubmitVoteSchema & { userId: number }): Promise<SubmitVoteResult> => {
+  // Fetch the crucible to validate it's active
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: {
+      id: true,
+      status: true,
+      endAt: true,
+    },
+  });
+
+  if (!crucible) {
+    throw throwNotFoundError('Crucible not found');
+  }
+
+  if (crucible.status !== CrucibleStatus.Active) {
+    throw throwBadRequestError('This crucible is not currently active for judging');
+  }
+
+  if (crucible.endAt && new Date() > crucible.endAt) {
+    throw throwBadRequestError('This crucible has ended');
+  }
+
+  // Validate entries exist and belong to this crucible
+  const [winnerEntry, loserEntry] = await Promise.all([
+    dbRead.crucibleEntry.findUnique({
+      where: { id: winnerEntryId },
+      select: { id: true, crucibleId: true, userId: true, voteCount: true },
+    }),
+    dbRead.crucibleEntry.findUnique({
+      where: { id: loserEntryId },
+      select: { id: true, crucibleId: true, userId: true, voteCount: true },
+    }),
+  ]);
+
+  if (!winnerEntry) {
+    throw throwNotFoundError('Winner entry not found');
+  }
+
+  if (!loserEntry) {
+    throw throwNotFoundError('Loser entry not found');
+  }
+
+  if (winnerEntry.crucibleId !== crucibleId) {
+    throw throwBadRequestError('Winner entry does not belong to this crucible');
+  }
+
+  if (loserEntry.crucibleId !== crucibleId) {
+    throw throwBadRequestError('Loser entry does not belong to this crucible');
+  }
+
+  // User cannot vote on their own entries
+  if (winnerEntry.userId === userId || loserEntry.userId === userId) {
+    throw throwBadRequestError('You cannot vote on your own entries');
+  }
+
+  // Check if user has already voted on this pair
+  const votedPairs = await getVotedPairs(crucibleId, userId);
+  const pairKey = createPairKey(winnerEntryId, loserEntryId);
+
+  if (votedPairs.has(pairKey)) {
+    throw throwBadRequestError('You have already voted on this pair');
+  }
+
+  // Update ELO scores in Redis using processVote from crucible-elo.service
+  const { winnerElo, loserElo } = await processEloVote(
+    crucibleId,
+    winnerEntryId,
+    loserEntryId,
+    winnerEntry.voteCount,
+    loserEntry.voteCount
+  );
+
+  // Increment voteCount on both entries in database
+  await dbWrite.$transaction([
+    dbWrite.crucibleEntry.update({
+      where: { id: winnerEntryId },
+      data: { voteCount: { increment: 1 } },
+    }),
+    dbWrite.crucibleEntry.update({
+      where: { id: loserEntryId },
+      data: { voteCount: { increment: 1 } },
+    }),
+  ]);
+
+  // Mark pair as voted in Redis
+  await markPairVoted(crucibleId, userId, winnerEntryId, loserEntryId);
+
+  return {
+    winnerElo,
+    loserElo,
+    winnerEntryId,
+    loserEntryId,
+  };
+};

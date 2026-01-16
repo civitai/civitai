@@ -3731,6 +3731,7 @@ export interface CrucibleEntry {
   imageId: number;
   image?: Image;
   score: number;
+  voteCount: number;
   position: number | null;
   createdAt: Date;
 }

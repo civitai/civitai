@@ -4815,6 +4815,7 @@ model CrucibleEntry {
   imageId    Int
   image      Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
   score      Int       @default(1500)
+  voteCount  Int       @default(0)
   position   Int?
   createdAt  DateTime  @default(now())
 
