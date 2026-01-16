@@ -56,7 +56,17 @@ import { openLinkComponentModal } from '~/components/Resource/LinkComponentModal
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
-  const { files, onDrop, startUpload, hasPending, fileExtensions, maxFiles } = useFilesContext();
+  const {
+    files,
+    linkedComponents,
+    onDrop,
+    startUpload,
+    hasPending,
+    fileExtensions,
+    maxFiles,
+    addLinkedComponent,
+    removeLinkedComponent,
+  } = useFilesContext();
 
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
@@ -71,9 +81,6 @@ export function Files() {
   );
   const resizeObserver = useResizeObserver(positioner);
 
-  // State for linked components (components from other models on Civitai)
-  const [linkedComponents, setLinkedComponents] = useState<LinkedComponent[]>([]);
-
   // Get existing component types to avoid duplicates
   const existingComponentTypes = linkedComponents.map((c) => c.componentType);
 
@@ -83,14 +90,6 @@ export function Files() {
   const optionalFiles = files.filter(
     (f) => !['Model', 'Pruned Model', 'VAE', 'Text Encoder'].includes(f.type ?? '')
   );
-
-  const handleLinkComponent = (component: LinkedComponent) => {
-    setLinkedComponents((prev) => [...prev, component]);
-  };
-
-  const handleRemoveLinkedComponent = (componentType: ModelFileComponentType) => {
-    setLinkedComponents((prev) => prev.filter((c) => c.componentType !== componentType));
-  };
 
   return (
     <Stack>
@@ -203,7 +202,7 @@ export function Files() {
                 leftSection={<IconLink size={14} />}
                 onClick={() =>
                   openLinkComponentModal({
-                    onSave: handleLinkComponent,
+                    onSave: addLinkedComponent,
                     existingComponentTypes,
                   })
                 }
@@ -223,7 +222,7 @@ export function Files() {
                 <LinkedComponentCard
                   key={component.componentType}
                   component={component}
-                  onRemove={handleRemoveLinkedComponent}
+                  onRemove={removeLinkedComponent}
                 />
               ))}
             </Stack>
@@ -239,7 +238,7 @@ export function Files() {
           leftSection={<IconLink size={16} />}
           onClick={() =>
             openLinkComponentModal({
-              onSave: handleLinkComponent,
+              onSave: addLinkedComponent,
               existingComponentTypes,
             })
           }
