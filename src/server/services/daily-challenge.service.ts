@@ -1,6 +1,12 @@
 import { ArticleSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
+  getActiveChallengeFromDb,
+  getChallengeById,
+  getUpcomingChallengesFromDb,
+  type ChallengeDetails as NewChallengeDetails,
+} from '~/server/games/daily-challenge/challenge-helpers';
+import {
   dailyChallengeConfig,
   getCurrentChallenge,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -8,6 +14,7 @@ import { articleWhereSchema } from '~/server/schema/article.schema';
 import { getArticles } from '~/server/services/article.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { isFutureDate, startOfDay } from '~/utils/date-helpers';
 
@@ -117,3 +124,65 @@ export async function setCustomChallenge(data: Record<string, unknown>) {
 export async function deleteCustomChallenge() {
   await sysRedis.del(REDIS_SYS_KEYS.GENERATION.CUSTOM_CHALLENGE);
 }
+
+// =============================================================================
+// New Challenge Table Functions
+// =============================================================================
+
+/**
+ * Get all challenges from the new Challenge table
+ * Includes active, scheduled, and completed challenges
+ */
+export async function getAllChallengesFromDb(options?: {
+  status?: ChallengeStatus[];
+  limit?: number;
+}) {
+  const { status, limit = 100 } = options ?? {};
+
+  let statusFilter = '';
+  if (status && status.length > 0) {
+    const statusList = status.map((s) => `'${s}'`).join(', ');
+    statusFilter = `AND status IN (${statusList})`;
+  }
+
+  const rows = await dbRead.$queryRawUnsafe<{ id: number }[]>(`
+    SELECT id
+    FROM "Challenge"
+    WHERE 1=1
+    ${statusFilter}
+    ORDER BY "startsAt" DESC
+    LIMIT ${limit}
+  `);
+
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is NewChallengeDetails => c !== null);
+}
+
+/**
+ * Get visible challenges (visible and not completed/cancelled)
+ * Used for the public challenges feed
+ */
+export async function getVisibleChallenges(limit = 30) {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE "visibleAt" <= now()
+    AND status NOT IN (${ChallengeStatus.Cancelled}::"ChallengeStatus")
+    ORDER BY
+      CASE
+        WHEN status = ${ChallengeStatus.Active}::"ChallengeStatus" THEN 1
+        WHEN status = ${ChallengeStatus.Scheduled}::"ChallengeStatus" THEN 2
+        ELSE 3
+      END,
+      "startsAt" DESC
+    LIMIT ${limit}
+  `;
+
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is NewChallengeDetails => c !== null);
+}
+
+/**
+ * Get a single challenge by ID with full details
+ */
+export { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';

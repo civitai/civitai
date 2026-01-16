@@ -385,3 +385,8 @@ export type GetModelVersionsPopularityInput = z.infer<typeof getModelVersionsPop
 export const getModelVersionsPopularityInput = z.object({
   ids: z.array(z.number()),
 });
+
+export type GetModelVersionsByIdsInput = z.infer<typeof getModelVersionsByIdsInput>;
+export const getModelVersionsByIdsInput = z.object({
+  ids: z.array(z.number()).max(50),
+});

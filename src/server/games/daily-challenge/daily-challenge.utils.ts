@@ -1,9 +1,11 @@
+import type { Prisma } from '@prisma/client';
 import { mergeWith } from 'lodash-es';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 const challengeConfigSchema = z.object({
   challengeType: z.string(),

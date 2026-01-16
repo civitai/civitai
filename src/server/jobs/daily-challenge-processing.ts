@@ -5,6 +5,12 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
+import {
+  createChallengeRecord,
+  createChallengeWinner,
+  updateChallengeStatus,
+} from '~/server/games/daily-challenge/challenge-helpers';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   endChallenge,
@@ -22,7 +28,7 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
@@ -164,6 +170,17 @@ export async function createUpcomingChallenge() {
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
+  // Get published model version IDs for this model
+  const modelVersionIds = (
+    await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT mv.id
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ${resource.modelId}
+      AND mv.status = 'Published'
+      ORDER BY mv.index ASC
+    `
+  ).map((v) => v.id);
+
   // Get cover of resource
   const image = await getCoverOfModel(resource.modelId);
 
@@ -260,6 +277,36 @@ export async function createUpcomingChallenge() {
 
   log('Article created:', article);
 
+  // Create Challenge record (new system - dual write during transition)
+  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+  const challengeId = await createChallengeRecord({
+    startsAt: challengeDate,
+    endsAt,
+    visibleAt: challengeDate, // Visible when it starts
+    title: articleDetails.title,
+    description: articleDetails.content,
+    theme: articleDetails.theme,
+    invitation: articleDetails.invitation,
+    coverImageId,
+    nsfwLevel: 1,
+    allowedNsfwLevel: 1, // PG only for auto-generated challenges
+    modelVersionIds,
+    collectionId: collection.id,
+    maxEntriesPerUser: config.entryPrizeRequirement * 2,
+    prizes: prizeConfig.prizes,
+    entryPrize: prizeConfig.entryPrize,
+    prizePool: prizeConfig.prizes.reduce((sum, p) => sum + p.buzz, 0),
+    createdById: challengeTypeConfig.userId,
+    source: ChallengeSource.System,
+    status: ChallengeStatus.Scheduled,
+    metadata: {
+      articleId: article.id,
+      challengeType: config.challengeType,
+      resourceUserId: randomUser.userId,
+    },
+  });
+  log('Challenge record created:', challengeId);
+
   // Add to challenge collection
   await dbWrite.collectionItem.create({
     data: {
@@ -296,15 +343,25 @@ async function reviewEntries() {
     // Update pending entries
     // ----------------------------------------------
     const reviewing = Date.now();
+
+    // Get the Challenge record to check allowedNsfwLevel (new system)
+    // Fall back to PG-only (1) for old article-based challenges
+    const [challengeRecord] = await dbRead.$queryRaw<[{ allowedNsfwLevel: number } | undefined]>`
+      SELECT "allowedNsfwLevel"
+      FROM "Challenge"
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+      LIMIT 1
+    `;
+    const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+
     // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
+    // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
     const reviewedCount = await dbWrite.$executeRaw`
     WITH source AS (
       SELECT
       i.id,
-      i."nsfwLevel" = 1 as "isSafe",
-      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" IN (${Prisma.join(
-        currentChallenge.modelVersionIds
-      )}) AND ir."imageId" = i.id) as "hasResource",
+      (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
+      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
       i."createdAt" >= ${currentChallenge.date} as "isRecent"
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"
@@ -719,6 +776,32 @@ ${outcome}
   );
   log('Prizes sent');
 
+  // Create ChallengeWinner records (new system - dual write during transition)
+  // Find the Challenge by collectionId
+  const winnerChallengeRecords = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Challenge"
+    WHERE "collectionId" = ${currentChallenge.collectionId}
+    AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
+    LIMIT 1
+  `;
+  const winnerChallengeRecord = winnerChallengeRecords[0];
+  if (winnerChallengeRecord) {
+    for (const entry of winningEntries) {
+      await createChallengeWinner({
+        challengeId: winnerChallengeRecord.id,
+        userId: entry.userId,
+        imageId: entry.imageId,
+        place: entry.position,
+        buzzAwarded: entry.prize,
+        pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
+        reason: entry.reason,
+      });
+    }
+    // Update Challenge status to Completed
+    await updateChallengeStatus(winnerChallengeRecord.id, ChallengeStatus.Completed);
+    log('ChallengeWinner records created and status updated to Completed');
+  }
+
   // Start next challenge
   // ----------------------------------------------
   await startNextChallenge(config);
@@ -896,6 +979,20 @@ export async function startNextChallenge(config: ChallengeConfig) {
     WHERE id = ${upcomingChallenge.articleId};
   `;
   log('Article published');
+
+  // Update Challenge status to Active (new system - dual write during transition)
+  // Find the Challenge by collectionId since we don't have challengeId here
+  const challengeRecords = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Challenge"
+    WHERE "collectionId" = ${upcomingChallenge.collectionId}
+    AND status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
+    LIMIT 1
+  `;
+  const challengeRecord = challengeRecords[0];
+  if (challengeRecord) {
+    await updateChallengeStatus(challengeRecord.id, ChallengeStatus.Active);
+    log('Challenge status updated to Active:', challengeRecord.id);
+  }
 
   // Accept Collection Item in Challenge Collection
   await dbWrite.$executeRaw`
