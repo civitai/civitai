@@ -66,6 +66,12 @@ export const submitVoteSchema = z.object({
   loserEntryId: z.number(),
 });
 
+// Schema for getting a judging pair
+export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
+export const getJudgingPairSchema = z.object({
+  crucibleId: z.number(),
+});
+
 // Schema for cancelling a crucible
 export type CancelCrucibleSchema = z.infer<typeof cancelCrucibleSchema>;
 export const cancelCrucibleSchema = z.object({
