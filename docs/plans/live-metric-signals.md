@@ -1,5 +1,10 @@
 # Live Metric Signals Implementation Plan
 
+**Session ID:** `1d51f5de-f13a-4480-a5a7-87b9bfa89cd0`
+**Status:** Partially implemented (ImageCard done, other cards pending)
+
+---
+
 ## Overview
 
 Implement real-time metric updates using the existing signals infrastructure. When metrics change (reactions, downloads, comments, etc.), the event-engine sends delta updates via signals that the frontend can subscribe to and apply in real-time.

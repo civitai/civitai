@@ -1,4 +1,5 @@
 import { IconInfoCircle } from '@tabler/icons-react';
+import { ThemeIcon } from '@mantine/core';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -8,11 +9,28 @@ import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import cardClasses from '~/components/Cards/Cards.module.css';
-import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {
+  return (
+    <MetricSubscriptionProvider entityType="Image" entityId={data.id}>
+      <ImageCardContent data={data} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ImageCardContent({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
+
+  const liveMetrics = useLiveMetrics('Image', data.id, {
+    likeCount: data.stats?.likeCountAllTime ?? 0,
+    dislikeCount: data.stats?.dislikeCountAllTime ?? 0,
+    heartCount: data.stats?.heartCountAllTime ?? 0,
+    laughCount: data.stats?.laughCountAllTime ?? 0,
+    cryCount: data.stats?.cryCountAllTime ?? 0,
+    tippedAmountCount: data.stats?.tippedAmountCountAllTime ?? 0,
+  });
 
   return (
     <AspectRatioImageCard
@@ -42,14 +60,7 @@ export function ImageCard({ data }: Props) {
               entityId={data.id}
               entityType="image"
               reactions={data.reactions}
-              metrics={{
-                likeCount: data.stats?.likeCountAllTime,
-                dislikeCount: data.stats?.dislikeCountAllTime,
-                heartCount: data.stats?.heartCountAllTime,
-                laughCount: data.stats?.laughCountAllTime,
-                cryCount: data.stats?.cryCountAllTime,
-                tippedAmountCount: data.stats?.tippedAmountCountAllTime,
-              }}
+              metrics={liveMetrics}
               targetUserId={data.user.id}
               disableBuzzTip={data.poi}
             />
