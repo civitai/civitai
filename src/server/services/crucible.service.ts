@@ -952,6 +952,54 @@ export const finalizeCrucible = async (
   // Sort prize positions by position number
   const sortedPrizePositions = [...prizePositions].sort((a, b) => a.position - b.position);
 
+  // ============================================================================
+  // Edge Case: 0 entries
+  // ============================================================================
+  if (crucible.entries.length === 0) {
+    log(`Edge case: Crucible ${crucibleId} has 0 entries - finalizing without prizes`);
+
+    // Update crucible status to completed
+    await dbWrite.crucible.update({
+      where: { id: crucibleId },
+      data: {
+        status: CrucibleStatus.Completed,
+      },
+    });
+
+    // Clean up Redis ELO data (set TTL for eventual cleanup)
+    await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
+
+    // Send 'crucible-ended' notification to the crucible creator
+    createNotification({
+      userId: crucible.userId,
+      type: 'crucible-ended',
+      category: NotificationCategory.Crucible,
+      key: `crucible-ended:${crucibleId}`,
+      details: {
+        crucibleId,
+        crucibleName: crucible.name,
+        totalEntries: 0,
+        prizePool: 0,
+      },
+    }).catch((err) => {
+      log(`Failed to send crucible-ended notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    });
+
+    return {
+      crucibleId,
+      totalPrizePool: 0,
+      finalEntries: [],
+      totalPrizesDistributed: 0,
+    };
+  }
+
+  // ============================================================================
+  // Edge Case: 1 entry (auto-win)
+  // ============================================================================
+  if (crucible.entries.length === 1) {
+    log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${crucible.entries[0].id}`);
+  }
+
   // Get all ELO scores from Redis
   const redisElos = await getAllEntryElos(crucibleId);
 
@@ -972,6 +1020,25 @@ export const finalizeCrucible = async (
     // Tiebreaker: earlier entry wins
     return a.createdAt.getTime() - b.createdAt.getTime();
   });
+
+  // ============================================================================
+  // Edge Case: Tied ELO scores (log for debugging)
+  // ============================================================================
+  // Detect and log any tied scores that were resolved by tiebreaker
+  const scoreGroups = new Map<number, typeof entriesWithElo>();
+  for (const entry of entriesWithElo) {
+    const group = scoreGroups.get(entry.finalScore) ?? [];
+    group.push(entry);
+    scoreGroups.set(entry.finalScore, group);
+  }
+
+  // Log tied scores resolved by entry time tiebreaker
+  for (const [score, entries] of scoreGroups) {
+    if (entries.length > 1) {
+      const entryIds = entries.map((e) => e.entryId).join(', ');
+      log(`Edge case: Crucible ${crucibleId} - ${entries.length} entries tied at ELO ${score} (entry IDs: ${entryIds}). Resolved by entry time (earlier entry wins).`);
+    }
+  }
 
   // Assign positions and calculate prize amounts
   const finalizedEntries: FinalizedEntry[] = sortedEntries.map((entry, index) => {
