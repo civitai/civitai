@@ -1,13 +1,10 @@
 import * as z from 'zod';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleSort } from '~/server/common/enums';
 import { infiniteQuerySchema } from './base.schema';
 
-// Enum for Crucible sorting options
-export enum CrucibleSort {
-  PrizePool = 'Prize Pool',
-  EndingSoon = 'Ending Soon',
-  Newest = 'Newest',
-}
+// Re-export CrucibleSort for convenience
+export { CrucibleSort };
 
 // Schema for infinite list of crucibles with filters
 export type GetCruciblesInfiniteSchema = z.infer<typeof getCruciblesInfiniteSchema>;

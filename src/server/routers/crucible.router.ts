@@ -27,6 +27,7 @@ const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       id: true,
       username: true,
       image: true,
+      deletedAt: true,
     },
   },
   image: {
@@ -34,6 +35,8 @@ const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       id: true,
       name: true,
       url: true,
+      type: true,
+      metadata: true,
       nsfwLevel: true,
       width: true,
       height: true,
@@ -71,6 +74,7 @@ const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       id: true,
       username: true,
       image: true,
+      deletedAt: true,
     },
   },
   image: {
@@ -78,6 +82,8 @@ const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       id: true,
       name: true,
       url: true,
+      type: true,
+      metadata: true,
       nsfwLevel: true,
       width: true,
       height: true,

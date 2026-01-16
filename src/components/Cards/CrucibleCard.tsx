@@ -16,7 +16,7 @@ type CrucibleCardData = {
   id: number;
   name: string;
   status: CrucibleStatus;
-  endAt: Date;
+  endAt: Date | null;
   entryFee: number;
   user: {
     id: number;
@@ -24,27 +24,24 @@ type CrucibleCardData = {
     deletedAt: Date | null;
     image: string | null;
   };
-  image?: {
+  image: {
     id: number;
     url: string;
-    type: string;
-    name?: string | null;
-    metadata: MixedObject | null;
-    nsfwLevel?: number;
-    userId?: number;
-    user?: { id: number };
-    width?: number | null;
-    height?: number | null;
-    thumbnailUrl?: string | null;
+    type: any;
+    name: string | null;
+    metadata: any;
+    nsfwLevel: number;
+    width: number | null;
+    height: number | null;
   } | null;
-  _count?: {
+  _count: {
     entries: number;
   };
 };
 
 export function CrucibleCard({ data }: { data: CrucibleCardData }) {
   const { id, name, status, endAt, entryFee, user, image, _count } = data;
-  const entryCount = _count?.entries ?? 0;
+  const entryCount = _count.entries ?? 0;
 
   // Calculate total prize pool (entryFee * entryCount)
   const prizePool = entryFee * entryCount;
@@ -124,15 +121,12 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           ? {
               id: image.id,
               url: image.url,
-              type: image.type as any,
+              type: image.type,
               name: image.name,
-              metadata: image.metadata,
+              metadata: (image.metadata as MixedObject) ?? null,
               nsfwLevel: image.nsfwLevel,
-              userId: image.userId,
-              user: image.user,
               width: image.width,
               height: image.height,
-              thumbnailUrl: image.thumbnailUrl,
             }
           : undefined
       }
@@ -158,24 +152,26 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
                 backgroundColor: 'rgba(0, 0, 0, 0.31)',
               }}
             />
-            {status !== CrucibleStatus.Completed && status !== CrucibleStatus.Cancelled && (
-              <IconBadge
-                icon={<IconClockHour4 size={14} />}
-                color="dark"
-                className={cardClasses.chip}
-                style={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.31)',
-                }}
-                radius="xl"
-                px={8}
-                h={26}
-                variant="filled"
-              >
-                <Text fw="bold" size="xs">
-                  <DaysFromNow date={endAt} withoutSuffix />
-                </Text>
-              </IconBadge>
-            )}
+            {status !== CrucibleStatus.Completed &&
+              status !== CrucibleStatus.Cancelled &&
+              endAt && (
+                <IconBadge
+                  icon={<IconClockHour4 size={14} />}
+                  color="dark"
+                  className={cardClasses.chip}
+                  style={{
+                    backgroundColor: 'rgba(0, 0, 0, 0.31)',
+                  }}
+                  radius="xl"
+                  px={8}
+                  h={26}
+                  variant="filled"
+                >
+                  <Text fw="bold" size="xs">
+                    <DaysFromNow date={endAt} withoutSuffix />
+                  </Text>
+                </IconBadge>
+              )}
           </div>
           <div className="flex items-center gap-2">
             <Badge
