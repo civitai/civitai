@@ -31,6 +31,7 @@ import {
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
+  IconPuzzle,
   IconRepeat,
   IconShare3,
 } from '@tabler/icons-react';
@@ -199,6 +200,10 @@ export function ModelVersionDetails({
 
   // Check if this is a multi-variant model (more than 1 model file)
   const hasMultipleModelVariants = modelFilesVisible.length > 1;
+
+  // Check if this is a component-only model (no model files, only components)
+  const isComponentOnlyModel =
+    modelFilesVisible.length === 0 && Object.keys(groupedFiles.components).length > 0;
 
   const displayCivitaiLink =
     civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
@@ -885,7 +890,8 @@ export function ModelVersionDetails({
                       }
                     </CivitaiLinkManageButton>
                   )}
-                  {hideDownload ? null : displayCivitaiLink || canGenerate ? (
+                  {/* Hide download button for component-only models */}
+                  {hideDownload || isComponentOnlyModel ? null : displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
                         data-tour="model:download"
@@ -1017,9 +1023,24 @@ export function ModelVersionDetails({
                   )}
                 </Group>
               </Group>
-              {primaryFileDetails}
-              {/* Variant dropdown for multiple model files */}
-              {hasMultipleModelVariants && !hideDownload && (
+              {/* Component-only model message */}
+              {isComponentOnlyModel && (
+                <AlertWithIcon
+                  color="blue"
+                  iconColor="blue"
+                  icon={<IconPuzzle size={16} />}
+                  size="sm"
+                  mt="xs"
+                >
+                  <Text size="sm">
+                    This is a modular model - download components below
+                  </Text>
+                </AlertWithIcon>
+              )}
+              {/* Regular model file details - hide for component-only models */}
+              {!isComponentOnlyModel && primaryFileDetails}
+              {/* Variant dropdown for multiple model files - hide for component-only models */}
+              {!isComponentOnlyModel && hasMultipleModelVariants && !hideDownload && (
                 <Card withBorder p="sm" mt="sm">
                   <DownloadVariantDropdown
                     files={filesVisible}
@@ -1346,6 +1367,7 @@ export function ModelVersionDetails({
                 isLoadingAccess={isLoadingAccess}
                 archived={archived}
                 onPurchase={() => onPurchase('download')}
+                isPrimary={isComponentOnlyModel}
               />
             )}
             {isDownloadable && (
