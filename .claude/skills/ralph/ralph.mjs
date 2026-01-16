@@ -7,11 +7,10 @@
  * Each iteration gets a clean context window, avoiding context rot.
  *
  * Usage:
- *   node ralph.mjs [options]
- *   npm run ralph [-- options]
+ *   node .claude/skills/ralph/ralph.mjs [options]
  *
  * Options:
- *   --prd <path>           Path to prd.json (default: scripts/ralph/prd.json)
+ *   --prd <path>           Path to prd.json (default: .claude/skills/ralph/prd.json)
  *   --max-iterations <n>   Maximum iterations (default: 10)
  *   --model <model>        Model to use: opus, sonnet, haiku (default: sonnet)
  *   --quiet                Suppress iteration banners
@@ -24,16 +23,18 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = resolve(__dirname, '../..');
+const defaultProjectRoot = resolve(__dirname, '../../..');
 
 // Parse arguments
 const args = process.argv.slice(2);
 let prdPath = resolve(__dirname, 'prd.json');
-let maxIterations = 10;
-let model = 'sonnet';
+let maxIterations = null; // Will default to story count
+let model = 'opus';
 let quietMode = false;
 let dryRun = false;
 let debugMode = false;
+let noCommit = false;
+let cwdOverride = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -49,26 +50,31 @@ for (let i = 0; i < args.length; i++) {
     dryRun = true;
   } else if (arg === '--debug') {
     debugMode = true;
+  } else if (arg === '--no-commit') {
+    noCommit = true;
+  } else if (arg === '--cwd' || arg === '-C') {
+    cwdOverride = resolve(process.cwd(), args[++i]);
   } else if (arg === '--help' || arg === '-h') {
     console.log(`
 Ralph - Autonomous AI agent loop using Claude Agent SDK
 
-Usage: node ralph.mjs [options]
+Usage: node .claude/skills/ralph/ralph.mjs [options]
 
 Options:
-  --prd, -p <path>         Path to prd.json (default: scripts/ralph/prd.json)
-  --max-iterations, -n <n> Maximum iterations (default: 10)
-  --model, -m <model>      Model: opus, sonnet, haiku (default: sonnet)
+  --prd, -p <path>         Path to prd.json (default: .claude/skills/ralph/prd.json)
+  --max-iterations, -n <n> Maximum iterations (default: number of stories)
+  --model, -m <model>      Model: opus, sonnet, haiku (default: opus)
+  --cwd, -C <path>         Working directory for Ralph (default: script location)
   --quiet, -q              Suppress iteration banners
   --dry-run                Show what would be done without executing
+  --no-commit              Skip git commits (for testing)
   --debug                  Show debug output for message types
   --help, -h               Show this help
 
 Examples:
-  node scripts/ralph/ralph.mjs
-  node scripts/ralph/ralph.mjs --max-iterations 50
-  node scripts/ralph/ralph.mjs --prd ./my-feature/prd.json --model opus
-  npm run ralph -- --max-iterations 20
+  node .claude/skills/ralph/ralph.mjs
+  node .claude/skills/ralph/ralph.mjs --max-iterations 50
+  node .claude/skills/ralph/ralph.mjs --prd ./my-feature/prd.json --model opus
 `);
     process.exit(0);
   }
@@ -82,13 +88,13 @@ if (!existsSync(promptPath)) {
 }
 const promptTemplate = readFileSync(promptPath, 'utf-8');
 
-// Read progress file path
-const progressPath = resolve(__dirname, 'progress.txt');
+// Read progress file path (in same directory as PRD)
+const progressPath = resolve(dirname(prdPath), 'progress.txt');
 
 // Validate PRD exists
 if (!existsSync(prdPath)) {
   console.error(`Error: PRD not found at ${prdPath}`);
-  console.error('Create a PRD first with: /ralph <path-to-plan.md>');
+  console.error('Create a PRD first using the /ralph skill');
   process.exit(1);
 }
 
@@ -144,16 +150,61 @@ function printBanner(iteration, maxIterations, story) {
   console.log('');
 }
 
+// Build the prompt with PRD and progress paths injected
+function buildPrompt() {
+  // Replace placeholder paths in prompt template with actual paths
+  let prompt = promptTemplate
+    .replace(/`[^`]*prd\.json`/g, `\`${prdPath}\``)
+    .replace(/`[^`]*progress\.txt`/g, `\`${progressPath}\``);
+
+  // Add no-commit instruction if flag is set
+  if (noCommit) {
+    prompt += `
+
+## TESTING MODE - NO COMMITS
+
+**DO NOT commit any changes.** This is a test run.
+- Make the code changes as normal
+- Run typecheck as normal
+- Update prd.json to mark story as passing
+- Update progress.txt as normal
+- But SKIP the git commit step entirely
+`;
+  }
+
+  return prompt;
+}
+
+// Format tool name for logging
+function formatToolName(name) {
+  // Shorten common tool names for cleaner output
+  const shortNames = {
+    'Read': 'Read',
+    'Write': 'Write',
+    'Edit': 'Edit',
+    'Bash': 'Bash',
+    'Glob': 'Glob',
+    'Grep': 'Grep',
+    'TodoWrite': 'Todo',
+    'WebFetch': 'Fetch',
+    'WebSearch': 'Search',
+  };
+  return shortNames[name] || name;
+}
+
 // Run a single iteration using Claude Agent SDK
 async function runIteration(prd, story) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
-  // The prompt is the content of prompt.md
-  const prompt = promptTemplate;
+  // Build the prompt with correct paths
+  const prompt = buildPrompt();
 
   let fullResponse = '';
+  let lastWasToolCall = false;
+  let pendingNewline = false;
 
   // Change to project root so file paths resolve correctly
+  const projectRoot = cwdOverride || defaultProjectRoot;
   const originalCwd = process.cwd();
   process.chdir(projectRoot);
 
@@ -170,7 +221,8 @@ async function runIteration(prd, story) {
       },
     })) {
       if (debugMode) {
-        console.log(`[DEBUG] Message: ${JSON.stringify(message).substring(0, 200)}`);
+        console.log(`\n[DEBUG] Message type: ${message.type}`);
+        console.log(`[DEBUG] Content: ${JSON.stringify(message).substring(0, 300)}`);
       }
 
       // Handle system messages (init, etc.)
@@ -180,33 +232,71 @@ async function runIteration(prd, story) {
         }
       }
 
-      // Stream assistant text content to terminal
-      if (message.type === 'assistant') {
-        if (message.content && Array.isArray(message.content)) {
-          for (const block of message.content) {
-            if (block.type === 'text' && block.text) {
-              process.stdout.write(block.text);
-              fullResponse += block.text;
+      // Process content blocks from assistant messages
+      const processContent = (content) => {
+        if (!content || !Array.isArray(content)) return;
+
+        for (const block of content) {
+          // Handle text blocks
+          if (block.type === 'text' && block.text) {
+            // Add newline before text if we just had tool calls
+            if (lastWasToolCall) {
+              console.log('');
+              lastWasToolCall = false;
             }
+            // Ensure text ends with newline for proper formatting
+            const text = block.text;
+            process.stdout.write(text);
+            fullResponse += text;
+            // Track if we need a newline after this
+            pendingNewline = !text.endsWith('\n');
+          }
+
+          // Handle tool_use blocks - log the tool being called
+          if (block.type === 'tool_use' && !quietMode) {
+            // Add newline before tool call if text didn't end with one
+            if (pendingNewline) {
+              console.log('');
+              pendingNewline = false;
+            }
+            const toolName = formatToolName(block.name);
+            // Extract brief context from input if available
+            let context = '';
+            if (block.input) {
+              if (block.input.file_path) {
+                // For file operations, show the path
+                const path = block.input.file_path;
+                const shortPath = path.length > 50 ? '...' + path.slice(-47) : path;
+                context = ` → ${shortPath}`;
+              } else if (block.input.command) {
+                // For bash, show truncated command
+                const cmd = block.input.command;
+                const shortCmd = cmd.length > 40 ? cmd.slice(0, 37) + '...' : cmd;
+                context = ` → ${shortCmd}`;
+              } else if (block.input.pattern) {
+                // For glob/grep, show the pattern
+                context = ` → ${block.input.pattern}`;
+              }
+            }
+            console.log(`  [${toolName}]${context}`);
+            lastWasToolCall = true;
           }
         }
+      };
+
+      // Stream assistant content
+      if (message.type === 'assistant') {
+        processContent(message.content);
         // Some messages might have message.message with content
-        if (message.message?.content && Array.isArray(message.message.content)) {
-          for (const block of message.message.content) {
-            if (block.type === 'text' && block.text) {
-              process.stdout.write(block.text);
-              fullResponse += block.text;
-            }
-          }
+        if (message.message?.content) {
+          processContent(message.message.content);
         }
       }
 
-      // Handle user messages (tool results)
-      if (message.type === 'user' && !quietMode) {
-        // Tool results come back as user messages
-        if (debugMode && message.content) {
-          console.log(`[Tool Result]`);
-        }
+      // Handle user messages (tool results) - just note completion
+      if (message.type === 'user') {
+        // Tool results come back as user messages - we don't need to log these
+        // as the tool call was already logged above
       }
 
       // Handle final result
@@ -228,6 +318,11 @@ async function runIteration(prd, story) {
     process.chdir(originalCwd);
   }
 
+  // Ensure we end with a newline
+  if (pendingNewline) {
+    console.log('');
+  }
+
   // Check for completion signal
   const allDone = fullResponse.includes('<promise>COMPLETE</promise>');
 
@@ -240,6 +335,17 @@ async function runIteration(prd, story) {
 
 // Main loop
 async function main() {
+  let prd = readPrd();
+  initProgress(prd);
+
+  const totalStories = prd.userStories.length;
+  const initialRemaining = countRemaining(prd);
+
+  // Default maxIterations to story count if not explicitly set
+  if (maxIterations === null) {
+    maxIterations = totalStories;
+  }
+
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                         RALPH                                 ║
@@ -249,15 +355,16 @@ async function main() {
 ╚══════════════════════════════════════════════════════════════╝
 `);
 
-  let prd = readPrd();
-  initProgress(prd);
-
-  const totalStories = prd.userStories.length;
-  const initialRemaining = countRemaining(prd);
-
   console.log(`PRD: ${prdPath}`);
+  console.log(`Progress: ${progressPath}`);
+  if (cwdOverride) {
+    console.log(`Working dir: ${cwdOverride}`);
+  }
   console.log(`Total stories: ${totalStories}`);
   console.log(`Remaining: ${initialRemaining}`);
+  if (noCommit) {
+    console.log(`Mode: NO-COMMIT (testing)`);
+  }
   console.log('');
 
   if (dryRun) {

@@ -53,8 +53,7 @@
     "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src",
-    "ts-script": "NODE_ENV=development tsx",
-    "ralph": "node scripts/ralph/ralph.mjs"
+    "ts-script": "NODE_ENV=development tsx"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

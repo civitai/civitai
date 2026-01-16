@@ -1,0 +1,6 @@
+# Project folders contain PRDs and progress files - not committed
+projects/
+
+# Legacy root-level files (if anyone runs without --prd)
+prd.json
+progress.txt

@@ -4,20 +4,30 @@ You are an autonomous coding agent working on a software project. Each iteration
 
 ## Your Task
 
-1. Read the PRD at `scripts/ralph/prd.json`
-2. Read the progress log at `scripts/ralph/progress.txt` (check Codebase Patterns section FIRST)
+1. Read the PRD at `.claude/skills/ralph/prd.json`
+2. Read the progress log at `.claude/skills/ralph/progress.txt` (check Codebase Patterns section FIRST)
 3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
 4. Pick the **highest priority** user story where `passes: false`
-5. Implement that single user story
-6. Run quality checks: `npm run typecheck` (required), then tests if applicable
-7. Update CLAUDE.md if you discover reusable patterns (see below)
-8. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
-9. Update the PRD to set `passes: true` for the completed story
-10. Append your progress to `scripts/ralph/progress.txt`
+5. **If story has `mockupRef`**: Read the referenced mockup file from the PRD's `mockups` array
+6. **If story references design images**: Note them from `designReferences` in the PRD
+7. Implement that single user story (matching mockups if provided)
+8. Run quality checks: `npm run typecheck` (required), then tests if applicable
+9. Update CLAUDE.md if you discover reusable patterns (see below)
+10. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
+11. Update the PRD to set `passes: true` for the completed story
+12. Append your progress to `.claude/skills/ralph/progress.txt`
+
+## Reading Mockups
+
+When a story has a `mockupRef`:
+1. Find the full path in the PRD's `mockups` array
+2. Read the HTML file to understand the expected UI
+3. Match the layout, components, and styling as closely as possible
+4. Note any deviations in your progress report
 
 ## Progress Report Format
 
-APPEND to scripts/ralph/progress.txt (never replace, always append):
+APPEND to progress.txt (never replace, always append):
 ```
 ## [Date/Time] - [Story ID]
 - What was implemented
