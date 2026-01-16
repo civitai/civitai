@@ -82,6 +82,9 @@ export const dialogs = dialogFactory({
   'card-decoration': {
     component: dynamic(() => import('~/components/Modals/CardDecorationModal')),
   },
+  'crucible-submit-entry': {
+    component: dynamic(() => import('~/components/Crucible/CrucibleSubmitEntryModal')),
+  },
 });
 
 export type DialogRegistry = typeof dialogs;
