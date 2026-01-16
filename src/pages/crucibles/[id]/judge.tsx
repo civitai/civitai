@@ -1,9 +1,9 @@
-import { Container, Group, Paper, Text, Title, Button, Box, Anchor, Loader } from '@mantine/core';
+import { Alert, Container, Group, Paper, Text, Title, Button, Box, Anchor, Loader } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import * as z from 'zod';
-import { IconArrowLeft, IconClock, IconTrophy, IconCoin, IconUsers, IconLayoutGrid } from '@tabler/icons-react';
+import { IconArrowLeft, IconClock, IconTrophy, IconCoin, IconUsers, IconLayoutGrid, IconRefresh, IconAlertCircle } from '@tabler/icons-react';
 import { useState, useCallback, useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -52,6 +52,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const [sessionSkips, setSessionSkips] = useState(0);
   const [isVoting, setIsVoting] = useState(false);
   const [allPairsJudged, setAllPairsJudged] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
+  const [lastVoteAttempt, setLastVoteAttempt] = useState<{ winnerId: number; loserId: number } | null>(null);
 
   // Fetch crucible details
   const { data: crucible, isLoading: isLoadingCrucible } = trpc.crucible.getById.useQuery({ id });
@@ -72,7 +74,23 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   // Submit vote mutation
   const submitVoteMutation = trpc.crucible.submitVote.useMutation({
     onError: (error) => {
-      showErrorNotification({ error: new Error(error.message) });
+      // Check if it's a network error
+      const isNetworkError =
+        error.message.includes('fetch') ||
+        error.message.includes('network') ||
+        error.message.includes('Failed to fetch') ||
+        error.message.includes('NetworkError') ||
+        error.message.includes('timeout');
+
+      if (isNetworkError) {
+        setVoteError('Network error. Please check your connection and try again.');
+      } else if (error.message.includes('already voted') || error.message.includes('already being processed')) {
+        // Race condition - silently fetch next pair
+        setVoteError(null);
+        refetchPair();
+      } else {
+        showErrorNotification({ error: new Error(error.message) });
+      }
       setIsVoting(false);
     },
   });
@@ -115,6 +133,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       if (isVoting || !pair) return;
 
       setIsVoting(true);
+      setVoteError(null);
+      setLastVoteAttempt({ winnerId, loserId });
+
       try {
         await submitVoteMutation.mutateAsync({
           crucibleId: id,
@@ -123,6 +144,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         });
 
         setSessionVotes((prev) => prev + 1);
+        setLastVoteAttempt(null);
         // Small delay for visual feedback before loading next pair
         setTimeout(async () => {
           const result = await refetchPair();
@@ -137,6 +159,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     },
     [isVoting, pair, id, submitVoteMutation, refetchPair]
   );
+
+  // Retry last vote attempt
+  const handleRetryVote = useCallback(() => {
+    if (lastVoteAttempt && !isVoting) {
+      handleVote(lastVoteAttempt.winnerId, lastVoteAttempt.loserId);
+    }
+  }, [lastVoteAttempt, isVoting, handleVote]);
 
   // Handle skip (counts as equal - no vote submitted, just get next pair)
   const handleSkip = useCallback(async () => {
@@ -315,13 +344,41 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
       {/* Main Voting Area or End State */}
       <Container size="xl" className="py-8">
+        {/* Network Error Banner with Retry */}
+        {voteError && (
+          <Alert
+            icon={<IconAlertCircle size={18} />}
+            title="Connection Error"
+            color="red"
+            mb="lg"
+            withCloseButton
+            onClose={() => setVoteError(null)}
+          >
+            <Group justify="space-between" align="center">
+              <Text size="sm">{voteError}</Text>
+              {lastVoteAttempt && (
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  leftSection={<IconRefresh size={14} />}
+                  onClick={handleRetryVote}
+                  loading={isVoting}
+                >
+                  Retry Vote
+                </Button>
+              )}
+            </Group>
+          </Alert>
+        )}
+
         {allPairsJudged ? (
           <EndCrucibleState crucibleId={id} crucibleName={crucible.name} sessionVotes={sessionVotes} />
         ) : (
           <CrucibleJudgingUI
             pair={pair}
             isLoading={isLoadingPair || isVoting}
-            disabled={isVoting}
+            disabled={isVoting || !!voteError}
             onVote={handleVote}
             onSkip={handleSkip}
           />

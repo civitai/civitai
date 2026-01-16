@@ -309,8 +309,9 @@ export const submitEntry = async ({
     const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
 
     if (totalBalance < crucible.entryFee) {
+      const shortage = crucible.entryFee - totalBalance;
       return throwInsufficientFundsError(
-        `You need ${crucible.entryFee} Buzz to enter this crucible. You currently have ${totalBalance} Buzz.`
+        `You need ${crucible.entryFee.toLocaleString()} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
       );
     }
 
@@ -779,7 +780,22 @@ export const submitVote = async ({
   const pairKey = createPairKey(winnerEntryId, loserEntryId);
 
   if (votedPairs.has(pairKey)) {
-    throw throwBadRequestError('You have already voted on this pair');
+    throw throwBadRequestError(
+      'You have already voted on this pair. Please wait for the next pair to load.'
+    );
+  }
+
+  // Race condition protection: Try to atomically mark the pair as voted before processing
+  // Use SADD to add to the set - if it returns 0, the pair was already added by another request
+  const key = getVotedPairsKey(crucibleId, userId);
+  const addResult = await sysRedis.sAdd(key, [pairKey]);
+  await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
+
+  if (addResult === 0) {
+    // Another concurrent request already processed this vote
+    throw throwBadRequestError(
+      'This vote is already being processed. Please wait for the next pair to load.'
+    );
   }
 
   // Update ELO scores in Redis using processVote from crucible-elo.service
@@ -803,8 +819,8 @@ export const submitVote = async ({
     }),
   ]);
 
-  // Mark pair as voted in Redis
-  await markPairVoted(crucibleId, userId, winnerEntryId, loserEntryId);
+  // Note: Pair was already marked as voted atomically at the start of this function
+  // for race condition protection - no need to call markPairVoted again
 
   // Track vote in ClickHouse (fire-and-forget)
   const tracker = new Tracker();

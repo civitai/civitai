@@ -18,6 +18,7 @@ import {
   IconCloudUpload,
   IconEye,
   IconPhoto,
+  IconRefresh,
   IconSend,
   IconX,
 } from '@tabler/icons-react';
@@ -259,11 +260,15 @@ export default function CrucibleSubmitEntryModal({
     },
   });
 
+  // Track last error for retry functionality
+  const [lastError, setLastError] = useState<Error | null>(null);
+
   // Handle submit
   const handleSubmit = async () => {
     if (validSelectedCount === 0) return;
 
     setIsSubmitting(true);
+    setLastError(null);
 
     try {
       // Submit each selected image
@@ -289,12 +294,38 @@ export default function CrucibleSubmitEntryModal({
       onSuccess?.();
       dialog.onClose();
     } catch (error) {
-      showErrorNotification({
-        title: 'Failed to submit entries',
-        error: error instanceof Error ? error : new Error('An unknown error occurred'),
-      });
+      const err = error instanceof Error ? error : new Error('An unknown error occurred');
+      setLastError(err);
+
+      // Check if it's a network error or a validation error
+      const isNetworkError =
+        err.message.includes('fetch') ||
+        err.message.includes('network') ||
+        err.message.includes('Failed to fetch') ||
+        err.message.includes('NetworkError') ||
+        err.message.includes('timeout');
+
+      if (isNetworkError) {
+        showErrorNotification({
+          title: 'Network Error',
+          error: { message: 'Unable to connect to server. Please check your connection and try again.' },
+          autoClose: 5000,
+        });
+      } else {
+        showErrorNotification({
+          title: 'Failed to submit entries',
+          error: err,
+        });
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Retry handler for network errors
+  const handleRetry = () => {
+    if (lastError) {
+      handleSubmit();
     }
   };
 
@@ -441,6 +472,24 @@ export default function CrucibleSubmitEntryModal({
 
         {/* Footer */}
         <div className="flex flex-col gap-3 border-t border-[#373a40] p-5">
+          {/* Error with Retry */}
+          {lastError && !isSubmitting && (
+            <div className="flex items-center justify-between rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+              <Text size="sm" c="red.4">
+                Something went wrong. Please try again.
+              </Text>
+              <Button
+                size="xs"
+                variant="light"
+                color="red"
+                leftSection={<IconRefresh size={14} />}
+                onClick={handleRetry}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
+
           <div className="flex gap-3">
             {/* Cancel Button */}
             <Button variant="default" onClick={handleClose} className="flex-shrink-0">
