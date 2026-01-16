@@ -157,6 +157,11 @@ export function DownloadVariantDropdown({
         withBorder
         p="sm"
         radius="md"
+        role="button"
+        tabIndex={0}
+        aria-expanded={opened}
+        aria-haspopup="listbox"
+        aria-label={`Select download variant. Currently selected: ${getFileLabel(activeFile)} ${activeFile.metadata?.format || ''}`}
         style={{
           cursor: 'pointer',
           backgroundColor: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
@@ -167,6 +172,12 @@ export function DownloadVariantDropdown({
             : theme.colors.gray[3],
         }}
         onClick={toggle}
+        onKeyDown={(e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle();
+          }
+        }}
       >
         <Group justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
@@ -209,6 +220,8 @@ export function DownloadVariantDropdown({
         <Paper
           withBorder
           radius="md"
+          role="listbox"
+          aria-label="Download variant options"
           style={{
             backgroundColor: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
             overflow: 'hidden',
@@ -360,6 +373,9 @@ function VariantItem({
       w="100%"
       px="sm"
       py="xs"
+      role="option"
+      aria-selected={isSelected}
+      aria-label={`${getFileLabel(file)}${isBestMatch ? ', best match' : ''}, ${getFileDescription(file)}, ${formatKBytes(file.sizeKB)}`}
       style={{
         backgroundColor: isSelected
           ? 'rgba(34, 139, 230, 0.15)'
