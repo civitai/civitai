@@ -144,11 +144,16 @@ export function RequiredComponentsSection({
   }, [groupedFiles.components]);
 
   // Track selected file for each component type
-  const [selectedFiles, setSelectedFiles] = useState<Record<ModelFileComponentType, FileType>>({} as Record<ModelFileComponentType, FileType>);
+  const [selectedFiles, setSelectedFiles] = useState<Record<ModelFileComponentType, FileType>>(
+    {} as Record<ModelFileComponentType, FileType>
+  );
 
   // Initialize selected files with best matches
   useEffect(() => {
-    const newSelectedFiles: Record<ModelFileComponentType, FileType> = {} as Record<ModelFileComponentType, FileType>;
+    const newSelectedFiles: Record<ModelFileComponentType, FileType> = {} as Record<
+      ModelFileComponentType,
+      FileType
+    >;
     for (const component of requiredComponents) {
       const bestMatch = getPrimaryFile(component.files, { metadata: userPreferences });
       if (bestMatch) {
@@ -253,7 +258,9 @@ export function RequiredComponentsSection({
           <Box
             p="sm"
             style={{
-              borderTop: `1px solid ${colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]}`,
+              borderTop: `1px solid ${
+                colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+              }`,
             }}
           >
             <Button
@@ -354,7 +361,9 @@ function ComponentGroup({
       <Box
         p="sm"
         style={{
-          borderBottom: `1px solid ${colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]}`,
+          borderBottom: `1px solid ${
+            colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+          }`,
         }}
       >
         <Group justify="space-between" wrap="nowrap">
@@ -394,7 +403,9 @@ function ComponentGroup({
   return (
     <Box
       style={{
-        borderBottom: `1px solid ${colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]}`,
+        borderBottom: `1px solid ${
+          colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+        }`,
       }}
     >
       {/* Header - clickable to expand */}
@@ -440,7 +451,9 @@ function ComponentGroup({
         <Box
           style={{
             backgroundColor: colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-            borderTop: `1px solid ${colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]}`,
+            borderTop: `1px solid ${
+              colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+            }`,
           }}
         >
           {files.map((file) => {
@@ -460,7 +473,9 @@ function ComponentGroup({
                 pl={56}
                 style={{
                   backgroundColor: isSelected ? 'rgba(34, 139, 230, 0.1)' : undefined,
-                  borderBottom: `1px solid ${colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1]}`,
+                  borderBottom: `1px solid ${
+                    colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1]
+                  }`,
                   cursor: 'pointer',
                 }}
                 onClick={() => onSelectFile(file)}

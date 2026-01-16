@@ -79,9 +79,7 @@ export function Files() {
 
   // Categorize files by type
   const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type ?? ''));
-  const requiredComponents = files.filter((f) =>
-    ['VAE', 'Text Encoder'].includes(f.type ?? '')
-  );
+  const requiredComponents = files.filter((f) => ['VAE', 'Text Encoder'].includes(f.type ?? ''));
   const optionalFiles = files.filter(
     (f) => !['Model', 'Pruned Model', 'VAE', 'Text Encoder'].includes(f.type ?? '')
   );
@@ -183,7 +181,13 @@ export function Files() {
 
       {/* Required Components Section */}
       {(requiredComponents.length > 0 || linkedComponents.length > 0) && (
-        <Card withBorder style={{ borderColor: 'var(--mantine-color-yellow-6)', backgroundColor: 'rgba(250, 176, 5, 0.03)' }}>
+        <Card
+          withBorder
+          style={{
+            borderColor: 'var(--mantine-color-yellow-6)',
+            backgroundColor: 'rgba(250, 176, 5, 0.03)',
+          }}
+        >
           <Stack gap="md">
             <Group gap="xs" justify="space-between" wrap="nowrap">
               <Group gap="xs">
@@ -685,7 +689,9 @@ function FileEditForm({
             error={error?.componentType?._errors[0]}
             value={versionFile.componentType ?? null}
             onChange={(value) => {
-              updateFile(versionFile.uuid, { componentType: value as ModelFileComponentType | null });
+              updateFile(versionFile.uuid, {
+                componentType: value as ModelFileComponentType | null,
+              });
             }}
           />
         </Tooltip>
