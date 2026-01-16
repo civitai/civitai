@@ -1,5 +1,5 @@
-import { Box, Paper, Text, Title, SimpleGrid, Skeleton, Badge } from '@mantine/core';
-import { IconPhoto, IconTrophy, IconChartLine, IconUsers } from '@tabler/icons-react';
+import { Box, Button, Paper, Text, Title, SimpleGrid, Skeleton, Badge } from '@mantine/core';
+import { IconPhoto, IconTrophy, IconChartLine, IconUsers, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
@@ -246,10 +246,20 @@ function PositionBadge({ rank, isTopThree }: PositionBadgeProps) {
   );
 }
 
+type CrucibleEntryGridEmptyProps = {
+  message?: string;
+  showSubmitButton?: boolean;
+  onSubmitClick?: () => void;
+};
+
 /**
  * Empty state for the entry grid
  */
-export function CrucibleEntryGridEmpty({ message = 'No entries yet' }: { message?: string }) {
+export function CrucibleEntryGridEmpty({
+  message = 'No entries yet',
+  showSubmitButton = false,
+  onSubmitClick,
+}: CrucibleEntryGridEmptyProps) {
   return (
     <Paper
       className="flex flex-col items-center justify-center rounded-lg py-16 text-center"
@@ -259,9 +269,19 @@ export function CrucibleEntryGridEmpty({ message = 'No entries yet' }: { message
       <Text size="lg" fw={600} c="white" mb={4}>
         {message}
       </Text>
-      <Text size="sm" c="dimmed">
+      <Text size="sm" c="dimmed" mb={showSubmitButton ? 'md' : undefined}>
         Be the first to submit an entry!
       </Text>
+      {showSubmitButton && onSubmitClick && (
+        <Button
+          size="md"
+          leftSection={<IconPlus size={18} />}
+          onClick={onSubmitClick}
+          className="bg-blue-600 hover:bg-blue-500"
+        >
+          Submit Entry
+        </Button>
+      )}
     </Paper>
   );
 }
