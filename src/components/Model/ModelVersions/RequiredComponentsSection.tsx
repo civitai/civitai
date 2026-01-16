@@ -44,6 +44,8 @@ interface RequiredComponentsSectionProps {
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
+  /** When true, this is a component-only model and Download All should be the primary action */
+  isPrimary?: boolean;
 }
 
 // Component type display names and icons
@@ -114,6 +116,7 @@ export function RequiredComponentsSection({
   isLoadingAccess,
   archived,
   onPurchase,
+  isPrimary = false,
 }: RequiredComponentsSectionProps) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -246,7 +249,7 @@ export function RequiredComponentsSection({
             />
           ))}
 
-          {/* Download All button */}
+          {/* Download All button - more prominent when isPrimary */}
           <Box
             p="sm"
             style={{
@@ -255,19 +258,24 @@ export function RequiredComponentsSection({
           >
             <Button
               fullWidth
-              variant="light"
+              variant={isPrimary ? 'filled' : 'light'}
               color="blue"
-              leftSection={<IconPackage size={18} />}
+              size={isPrimary ? 'md' : 'sm'}
+              leftSection={<IconPackage size={isPrimary ? 20 : 18} />}
               onClick={handleDownloadAll}
               disabled={archived || isLoadingAccess}
-              style={{
-                backgroundColor: 'rgba(34, 139, 230, 0.15)',
-                borderColor: 'rgba(34, 139, 230, 0.3)',
-              }}
+              style={
+                isPrimary
+                  ? undefined
+                  : {
+                      backgroundColor: 'rgba(34, 139, 230, 0.15)',
+                      borderColor: 'rgba(34, 139, 230, 0.3)',
+                    }
+              }
             >
               <Group gap={8}>
                 <span>Download All Components</span>
-                <Text span c="blue.3" style={{ opacity: 0.7 }}>
+                <Text span c={isPrimary ? 'blue.2' : 'blue.3'} style={{ opacity: 0.7 }}>
                   ({formatKBytes(totalSize)})
                 </Text>
               </Group>
