@@ -1,4 +1,4 @@
-import { router, publicProcedure, guardedProcedure } from '~/server/trpc';
+import { router, publicProcedure, guardedProcedure, isFlagProtected } from '~/server/trpc';
 import {
   getCruciblesInfiniteSchema,
   getCrucibleByIdSchema,
@@ -121,33 +121,42 @@ const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
 });
 
 export const crucibleRouter = router({
-  getInfinite: publicProcedure.input(getCruciblesInfiniteSchema).query(async ({ input }) => {
-    const items = await getCrucibles({
-      input,
-      select: crucibleListSelect,
-    });
+  getInfinite: publicProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getCruciblesInfiniteSchema)
+    .query(async ({ input }) => {
+      const items = await getCrucibles({
+        input,
+        select: crucibleListSelect,
+      });
 
-    return {
-      items,
-      nextCursor: items.length > 0 ? items[items.length - 1].id : undefined,
-    };
-  }),
+      return {
+        items,
+        nextCursor: items.length > 0 ? items[items.length - 1].id : undefined,
+      };
+    }),
 
-  getById: publicProcedure.input(getCrucibleByIdSchema).query(async ({ input }) => {
-    const crucible = await getCrucible({
-      id: input.id,
-      select: crucibleDetailSelect,
-    });
+  getById: publicProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getCrucibleByIdSchema)
+    .query(async ({ input }) => {
+      const crucible = await getCrucible({
+        id: input.id,
+        select: crucibleDetailSelect,
+      });
 
-    return crucible;
-  }),
+      return crucible;
+    }),
 
-  create: guardedProcedure.input(createCrucibleInputSchema).mutation(async ({ ctx, input }) => {
-    const crucible = await createCrucible({
-      ...input,
-      userId: ctx.user.id,
-    });
+  create: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(createCrucibleInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const crucible = await createCrucible({
+        ...input,
+        userId: ctx.user.id,
+      });
 
-    return crucible;
-  }),
+      return crucible;
+    }),
 });
