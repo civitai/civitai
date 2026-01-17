@@ -1179,6 +1179,10 @@ export const submitVote = async ({
   loserEntryId,
   userId,
 }: SubmitVoteSchema & { userId: number }): Promise<SubmitVoteResult> => {
+  log(
+    `Vote submission started: user ${userId}, crucible ${crucibleId}, winner ${winnerEntryId}, loser ${loserEntryId}`
+  );
+
   // Fetch the crucible to validate it's active
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -1285,6 +1289,10 @@ export const submitVote = async ({
     winnerEntryId,
     loserEntryId,
   });
+
+  log(
+    `Vote submitted successfully: user ${userId}, crucible ${crucibleId}, winner ${winnerEntryId} (ELO: ${winnerElo}), loser ${loserEntryId} (ELO: ${loserElo})`
+  );
 
   return {
     winnerElo,
