@@ -2,6 +2,12 @@ import * as z from 'zod';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { infiniteQuerySchema } from './base.schema';
+import {
+  CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+} from '~/shared/constants/crucible.constants';
 
 // Re-export CrucibleSort for convenience
 export { CrucibleSort };
@@ -29,14 +35,8 @@ export const crucibleImageSchema = z.object({
 });
 export type CrucibleImageSchema = z.infer<typeof crucibleImageSchema>;
 
-// Crucible setup fee pricing constants (in Buzz)
-export const CRUCIBLE_DURATION_COSTS: Record<number, number> = {
-  8: 0, // 8 hours - free
-  24: 500, // 24 hours
-  72: 1000, // 3 days
-  168: 2000, // 7 days
-};
-export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 1000;
+// Re-export crucible constants for backward compatibility
+export { CRUCIBLE_DURATION_COSTS, CRUCIBLE_PRIZE_CUSTOMIZATION_COST } from '~/shared/constants/crucible.constants';
 
 /**
  * Calculate the total setup cost for creating a crucible
@@ -60,8 +60,8 @@ export const createCrucibleInputSchema = z.object({
   description: z.string().nonempty(),
   coverImage: crucibleImageSchema,
   nsfwLevel: z.number(),
-  entryFee: z.number().min(0).max(1_000_000), // Max 1M Buzz to prevent integer overflow
-  entryLimit: z.number().min(1).max(10_000), // Max 10K entries per user to prevent abuse
+  entryFee: z.number().min(0).max(CRUCIBLE_MAX_ENTRY_FEE),
+  entryLimit: z.number().min(1).max(CRUCIBLE_MAX_ENTRIES),
   maxTotalEntries: z.number().min(1).optional(),
   prizePositions: z.record(z.string(), z.number()).refine(
     (positions) => {
