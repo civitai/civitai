@@ -103,3 +103,10 @@ nul
 
 scripts/local-dev/
 .direnv
+
+# Ralph agent
+scripts/ralph/prd.json
+scripts/ralph/progress.txt
+
+# Claude temp files
+tmpclaude-*

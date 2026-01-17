@@ -107,12 +107,29 @@ declare global {
     | 'Other';
   type ModelFileSize = 'full' | 'pruned';
   type ModelFileFp = 'fp32' | 'fp16' | 'bf16' | 'fp8' | 'nf4';
+  type ModelFileQuantType =
+    | 'Q8_0'
+    | 'Q6_K'
+    | 'Q5_K_M'
+    | 'Q4_K_M'
+    | 'Q4_K_S'
+    | 'Q3_K_M'
+    | 'Q2_K';
+  type ModelFileComponentType =
+    | 'VAE'
+    | 'TextEncoder'
+    | 'UNet'
+    | 'CLIPVision'
+    | 'ControlNet'
+    | 'Config'
+    | 'Other';
   type ImageFormat = 'optimized' | 'metadata';
 
   type UserFilePreferences = {
     format: ModelFileFormat;
     size: ModelFileSize;
     fp: ModelFileFp;
+    quantType?: ModelFileQuantType;
     imageFormat: ImageFormat;
   };
 
@@ -120,6 +137,8 @@ declare global {
     format?: ModelFileFormat;
     size?: ModelFileSize;
     fp?: ModelFileFp;
+    quantType?: ModelFileQuantType;
+    componentType?: ModelFileComponentType;
   };
 
   // TODO should find a way to merge this with ModelFileMetadata
