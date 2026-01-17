@@ -126,6 +126,49 @@
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-primary); }
     .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
 
+    .status-filters {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 15px;
+      padding: 10px 15px;
+      background: var(--bg-card);
+      border-radius: 8px;
+    }
+
+    .filter-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .filter-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .status-chip {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.15s;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+
+    .status-chip.active {
+      opacity: 1;
+    }
+
+    .status-chip.CREATED { background: var(--accent); color: var(--bg-dark); }
+    .status-chip.RUNNING { background: var(--success); color: var(--bg-dark); }
+    .status-chip.PAUSED { background: var(--warning); color: var(--bg-dark); }
+    .status-chip.WAITING_APPROVAL { background: var(--danger); color: white; }
+    .status-chip.COMPLETED { background: var(--text-secondary); color: var(--bg-dark); }
+    .status-chip.ABORTED { background: #666; color: white; }
+
     .sessions-grid {
       display: grid;
       gap: 20px;
@@ -172,6 +215,24 @@
     .session-name {
       font-weight: 600;
       font-size: 1.1rem;
+    }
+
+    .copy-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 0.8rem;
+      opacity: 0.5;
+      transition: opacity 0.15s;
+      padding: 2px 4px;
+    }
+
+    .copy-btn:hover {
+      opacity: 1;
+    }
+
+    .copy-btn.copied {
+      opacity: 1;
     }
 
     .session-id {
@@ -697,6 +758,11 @@
       <button class="btn btn-primary" onclick="createSession()">Create Session</button>
     </div>
 
+    <div class="status-filters">
+      <span class="filter-label">Show:</span>
+      <div class="filter-chips" id="status-filter-chips"></div>
+    </div>
+
     <div id="sessions-container" class="sessions-grid">
       <div class="empty-state">
         <h3>No Sessions</h3>
@@ -714,6 +780,10 @@
     let openChildrenLists = new Set();  // Track which children lists are expanded
     let logFilters = new Map();  // Track log level filters per session (Map<sessionId, Set<level>>)
     const defaultLogLevels = ['text', 'tool', 'story', 'info', 'warn', 'error', 'inject'];
+
+    // Session status filtering
+    const allStatuses = ['CREATED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'COMPLETED', 'ABORTED'];
+    let activeStatusFilters = new Set(['CREATED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL']);  // Default to active sessions
 
     // API Functions
     async function fetchSessions() {
@@ -966,8 +1036,33 @@
       document.getElementById('completed-count').textContent = completed;
     }
 
+    function renderStatusFilters() {
+      const container = document.getElementById('status-filter-chips');
+      if (!container) return;
+
+      container.innerHTML = allStatuses.map(status => `
+        <span class="status-chip ${status} ${activeStatusFilters.has(status) ? 'active' : ''}"
+              onclick="toggleStatusFilter('${status}')">${status.replace('_', ' ')}</span>
+      `).join('');
+    }
+
+    function toggleStatusFilter(status) {
+      if (activeStatusFilters.has(status)) {
+        activeStatusFilters.delete(status);
+      } else {
+        activeStatusFilters.add(status);
+      }
+      renderStatusFilters();
+      renderSessions();
+    }
+
+    function getFilteredSessions() {
+      return sessions.filter(s => activeStatusFilters.has(s.status));
+    }
+
     function renderSessions() {
       const container = document.getElementById('sessions-container');
+      renderStatusFilters();
 
       if (sessions.length === 0) {
         container.innerHTML = `
@@ -979,9 +1074,20 @@
         return;
       }
 
+      const filteredSessions = getFilteredSessions();
+      if (filteredSessions.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>No Matching Sessions</h3>
+            <p>No sessions match the current filter. Try adjusting the status filters above.</p>
+          </div>
+        `;
+        return;
+      }
+
       // Organize hierarchically: parents first, then their children indented
-      const parentSessions = sessions.filter(s => !s.parentId);
-      const childSessions = sessions.filter(s => s.parentId);
+      const parentSessions = filteredSessions.filter(s => !s.parentId);
+      const childSessions = filteredSessions.filter(s => s.parentId);
 
       let html = '';
       parentSessions.forEach(parent => {
@@ -1025,6 +1131,7 @@
           <div class="session-header">
             <div class="session-title">
               <span class="session-name">${escapeHtml(s.name || s.id)}</span>
+              <button class="copy-btn" onclick="copyToClipboard('${s.id}', this)" title="Copy session ID">📋</button>
               <div class="session-badges">
                 ${s.childIds && s.childIds.length > 0 ? `<span class="badge badge-parent">${s.childIds.length} children</span>` : ''}
                 ${s.parentId ? `<span class="badge badge-child" onclick="scrollToSession('${s.parentId}')" title="Click to go to parent">child<span class="parent-ref">→ ${getSessionName(s.parentId)}</span></span>` : ''}
@@ -1090,6 +1197,7 @@
             <div class="prd-viewer" id="prd-viewer-${s.id}" style="display: ${openPrdViewers.has(s.id) ? 'block' : 'none'};">
               <div class="prd-header">
                 <span>PRD: ${escapeHtml(s.prdPath || 'Unknown')}</span>
+                <button class="copy-btn" onclick="copyToClipboard('${escapeHtml(s.prdPath || '')}', this)" title="Copy PRD path">📋</button>
                 <button class="btn btn-ghost btn-sm" onclick="togglePrdView('${s.id}')">Close</button>
               </div>
               <div class="prd-stories" id="prd-stories-${s.id}">
@@ -1257,6 +1365,21 @@
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+    }
+
+    async function copyToClipboard(text, button) {
+      try {
+        await navigator.clipboard.writeText(text);
+        const originalText = button.textContent;
+        button.textContent = '✓';
+        button.classList.add('copied');
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.classList.remove('copied');
+        }, 1500);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
     }
 
     function updateTurnCounter(sessionId, storyTurns, maxTurns, totalTurns) {
