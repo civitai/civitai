@@ -132,3 +132,18 @@ export type UserActiveCrucible = {
   position: number | null;
   imageUrl: string | null;
 };
+
+// Schema for getting featured crucible (no input needed - returns highest prize pool active crucible)
+export type GetFeaturedCrucibleSchema = z.infer<typeof getFeaturedCrucibleSchema>;
+export const getFeaturedCrucibleSchema = z.object({});
+
+// Featured crucible response type
+export type FeaturedCrucible = {
+  id: number;
+  name: string;
+  description: string;
+  prizePool: number;
+  timeRemaining: string;
+  entriesCount: number;
+  imageUrl: string | null;
+};

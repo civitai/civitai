@@ -2079,3 +2079,79 @@ export const getUserActiveCrucibles = async ({
     return a.endAt.getTime() - b.endAt.getTime();
   });
 };
+
+// ============================================================================
+// Featured Crucible
+// ============================================================================
+
+/**
+ * Get the featured crucible for the discovery page
+ *
+ * Returns the active crucible with the highest prize pool (entry fee * entries count).
+ * This will be displayed as a prominent hero card on the discovery page.
+ *
+ * Returns null if no active crucibles exist.
+ */
+export const getFeaturedCrucible = async (): Promise<{
+  id: number;
+  name: string;
+  description: string;
+  prizePool: number;
+  timeRemaining: string;
+  entriesCount: number;
+  imageUrl: string | null;
+} | null> => {
+  // Get all active crucibles with their entry counts
+  const activeCrucibles = await dbRead.crucible.findMany({
+    where: {
+      status: CrucibleStatus.Active,
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      entryFee: true,
+      endAt: true,
+      image: {
+        select: {
+          url: true,
+        },
+      },
+      _count: {
+        select: {
+          entries: true,
+        },
+      },
+    },
+  });
+
+  if (activeCrucibles.length === 0) {
+    return null;
+  }
+
+  // Calculate prize pool for each and find the one with the highest
+  const cruciblesWithPrizePool = activeCrucibles.map((crucible) => ({
+    ...crucible,
+    prizePool: crucible.entryFee * crucible._count.entries,
+  }));
+
+  // Sort by prize pool descending, then by entry count descending (as tiebreaker)
+  cruciblesWithPrizePool.sort((a, b) => {
+    if (b.prizePool !== a.prizePool) {
+      return b.prizePool - a.prizePool;
+    }
+    return b._count.entries - a._count.entries;
+  });
+
+  const featured = cruciblesWithPrizePool[0];
+
+  return {
+    id: featured.id,
+    name: featured.name,
+    description: featured.description ?? '',
+    prizePool: featured.prizePool,
+    timeRemaining: featured.endAt ? formatTimeRemaining(featured.endAt) : 'No end date',
+    entriesCount: featured._count.entries,
+    imageUrl: featured.image?.url ?? null,
+  };
+};

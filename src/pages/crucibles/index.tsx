@@ -3,6 +3,7 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
+import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
@@ -44,6 +45,9 @@ function CruciblesPage() {
 
           {/* User welcome section with stats */}
           <UserCrucibleWelcome />
+
+          {/* Featured crucible hero card */}
+          <FeaturedCrucibleHero />
 
           <SegmentedControl
             data={statusData}

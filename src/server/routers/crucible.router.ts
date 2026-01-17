@@ -9,6 +9,7 @@ import {
   cancelCrucibleSchema,
   getUserCrucibleStatsSchema,
   getUserActiveCruciblesSchema,
+  getFeaturedCrucibleSchema,
 } from '~/server/schema/crucible.schema';
 import {
   createCrucible,
@@ -20,6 +21,7 @@ import {
   cancelCrucible,
   getUserCrucibleStats,
   getUserActiveCrucibles,
+  getFeaturedCrucible,
 } from '~/server/services/crucible.service';
 import { isModerator } from '~/server/routers/base.router';
 import { Prisma } from '@prisma/client';
@@ -254,5 +256,13 @@ export const crucibleRouter = router({
       });
 
       return crucibles;
+    }),
+
+  getFeatured: publicProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getFeaturedCrucibleSchema)
+    .query(async () => {
+      const featured = await getFeaturedCrucible();
+      return featured;
     }),
 });
