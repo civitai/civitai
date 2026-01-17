@@ -383,6 +383,8 @@ model User {
   playerInfo                 NewOrderPlayer?
   CryptoWallet               CryptoWallet[]
   CryptoTransaction          CryptoTransaction[]
+  crucibles                  Crucible[]
+  crucibleEntries            CrucibleEntry[]
 
   @@index([deletedAt])
 }
@@ -1480,6 +1482,8 @@ model Image {
   tagsNew             TagsOnImageNew[]
   imageResourceNew    ImageResourceNew[]
   imageTagsForReview  ImageTagForReview[]
+  crucibles           Crucible[]
+  crucibleEntries     CrucibleEntry[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -4759,4 +4763,65 @@ model TagsOnImageDetails {
   confidence  Int
 
   @@id([imageId, tagId])
+}
+
+// ============================================================================
+// Crucible - Head-to-head content competitions
+// ============================================================================
+
+enum CrucibleStatus {
+  Pending
+  Active
+  Completed
+  Cancelled
+}
+
+model Crucible {
+  id                Int             @id @default(autoincrement())
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  imageId           Int?
+  image             Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  nsfwLevel         Int             @default(0)
+  entryFee          Int             @default(0)
+  entryLimit        Int             @default(1)
+  maxTotalEntries   Int?
+  prizePositions    Json            @default("[]")
+  allowedResources  Json?
+  judgeRequirements Json?
+  duration          Int             @default(480) // Duration in minutes, default 8 hours
+  startAt           DateTime?
+  endAt             DateTime?
+  status            CrucibleStatus  @default(Pending)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  buzzTransactionId String?         // Transaction ID for creator setup fee refunds
+
+  entries CrucibleEntry[]
+
+  @@index([userId], type: Hash)
+  @@index([status])
+  @@index([endAt])
+  @@index([startAt])
+}
+
+model CrucibleEntry {
+  id                Int       @id @default(autoincrement())
+  crucibleId        Int
+  crucible          Crucible  @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId           Int
+  image             Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  score             Int       @default(1500)
+  voteCount         Int       @default(0)
+  position          Int?
+  buzzTransactionId String?   // Transaction prefix for potential refunds
+  createdAt         DateTime  @default(now())
+
+  @@index([crucibleId], type: Hash)
+  @@index([userId], type: Hash)
+  @@index([crucibleId, score(sort: Desc)])
 }

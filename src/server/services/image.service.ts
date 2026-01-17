@@ -6099,7 +6099,7 @@ export const getMyImages = async ({
 
   try {
     const media = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true, type: true },
+      select: { id: true, url: true, meta: true, createdAt: true, type: true, nsfwLevel: true },
       where: {
         userId,
         type: {

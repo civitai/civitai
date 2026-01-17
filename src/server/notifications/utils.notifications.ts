@@ -8,6 +8,7 @@ import { challengeNotifications } from '~/server/notifications/challenge.notific
 import { clubNotifications } from '~/server/notifications/club.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { crucibleNotifications } from '~/server/notifications/crucible.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
@@ -47,6 +48,7 @@ export const notificationProcessors = {
   ...challengeNotifications,
   ...auctionNotifications,
   ...knightsNewOrderNotifications,
+  ...crucibleNotifications,
 };
 
 // Sort notifications by priority and group them by priority

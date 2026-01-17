@@ -1,0 +1,1655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crucible Discovery - v2e Refined</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons@latest/dist/tabler-icons.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.3.0/tailwind.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --mantine-color-dark-8: #1a1b1e;
+            --mantine-color-dark-7: #25262b;
+            --mantine-color-dark-5: #373a40;
+            --mantine-color-blue-6: #3b82f6;
+            --mantine-color-blue-5: #60a5fa;
+            --mantine-color-green-6: #10b981;
+            --mantine-color-gold-6: #fbbf24;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #1a1b1e;
+            color: #c1c2c5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.5;
+        }
+
+        /* Navigation */
+        nav {
+            background-color: #25262b;
+            border-bottom: 1px solid #373a40;
+            padding: 0 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 0;
+        }
+
+        nav-brand {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #fff;
+            margin-right: 3rem;
+        }
+
+        nav-items {
+            display: flex;
+            gap: 2rem;
+        }
+
+        nav-item {
+            color: #a6adba;
+            text-decoration: none;
+            padding: 0.5rem 0;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        nav-item:hover {
+            color: #fff;
+        }
+
+        nav-item.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+
+        /* Main Container */
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header Section */
+        .header-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .header-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .header-action {
+            display: flex;
+            gap: 1rem;
+        }
+
+        /* Button Styles */
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            border: none;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background-color: #3b82f6;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background-color: #60a5fa;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            color: #3b82f6;
+            border: 1px solid #3b82f6;
+        }
+
+        .btn-secondary:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+            border-color: #60a5fa;
+            color: #60a5fa;
+        }
+
+        .btn-small {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        /* User Section */
+        .user-section {
+            background: linear-gradient(135deg, #25262b 0%, #1a1b1e 100%);
+            border: 1px solid #373a40;
+            border-radius: 0.75rem;
+            padding: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .user-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .user-greeting {
+            flex: 1;
+        }
+
+        .user-greeting-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .user-greeting-subtitle {
+            color: #a6adba;
+            font-size: 0.95rem;
+        }
+
+        /* User Stats Grid - Individual Card Style */
+        .user-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background-color: rgba(37, 38, 43, 0.5);
+            border: 1px solid #373a40;
+            border-radius: 0.625rem;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 0.75rem;
+            transition: all 0.2s ease;
+        }
+
+        .stat-card:hover {
+            background-color: rgba(37, 38, 43, 0.8);
+            border-color: #3b82f6;
+        }
+
+        .stat-card-icon {
+            font-size: 2rem;
+            color: #3b82f6;
+        }
+
+        .stat-card-icon.gold {
+            color: #fbbf24;
+        }
+
+        .stat-card-icon.green {
+            color: #10b981;
+        }
+
+        .stat-card-icon.orange {
+            color: #f59e0b;
+        }
+
+        .stat-card-label {
+            font-size: 0.75rem;
+            color: #a6adba;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-card-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        /* Recent Results Dropdown */
+        .recent-results-container {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+            margin-top: 1.5rem;
+        }
+
+        .recent-results-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #3b82f6;
+            text-decoration: none;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 0.5rem 1rem;
+            background-color: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 0.5rem;
+        }
+
+        .recent-results-trigger:hover {
+            color: #60a5fa;
+            background-color: rgba(59, 130, 246, 0.15);
+            border-color: #3b82f6;
+        }
+
+        .recent-results-panel {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background-color: #25262b;
+            border: 1px solid #373a40;
+            border-radius: 0.5rem;
+            margin-top: 0.75rem;
+            z-index: 50;
+            max-height: 400px;
+            overflow-y: auto;
+            display: none;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .recent-results-panel.active {
+            display: block;
+        }
+
+        .recent-results-header {
+            padding: 1rem;
+            border-bottom: 1px solid #373a40;
+            font-weight: 600;
+            color: #fff;
+            position: sticky;
+            top: 0;
+            background-color: #25262b;
+        }
+
+        .result-row {
+            padding: 1rem;
+            border-bottom: 1px solid #373a40;
+            display: grid;
+            grid-template-columns: 1.5fr 0.8fr 0.8fr 1fr;
+            gap: 1rem;
+            align-items: center;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .result-row:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+
+        .result-row:last-child {
+            border-bottom: none;
+        }
+
+        .result-name {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .result-position {
+            color: #a6adba;
+            text-align: center;
+        }
+
+        .result-outcome {
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .result-outcome.won {
+            color: #10b981;
+        }
+
+        .result-outcome.lost {
+            color: #f59e0b;
+        }
+
+        .result-buzz {
+            text-align: right;
+            color: #fbbf24;
+            font-weight: 600;
+        }
+
+        .view-all-results {
+            display: block;
+            text-align: center;
+            padding: 1rem;
+            color: #3b82f6;
+            text-decoration: none;
+            background-color: rgba(59, 130, 246, 0.05);
+            border-top: 1px solid #373a40;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .view-all-results:hover {
+            background-color: rgba(59, 130, 246, 0.15);
+        }
+
+        /* Active Crucibles Section */
+        .active-crucibles-section {
+            margin-bottom: 2rem;
+        }
+
+        .section-subheader {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section-subheader h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .section-subheader-badge {
+            background-color: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .active-crucibles-carousel {
+            display: flex;
+            gap: 1.5rem;
+            overflow-x: auto;
+            padding-bottom: 1rem;
+            scroll-behavior: smooth;
+        }
+
+        .active-crucibles-carousel::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .active-crucibles-carousel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .active-crucibles-carousel::-webkit-scrollbar-thumb {
+            background: #373a40;
+            border-radius: 3px;
+        }
+
+        /* Active Crucible Card - Now using discovery grid style */
+        .active-crucible-card {
+            flex: 0 0 calc(25% - 1.125rem);
+            min-width: 250px;
+            background-color: #25262b;
+            border: 1px solid #373a40;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .active-crucible-card:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 12px 32px rgba(59, 130, 246, 0.15);
+            transform: translateY(-4px);
+        }
+
+        .active-crucible-image {
+            width: 100%;
+            height: 160px;
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .active-crucible-image.alt1 {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .active-crucible-image.alt2 {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .active-crucible-image.alt3 {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .active-crucible-position-badge {
+            position: absolute;
+            top: 0.75rem;
+            right: 0.75rem;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: #fbbf24;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .active-crucible-body {
+            padding: 1.5rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .active-crucible-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 0.5rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .crucible-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            margin-top: auto;
+            padding-top: 1rem;
+            border-top: 1px solid #373a40;
+        }
+
+        .crucible-info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .crucible-info-label {
+            font-size: 0.75rem;
+            color: #a6adba;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .crucible-info-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .crucible-info-value.prize {
+            color: #fbbf24;
+        }
+
+        .crucible-info-value.time {
+            color: #60a5fa;
+        }
+
+        .active-crucible-actions {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .btn-small-primary {
+            flex: 1;
+            padding: 0.5rem 1rem;
+            background-color: #3b82f6;
+            color: #fff;
+            border: none;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-small-primary:hover {
+            background-color: #60a5fa;
+        }
+
+        .btn-small-secondary {
+            flex: 1;
+            padding: 0.5rem 1rem;
+            background-color: transparent;
+            color: #3b82f6;
+            border: 1px solid #3b82f6;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-small-secondary:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+            border-color: #60a5fa;
+            color: #60a5fa;
+        }
+
+        /* Discovery Section */
+        .discovery-section {
+            margin-top: 3rem;
+        }
+
+        .discovery-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .discovery-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        /* Filter Controls */
+        .filter-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .filter-tabs {
+            display: flex;
+            gap: 1rem;
+            border-bottom: 1px solid #373a40;
+            padding-bottom: 1rem;
+            flex: 1;
+        }
+
+        .filter-tab {
+            padding: 0.75rem 1rem;
+            background: none;
+            border: none;
+            color: #a6adba;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1rem;
+            padding-bottom: 1.75rem;
+        }
+
+        .filter-tab:hover {
+            color: #fff;
+        }
+
+        .filter-tab.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+
+        /* Sort Dropdown */
+        .sort-dropdown-container {
+            position: relative;
+        }
+
+        .sort-dropdown-btn {
+            padding: 0.75rem 1.25rem;
+            background-color: #25262b;
+            border: 1px solid #373a40;
+            border-radius: 0.5rem;
+            color: #c1c2c5;
+            cursor: pointer;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .sort-dropdown-btn:hover {
+            background-color: #2c2e33;
+            border-color: #3b82f6;
+            color: #fff;
+        }
+
+        .sort-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background-color: #25262b;
+            border: 1px solid #373a40;
+            border-radius: 0.5rem;
+            min-width: 200px;
+            margin-top: 0.5rem;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .sort-dropdown-menu.active {
+            display: block;
+        }
+
+        .sort-dropdown-item {
+            padding: 0.75rem 1rem;
+            color: #c1c2c5;
+            cursor: pointer;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.95rem;
+        }
+
+        .sort-dropdown-item:hover {
+            background-color: #373a40;
+            color: #fff;
+        }
+
+        .sort-dropdown-item.active {
+            color: #3b82f6;
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+
+        .sort-dropdown-item i {
+            width: 16px;
+            text-align: center;
+        }
+
+        /* Hero Section */
+        .hero-section {
+            margin-bottom: 4rem;
+        }
+
+        .hero-card {
+            background: linear-gradient(135deg, #373a40 0%, #25262b 100%);
+            border: 1px solid #373a40;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            padding: 0;
+            transition: all 0.3s ease;
+        }
+
+        .hero-card:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 12px 32px rgba(59, 130, 246, 0.2);
+        }
+
+        .hero-image {
+            background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 4rem;
+            min-height: 300px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-image::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: float 20s linear infinite;
+        }
+
+        @keyframes float {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+
+        .hero-content {
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 300px;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background-color: rgba(251, 191, 36, 0.15);
+            color: #fbbf24;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            width: fit-content;
+            margin-bottom: 1rem;
+        }
+
+        .hero-title {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero-description {
+            color: #a6adba;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .hero-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: #a6adba;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .stat-value.highlight {
+            color: #fbbf24;
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        /* Grid Section */
+        .grid-section {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 1.5rem;
+        }
+
+        .crucible-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        /* Card Styles */
+        .crucible-card {
+            background-color: #25262b;
+            border: 1px solid #373a40;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+        }
+
+        .crucible-card:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 12px 32px rgba(59, 130, 246, 0.15);
+            transform: translateY(-4px);
+        }
+
+        .card-image {
+            width: 100%;
+            height: 180px;
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card-image.alt1 {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .card-image.alt2 {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .card-image.alt3 {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .card-image.alt4 {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        }
+
+        .card-badge {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: #fff;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .card-content {
+            padding: 1.5rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 0.5rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .card-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            margin-top: auto;
+            padding-top: 1rem;
+            border-top: 1px solid #373a40;
+        }
+
+        .meta-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .meta-label {
+            font-size: 0.75rem;
+            color: #a6adba;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .meta-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .meta-value.prize {
+            color: #fbbf24;
+        }
+
+        .meta-value.time {
+            color: #60a5fa;
+        }
+
+        .card-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: #a6adba;
+            margin-top: 0.75rem;
+        }
+
+        .status-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            background-color: #10b981;
+        }
+
+        .status-dot.ending {
+            background-color: #f59e0b;
+        }
+
+        .status-dot.completed {
+            background-color: #6b7280;
+        }
+
+        /* Infinite Scroll Indicator */
+        .loading-indicator {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+            color: #a6adba;
+            font-size: 0.95rem;
+            gap: 0.75rem;
+        }
+
+        .loading-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #373a40;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .active-crucible-card {
+                flex: 0 0 calc(33.333% - 1rem);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .hero-card {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-image {
+                min-height: 200px;
+            }
+
+            .header-section {
+                flex-direction: column;
+                gap: 1.5rem;
+                align-items: flex-start;
+            }
+
+            .header-title {
+                font-size: 1.875rem;
+            }
+
+            .crucible-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .main-container {
+                padding: 1rem;
+            }
+
+            .active-crucible-card {
+                flex: 0 0 calc(50% - 0.75rem);
+            }
+
+            .user-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filter-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-tabs {
+                width: 100%;
+            }
+
+            .sort-dropdown-container {
+                width: 100%;
+            }
+
+            .sort-dropdown-btn {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .hero-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-actions {
+                flex-direction: column;
+            }
+
+            .result-row {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .active-crucible-card {
+                flex: 0 0 100%;
+            }
+
+            .user-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .stat-card {
+                padding: 1.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <nav-container>
+            <nav-brand>Civitai</nav-brand>
+            <nav-items>
+                <nav-item>Home</nav-item>
+                <nav-item>Models</nav-item>
+                <nav-item class="active">Crucibles</nav-item>
+                <nav-item>Community</nav-item>
+                <nav-item>Leaderboard</nav-item>
+            </nav-items>
+        </nav-container>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-container">
+        <!-- Header -->
+        <div class="header-section">
+            <h1 class="header-title">Crucible Discovery</h1>
+            <div class="header-action">
+                <button class="btn btn-primary">
+                    <i class="ti ti-plus"></i>
+                    Create Crucible
+                </button>
+            </div>
+        </div>
+
+        <!-- USER SECTION: Your Crucibles & Stats -->
+        <div class="user-section">
+            <!-- User Greeting -->
+            <div class="user-header">
+                <div class="user-greeting">
+                    <h2 class="user-greeting-title">Welcome back, Alex!</h2>
+                    <p class="user-greeting-subtitle">Here's how you're doing in your active crucibles</p>
+                </div>
+            </div>
+
+            <!-- User Stats - Individual Icon-Forward Cards -->
+            <div class="user-stats">
+                <div class="stat-card">
+                    <i class="ti ti-trophy stat-card-icon"></i>
+                    <span class="stat-card-label">Total Crucibles</span>
+                    <span class="stat-card-value">12</span>
+                </div>
+                <div class="stat-card">
+                    <i class="ti ti-coin stat-card-icon gold"></i>
+                    <span class="stat-card-label">Buzz Won</span>
+                    <span class="stat-card-value">45,300</span>
+                </div>
+                <div class="stat-card">
+                    <i class="ti ti-medal stat-card-icon orange"></i>
+                    <span class="stat-card-label">Best Placement</span>
+                    <span class="stat-card-value">#2</span>
+                </div>
+                <div class="stat-card">
+                    <i class="ti ti-chart-bar stat-card-icon green"></i>
+                    <span class="stat-card-label">Win Rate</span>
+                    <span class="stat-card-value">33%</span>
+                </div>
+            </div>
+
+            <!-- Your Active Crucibles -->
+            <div class="active-crucibles-section">
+                <div class="section-subheader">
+                    <h3>Your Active Crucibles</h3>
+                    <span class="section-subheader-badge">3 active</span>
+                </div>
+                <div class="active-crucibles-carousel">
+                    <!-- Active Crucible Card 1 -->
+                    <div class="active-crucible-card">
+                        <div class="active-crucible-image">
+                            <i class="ti ti-sparkles"></i>
+                            <span class="active-crucible-position-badge">#3</span>
+                        </div>
+                        <div class="active-crucible-body">
+                            <h4 class="active-crucible-title">Quality Champions</h4>
+                            <div class="crucible-info">
+                                <div class="crucible-info-item">
+                                    <span class="crucible-info-label">Prize Pool</span>
+                                    <span class="crucible-info-value prize">2,500 Buzz</span>
+                                </div>
+                                <div class="crucible-info-item">
+                                    <span class="crucible-info-label">Time Left</span>
+                                    <span class="crucible-info-value time">5 days</span>
+                                </div>
+                            </div>
+                            <div class="active-crucible-actions">
+                                <button class="btn-small-primary">View</button>
+                                <button class="btn-small-secondary">Submit</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Crucible Card 2 -->
+                    <div class="active-crucible-card">
+                        <div class="active-crucible-image alt1">
+                            <i class="ti ti-leaf"></i>
+                            <span class="active-crucible-position-badge">#1</span>
+                        </div>
+                        <div class="active-crucible-body">
+                            <h4 class="active-crucible-title">Style Innovation</h4>
+                            <div class="crucible-info">
+                                <div class="crucible-info-item">
+                                    <span class="crucible-info-label">Prize Pool</span>
+                                    <span class="crucible-info-value prize">5,000 Buzz</span>
+                                </div>
+                                <div class="crucible-info-item">
+                                    <span class="crucible-info-label">Time Left</span>
+                                    <span class="crucible-info-value time">12 days</span>
+                                </div>
+                            </div>
+                            <div class="active-crucible-actions">
+                                <button class="btn-small-primary">View</button>
+                                <button class="btn-small-secondary">Submit</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Crucible Card 3 -->
+                    <div class="active-crucible-card">
+                        <div class="active-crucible-image alt2">
+                            <i class="ti ti-palette"></i>
+                            <span class="active-crucible-position-badge">#7</span>
+                        </div>
+                        <div class="active-crucible-body">
+                            <h4 class="active-crucible-title">Artistic Excellence</h4>
+                            <div class="crucible-info">
+                                <div class="crucible-info-item">
+                                    <span class="crucible-info-label">Prize Pool</span>
+                                    <span class="crucible-info-value prize">1,000 Buzz</span>
+                                </div>
+                                <div class="crucible-info-item">
+                                    <span class="crucible-info-label">Time Left</span>
+                                    <span class="crucible-info-value time">8 days</span>
+                                </div>
+                            </div>
+                            <div class="active-crucible-actions">
+                                <button class="btn-small-primary">View</button>
+                                <button class="btn-small-secondary">Submit</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- View Recent Results Dropdown -->
+            <div class="recent-results-container">
+                <button class="recent-results-trigger" id="recentResultsBtn">
+                    <i class="ti ti-history"></i>
+                    View Recent Results
+                    <i class="ti ti-chevron-down"></i>
+                </button>
+                <div class="recent-results-panel" id="recentResultsPanel">
+                    <div class="recent-results-header">Recent Crucible Results</div>
+                    <div class="result-row">
+                        <span class="result-name">Ultra Quality Challenge</span>
+                        <span class="result-position">#2</span>
+                        <span class="result-outcome won">Won</span>
+                        <span class="result-buzz">+5,000 Buzz</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="result-name">Style Innovation</span>
+                        <span class="result-position">#1</span>
+                        <span class="result-outcome won">Won</span>
+                        <span class="result-buzz">+8,500 Buzz</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="result-name">Green Future Models</span>
+                        <span class="result-position">#5</span>
+                        <span class="result-outcome lost">Lost</span>
+                        <span class="result-buzz">+0 Buzz</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="result-name">Artistic Vision 2025</span>
+                        <span class="result-position">#3</span>
+                        <span class="result-outcome won">Won</span>
+                        <span class="result-buzz">+3,200 Buzz</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="result-name">Community Favorite</span>
+                        <span class="result-position">#8</span>
+                        <span class="result-outcome lost">Lost</span>
+                        <span class="result-buzz">+0 Buzz</span>
+                    </div>
+                    <a href="#" class="view-all-results">View All Results</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN DISCOVERY SECTION -->
+        <div class="discovery-section">
+            <!-- Discovery Header -->
+            <div class="discovery-header">
+                <h2 class="discovery-title">Discover Crucibles</h2>
+            </div>
+
+            <!-- Filter Controls with Tabs and Sort -->
+            <div class="filter-controls">
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-filter="featured">Featured</button>
+                    <button class="filter-tab" data-filter="ending-soon">Ending Soon</button>
+                    <button class="filter-tab" data-filter="high-stakes">High Stakes</button>
+                    <button class="filter-tab" data-filter="new">New</button>
+                </div>
+
+                <!-- Sort Dropdown -->
+                <div class="sort-dropdown-container">
+                    <button class="sort-dropdown-btn" id="sortBtn">
+                        <i class="ti ti-sort"></i>
+                        <span id="sortLabel">Prize Pool</span>
+                        <i class="ti ti-chevron-down" style="font-size: 14px;"></i>
+                    </button>
+                    <div class="sort-dropdown-menu" id="sortMenu">
+                        <button class="sort-dropdown-item active" data-sort="prize">
+                            <i class="ti ti-check" style="font-size: 14px;"></i>
+                            Prize Pool
+                        </button>
+                        <button class="sort-dropdown-item" data-sort="ending">
+                            <i style="font-size: 14px;"></i>
+                            Ending Soon
+                        </button>
+                        <button class="sort-dropdown-item" data-sort="newest">
+                            <i style="font-size: 14px;"></i>
+                            Newest
+                        </button>
+                        <button class="sort-dropdown-item" data-sort="entries">
+                            <i style="font-size: 14px;"></i>
+                            Most Entries
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hero Section (Featured) -->
+            <div class="hero-section">
+                <div class="hero-card">
+                    <div class="hero-image">
+                        <i class="ti ti-flame"></i>
+                    </div>
+                    <div class="hero-content">
+                        <div>
+                            <div class="hero-badge">
+                                <i class="ti ti-star"></i>
+                                Paid Placement
+                            </div>
+                            <h2 class="hero-title">Ultra Quality Challenge 2025</h2>
+                            <p class="hero-description">
+                                Compete to create the highest quality model enhancements. This month's premier competition showcasing cutting-edge techniques and innovation.
+                            </p>
+                        </div>
+
+                        <div class="hero-stats">
+                            <div class="stat">
+                                <span class="stat-label">Prize Pool</span>
+                                <span class="stat-value highlight">50,000 Buzz</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Time Remaining</span>
+                                <span class="stat-value">18 days</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Entries</span>
+                                <span class="stat-value">247</span>
+                            </div>
+                        </div>
+
+                        <div class="hero-actions">
+                            <button class="btn btn-primary">
+                                <i class="ti ti-login"></i>
+                                Enter Competition
+                            </button>
+                            <button class="btn btn-secondary">
+                                <i class="ti ti-info-circle"></i>
+                                Learn More
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Crucibles Grid -->
+            <div class="grid-section">
+                <h3 class="section-title">High Stakes Crucibles</h3>
+                <div class="crucible-grid">
+                    <!-- Card 1 -->
+                    <div class="crucible-card">
+                        <div class="card-image">
+                            <i class="ti ti-sparkles"></i>
+                            <span class="card-badge">Active</span>
+                        </div>
+                        <div class="card-content">
+                            <h4 class="card-title">Style Transfer Championship</h4>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Prize Pool</span>
+                                    <span class="meta-value prize">15,000 Buzz</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Time Left</span>
+                                    <span class="meta-value time">12 days</span>
+                                </div>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Entries</span>
+                                    <span class="meta-value">142</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Participants</span>
+                                    <span class="meta-value">89</span>
+                                </div>
+                            </div>
+                            <div class="card-status">
+                                <span class="status-dot"></span>
+                                <span>Active - Accepting entries</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 2 -->
+                    <div class="crucible-card">
+                        <div class="card-image alt1">
+                            <i class="ti ti-leaf"></i>
+                            <span class="card-badge">Ending Soon</span>
+                        </div>
+                        <div class="card-content">
+                            <h4 class="card-title">Green Future Models</h4>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Prize Pool</span>
+                                    <span class="meta-value prize">8,000 Buzz</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Time Left</span>
+                                    <span class="meta-value time">2 days</span>
+                                </div>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Entries</span>
+                                    <span class="meta-value">67</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Participants</span>
+                                    <span class="meta-value">45</span>
+                                </div>
+                            </div>
+                            <div class="card-status">
+                                <span class="status-dot ending"></span>
+                                <span>Ending Soon</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 3 -->
+                    <div class="crucible-card">
+                        <div class="card-image alt2">
+                            <i class="ti ti-palette"></i>
+                            <span class="card-badge">Active</span>
+                        </div>
+                        <div class="card-content">
+                            <h4 class="card-title">Artistic Vision 2025</h4>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Prize Pool</span>
+                                    <span class="meta-value prize">12,000 Buzz</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Time Left</span>
+                                    <span class="meta-value time">25 days</span>
+                                </div>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Entries</span>
+                                    <span class="meta-value">189</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Participants</span>
+                                    <span class="meta-value">112</span>
+                                </div>
+                            </div>
+                            <div class="card-status">
+                                <span class="status-dot"></span>
+                                <span>Active - Accepting entries</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 4 -->
+                    <div class="crucible-card">
+                        <div class="card-image alt3">
+                            <i class="ti ti-zap"></i>
+                            <span class="card-badge">Active</span>
+                        </div>
+                        <div class="card-content">
+                            <h4 class="card-title">Lightning Round Speed</h4>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Prize Pool</span>
+                                    <span class="meta-value prize">5,000 Buzz</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Time Left</span>
+                                    <span class="meta-value time">3 hours</span>
+                                </div>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Entries</span>
+                                    <span class="meta-value">23</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Participants</span>
+                                    <span class="meta-value">18</span>
+                                </div>
+                            </div>
+                            <div class="card-status">
+                                <span class="status-dot ending"></span>
+                                <span>Ends very soon</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 5 -->
+                    <div class="crucible-card">
+                        <div class="card-image alt4">
+                            <i class="ti ti-brain"></i>
+                            <span class="card-badge">Active</span>
+                        </div>
+                        <div class="card-content">
+                            <h4 class="card-title">AI Innovation Hub</h4>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Prize Pool</span>
+                                    <span class="meta-value prize">20,000 Buzz</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Time Left</span>
+                                    <span class="meta-value time">30 days</span>
+                                </div>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Entries</span>
+                                    <span class="meta-value">198</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Participants</span>
+                                    <span class="meta-value">134</span>
+                                </div>
+                            </div>
+                            <div class="card-status">
+                                <span class="status-dot"></span>
+                                <span>Active - Accepting entries</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 6 -->
+                    <div class="crucible-card">
+                        <div class="card-image">
+                            <i class="ti ti-star"></i>
+                            <span class="card-badge">Active</span>
+                        </div>
+                        <div class="card-content">
+                            <h4 class="card-title">Community Favorite</h4>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Prize Pool</span>
+                                    <span class="meta-value prize">10,000 Buzz</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Time Left</span>
+                                    <span class="meta-value time">7 days</span>
+                                </div>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-item">
+                                    <span class="meta-label">Entries</span>
+                                    <span class="meta-value">156</span>
+                                </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">Participants</span>
+                                    <span class="meta-value">98</span>
+                                </div>
+                            </div>
+                            <div class="card-status">
+                                <span class="status-dot"></span>
+                                <span>Active - Accepting entries</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Infinite Scroll Indicator -->
+            <div class="loading-indicator">
+                <div class="loading-spinner"></div>
+                <span>Loading more crucibles...</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Filter tab functionality
+        document.querySelectorAll('.filter-tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Recent results dropdown
+        const recentResultsBtn = document.getElementById('recentResultsBtn');
+        const recentResultsPanel = document.getElementById('recentResultsPanel');
+
+        recentResultsBtn.addEventListener('click', function() {
+            recentResultsPanel.classList.toggle('active');
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.recent-results-container')) {
+                recentResultsPanel.classList.remove('active');
+            }
+        });
+
+        // Sort dropdown functionality
+        const sortBtn = document.getElementById('sortBtn');
+        const sortMenu = document.getElementById('sortMenu');
+        const sortLabel = document.getElementById('sortLabel');
+
+        sortBtn.addEventListener('click', function() {
+            sortMenu.classList.toggle('active');
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.sort-dropdown-container')) {
+                sortMenu.classList.remove('active');
+            }
+        });
+
+        document.querySelectorAll('.sort-dropdown-item').forEach(item => {
+            item.addEventListener('click', function(e) {
+                e.preventDefault();
+
+                document.querySelectorAll('.sort-dropdown-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+
+                const sortValue = this.dataset.sort;
+                const sortTexts = {
+                    'prize': 'Prize Pool',
+                    'ending': 'Ending Soon',
+                    'newest': 'Newest',
+                    'entries': 'Most Entries'
+                };
+
+                sortLabel.textContent = sortTexts[sortValue];
+                sortMenu.classList.remove('active');
+            });
+        });
+
+        // Navigation click handlers
+        document.querySelectorAll('nav-item').forEach(item => {
+            item.addEventListener('click', function() {
+                document.querySelectorAll('nav-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>
