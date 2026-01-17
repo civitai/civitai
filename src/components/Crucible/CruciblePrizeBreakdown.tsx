@@ -130,7 +130,7 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
         <Group gap="sm">
           {/* Medal badge */}
           <Box
-            className="flex h-7 w-7 items-center justify-center rounded-md font-bold"
+            className="flex size-7 items-center justify-center rounded-md font-bold"
             style={{
               background: style.bgColor,
               color: style.textColor,
@@ -168,9 +168,7 @@ function getOrdinalSuffix(n: number): string {
 }
 
 // Export a helper to parse JSON prize positions from the database
-export function parsePrizePositions(
-  prizePositionsJson: unknown
-): PrizePosition[] {
+export function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
   if (!prizePositionsJson || !Array.isArray(prizePositionsJson)) {
     return [];
   }

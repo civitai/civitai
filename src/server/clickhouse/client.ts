@@ -642,11 +642,11 @@ export class Tracker {
    *
    * @see docs/features/crucible/clickhouse-tables.md for schema and buffer table details
    */
-  public crucibleVote(values: {
-    crucibleId: number;
-    winnerEntryId: number;
-    loserEntryId: number;
-  }) {
-    return this.track('crucible_votes', { ...values, createdAt: new Date() }, { skipActorMeta: true });
+  public crucibleVote(values: { crucibleId: number; winnerEntryId: number; loserEntryId: number }) {
+    return this.track(
+      'crucible_votes',
+      { ...values, createdAt: new Date() },
+      { skipActorMeta: true }
+    );
   }
 }

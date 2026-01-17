@@ -75,11 +75,7 @@ function ActiveCruciblesCarouselContent() {
           </>
         ) : (
           crucibles?.map((crucible, index) => (
-            <ActiveCrucibleCard
-              key={crucible.id}
-              crucible={crucible}
-              colorVariant={index % 3}
-            />
+            <ActiveCrucibleCard key={crucible.id} crucible={crucible} colorVariant={index % 3} />
           ))
         )}
       </div>
@@ -115,7 +111,7 @@ function ActiveCrucibleCard({ crucible, colorVariant }: ActiveCrucibleCardProps)
   return (
     <Card
       radius="md"
-      className="flex-shrink-0 border border-[#373a40] transition-all hover:-translate-y-1 hover:border-blue-500 hover:shadow-lg hover:shadow-blue-500/15"
+      className="shrink-0 border border-[#373a40] transition-all hover:-translate-y-1 hover:border-blue-500 hover:shadow-lg hover:shadow-blue-500/15"
       style={{
         width: '250px',
         minWidth: '250px',
@@ -129,11 +125,11 @@ function ActiveCrucibleCard({ crucible, colorVariant }: ActiveCrucibleCardProps)
           <EdgeImage
             src={crucible.imageUrl}
             options={{ width: 300 }}
-            className="h-full w-full object-cover"
+            className="size-full object-cover"
           />
         ) : (
           <div
-            className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${gradientClass}`}
+            className={`flex size-full items-center justify-center bg-gradient-to-br ${gradientClass}`}
           >
             <GradientIcon size={40} className="text-white/90" />
           </div>
@@ -163,13 +159,7 @@ function ActiveCrucibleCard({ crucible, colorVariant }: ActiveCrucibleCardProps)
       {/* Card body */}
       <Stack gap="sm" p="lg" className="flex-1">
         {/* Title */}
-        <Text
-          fw={600}
-          size="md"
-          c="white"
-          lineClamp={1}
-          title={crucible.name}
-        >
+        <Text fw={600} size="md" c="white" lineClamp={1} title={crucible.name}>
           {crucible.name}
         </Text>
 
@@ -225,7 +215,7 @@ function CrucibleCardSkeleton() {
   return (
     <Card
       radius="md"
-      className="flex-shrink-0 border border-[#373a40]"
+      className="shrink-0 border border-[#373a40]"
       style={{
         width: '250px',
         minWidth: '250px',

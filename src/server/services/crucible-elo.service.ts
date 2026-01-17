@@ -147,4 +147,9 @@ export const getAllEntryElos = async (crucibleId: number): Promise<Record<number
 };
 
 // Export constants for use elsewhere
-export { CRUCIBLE_DEFAULT_ELO, K_FACTOR_PROVISIONAL, K_FACTOR_ESTABLISHED, PROVISIONAL_VOTE_THRESHOLD };
+export {
+  CRUCIBLE_DEFAULT_ELO,
+  K_FACTOR_PROVISIONAL,
+  K_FACTOR_ESTABLISHED,
+  PROVISIONAL_VOTE_THRESHOLD,
+};

@@ -196,13 +196,15 @@
         }
       },
       toBeLessThan(expected: number) {
-        if (typeof actual !== 'number') throw new Error(`Expected a number but got ${typeof actual}`);
+        if (typeof actual !== 'number')
+          throw new Error(`Expected a number but got ${typeof actual}`);
         if (actual >= expected) {
           throw new Error(`Expected ${actual} to be less than ${expected}`);
         }
       },
       toBeGreaterThan(expected: number) {
-        if (typeof actual !== 'number') throw new Error(`Expected a number but got ${typeof actual}`);
+        if (typeof actual !== 'number')
+          throw new Error(`Expected a number but got ${typeof actual}`);
         if (actual <= expected) {
           throw new Error(`Expected ${actual} to be greater than ${expected}`);
         }
@@ -273,7 +275,12 @@
 
     test('single entry gets position 1', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {};
       const redisVoteCounts: Record<number, number> = {};
@@ -289,7 +296,12 @@
 
     test('single entry gets 50% prize with standard 50/30/20 split', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {};
       const redisVoteCounts: Record<number, number> = {};
@@ -305,7 +317,12 @@
 
     test('single entry gets 100% prize with single-winner config', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {};
       const redisVoteCounts: Record<number, number> = {};
@@ -321,7 +338,12 @@
 
     test('single entry keeps default ELO score when no Redis data', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {}; // No Redis data
       const redisVoteCounts: Record<number, number> = {};
@@ -336,7 +358,12 @@
 
     test('single entry uses Redis ELO when available', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = { 1: 1600 }; // Redis has updated ELO
       const redisVoteCounts: Record<number, number> = { 1: 5 };
@@ -361,8 +388,18 @@
     test('earlier entry wins tiebreaker for position 1', () => {
       // Two entries with same ELO, different creation times
       const dbEntries = [
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') }, // Later
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') }, // Earlier
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        }, // Later
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        }, // Earlier
       ];
       const redisElos: Record<number, number> = {
         1: 1600, // Same ELO
@@ -380,8 +417,18 @@
 
     test('tiebreaker determines prize distribution correctly', () => {
       const dbEntries = [
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') },
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {
         1: 1600,
@@ -407,9 +454,24 @@
 
     test('three-way tie resolved by entry time', () => {
       const dbEntries = [
-        { id: 3, userId: 300, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T14:00:00Z') },
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') },
+        {
+          id: 3,
+          userId: 300,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T14:00:00Z'),
+        },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {
         1: 1600,
@@ -429,10 +491,30 @@
 
     test('mixed tie: some tied, some different ELO', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
-        { id: 3, userId: 300, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') },
-        { id: 4, userId: 400, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T13:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
+        {
+          id: 3,
+          userId: 300,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        },
+        {
+          id: 4,
+          userId: 400,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T13:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {
         1: 1700, // Highest ELO
@@ -477,9 +559,24 @@
       ];
 
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
-        { id: 3, userId: 300, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
+        {
+          id: 3,
+          userId: 300,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = { 1: 1700, 2: 1550, 3: 1450 };
       const redisVoteCounts: Record<number, number> = { 1: 20, 2: 15, 3: 10 };
@@ -500,8 +597,18 @@
   describe('Redis ELO to PostgreSQL syncing', () => {
     test('entries get Redis ELO scores, not default DB scores', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {
         1: 1850, // Much higher than default
@@ -518,7 +625,12 @@
     test('entries without Redis ELO use DB score as fallback', () => {
       const dbEntries = [
         { id: 1, userId: 100, score: 1550, createdAt: new Date('2024-01-01T10:00:00Z') }, // Custom DB score
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {
         // Entry 1 has no Redis ELO
@@ -536,9 +648,24 @@
 
     test('vote counts synced from Redis', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
-        { id: 3, userId: 300, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
+        {
+          id: 3,
+          userId: 300,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = { 1: 1600, 2: 1550, 3: 1500 };
       const redisVoteCounts: Record<number, number> = {
@@ -562,8 +689,18 @@
       ];
 
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = {
         1: 1750,
@@ -593,8 +730,18 @@
 
     test('2 entries: only positions 1 and 2 get prizes', () => {
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = { 1: 1600, 2: 1400 };
       const redisVoteCounts: Record<number, number> = { 1: 10, 2: 10 };
@@ -659,10 +806,30 @@
       ];
 
       const dbEntries = [
-        { id: 1, userId: 100, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T10:00:00Z') },
-        { id: 2, userId: 200, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T11:00:00Z') },
-        { id: 3, userId: 300, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T12:00:00Z') },
-        { id: 4, userId: 400, score: CRUCIBLE_DEFAULT_ELO, createdAt: new Date('2024-01-01T13:00:00Z') },
+        {
+          id: 1,
+          userId: 100,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 2,
+          userId: 200,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T11:00:00Z'),
+        },
+        {
+          id: 3,
+          userId: 300,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T12:00:00Z'),
+        },
+        {
+          id: 4,
+          userId: 400,
+          score: CRUCIBLE_DEFAULT_ELO,
+          createdAt: new Date('2024-01-01T13:00:00Z'),
+        },
       ];
       const redisElos: Record<number, number> = { 1: 1700, 2: 1600, 3: 1500, 4: 1400 };
       const redisVoteCounts: Record<number, number> = { 1: 30, 2: 25, 3: 20, 4: 15 };

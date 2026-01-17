@@ -44,13 +44,13 @@ export function DownloadCard({ download, onHide }: Props) {
         <Paper
           component={Link}
           href={modelUrl}
-          className="overflow-hidden hover:bg-gray-0 dark:hover:bg-dark-5 transition-colors group h-full"
+          className="group h-full overflow-hidden transition-colors hover:bg-gray-0 dark:hover:bg-dark-5"
           radius="lg"
           withBorder
         >
           <div className="flex h-full">
             {/* Thumbnail */}
-            <div className="w-32 h-32 flex-shrink-0 relative bg-gray-1 dark:bg-dark-6 flex items-center justify-center overflow-hidden">
+            <div className="relative flex size-32 shrink-0 items-center justify-center overflow-hidden bg-gray-1 dark:bg-dark-6">
               {image ? (
                 <ImageGuard2 image={image} explain={false}>
                   {(safe) => (
@@ -63,7 +63,7 @@ export function DownloadCard({ download, onHide }: Props) {
                           name={image.name}
                           type={image.type}
                           width={128}
-                          className="object-cover w-full h-full"
+                          className="size-full object-cover"
                           loading="lazy"
                         />
                       ) : (
@@ -78,7 +78,7 @@ export function DownloadCard({ download, onHide }: Props) {
             </div>
 
             {/* Content */}
-            <div className="flex-1 p-4 flex flex-col justify-between min-w-0">
+            <div className="flex min-w-0 flex-1 flex-col justify-between p-4">
               <div>
                 <Text size="sm" fw={600} lineClamp={1}>
                   {model.name}
@@ -90,9 +90,9 @@ export function DownloadCard({ download, onHide }: Props) {
                 {/* Badges - no wrap, fade out on overflow (mobile only) */}
                 <div className="relative mt-2 cursor-pointer">
                   <div
-                    className="absolute right-0 top-0 bottom-0 w-8 pointer-events-none z-10 md:hidden
-                      bg-gradient-to-r from-transparent to-white group-hover:to-gray-0
-                      dark:to-dark-7 dark:group-hover:to-dark-5"
+                    className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-r from-transparent
+                      to-white group-hover:to-gray-0 md:hidden dark:to-dark-7
+                      dark:group-hover:to-dark-5"
                   />
                   <Group gap={6} wrap="nowrap" className="overflow-hidden">
                     {/* Model Type Badge */}
@@ -173,7 +173,7 @@ export function DownloadCard({ download, onHide }: Props) {
                   variant="subtle"
                   color="gray"
                   size="md"
-                  className="hover:text-red-6 hover:bg-red-1 dark:hover:bg-red-9/20"
+                  className="hover:bg-red-1 hover:text-red-6 dark:hover:bg-red-9/20"
                   onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();
                     e.stopPropagation();

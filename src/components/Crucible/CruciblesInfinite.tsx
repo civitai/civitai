@@ -1,5 +1,14 @@
 import type { GetCruciblesInfiniteSchema } from '~/server/schema/crucible.schema';
-import { Button, Center, Loader, LoadingOverlay, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  Button,
+  Center,
+  Loader,
+  LoadingOverlay,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrophy, IconPlus, IconSearch } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -124,11 +133,7 @@ function CruciblesEmptyState({ hasFilters, isLoggedIn }: CruciblesEmptyStateProp
 
   // No crucibles at all - encourage creation
   return (
-    <Paper
-      className="mx-auto max-w-lg rounded-xl border border-[#373a40]"
-      bg="dark.6"
-      p="xl"
-    >
+    <Paper className="mx-auto max-w-lg rounded-xl border border-[#373a40]" bg="dark.6" p="xl">
       <Stack align="center" gap="lg">
         <ThemeIcon size={80} radius={100} color="blue" variant="light">
           <IconTrophy size={40} />
@@ -138,7 +143,8 @@ function CruciblesEmptyState({ hasFilters, isLoggedIn }: CruciblesEmptyStateProp
             No Crucibles Yet
           </Text>
           <Text c="dimmed" maw={350}>
-            Be the first to create a head-to-head competition! Submit your images, set prizes, and let the community vote.
+            Be the first to create a head-to-head competition! Submit your images, set prizes, and
+            let the community vote.
           </Text>
         </div>
         {isLoggedIn ? (

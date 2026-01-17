@@ -97,7 +97,8 @@
         }
       },
       toBeCloseTo(expected: number, tolerance = 1) {
-        if (typeof actual !== 'number') throw new Error(`Expected a number but got ${typeof actual}`);
+        if (typeof actual !== 'number')
+          throw new Error(`Expected a number but got ${typeof actual}`);
         if (Math.abs(actual - expected) > tolerance) {
           throw new Error(`Expected ${expected} (+/- ${tolerance}) but got ${actual}`);
         }

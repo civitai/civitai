@@ -2218,58 +2218,51 @@ export const getFeaturedCrucible = async (): Promise<{
   entriesCount: number;
   imageUrl: string | null;
 } | null> => {
-  // Get all active crucibles with their entry counts
-  const activeCrucibles = await dbRead.crucible.findMany({
-    where: {
-      status: CrucibleStatus.Active,
-    },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      entryFee: true,
-      endAt: true,
-      image: {
-        select: {
-          url: true,
-        },
-      },
-      _count: {
-        select: {
-          entries: true,
-        },
-      },
-    },
-  });
+  // Use raw SQL to calculate prize pool and sort at database level for scalability
+  const result = await dbRead.$queryRaw<
+    {
+      id: number;
+      name: string;
+      description: string | null;
+      entryFee: number;
+      endAt: Date | null;
+      imageUrl: string | null;
+      entriesCount: bigint;
+      prizePool: bigint;
+    }[]
+  >`
+    SELECT
+      c.id,
+      c.name,
+      c.description,
+      c."entryFee",
+      c."endAt",
+      i.url as "imageUrl",
+      COUNT(ce.id) as "entriesCount",
+      c."entryFee" * COUNT(ce.id) as "prizePool"
+    FROM "Crucible" c
+    LEFT JOIN "Image" i ON c."imageId" = i.id
+    LEFT JOIN "CrucibleEntry" ce ON c.id = ce."crucibleId"
+    WHERE c.status = ${CrucibleStatus.Active}
+    GROUP BY c.id, c.name, c.description, c."entryFee", c."endAt", i.url
+    ORDER BY "prizePool" DESC, "entriesCount" DESC
+    LIMIT 1
+  `;
 
-  if (activeCrucibles.length === 0) {
+  if (result.length === 0) {
     return null;
   }
 
-  // Calculate prize pool for each and find the one with the highest
-  const cruciblesWithPrizePool = activeCrucibles.map((crucible) => ({
-    ...crucible,
-    prizePool: crucible.entryFee * crucible._count.entries,
-  }));
-
-  // Sort by prize pool descending, then by entry count descending (as tiebreaker)
-  cruciblesWithPrizePool.sort((a, b) => {
-    if (b.prizePool !== a.prizePool) {
-      return b.prizePool - a.prizePool;
-    }
-    return b._count.entries - a._count.entries;
-  });
-
-  const featured = cruciblesWithPrizePool[0];
+  const featured = result[0];
 
   return {
     id: featured.id,
     name: featured.name,
     description: featured.description ?? '',
-    prizePool: featured.prizePool,
+    prizePool: Number(featured.prizePool),
     timeRemaining: featured.endAt ? formatTimeRemaining(featured.endAt) : 'No end date',
-    entriesCount: featured._count.entries,
-    imageUrl: featured.image?.url ?? null,
+    entriesCount: Number(featured.entriesCount),
+    imageUrl: featured.imageUrl,
   };
 };
 

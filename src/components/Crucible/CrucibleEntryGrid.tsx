@@ -168,7 +168,7 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
             src={entry.image.url}
             name={entry.image.name}
             type="image"
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
             width={320}
           />
         </div>

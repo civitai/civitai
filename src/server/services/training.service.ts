@@ -6,7 +6,7 @@ import type {
   TrainingStep,
   TrainingOutput,
 } from '@civitai/client';
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';

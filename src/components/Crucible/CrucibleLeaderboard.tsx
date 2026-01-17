@@ -254,7 +254,7 @@ function LeaderboardEntryItem({
           <Group gap="sm">
             {/* Medal badge */}
             <Box
-              className="flex h-7 w-7 items-center justify-center rounded-md font-bold"
+              className="flex size-7 items-center justify-center rounded-md font-bold"
               style={{
                 background: style.bgColor,
                 color: style.textColor,
@@ -281,7 +281,7 @@ function LeaderboardEntryItem({
       <div className="flex items-center gap-3">
         {/* Crown/position indicator */}
         <div
-          className="flex h-6 w-6 items-center justify-center font-bold"
+          className="flex size-6 items-center justify-center font-bold"
           style={{
             color: style.textColor,
             fontSize: style.icon ? '1.125rem' : '0.875rem',

@@ -9,7 +9,9 @@ export const crucibleNotifications = createNotificationProcessor({
     category: NotificationCategory.Crucible,
     toggleable: true,
     prepareMessage: ({ details }) => ({
-      message: `Your crucible "${details.crucibleName}" has ended! ${details.totalEntries} entries competed for a prize pool of ${numberWithCommas(details.prizePool)} Buzz.`,
+      message: `Your crucible "${details.crucibleName}" has ended! ${
+        details.totalEntries
+      } entries competed for a prize pool of ${numberWithCommas(details.prizePool)} Buzz.`,
       url: `/crucibles/${details.crucibleId}`,
     }),
   },
@@ -27,7 +29,9 @@ export const crucibleNotifications = createNotificationProcessor({
         };
       }
       return {
-        message: `Congrats! You placed ${asOrdinal(details.position)} in the "${details.crucibleName}" crucible! You've won ${numberWithCommas(details.prizeAmount)} Buzz.`,
+        message: `Congrats! You placed ${asOrdinal(details.position)} in the "${
+          details.crucibleName
+        }" crucible! You've won ${numberWithCommas(details.prizeAmount)} Buzz.`,
         url: `/crucibles/${details.crucibleId}`,
       };
     },

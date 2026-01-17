@@ -121,9 +121,7 @@ export const syncCrucibleScoresJob = createJob(
         }
 
         if (errorCount > 0) {
-          log(
-            `Crucible ${crucible.id}: Synced ${successCount} entries, ${errorCount} failed`
-          );
+          log(`Crucible ${crucible.id}: Synced ${successCount} entries, ${errorCount} failed`);
         } else {
           log(`Crucible ${crucible.id}: Successfully synced ${successCount} entries`);
         }

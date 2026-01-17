@@ -396,12 +396,14 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && !isCivitaiProvider && !subscription.isBadState && (
-                          <CancelMembershipAction
-                            variant="button"
-                            buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
-                          />
-                        )}
+                        {!subscription.cancelAt &&
+                          !isCivitaiProvider &&
+                          !subscription.isBadState && (
+                            <CancelMembershipAction
+                              variant="button"
+                              buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
+                            />
+                          )}
                         {subscription.isBadState && isStripe && (
                           <SubscribeButton
                             priceId={subscription.price.id}

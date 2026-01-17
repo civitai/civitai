@@ -30,11 +30,11 @@
   // NSFW level flags (bitwise)
   // These are typical NSFW level flags used in the codebase
   const NsfwLevel = {
-    None: 1,      // SFW content
-    Soft: 2,      // Slightly suggestive
-    Mature: 4,    // Mature content
-    X: 8,         // Adult content
-    Blocked: 16,  // Blocked content
+    None: 1, // SFW content
+    Soft: 2, // Slightly suggestive
+    Mature: 4, // Mature content
+    X: 8, // Adult content
+    Blocked: 16, // Blocked content
   } as const;
 
   // ============================================================
@@ -96,7 +96,9 @@
     if (userEntryCount >= entryLimit) {
       return {
         valid: false,
-        error: `You have reached the maximum of ${entryLimit} ${entryLimit === 1 ? 'entry' : 'entries'} for this crucible`,
+        error: `You have reached the maximum of ${entryLimit} ${
+          entryLimit === 1 ? 'entry' : 'entries'
+        } for this crucible`,
       };
     }
     return { valid: true };
@@ -106,7 +108,10 @@
    * Validate no duplicate image
    * Same image cannot be submitted to the same crucible twice
    */
-  function validateNoDuplicateImage(existingImageIds: number[], newImageId: number): ValidationResult {
+  function validateNoDuplicateImage(
+    existingImageIds: number[],
+    newImageId: number
+  ): ValidationResult {
     if (existingImageIds.includes(newImageId)) {
       return {
         valid: false,
@@ -483,7 +488,7 @@
       expect(result.valid).toBeTrue();
     });
 
-    test('rejects submission of another user\'s image', () => {
+    test("rejects submission of another user's image", () => {
       const result = validateImageOwnership(456, 123);
       expect(result.valid).toBeFalse();
       expect(result.error!).toContain('only submit your own images');

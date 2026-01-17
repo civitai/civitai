@@ -70,7 +70,9 @@ export class CrucibleEloRedisClient {
   async incrementElo(crucibleId: number, entryId: number, change: number): Promise<number> {
     const key = this.getKey(crucibleId);
     const newValue = await this.redis.hIncrBy(key, entryId.toString(), change);
-    log(`Incremented ELO for crucible ${crucibleId}, entry ${entryId} by ${change}: now ${newValue}`);
+    log(
+      `Incremented ELO for crucible ${crucibleId}, entry ${entryId} by ${change}: now ${newValue}`
+    );
     return newValue;
   }
 
@@ -141,7 +143,7 @@ export class CrucibleEloRedisClient {
       return {winnerElo, loserElo, newWinnerElo, newLoserElo, winnerChange, loserChange}
     `;
 
-    const result = await this.redis.eval(script, {
+    const result = (await this.redis.eval(script, {
       keys: [key],
       arguments: [
         winnerEntryId.toString(),
@@ -150,9 +152,10 @@ export class CrucibleEloRedisClient {
         loserKFactor.toString(),
         DEFAULT_ELO.toString(),
       ],
-    }) as number[];
+    })) as number[];
 
-    const [winnerOldElo, loserOldElo, newWinnerElo, newLoserElo, winnerChange, loserChange] = result;
+    const [winnerOldElo, loserOldElo, newWinnerElo, newLoserElo, winnerChange, loserChange] =
+      result;
 
     log(
       `Atomic vote: crucible ${crucibleId}, winner ${winnerEntryId} (${winnerOldElo} -> ${newWinnerElo}), loser ${loserEntryId} (${loserOldElo} -> ${newLoserElo})`

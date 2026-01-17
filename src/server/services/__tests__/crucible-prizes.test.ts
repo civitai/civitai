@@ -93,9 +93,7 @@
   /**
    * Calculate total prizes distributed
    */
-  function calculateTotalPrizesDistributed(
-    prizeDistribution: { prizeAmount: number }[]
-  ): number {
+  function calculateTotalPrizesDistributed(prizeDistribution: { prizeAmount: number }[]): number {
     return prizeDistribution.reduce((sum, entry) => sum + entry.prizeAmount, 0);
   }
 
@@ -140,13 +138,15 @@
         }
       },
       toBeLessThan(expected: number) {
-        if (typeof actual !== 'number') throw new Error(`Expected a number but got ${typeof actual}`);
+        if (typeof actual !== 'number')
+          throw new Error(`Expected a number but got ${typeof actual}`);
         if (actual >= expected) {
           throw new Error(`Expected ${actual} to be less than ${expected}`);
         }
       },
       toBeLessThanOrEqual(expected: number) {
-        if (typeof actual !== 'number') throw new Error(`Expected a number but got ${typeof actual}`);
+        if (typeof actual !== 'number')
+          throw new Error(`Expected a number but got ${typeof actual}`);
         if (actual > expected) {
           throw new Error(`Expected ${actual} to be less than or equal to ${expected}`);
         }
@@ -225,7 +225,11 @@
       const totalPool = 10000;
       const numEntries = 10;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
 
       expect(distribution[0].prizeAmount).toBe(5000); // 50% of 10000
       expect(distribution[1].prizeAmount).toBe(3000); // 30% of 10000
@@ -237,7 +241,11 @@
       const totalPool = 100;
       const numEntries = 5;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
 
       expect(distribution[0].prizeAmount).toBe(50); // 50% of 100
       expect(distribution[1].prizeAmount).toBe(30); // 30% of 100
@@ -248,7 +256,11 @@
       const totalPool = 10000;
       const numEntries = 5;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
       const totalDistributed = calculateTotalPrizesDistributed(distribution);
 
       expect(totalDistributed).toBe(10000);
@@ -270,7 +282,11 @@
       const totalPool = 333;
       const numEntries = 3;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
 
       expect(distribution[0].prizeAmount).toBe(166); // Math.floor(333 * 0.5)
       expect(distribution[1].prizeAmount).toBe(99); // Math.floor(333 * 0.3)
@@ -281,7 +297,11 @@
       const totalPool = 333;
       const numEntries = 3;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
       const totalDistributed = calculateTotalPrizesDistributed(distribution);
 
       // 166 + 99 + 66 = 331, so 2 Buzz lost to rounding
@@ -295,7 +315,11 @@
       const totalPool = 1000;
       const numEntries = 5;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
       const totalDistributed = calculateTotalPrizesDistributed(distribution);
 
       expect(totalDistributed).toBe(1000);
@@ -310,7 +334,11 @@
       const totalPool = 7;
       const numEntries = 3;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
       const totalDistributed = calculateTotalPrizesDistributed(distribution);
 
       expect(distribution[0].prizeAmount).toBe(3);
@@ -415,7 +443,11 @@
       const totalPool = 10000;
       const numEntries = 0;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
 
       expect(distribution).toHaveLength(0);
     });
@@ -424,7 +456,11 @@
       const totalPool = 10000;
       const numEntries = 0;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
       const totalDistributed = calculateTotalPrizesDistributed(distribution);
 
       expect(totalDistributed).toBe(0);
@@ -442,7 +478,11 @@
       const totalPool = 0;
       const numEntries = 5;
 
-      const distribution = calculatePrizeDistribution(standardPrizePositions, totalPool, numEntries);
+      const distribution = calculatePrizeDistribution(
+        standardPrizePositions,
+        totalPool,
+        numEntries
+      );
 
       expect(distribution[0].prizeAmount).toBe(0);
       expect(distribution[1].prizeAmount).toBe(0);
@@ -528,11 +568,7 @@
     });
 
     test('returns 0 when all prizes are 0', () => {
-      const distribution = [
-        { prizeAmount: 0 },
-        { prizeAmount: 0 },
-        { prizeAmount: 0 },
-      ];
+      const distribution = [{ prizeAmount: 0 }, { prizeAmount: 0 }, { prizeAmount: 0 }];
 
       const total = calculateTotalPrizesDistributed(distribution);
 
