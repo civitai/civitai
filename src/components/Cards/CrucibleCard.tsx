@@ -9,6 +9,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { getStatusDotColor, getStatusText } from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 
@@ -200,57 +201,6 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
       }
     />
   );
-}
-
-/**
- * Check if a crucible is ending soon (within 3 days)
- */
-function isEndingSoon(endAt: Date): boolean {
-  const now = new Date();
-  const threeDaysFromNow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  return new Date(endAt) <= threeDaysFromNow;
-}
-
-/**
- * Get the status dot color class based on crucible status
- */
-function getStatusDotColor(status: CrucibleStatus, endAt: Date | null): string {
-  if (status === CrucibleStatus.Active && endAt && isEndingSoon(endAt)) {
-    return 'bg-yellow-5';
-  }
-  switch (status) {
-    case CrucibleStatus.Active:
-      return 'bg-green-5';
-    case CrucibleStatus.Pending:
-      return 'bg-blue-5';
-    case CrucibleStatus.Completed:
-      return 'bg-gray-5';
-    case CrucibleStatus.Cancelled:
-      return 'bg-red-5';
-    default:
-      return 'bg-gray-5';
-  }
-}
-
-/**
- * Get status text for display
- */
-function getStatusText(status: CrucibleStatus, endAt: Date | null): string {
-  switch (status) {
-    case CrucibleStatus.Active:
-      if (endAt && isEndingSoon(endAt)) {
-        return 'Ending Soon';
-      }
-      return 'Active - Accepting entries';
-    case CrucibleStatus.Pending:
-      return 'Upcoming';
-    case CrucibleStatus.Completed:
-      return 'Completed';
-    case CrucibleStatus.Cancelled:
-      return 'Cancelled';
-    default:
-      return '';
-  }
 }
 
 /**
