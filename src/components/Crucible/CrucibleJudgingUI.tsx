@@ -1,4 +1,14 @@
-import { Button, Kbd, Paper, Text, Loader, Box, SimpleGrid, Skeleton, Tooltip } from '@mantine/core';
+import {
+  Button,
+  Kbd,
+  Paper,
+  Text,
+  Loader,
+  Box,
+  SimpleGrid,
+  Skeleton,
+  Tooltip,
+} from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { IconPlayerSkipForward, IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -120,7 +130,7 @@ export function CrucibleJudgingUI({
         />
       </SimpleGrid>
 
-      {/* Skip Button */}
+      {/* Skip Button - matching mockup styling */}
       <Tooltip
         label="Skips this pair without voting. The pair may appear again later."
         position="top"
@@ -132,13 +142,28 @@ export function CrucibleJudgingUI({
           fullWidth
           onClick={handleSkip}
           disabled={isDisabled}
-          className="border-[#495057] bg-[#373a40] text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
+          className="border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
+          styles={{
+            root: {
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+            },
+            inner: {
+              display: 'flex',
+              width: '100%',
+              alignItems: 'center',
+              justifyContent: 'center',
+            },
+            section: {
+              '&[data-position="right"]': {
+                marginLeft: 'auto',
+              },
+            },
+          }}
           leftSection={<IconPlayerSkipForward size={18} />}
-          rightSection={
-            <span className="ml-auto flex items-center gap-2">
-              <Kbd>Space</Kbd>
-            </span>
-          }
+          rightSection={<Kbd>Space</Kbd>}
         >
           Skip Pair
         </Button>
@@ -194,7 +219,7 @@ function ImageCard({
         'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#1a1b1e]',
         isSelected
           ? 'border-green-500 shadow-[0_0_20px_rgba(64,192,87,0.3)]'
-          : 'border-transparent hover:border-blue-500 hover:-translate-y-0.5'
+          : 'border-transparent hover:-translate-y-0.5 hover:border-blue-500'
       )}
       bg="dark.7"
       role="button"
@@ -207,14 +232,14 @@ function ImageCard({
       {/* Image wrapper with 4:5 aspect ratio */}
       <Box className="relative bg-[#1a1b1e]" style={{ aspectRatio: '4 / 5' }}>
         {isLoading ? (
-          <div className="flex h-full w-full items-center justify-center">
+          <div className="flex size-full items-center justify-center">
             <Loader size="lg" />
           </div>
         ) : (
           <EdgeMedia
             src={entry.image.url}
             type="image"
-            className="h-full w-full object-contain"
+            className="size-full object-contain"
             width={600}
           />
         )}
@@ -222,7 +247,7 @@ function ImageCard({
         {/* Selected indicator */}
         {isSelected && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500">
+            <div className="flex size-16 items-center justify-center rounded-full bg-green-500">
               <IconCheck size={32} className="text-white" />
             </div>
           </div>
@@ -236,7 +261,7 @@ function ImageCard({
             'flex-1 font-semibold transition-all duration-200',
             isSelected
               ? 'bg-green-600 hover:bg-green-500'
-              : 'bg-blue-600 hover:bg-blue-500 hover:-translate-y-0.5'
+              : 'bg-blue-600 hover:-translate-y-0.5 hover:bg-blue-500'
           )}
           size="md"
           onClick={(e: React.MouseEvent) => {
