@@ -7,11 +7,11 @@ import {
   Loader,
   Modal,
   Progress,
-  Stack,
   Text,
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Dropzone } from '@mantine/dropzone';
 import {
   IconBolt,
   IconCheck,
@@ -20,6 +20,7 @@ import {
   IconPhoto,
   IconRefresh,
   IconSend,
+  IconUpload,
   IconX,
 } from '@tabler/icons-react';
 import React, { useMemo, useState } from 'react';
@@ -27,7 +28,9 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Currency, MediaType } from '~/shared/utils/prisma/enums';
+import { useMediaUpload } from '~/hooks/useMediaUpload';
+import { MediaType } from '~/shared/utils/prisma/enums';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
@@ -98,8 +101,8 @@ function ImageCard({
         isSelected
           ? 'border-green-500 shadow-[0_0_10px_rgba(81,207,102,0.4)]'
           : isValid
-            ? 'border-[#373a40] hover:border-[#535458]'
-            : 'border-red-500/50',
+          ? 'border-[#373a40] hover:border-[#535458]'
+          : 'border-red-500/50',
         disabled && 'cursor-not-allowed opacity-60'
       )}
       onClick={disabled ? undefined : onClick}
@@ -168,6 +171,44 @@ export default function CrucibleSubmitEntryModal({
 
   const [selectedImages, setSelectedImages] = useState<number[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadedCount, setUploadedCount] = useState(0);
+
+  // Image upload handling
+  const {
+    upload: uploadImages,
+    files: uploadingFiles,
+    progress: uploadProgress,
+    canAdd: canUpload,
+    loading: isUploading,
+  } = useMediaUpload({
+    count: uploadedCount,
+    onComplete: (props) => {
+      if (props.status === 'added') {
+        // Refresh the image list when an upload completes
+        queryUtils.image.getMyImages.invalidate();
+        setUploadedCount((prev) => prev + 1);
+        showSuccessNotification({
+          title: 'Image uploaded',
+          message: 'Your image is now available for selection',
+        });
+      } else if (props.status === 'error') {
+        showErrorNotification({
+          title: 'Upload failed',
+          error: new Error('Failed to upload image. Please try again.'),
+        });
+      } else if (props.status === 'blocked') {
+        showErrorNotification({
+          title: 'Image blocked',
+          error: new Error(`Image was blocked: ${props.blockedFor || 'Content policy violation'}`),
+        });
+      }
+    },
+  });
+
+  const handleDrop = (files: File[]) => {
+    if (!canUpload || currentUser?.muted) return;
+    uploadImages(files.map((file) => ({ file })));
+  };
 
   // Fetch user's images
   const {
@@ -217,8 +258,10 @@ export default function CrucibleSubmitEntryModal({
       message: isAlreadySubmitted
         ? 'Already submitted'
         : !isCompatibleNsfw
-          ? `Content level mismatch (${getNsfwLabel(image.nsfwLevel ?? 1)} image, requires ${getNsfwLabel(nsfwLevel)})`
-          : undefined,
+        ? `Content level mismatch (${getNsfwLabel(
+            image.nsfwLevel ?? 1
+          )} image, requires ${getNsfwLabel(nsfwLevel)})`
+        : undefined,
     };
   };
 
@@ -288,7 +331,9 @@ export default function CrucibleSubmitEntryModal({
 
       showSuccessNotification({
         title: 'Entries submitted!',
-        message: `Successfully submitted ${validImageIds.length} ${validImageIds.length === 1 ? 'entry' : 'entries'} to ${crucibleName}`,
+        message: `Successfully submitted ${validImageIds.length} ${
+          validImageIds.length === 1 ? 'entry' : 'entries'
+        } to ${crucibleName}`,
       });
 
       onSuccess?.();
@@ -308,7 +353,9 @@ export default function CrucibleSubmitEntryModal({
       if (isNetworkError) {
         showErrorNotification({
           title: 'Network Error',
-          error: { message: 'Unable to connect to server. Please check your connection and try again.' },
+          error: {
+            message: 'Unable to connect to server. Please check your connection and try again.',
+          },
           autoClose: 5000,
         });
       } else {
@@ -412,19 +459,72 @@ export default function CrucibleSubmitEntryModal({
             </div>
           </div>
 
+          {/* Drop Zone */}
+          <Dropzone
+            onDrop={handleDrop}
+            accept={IMAGE_MIME_TYPE}
+            disabled={!canUpload || isUploading || currentUser?.muted}
+            loading={isUploading}
+            className={clsx(
+              'mb-6 rounded-xl border-2 border-dashed bg-[#2c2e33] p-8 text-center transition-all',
+              isUploading || !canUpload
+                ? 'cursor-not-allowed border-[#373a40] opacity-60'
+                : 'cursor-pointer border-[#373a40] hover:border-blue-500 hover:bg-[rgba(34,139,230,0.05)]'
+            )}
+          >
+            <div className="pointer-events-none flex flex-col items-center justify-center gap-2">
+              <Dropzone.Accept>
+                <IconUpload size={48} className="text-blue-500" stroke={1.5} />
+              </Dropzone.Accept>
+              <Dropzone.Reject>
+                <IconX size={48} className="text-red-500" stroke={1.5} />
+              </Dropzone.Reject>
+              <Dropzone.Idle>
+                <IconCloudUpload size={48} className="text-blue-500" stroke={1.5} />
+              </Dropzone.Idle>
+              <Text c="white" fw={600}>
+                Drag images here to add entries
+              </Text>
+              <Text size="sm" c="dimmed">
+                or{' '}
+                <Text component="span" c="blue" className="cursor-pointer underline">
+                  click to browse
+                </Text>
+              </Text>
+            </div>
+          </Dropzone>
+
+          {/* Upload Progress */}
+          {uploadingFiles.length > 0 && (
+            <div className="mb-4">
+              <Progress
+                value={uploadProgress}
+                size="sm"
+                radius="xl"
+                animated
+                styles={{
+                  root: { backgroundColor: '#373a40' },
+                  section: { background: 'linear-gradient(90deg, #228be6, #40c057)' },
+                }}
+              />
+              <Text size="xs" c="dimmed" ta="center" mt={4}>
+                Uploading {uploadingFiles.length} {uploadingFiles.length === 1 ? 'image' : 'images'}...
+              </Text>
+            </div>
+          )}
+
           {/* Images Grid */}
           {isLoadingImages ? (
             <Center py="xl">
               <Loader />
             </Center>
           ) : images.length === 0 ? (
-            <div className="rounded-lg border-2 border-dashed border-[#373a40] bg-[#2c2e33] p-8 text-center">
-              <IconCloudUpload size={48} className="mx-auto mb-3 text-blue-500" />
+            <div className="rounded-lg border border-[#373a40] bg-[#2c2e33] p-8 text-center">
               <Text c="white" fw={600} mb={4}>
                 No images found
               </Text>
               <Text size="sm" c="dimmed">
-                You don&apos;t have any images to submit. Generate or upload images first.
+                Upload images above or generate images to get started.
               </Text>
             </div>
           ) : (
@@ -546,4 +646,3 @@ export default function CrucibleSubmitEntryModal({
     </Modal>
   );
 }
-
