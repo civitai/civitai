@@ -67,7 +67,7 @@ export class SessionStorage {
       name: session.name || session.id,
       prdPath: session.prdPath,
       status: 'CREATED',
-      model: session.model || 'sonnet',
+      model: session.model || 'opus',
       maxTurns: session.maxTurns || 100,
       currentStoryId: null,
       currentStoryTitle: null,

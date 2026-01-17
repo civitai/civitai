@@ -88,7 +88,7 @@ export class TurnEngine extends EventEmitter {
 
     // Options
     this.options = {
-      model: options.model || 'sonnet',
+      model: options.model || 'opus',
       maxTurns: options.maxTurns || 100,
       sensitiveToolsEnabled: options.sensitiveToolsEnabled ?? true,
       checkpointInterval: options.checkpointInterval || 10,

@@ -78,7 +78,7 @@ export class SessionManager extends EventEmitter {
     const {
       prd,
       name,
-      model = 'sonnet',
+      model = 'opus',
       maxTurns = 100,
       workingDirectory,
       autoStart = false,

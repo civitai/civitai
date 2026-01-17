@@ -569,7 +569,7 @@ Session Commands:
   create                 Create a new session
     --prd <path>           PRD file path (required)
     --name <name>          Session name
-    --model <model>        Model: opus, sonnet, haiku (default: sonnet)
+    --model <model>        Model: opus, sonnet, haiku (default: opus)
     --max-turns <n>        Max turns per iteration (default: 100)
     --start                Auto-start after creation
 
