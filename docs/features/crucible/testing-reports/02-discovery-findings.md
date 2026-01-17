@@ -1,186 +1,168 @@
-# Crucibles Discovery Page - Visual Comparison Findings
+# Crucible Discovery Page - Visual Comparison Findings
 
 **Tested**: 2026-01-17
-**Mockup**: `docs/features/crucible/mockups/discovery.html`
+**Mockup**: docs/features/crucible/mockups/discovery.html
 **Live URL**: http://localhost:3000/crucibles
-**Tester**: Ralph (Automated Testing Agent)
 
 ## Summary
-- **Critical**: 8 issues
-- **Major**: 5 issues
-- **Minor**: 3 issues
-
-The live implementation differs significantly from the mockup design. Most of the core features shown in the mockup are missing from the live page.
+- Critical: 1 issue
+- Major: 6 issues
+- Minor: 5 issues
 
 ## Screenshots
-- **Mockup**: `.browser/sessions/cbb42109/screenshots/002-inspect.png`
-- **Live**: `.browser/sessions/cbb42109/screenshots/008-inspect.png`
+- Mockup: `.browser/sessions/187fc275/screenshots/002-inspect.png`
+- Live (full page): `.browser/sessions/187fc275/screenshots/010-chunk-set-larger-viewport.png`
 
 ---
 
 ## Findings
 
-### Critical Issues
+### Critical
 
-#### 1. Missing User Welcome Section
-**Expected**: Large user section with greeting "Welcome back, Alex!" and subtitle "Here's how you're doing in your active crucibles"
-**Actual**: Completely missing
-**Impact**: Users have no personalized welcome or introduction to their crucible activity
+#### 1. Missing Featured Hero Card Section
+**Mockup**: Shows a large featured "Ultra Quality Challenge 2025" hero card with:
+- Split layout (image left, content right)
+- "Paid Placement" badge in gold
+- Large prize pool display (50,000 Buzz)
+- Time remaining and entries count
+- "Enter Competition" and "Learn More" buttons
 
-#### 2. Missing User Stats Cards
-**Expected**: Four individual stat cards showing:
-- Total Crucibles: 12
-- Buzz Won: 45,300
-- Best Placement: #2
-- Win Rate: 33%
+**Live**: No featured hero card section exists. The discovery grid goes directly from the filter tabs to the crucible card grid with no featured/promoted crucible highlight.
 
-Each card should have:
-- Large icon (trophy, coin, medal, chart)
-- Label in uppercase
-- Large numeric value
+**Impact**: Major promotional feature for high-value crucibles is completely missing.
 
-**Actual**: Completely missing
-**Impact**: Users cannot see their performance metrics at a glance
+---
 
-#### 3. Missing "Your Active Crucibles" Section
-**Expected**: Horizontal scrolling carousel with heading "Your Active Crucibles" and "3 active" badge, showing cards for:
-- Quality Champions (#3 position, 2,500 Buzz, 5 days left)
-- Style Innovation (#1 position, 5,000 Buzz, 12 days left)
-- Artistic Excellence (#7 position, 1,000 Buzz, 8 days left)
+### Major
 
-Each card should show:
-- Position badge overlay
-- Prize pool
-- Time left
-- View and Submit buttons
+#### 1. Page Header Title Mismatch
+**Mockup**: "Crucible Discovery"
+**Live**: "Crucibles"
+**Impact**: Different branding/naming convention. Mockup suggests this is a discovery-focused page.
 
-**Actual**: Completely missing
-**Impact**: Users cannot quickly access their active crucibles or see their current standings
+#### 2. Create Crucible Button Location and Style
+**Mockup**: Blue primary button "Create Crucible" with + icon in the header section, right-aligned
+**Live**: "Create" button is in the top navigation bar (next to search), not in the page header section
+**Impact**: Create action is less prominent and not contextually placed with the page title.
 
-#### 4. Missing "View Recent Results" Dropdown
-**Expected**: Expandable dropdown showing recent crucible results with:
-- Crucible name
-- Position achieved
-- Won/Lost status
-- Buzz earned
-- "View All Results" link at bottom
+#### 3. "Your Active Crucibles" Section Layout Differences
+**Mockup**:
+- Shows 3 active crucible cards in a horizontal carousel
+- Each card has colorful gradient background with icon
+- Position badge overlay (e.g., "#3", "#1", "#7")
+- Both "View" and "Submit" buttons on each card
 
-**Actual**: Completely missing
-**Impact**: Users cannot review their past performance
+**Live**:
+- Shows only 1 active crucible card (single column, not carousel)
+- Card has placeholder blue background (no image/gradient)
+- No position badge visible
+- Has "View" and "Submit" buttons (matches mockup)
 
-#### 5. Missing "Discover Crucibles" Header
-**Expected**: H2 heading "Discover Crucibles" above the filter controls
-**Actual**: Missing - page jumps directly to filter tabs
-**Impact**: No clear section break between user content and discovery content
+**Impact**: Carousel layout vs single card, missing position badges.
 
-#### 6. Missing Filter Tabs
-**Expected**: Four tabs (Featured, Ending Soon, High Stakes, New) with underline-style active state
-**Actual**: Only three pill-style buttons (All, Active, Upcoming, Completed) with completely different styling
-**Impact**: Different filtering options, different visual design
+#### 4. Discovery Grid Section Title Missing
+**Mockup**: Has "Discover Crucibles" section header and "High Stakes Crucibles" subsection title
+**Live**: No "Discover Crucibles" header. Filter tabs appear directly. No section title for the grid.
+**Impact**: Missing contextual headers for the discovery section.
 
-#### 7. Missing Sort Dropdown
-**Expected**: Dropdown button showing "Prize Pool" with sort options:
-- Prize Pool (default)
-- Ending Soon
-- Newest
-- Most Entries
+#### 5. Crucible Card Design Differences
+**Mockup Cards**:
+- Colorful gradient backgrounds (blue, green, orange, red, purple)
+- Icon centered in card image area
+- Status badge in top-right ("ACTIVE", "ENDING SOON")
+- Card meta shows: Prize Pool, Time Left, Entries, Participants
+- Status indicator with dot and text ("Active - Accepting entries")
 
-**Actual**: Completely missing
-**Impact**: Users cannot sort crucibles by different criteria
+**Live Cards**:
+- Placeholder image areas (mostly dark/empty, some with actual images)
+- "PG" badge in top-left corner (content rating)
+- "ACTIVE" badge in top-right
+- Creator name displayed (e.g., "JustMaier")
+- Card shows: Buzz amount, time, entries
+- Status dot indicator with "Ending Soon" text
 
-#### 8. Missing Featured Hero Card
-**Expected**: Large 2-column hero card for "Ultra Quality Challenge 2025" featuring:
-- Left: Large gradient image area with flame icon
-- Right: Content with "Paid Placement" badge, title, description, stats grid showing:
-  - Prize Pool: 50,000 Buzz (gold color)
-  - Time Remaining: 18 days
-  - Entries: 247
-- Two action buttons: "Enter Competition" and "Learn More"
+**Impact**: Different card information hierarchy and visual design.
 
-**Actual**: Completely missing
-**Impact**: No featured/promoted crucible showcase, losing a key revenue opportunity and user engagement feature
+#### 6. "View Recent Results" Dropdown Missing
+**Mockup**: Has a "View Recent Results" button/dropdown below the active crucibles section showing past competition results with positions and Buzz won
+**Live**: No recent results section exists
+**Impact**: Missing historical participation data for user engagement.
 
-### Major Issues
+---
 
-#### 9. Wrong Page Title/Header
-**Expected**: "Crucible Discovery" as main H1
-**Actual**: Just "Crucibles"
-**Impact**: Less descriptive, doesn't match mockup branding
+### Minor
 
-#### 10. Missing "Create Crucible" Button
-**Expected**: Blue primary button with plus icon and "Create Crucible" text in header area
-**Actual**: Only a "Create" button in top navigation (much smaller, different location)
-**Impact**: Less prominent call-to-action for crucible creation
+#### 1. User Stats Card Styling
+**Mockup**: Individual stat cards with large colored icons above label, centered layout
+**Live**: Similar layout with icons but different visual styling (flatter, less prominent)
+**Impact**: Minor visual difference in stat presentation.
 
-#### 11. Missing Section Title "High Stakes Crucibles"
-**Expected**: H3 heading "High Stakes Crucibles" above the card grid
-**Actual**: No section title before crucible cards
-**Impact**: No context for what crucibles are being shown
+#### 2. Filter Tabs Underline Style
+**Mockup**: Active tab has blue underline indicator
+**Live**: Active tab (Featured) has blue underline indicator
+**Impact**: Matches! This is consistent.
 
-#### 12. Missing Card Metadata
-**Expected**: Each crucible card should show:
-- Prize pool and time left in top grid
-- Entries and Participants count in second grid
-- Status indicator with colored dot and text
+#### 3. Sort Dropdown Position
+**Mockup**: "Prize Pool" dropdown right-aligned with filter tabs
+**Live**: "Prize Pool" dropdown right-aligned with filter tabs
+**Impact**: Matches! This is consistent.
 
-**Actual**: Cards only show minimal information ("PG" text and "ACTIVE" badge)
-**Impact**: Users cannot see important crucible details without clicking
+#### 4. Welcome Message Personalization
+**Mockup**: "Welcome back, Alex!"
+**Live**: "Welcome back, JustMaier!"
+**Impact**: Correctly personalized to logged-in user. Working as expected.
 
-#### 13. Missing Loading Indicator
-**Expected**: "Loading more crucibles..." text with animated spinner at page bottom
-**Actual**: Not visible (may exist below fold)
-**Impact**: No indication of infinite scroll capability
-
-### Minor Issues
-
-#### 14. Different Card Visual Design
-**Expected**: Cards with:
-- Larger image area (180px height)
-- Gradient backgrounds (blue, green, orange, red, purple)
-- Tabler icons in image area
-- Detailed metadata grids
-- Status indicators with colored dots
-
-**Actual**: Cards appear to have simpler design with just "PG" text and "ACTIVE" badge
-**Impact**: Less visual interest and information density
-
-#### 15. Missing Navigation Styling
-**Expected**: Simple dark navigation with "Civitai" brand and nav items (Home, Models, Crucibles, Community, Leaderboard) with underline active state
-**Actual**: Full Civitai navigation with many more options and different styling
-**Impact**: Different navigation experience (though live nav may be more complete/functional)
-
-#### 16. Different Background/Spacing
-**Expected**: Max-width container (1400px) with specific padding
-**Actual**: Different container and spacing approach
-**Impact**: Slight visual differences in layout density
+#### 5. Infinite Scroll Indicator
+**Mockup**: Shows "Loading more crucibles..." with spinner at bottom
+**Live**: Not visible (page has enough crucibles to fill viewport)
+**Impact**: Will need to scroll to verify if infinite loading works.
 
 ---
 
 ## Test Crucibles Verification
 
-✅ All 4 test crucibles were found in the page:
-1. `/crucibles/10/visual-test-crucible-primary` (Primary)
-2. `/crucibles/11/art-challenge-landscapes` (Landscapes)
-3. `/crucibles/12/portrait-masters` (Portrait Masters)
-4. `/crucibles/13/quick-challenge` (Quick Challenge)
+**Expected** (from PRD): 4 test crucibles - "Primary, Landscapes, Portrait Masters, Quick Challenge"
 
-However, due to minimal card styling, their actual content/metadata is not visible in the current view.
+**Found on page**:
+1. **Your Active Crucibles (1)**: "Visual Test Crucible - Primary" (50 Buzz, 1 hour left)
+2. **Discovery Grid (8+ visible)**:
+   - Test Crucible - Landing Page Comparison (0 Buzz, 2 hours)
+   - Submission Test (0 Buzz, 5 hours)
+   - Concurrent Test B (0 Buzz, 7 hours)
+   - Concurrent Test A (0 Buzz, 7 hours)
+   - Flow Test Crucible (0 Buzz, 7 hours)
+   - Session Flow Test (0 Buzz, 8 hours)
+   - Flow Test Crucible (duplicate, 0 Buzz, 8 hours)
+   - Test Crucible (0 Buzz, 8 hours) - this one has actual cover image
+
+**Note**: The specific 4 test crucibles mentioned in the PRD were not found. The shared-state.json file did not exist, indicating those test crucibles may not have been created by a previous test run. The page shows various other test crucibles that appear to be from different test sessions.
 
 ---
 
-## Implementation Status
+## Functional Elements Status
 
-**Overall**: The live page appears to be in a very early implementation stage. It has:
-- ✅ Basic page structure
-- ✅ Simple filter tabs (though different from mockup)
-- ✅ Test crucibles created and rendering
-- ❌ User personalization section
-- ❌ Stats dashboard
-- ❌ Active crucibles carousel
-- ❌ Recent results dropdown
-- ❌ Featured hero card
-- ❌ Sort functionality
-- ❌ Detailed card metadata
-- ❌ Most UI polish from mockup
+| Element | Mockup | Live | Status |
+|---------|--------|------|--------|
+| Page Header | "Crucible Discovery" | "Crucibles" | Different |
+| Create Crucible Button | In header | In nav bar | Different location |
+| User Welcome Section | Yes | Yes | Match |
+| User Stats (4 cards) | Yes | Yes | Match |
+| Your Active Crucibles | 3 cards, carousel | 1 card, single | Different |
+| View Recent Results | Yes | No | Missing |
+| Filter Tabs | 4 tabs | 4 tabs | Match |
+| Sort Dropdown | Yes | Yes | Match |
+| Featured Hero Card | Yes | No | Missing |
+| Grid Section Title | Yes | No | Missing |
+| Crucible Card Grid | Yes | Yes | Match (different design) |
+| Infinite Scroll | Yes | Not verified | - |
 
-The page is functional at a basic level but missing most of the features and polish shown in the mockup design.
+---
+
+## Recommendations
+
+1. **Critical**: Implement featured hero card section for promoted/high-value crucibles
+2. **Major**: Add "Discover Crucibles" and section titles for better content hierarchy
+3. **Major**: Implement carousel for active crucibles when user has multiple
+4. **Major**: Add position badges to active crucible cards
+5. **Major**: Implement "View Recent Results" dropdown for user engagement
+6. **Minor**: Consider moving Create button to page header for better visibility

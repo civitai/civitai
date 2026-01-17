@@ -1,175 +1,169 @@
 # Crucible Landing Page - Visual Comparison Findings
 
 **Tested**: 2026-01-17
-**Mockup**: docs/features/crucible/mockups/landing.html
-**Live URL**: http://localhost:3000/crucibles/14
-**Session**: 19a373a1
+**Mockup**: `docs/features/crucible/mockups/landing.html`
+**Live URL**: `http://localhost:3000/crucibles/15`
 
 ## Summary
-- **Critical**: 11 issues
-- **Major**: 8 issues
-- **Minor**: 3 issues
+- Critical: 0 issues
+- Major: 5 issues
+- Minor: 8 issues
 
 ## Screenshots
-- **Mockup**: .browser/sessions/19a373a1/screenshots/002-navigate-c--dev-repos-work-model-share-docs-featur.png
-- **Live (Top)**: .browser/sessions/19a373a1/screenshots/007-chunk-scroll-to-top.png
-- **Live (Middle)**: .browser/sessions/19a373a1/screenshots/009-chunk-scroll-down-gradually.png
+- Mockup: `.browser/sessions/74ac8e34/screenshots/002-inspect.png`
+- Live (hero): `.browser/sessions/74ac8e34/screenshots/016-chunk-scroll-up-to-middle-section.png`
+- Live (content): `.browser/sessions/74ac8e34/screenshots/017-chunk-scroll-down-to-stats-section.png`
+- Live (bottom): `.browser/sessions/74ac8e34/screenshots/015-chunk-click-on-content-area-and-use-pagedown.png`
+
+---
 
 ## Findings
 
-### Critical Issues
-
-#### 1. Missing Hero Section Background Image
-- **Expected**: Hero section with background image overlay showing semi-transparent image with gradient overlay
-- **Actual**: Plain solid blue gradient background with no image
-- **Impact**: Lacks visual appeal and brand imagery that sets the tone for the crucible
-
-#### 2. Missing Stats Grid
-- **Expected**: Three-column grid displaying "47 Entries", "923 Judges", "4d 12h Time Left"
-- **Actual**: Stats shown only as small icons with minimal text below hero card (0 Buzz, 0 entries, time remaining)
-- **Impact**: Key metrics are not prominently displayed above the CTA button as designed
-
-#### 3. Missing "Start Judging Now" CTA Button (Primary Position)
-- **Expected**: Large, prominent gradient button with gavel icon positioned between stats and entries section
-- **Actual**: Button exists but not visible in primary position (showing as not in viewport)
-- **Impact**: Primary call-to-action is not prominently featured in the expected location
-
-#### 4. Missing "Your Entries" Section in Main Content
-- **Expected**: "Your Entries (2 of 5)" section in main content area showing user's submissions with position badges (#3, #7)
-- **Actual**: No "Your Entries" section visible in main content area
-- **Impact**: Users cannot see their own entries at a glance on the landing page
-
-#### 5. Missing "All Entries" Grid with Entry Cards
-- **Expected**: Masonry grid displaying 12+ entry cards with images, titles, authors, likes, and views
-- **Actual**: "All Entries (0)" heading exists but no entry cards displayed (empty state)
-- **Impact**: The main content of the page is missing - users cannot browse crucible entries
-
-#### 6. Missing Hero Card Creator Avatar
-- **Expected**: Circular gradient avatar with initials "CT" next to creator name
-- **Actual**: Creator name "JustMaier" appears as text but no avatar displayed
-- **Impact**: Visual hierarchy and creator branding is diminished
-
-#### 7. Missing "Your Entries" Sidebar Panel (Top Position)
-- **Expected**: Sidebar panel at top with "Submit Entry" button, entry fee display (500 Buzz), and progress bar (2 of 5 used)
-- **Actual**: "Submit Entry" button exists in sidebar but panel styling and entry counter/progress bar missing
-- **Impact**: Users cannot see their entry limits and fee information at a glance
-
-#### 8. Incomplete Prize Pool & Leaderboard Section
-- **Expected**: Detailed prize breakdown with 1st/2nd/3rd place cards showing current leaders (@aurora_flux, @portrait_wizard, @flux_artisan) with scores and prize amounts
-- **Actual**: "Prize Pool & Leaderboard" heading exists but detailed breakdown not visible
-- **Impact**: Competitive motivation is reduced without visible leaderboard positions
-
-#### 9. Missing Rules & Requirements Section Content
-- **Expected**: Compact rules panel showing content levels (PG, PG-13, R badges), required resources, deadline, format, and judging method
-- **Actual**: Section likely exists but content not verified in visible area
-- **Impact**: Users may not understand entry requirements
-
-#### 10. Missing Infinite Scroll Indicator
-- **Expected**: Footer element with infinity icon and "Scroll for more entries" text
-- **Actual**: No infinite scroll indicator visible
-- **Impact**: Users don't know more content is available below
-
-#### 11. Wrong Hero Section Layout
-- **Expected**: Full-width hero with overlay card positioned at bottom-left within max-width container
-- **Actual**: Overlay card appears centered without the proper bottom-left positioning and background treatment
-- **Impact**: Layout doesn't match the intended design hierarchy
-
 ### Major Issues
 
-#### 12. Hero Section Height
-- **Expected**: 500px height hero section (350px on mobile)
-- **Actual**: Hero section appears taller or differently proportioned
-- **Impact**: Throws off the vertical rhythm of the page
+#### 1. Missing Hero Background Image
+- **Mockup**: Shows a beautiful background image (`picsum.photos`) with overlay gradient
+- **Live**: Plain blue gradient background only - no hero image
+- **Severity**: Major
+- **Impact**: Hero section looks significantly less engaging without background imagery
 
-#### 13. Missing Hero Overlay Gradient
-- **Expected**: Linear gradient from rgba(26,27,30,0.1) to rgba(26,27,30,0.8) over background image
-- **Actual**: No gradient overlay visible (plain blue background)
-- **Impact**: Text contrast and visual depth is missing
+#### 2. Missing Leaderboard Top 3 Positions
+- **Mockup**: Shows 1st, 2nd, 3rd place positions with:
+  - Medal badges (gold, silver, bronze)
+  - Current leader names (@aurora_flux, @portrait_wizard, @flux_artisan)
+  - Scores (92 pts, 87 pts, 84 pts)
+  - Prize percentages (50%, 30%, 15%)
+- **Live**: Shows only "No entries yet" and "4th - 10th Place" distribution
+- **Severity**: Major
+- **Note**: This is **expected empty state behavior** - will resolve when entries exist
 
-#### 14. Hero Card Description Truncation
-- **Expected**: Description truncated to 3 lines with ellipsis overflow
-- **Actual**: Full description text visible without truncation
-- **Impact**: Card may be larger than intended in the mockup
+#### 3. Missing "Your Entries" Section in Main Content Area
+- **Mockup**: Shows a dedicated "Your Entries" section in the main content area (left column) with:
+  - "Your Entries (2 of 5)" heading with icon
+  - Entry cards showing user's own entries
+  - Position badges showing current rank (#3, #7)
+  - Stats (likes, views)
+- **Live**: Missing entirely - no "Your Entries" section in main content
+- **Severity**: Major
+- **Note**: May be hidden because user has no entries - **expected empty state behavior**
 
-#### 15. Missing Sidebar Layout Structure
-- **Expected**: Two-column layout with main content (2/3 width) and sidebar (1/3 width, 340px)
-- **Actual**: Sidebar exists but layout proportions may not match
-- **Impact**: Content hierarchy and visual balance is different
+#### 4. Missing Entry Cards Grid
+- **Mockup**: Shows "All Entries (47)" with:
+  - Responsive grid of entry cards (4-5 columns)
+  - Each card has: image, title, author, likes, views
+  - Image zoom effect on hover
+  - Infinite scroll indicator at bottom
+- **Live**: Shows "All Entries (0)" with empty state:
+  - Placeholder image icon
+  - "No entries yet" text
+  - "Be the first to submit an entry!" prompt
+- **Severity**: Major
+- **Note**: This is **expected empty state behavior** - will resolve when entries exist
 
-#### 16. Stats Display Format
-- **Expected**: Large bold numbers (1.5rem) with uppercase labels in stat boxes
-- **Actual**: Icons with text in a horizontal layout below hero card
-- **Impact**: Stats are less prominent and scannable
+#### 5. Stats Show Zero Values
+- **Mockup**: 47 Entries, 923 Judges, 4d 12h Time Left
+- **Live**: 0 Entries, 0 Judges, 7h 47m Time Left
+- **Severity**: Major
+- **Note**: This is **expected empty state behavior** - reflects actual data
 
-#### 17. Missing Position Badges on Entry Cards
-- **Expected**: Top entries show position badges (#3 with trophy icon in gold gradient for top 3)
-- **Actual**: No entry cards to display badges on
-- **Impact**: Users can't see entry rankings at a glance
-
-#### 18. Missing Medal Badges in Prize Section
-- **Expected**: Colored medal badges (gold, silver, bronze) for 1st/2nd/3rd place
-- **Actual**: Prize section content not fully visible
-- **Impact**: Visual hierarchy for prize tiers is missing
-
-#### 19. Entry Cards Hover Effects
-- **Expected**: Cards elevate on hover with image zoom (scale 1.05) and background color change
-- **Actual**: Cannot verify - no entry cards visible
-- **Impact**: Interactive feedback is missing
+---
 
 ### Minor Issues
 
-#### 20. Status Badge Styling
-- **Expected**: "ACTIVE NOW" badge with specific rgba(34, 139, 230, 0.5) background and pill shape
-- **Actual**: "ACTIVE NOW" badge present but may use different blue shade
-- **Impact**: Minor color variance from design
+#### 1. Hero Section Creator Avatar Style Difference
+- **Mockup**: Circular avatar with gradient background (purple-blue), initials "CT"
+- **Live**: Circular avatar with user initials "JU", solid color background
+- **Severity**: Minor
+- **Note**: Mockup uses stylized avatar, live uses actual user avatar system
 
-#### 21. Missing Content Level Badges in Rules
-- **Expected**: PG, PG-13, R badges with specific rgba(34, 139, 230, 0.2) background and border styling
-- **Actual**: Not verified in visible content
-- **Impact**: Content rating communication may be unclear
+#### 2. Status Badge Position Difference
+- **Mockup**: Status badge ("ACTIVE NOW") appears above the title inside overlay card
+- **Live**: Status badge appears in the same position with same styling (matches)
+- **Severity**: Minor - Actually matches well
 
-#### 22. Page Header Navigation
-- **Expected**: Mockup shows minimal "Crucible" branding with trophy icon and "Back to Home" / "Sign In" buttons
-- **Actual**: Full Civitai navigation with all sections (Models, Images, Videos, etc.)
-- **Impact**: This is actually acceptable - live page uses production nav which is more functional
+#### 3. Hero Overlay Card Width
+- **Mockup**: Overlay card has max-width: 600px and appears on left side
+- **Live**: Overlay card appears similar but may have different max-width
+- **Severity**: Minor
 
-## Empty State vs. Populated State
+#### 4. Stats Grid Layout
+- **Mockup**: 3-column grid with dark card backgrounds
+- **Live**: 3-column grid with same layout (matches well)
+- **Severity**: Minor - Matches
 
-**Note**: The live crucible was just created and has 0 entries, while the mockup shows a populated state with 47 entries, 923 judges, and active leaderboard. Many differences stem from this:
+#### 5. CTA Button Style
+- **Mockup**: "Start Judging Now" with gavel icon, blue-to-green gradient
+- **Live**: "Start Judging Now" with same gradient and gavel icon (matches)
+- **Severity**: Minor - Matches well
 
-- **Expected (Mockup)**: 47 entries displayed in grid, "Your Entries" showing 2 submissions, leaderboard showing top 3 contestants with scores
-- **Actual (Live)**: "All Entries (0)" - empty state, no user entries, no leaderboard data
+#### 6. Sidebar "Submit Entry" Button Position
+- **Mockup**: "Submit Entry" is secondary (gray) button below "YOUR ENTRIES" title
+- **Live**: "Submit Entry" is prominent teal/green button below "YOUR ENTRIES"
+- **Severity**: Minor
+- **Note**: Live button may be more prominent which could be intentional UX improvement
 
-This accounts for the missing entry cards, leaderboard standings, and "Your Entries" section content, but the **UI structure and layout should still be present** to display these elements when data is available.
+#### 7. Entry Fee Display
+- **Mockup**: "Entry Fee: 500 Buzz"
+- **Live**: "ENTRY FEE: 10 BUZZ" (with yellow buzz icon)
+- **Severity**: Minor
+- **Note**: Different test data - mockup is design placeholder
+
+#### 8. Rules Section Content Differences
+- **Mockup**: Shows multiple content level badges (PG, PG-13, R), specific deadline (Jan 29, 2025), format requirements
+- **Live**: Shows only "PG" badge, deadline Jan 17, 2026, max entries per user, tie-breaking rules
+- **Severity**: Minor
+- **Note**: Live shows accurate data from database, additional rules fields shown
+
+---
+
+## Empty State vs Populated State Analysis
+
+The live page is testing against a crucible with **0 entries and 0 judges**. Many "missing" elements are actually correct empty state behavior:
+
+| Feature | Mockup (Populated) | Live (Empty) | Correct Empty State? |
+|---------|-------------------|--------------|---------------------|
+| Entry cards grid | 12 sample entries | "No entries yet" placeholder | Yes - correct |
+| Your Entries section | 2 user entries | Not shown | Yes - hides when empty |
+| Leaderboard top 3 | Sample leaders | "No entries yet" | Yes - correct |
+| Stats (entries/judges) | 47/923 | 0/0 | Yes - shows real data |
+| Prize pool | 100,000 Buzz | 0 Buzz | Yes - shows real data |
+
+---
+
+## Matches (Working Correctly)
+
+These elements match the mockup well:
+
+1. **Page Header Structure**: Navigation, logo, search, user profile area
+2. **Hero Section Layout**: Overlay card positioning, status badge, title, description, creator info
+3. **Stats Grid**: 3-column layout with proper styling
+4. **"Start Judging Now" CTA**: Full-width gradient button with icon
+5. **Sidebar Layout**: YOUR ENTRIES panel, Prize Pool section, Rules section
+6. **Rules & Requirements Section**: Content levels, deadline, judging info
+7. **Overall 2-column Layout**: Main content (left) + sidebar (right)
+
+---
 
 ## Recommendations
 
 ### High Priority
-1. Implement hero section background image with gradient overlay
-2. Add stats grid component above main content CTA
-3. Restructure hero card positioning (bottom-left with proper wrapper)
-4. Implement entry cards grid with proper layout (even in empty state, show structure or empty state message)
-5. Add "Your Entries" section in main content area
-6. Complete prize pool & leaderboard section with proper styling
-7. Add creator avatar to hero card
+1. **Hero Background Image**: Implement hero image upload/display for crucibles - currently shows only gradient
+2. **Verify Populated State**: Test with a crucible that has actual entries to validate entry cards, leaderboard, and user entries display correctly
 
 ### Medium Priority
-8. Implement sidebar panel with entry counter and progress bar
-9. Add rules section with content level badges
-10. Verify two-column layout proportions (main vs. sidebar)
-11. Add position badges component for entry rankings
-12. Implement hover effects for entry cards
+3. Consider making the hero background image optional with a fallback gradient (current behavior may be intentional)
+4. Test "Your Entries" section visibility when logged-in user has entries
 
 ### Low Priority
-13. Fine-tune status badge colors
-14. Add infinite scroll indicator
-15. Verify all spacing and typography matches mockup specifications
+5. Minor styling tweaks to match mockup button styles more closely
+6. Consider adding Format requirements to Rules section if applicable
 
-## Test Data Note
+---
 
-To fully test all components, the crucible should be populated with:
-- Multiple entries (to display entry cards and grid)
-- User submissions (to show "Your Entries" section)
-- Judging activity (to populate leaderboard)
+## Testing Notes
 
-Consider creating a seeded test crucible with sample data for comprehensive visual testing.
+- Used browser automation (Playwright) via localhost:9222
+- Page uses fixed layout with internal scrolling in main content area
+- Had to use keyboard navigation (PageDown/End) to scroll content
+- Full page screenshots captured body but not internal scroll content
+- Multiple screenshots needed to capture full page content

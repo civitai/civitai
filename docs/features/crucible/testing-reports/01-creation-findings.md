@@ -1,172 +1,126 @@
 # Crucible Creation Page - Visual Comparison Findings
 
-**Tested**: 2026-01-16
-**Mockup**: docs/features/crucible/mockups/creation.html
-**Live URL**: http://localhost:3000/crucibles/create
+**Tested**: 2026-01-17
+**Mockup**: `docs/features/crucible/mockups/creation.html`
+**Live URL**: `http://localhost:3000/crucibles/create`
 
 ## Summary
-- Critical: 2 issues
-- Major: 4 issues
-- Minor: 3 issues
+- Critical: 0 issues
+- Major: 2 issues (intentional design decisions)
+- Minor: 4 issues
 
 ## Screenshots
-- Mockup: `.browser/sessions/5b62aed3/screenshots/002-navigate-c--dev-repos-work-model-share-docs-featur.png`
-- Live: `.browser/sessions/5b62aed3/screenshots/008-inspect.png`
+- Mockup: `.browser/sessions/b1064b5a/screenshots/003-inspect.png`
+- Live Step 1 (top): `.browser/sessions/b1064b5a/screenshots/013-chunk-press-home-to-scroll-top.png`
+- Live Step 1 (bottom): `.browser/sessions/b1064b5a/screenshots/012-chunk-find-and-scroll-form.png`
+- Live Step 2: `.browser/sessions/b1064b5a/screenshots/016-chunk-scroll-to-top-of-step-2.png`
+- Live Step 3: `.browser/sessions/b1064b5a/screenshots/018-chunk-scroll-to-top-and-click-next.png`
+- Live Step 4: `.browser/sessions/b1064b5a/screenshots/019-chunk-click-next-to-step-4.png`
 
 ---
 
 ## Findings
 
-### Critical
+### Major (Intentional Design Decisions)
 
-#### 1. Page Layout Structure Completely Different
-**Expected (Mockup)**: Single-page form with all sections visible in a scrollable layout. Two-column layout with form on left and preview/cost card on right (sticky).
+#### 1. Wizard vs Single-Page Layout
+- **Mockup**: Single-page form with all sections visible simultaneously
+- **Live**: 4-step wizard (Basic Info → Entry Rules → Prizes → Review)
+- **Assessment**: This is **intentional** as documented in the mockup's HTML comments. The wizard pattern provides:
+  - Progressive disclosure (reduces cognitive load)
+  - Better mobile UX
+  - Step-by-step validation
+  - Guided experience for new users
+- **Severity**: Major (but intentional)
 
-**Actual (Live)**: Multi-step wizard interface with 4 steps:
-- Step 1: Basic Info
-- Step 2: Entry Rules
-- Step 3: Prizes
-- Step 4: Review
-
-Only one step visible at a time. Users must navigate through steps using Previous/Next buttons.
-
-**Impact**: This is a fundamentally different UX pattern. The mockup shows all form sections accessible at once, while the live version uses progressive disclosure. This affects how users understand the full scope of creating a crucible upfront.
-
-#### 2. Missing Form Sections in Current View
-**Expected (Mockup)**: Three main sections visible on one page:
-1. Basic Information (Cover Image, Name, Description)
-2. Entry Settings (Duration, Entry Fee, Entry Limit, NSFW Levels, Resource Requirements)
-3. Prize Distribution (with visual progress bar and customization options)
-
-**Actual (Live)**: Only "Basic Info" section is visible in Step 1. Cannot confirm if Entry Settings and Prize Distribution sections match the mockup without navigating through the wizard.
-
-**Impact**: Unable to complete full visual comparison without interacting with the wizard steps.
-
----
-
-### Major
-
-#### 3. Section Header Styling Inconsistency
-**Expected (Mockup)**: Section headers have:
-- Icon in colored background box (blue circular icon)
-- Section title in white bold text
-- Bottom border separator
-- Icon + title layout in horizontal alignment
-
-**Actual (Live)**: Section header "Basic Info" appears to have:
-- Icon visible (blue info icon)
-- Title present
-- Styling appears similar but need to verify exact match
-
-**Severity**: Major - Section headers are key visual hierarchy elements.
-
-#### 4. Preview Card Positioning
-**Expected (Mockup)**: Preview card is in a sticky right sidebar that stays visible while scrolling through the entire form. Two-column grid layout (form left, preview right).
-
-**Actual (Live)**: Preview card is in the right sidebar but due to wizard layout, it's only visible on the current step. Unknown if it persists across steps.
-
-**Impact**: Users may not see live preview while filling different form sections.
-
-#### 5. Missing "Back" Button in Header
-**Expected (Mockup)**: Back arrow button (square with rounded corners, subtle background) positioned to the left of "Create Crucible" heading in the page header.
-
-**Actual (Live)**: Back arrow button IS present to the left of "Create Crucible" heading.
-
-**Note**: Upon closer inspection, this appears to match. Recategorizing as matching.
-
-#### 6. Cost Breakdown Card Position
-**Expected (Mockup)**: Cost breakdown card is below the preview card in the right sidebar, showing:
-- Duration cost
-- Entry Limit cost
-- Prize Customization cost
-- Total Cost (bold)
-
-**Actual (Live)**: Cost breakdown card IS present in the right sidebar with matching structure.
-
-**Note**: This appears to match the mockup. Recategorizing as matching.
+#### 2. Section Grouping Differences
+- **Mockup**: "Basic Information" and "Entry Settings" are separate sections
+- **Live**: Content is redistributed across wizard steps:
+  - Step 1 "Basic Info": Cover Image, Crucible Name, Description, Duration, Allowed Content Levels
+  - Step 2 "Entry Rules": Entry Fee, Entry Limit, Maximum Total Entries, Resource Requirements
+- **Assessment**: Logical reorganization for wizard flow
+- **Severity**: Major (but intentional)
 
 ---
 
 ### Minor
 
-#### 7. Page Title Styling
-**Expected (Mockup)**:
-- Title: "Create Crucible" (28px, bold, white)
-- Subtitle: "Set up a new creative competition" (14px, gray #909296)
+#### 1. Duration Option Presentation
+- **Mockup**: Duration options show "8h", "24h", "3d", "7d" with Buzz cost badges inline
+- **Live**: Duration options show "8 hours", "24 hours", "3 days", "7 days" with clearer "FREE" or "+500/+1,000/+2,000" Buzz indicators below
+- **Assessment**: Live version is more readable with full words
+- **Severity**: Minor (improvement)
 
-**Actual (Live)**:
-- Title appears to be "Create Crucible"
-- Subtitle appears to be "Set up a new creative competition"
-- Font sizes and colors appear similar but would need exact measurement
+#### 2. Entry Limit Options
+- **Mockup**: Native `<select>` dropdown with options 1-10 entries and "Unlimited" with Buzz costs in option text
+- **Live**: Mantine `<select>` with cleaner options (1, 2, 3, 5, 10 entries) - no "Unlimited" option visible
+- **Assessment**: Live version may have different entry limit tiers
+- **Severity**: Minor
 
-**Impact**: Minor visual difference if any.
+#### 3. Resource Requirements Labeling
+- **Mockup**: Shows "Resource Requirements (optional)" with pre-selected LoRAs as blue chips
+- **Live**: Shows "Resource Requirements" labeled as "Premium feature" with search input
+- **Assessment**: Premium feature indicator added for monetization clarity
+- **Severity**: Minor (improvement)
 
-#### 8. Cover Image Field Helper Text
-**Expected (Mockup)**: "This image appears on discovery cards (16:9 aspect ratio recommended)"
-
-**Actual (Live)**: "This image appears on discovery cards (16:9 aspect ratio recommended)"
-
-**Note**: Text appears to match.
-
-#### 9. Preview Card Stats Layout
-**Expected (Mockup)**: Preview card shows three stats in a row:
-- Entry (100)
-- Duration (8h)
-- Entries (24)
-
-**Actual (Live)**: Preview card shows:
-- Entry (100)
-- Duration (8 hours - note: "hours" vs "h")
-- Entries (0)
-
-**Impact**: Minor - "8 hours" vs "8h" label difference. Entry count is 0 because form is empty.
+#### 4. Preview Card Stats
+- **Mockup**: Preview shows "100 Entry", "8h Duration", "24 Entries"
+- **Live**: Preview shows "100 Entry", "8 hours Duration", "0 Entries"
+- **Assessment**: Live correctly shows "0 Entries" for new crucible; uses full word "hours"
+- **Severity**: Minor (correct behavior)
 
 ---
 
-## Cannot Verify Without Further Interaction
+## Matches (Correct Implementation)
 
-The following elements from the mockup cannot be verified without navigating through the wizard steps:
+### Page Header
+- Back button with arrow icon
+- "Create Crucible" title
+- "Set up a new creative competition" subtitle
+- **Status**: Matches mockup
 
-### Entry Settings Section (Step 2)
-- Duration selection buttons (8h FREE, 24h +500, 3d +1,000, 7d +2,000)
-- Entry Fee input field with "Buzz" label
-- Entry Limit dropdown with options and Buzz costs
-- Allowed Content Levels chips (PG, PG-13, R, X, XXX)
-- Resource Requirements field with search and selected resources
+### Basic Info Section
+- Cover Image upload zone with drag & drop
+- "16:9 aspect ratio recommended" helper text
+- Crucible Name input with 100 char max
+- Description textarea with 500 char max, marked optional
+- **Status**: Matches mockup
 
-### Prize Distribution Section (Step 3)
-- Visual progress bar showing 1st/2nd/3rd place distribution
-- Default distribution display (50%, 30%, 20%)
+### Competition Settings (Entry Rules)
+- Entry Fee per User with Buzz indicator
+- Entry Limit per User dropdown
+- **Status**: Core functionality matches
+
+### Allowed Content Levels
+- Chip-based selection (PG, PG-13, R, X, XXX)
+- Toggle behavior for selecting multiple levels
+- Helper text explaining the purpose
+- **Status**: Matches mockup
+
+### Prize Distribution
+- Visual progress bar showing 1st (50%), 2nd (30%), 3rd (20%)
+- Color coding: Blue for 1st, Green for 2nd, Yellow/Gold for 3rd
+- Three summary cards with percentages
 - "Customize Distribution" button with +1,000 Buzz cost
-- Edit mode with sliders for each position
-- "Add Prize Position" functionality
-- Split remaining equally option
-- Total distribution indicator (should show 100%)
-- Reset to Default / Done Editing buttons
+- **Status**: Matches mockup closely
 
-### Form Submission
-- Primary "Create Crucible" button with Buzz cost
-- Button should show "Free" or total cost based on selections
+### Cost Summary (Right Sidebar)
+- Preview card with cover image
+- Crucible name display
+- Entry/Duration/Entries stats
+- Cost breakdown card with Duration, Entry Limit, Prize Customization, Total Cost
+- All showing "Free" for default selections
+- **Status**: Matches mockup
 
----
-
-## Recommendations
-
-1. **Critical**: Clarify whether the wizard UX is intentional or if the single-page layout from the mockup should be implemented. This is a fundamental UX decision.
-
-2. **Testing Priority**: Navigate through all wizard steps to compare Entry Settings and Prize Distribution sections against the mockup.
-
-3. **Verify Responsive Behavior**: The mockup includes mobile responsive CSS (`@media (max-width: 768px)`). Test if the wizard adapts appropriately on mobile.
-
-4. **Color Accuracy**: Use browser dev tools to verify exact color values match between mockup and live (e.g., background colors, borders, text colors).
-
-5. **Interactive States**: Test hover states, focus states, and active states for all interactive elements (buttons, inputs, chips).
+### Create Button
+- "Create Crucible - Free" button (yellow/gold gradient in mockup, blue in live)
+- Buzz icon
+- **Status**: Functionality matches; color differs slightly (live uses blue primary button)
 
 ---
 
-## Notes
+## Overall Assessment
 
-- The live implementation uses a wizard pattern which may be a deliberate UX improvement over the single-page mockup
-- Many visual elements appear to match or closely match the mockup styling
-- Full comparison requires navigating through all wizard steps
-- Browser session kept open as requested for US002
+The live implementation **successfully captures the core functionality and visual design** of the mockup. The main difference (wizard vs single-page) is an **intentional UX improvement** documented in the mockup itself. Minor differences are generally improvements (better readability, premium feature indicators).
+
+**Recommendation**: No critical fixes needed. The implementation is ready for user testing.
