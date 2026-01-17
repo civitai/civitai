@@ -1421,27 +1421,35 @@ export const finalizeCrucible = async (
     0
   );
 
-  // Update all entries and crucible status in a transaction
+  // Update all entries using raw SQL bulk update for performance
   // This syncs vote counts from Redis to PostgreSQL for persistence
-  // Batch updates in chunks to prevent transaction timeout for large crucibles
-  const BATCH_SIZE = 50;
+  // Uses Postgres UPDATE ... FROM (VALUES ...) pattern for bulk updates
+  // Batch size of 500 balances query complexity with DB round trips
+  const UPDATE_BATCH_SIZE = 500;
 
-  for (let i = 0; i < finalizedEntries.length; i += BATCH_SIZE) {
-    const batch = finalizedEntries.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < finalizedEntries.length; i += UPDATE_BATCH_SIZE) {
+    const batch = finalizedEntries.slice(i, i + UPDATE_BATCH_SIZE);
 
-    await dbWrite.$transaction(async (tx) => {
-      // Update entries in this batch
-      for (const entry of batch) {
-        await tx.crucibleEntry.update({
-          where: { id: entry.entryId },
-          data: {
-            score: entry.finalScore,
-            position: entry.position,
-            voteCount: entry.voteCount, // Sync vote count from Redis
-          },
-        });
-      }
-    });
+    // Build VALUES list for bulk update: (entryId, finalScore, position, voteCount)
+    // Use Prisma.sql for safe parameter binding
+    const valuesList = batch.map(
+      (entry) =>
+        Prisma.sql`(${entry.entryId}::int, ${entry.finalScore}::int, ${entry.position}::int, ${entry.voteCount}::int)`
+    );
+
+    // Execute bulk update using UPDATE ... FROM (VALUES ...) pattern
+    // This reduces N queries to 1 query per batch
+    await dbWrite.$executeRaw`
+      UPDATE "CrucibleEntry" AS ce
+      SET
+        score = v.score,
+        position = v.position,
+        "voteCount" = v."voteCount"
+      FROM (VALUES ${Prisma.join(valuesList)}) AS v(id, score, position, "voteCount")
+      WHERE ce.id = v.id
+    `;
+
+    log(`Updated batch of ${batch.length} entries (${i + batch.length}/${finalizedEntries.length})`);
   }
 
   // Update crucible status to completed (separate transaction after all entries)
