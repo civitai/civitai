@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import {
+  IconAlertCircle,
   IconBolt,
   IconCheck,
   IconCircleCheck,
@@ -78,6 +79,8 @@ type ValidationCriterion = {
   passes: boolean;
   passText?: string;
   failReason?: string;
+  /** Whether this criterion is pending server-side validation */
+  pending?: boolean;
 };
 
 /**
@@ -195,16 +198,34 @@ function ImageCard({
                   <div
                     className={clsx(
                       'flex size-3.5 shrink-0 items-center justify-center rounded-full',
-                      criterion.passes
+                      criterion.pending
+                        ? 'bg-yellow-500/20 text-yellow-400'
+                        : criterion.passes
                         ? 'bg-green-500/20 text-green-400'
                         : 'bg-red-500/20 text-red-400'
                     )}
                   >
-                    {criterion.passes ? <IconCheck size={10} /> : <IconX size={10} />}
+                    {criterion.pending ? (
+                      <IconAlertCircle size={10} />
+                    ) : criterion.passes ? (
+                      <IconCheck size={10} />
+                    ) : (
+                      <IconX size={10} />
+                    )}
                   </div>
                   {/* Criterion Text */}
-                  <span className={clsx(criterion.passes ? 'text-[#c1c2c5]' : 'text-red-400')}>
-                    {criterion.passes
+                  <span
+                    className={clsx(
+                      criterion.pending
+                        ? 'text-yellow-400'
+                        : criterion.passes
+                        ? 'text-[#c1c2c5]'
+                        : 'text-red-400'
+                    )}
+                  >
+                    {criterion.pending
+                      ? criterion.failReason || criterion.label
+                      : criterion.passes
                       ? criterion.passText || criterion.label
                       : criterion.failReason || criterion.label}
                   </span>
@@ -338,16 +359,21 @@ export default function CrucibleSubmitEntryModal({
     const requiredNsfwLabel = getNsfwLabel(nsfwLevel);
 
     // Build detailed validation criteria
-    const criteria = [
-      {
-        label: allowedResourceNames?.length
-          ? `Uses ${allowedResourceNames[0] ?? 'required model'}`
-          : 'Any model allowed',
-        // For now, model validation is always passing since we don't have model metadata yet
-        // TODO: Add actual model validation when backend supports it
-        passes: true,
-        failReason: 'Model validation not available',
-      },
+    // Only include model requirement if there are restrictions (allowedResourceNames specified)
+    const hasModelRestrictions = allowedResourceNames && allowedResourceNames.length > 0;
+    const criteria: ValidationCriterion[] = [
+      // Only show model criterion when there are restrictions
+      // Since we can't validate client-side, mark as pending validation
+      ...(hasModelRestrictions
+        ? [
+            {
+              label: `Uses ${allowedResourceNames[0] ?? 'required model'}`,
+              passes: true, // Treat as passing for selection, server validates on submit
+              pending: true, // Show as pending to indicate server-side validation
+              failReason: 'Validated on submit',
+            },
+          ]
+        : []),
       {
         label: 'Image type',
         passes: image.type === MediaType.image,
