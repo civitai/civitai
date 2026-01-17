@@ -1,7 +1,7 @@
 import { Badge, Box, Skeleton, Text } from '@mantine/core';
 import { IconClockHour4, IconFlame } from '@tabler/icons-react';
 import clsx from 'clsx';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -46,6 +46,10 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
 
   // Calculate total prize pool (entryFee * entryCount)
   const prizePool = entryFee * entryCount;
+
+  // Memoize current date to avoid creating new Date objects on each helper call
+  // This is stable for the render cycle and avoids unnecessary recalculations
+  const now = useMemo(() => new Date(), []);
 
   // Determine status badge
   const getStatusBadge = () => {
@@ -192,9 +196,9 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           </IconBadge>
           {/* Status indicator with colored dot */}
           <div className="flex items-center gap-1.5">
-            <Box className={clsx('size-2 rounded-full', getStatusDotColor(status, endAt))} />
+            <Box className={clsx('size-2 rounded-full', getStatusDotColor(status, endAt, now))} />
             <Text size="xs" c="dimmed">
-              {getStatusText(status, endAt)}
+              {getStatusText(status, endAt, now)}
             </Text>
           </div>
         </div>
