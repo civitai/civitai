@@ -211,6 +211,9 @@ export const serverSchema = z.object({
   // OpenAI
   OPENAI_API_KEY: z.string().optional(),
 
+  // OpenRouter (unified LLM API)
+  OPENROUTER_API_KEY: z.string().optional(),
+
   // Youtube related:
   YOUTUBE_APP_CLIENT_ID: z.string().optional(),
   YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
