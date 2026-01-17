@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
+import plimit from 'p-limit';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
@@ -1251,7 +1252,7 @@ function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
 export const finalizeCrucible = async (
   crucibleId: number
 ): Promise<FinalizeCrucibleResult> => {
-  // Fetch the crucible with all entries
+  // Fetch the crucible metadata (without loading all entries into memory)
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
     select: {
@@ -1262,14 +1263,8 @@ export const finalizeCrucible = async (
       entryFee: true,
       prizePositions: true,
       endAt: true,
-      entries: {
-        select: {
-          id: true,
-          userId: true,
-          score: true,
-          createdAt: true, // For tiebreaker
-        },
-        orderBy: { createdAt: 'asc' }, // Ordered by entry time for tiebreaker
+      _count: {
+        select: { entries: true },
       },
     },
   });
@@ -1287,8 +1282,11 @@ export const finalizeCrucible = async (
     throw throwBadRequestError('Cannot finalize a cancelled crucible');
   }
 
+  // Get entry count from aggregation (no memory impact)
+  const entryCount = crucible._count.entries;
+
   // Calculate total prize pool
-  const totalPrizePool = crucible.entryFee * crucible.entries.length;
+  const totalPrizePool = crucible.entryFee * entryCount;
 
   // Parse prize positions from JSON
   const prizePositions = parsePrizePositions(crucible.prizePositions);
@@ -1299,7 +1297,7 @@ export const finalizeCrucible = async (
   // ============================================================================
   // Edge Case: 0 entries
   // ============================================================================
-  if (crucible.entries.length === 0) {
+  if (entryCount === 0) {
     log(`Edge case: Crucible ${crucibleId} has 0 entries - finalizing without prizes`);
 
     // Update crucible status to completed
@@ -1337,22 +1335,56 @@ export const finalizeCrucible = async (
     };
   }
 
-  // ============================================================================
-  // Edge Case: 1 entry (auto-win)
-  // ============================================================================
-  if (crucible.entries.length === 1) {
-    log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${crucible.entries[0].id}`);
-  }
-
   // Get all ELO scores and vote counts from Redis
   const [redisElos, redisVoteCounts] = await Promise.all([
     getAllEntryElos(crucibleId),
     crucibleEloRedis.getAllVoteCounts(crucibleId),
   ]);
 
+  // Load entries using cursor-based pagination to avoid loading all entries into memory
+  // Batch size of 500 entries per query for efficient memory usage
+  const FETCH_BATCH_SIZE = 500;
+  const allEntries: Array<{
+    id: number;
+    userId: number;
+    score: number;
+    createdAt: Date;
+  }> = [];
+
+  let cursor: number | undefined;
+  while (true) {
+    const batch = await dbRead.crucibleEntry.findMany({
+      where: { crucibleId },
+      select: {
+        id: true,
+        userId: true,
+        score: true,
+        createdAt: true,
+      },
+      take: FETCH_BATCH_SIZE,
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0, // Skip the cursor entry itself
+      orderBy: { id: 'asc' }, // Order by ID for cursor consistency
+    });
+
+    if (batch.length === 0) break;
+
+    allEntries.push(...batch);
+    cursor = batch[batch.length - 1].id;
+
+    log(`Loaded batch of ${batch.length} entries (total so far: ${allEntries.length}/${entryCount})`);
+  }
+
+  // ============================================================================
+  // Edge Case: 1 entry (auto-win)
+  // ============================================================================
+  if (allEntries.length === 1) {
+    log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${allEntries[0].id}`);
+  }
+
   // Combine database entries with Redis ELO scores
   // If an entry doesn't have a Redis score, use the database score (1500 default)
-  const entriesWithElo = crucible.entries.map((entry) => ({
+  const entriesWithElo = allEntries.map((entry) => ({
     entryId: entry.id,
     userId: entry.userId,
     finalScore: redisElos[entry.id] ?? entry.score,
@@ -1646,39 +1678,57 @@ export const cancelCrucible = async ({
   let totalRefunded = 0;
   const failedRefunds: Array<{ entryId: number; userId: number; error: string }> = [];
 
-  // Refund entry fees for all entries with transaction IDs
-  for (const entry of crucible.entries) {
-    if (!entry.buzzTransactionId) {
-      // Entry has no transaction ID (free crucible or legacy entry)
-      continue;
-    }
+  // Refund entry fees in parallel with concurrency limit of 10
+  // This prevents timeout issues with large crucibles while avoiding overwhelming the system
+  const limit = plimit(10);
+  const refundResults = await Promise.allSettled(
+    crucible.entries
+      .filter((entry) => entry.buzzTransactionId !== null) // Only process entries with transaction IDs
+      .map((entry) =>
+        limit(async () => {
+          try {
+            // Refund using the stored transaction prefix
+            await refundMultiAccountTransaction({
+              externalTransactionIdPrefix: entry.buzzTransactionId!,
+              description: 'Crucible entry fee refund - crucible cancelled',
+              details: {
+                entityId: crucible.id,
+                entityType: 'Crucible',
+                reason: 'cancellation',
+              },
+            });
 
-    try {
-      // Refund using the stored transaction prefix
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: entry.buzzTransactionId,
-        description: 'Crucible entry fee refund - crucible cancelled',
-        details: {
-          entityId: crucible.id,
-          entityType: 'Crucible',
-          reason: 'cancellation',
-        },
-      });
+            log(`Refunded entry ${entry.id} for user ${entry.userId}: ${crucible.entryFee} Buzz`);
 
-      refundedEntries++;
-      totalRefunded += crucible.entryFee;
+            return { success: true, entry };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            log(`Failed to refund entry ${entry.id} for user ${entry.userId}: ${errorMessage}`);
 
-      log(`Refunded entry ${entry.id} for user ${entry.userId}: ${crucible.entryFee} Buzz`);
-    } catch (error) {
-      // Log failed refund but continue with other entries
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      failedRefunds.push({
-        entryId: entry.id,
-        userId: entry.userId,
-        error: errorMessage,
-      });
+            return {
+              success: false,
+              entry,
+              error: errorMessage,
+            };
+          }
+        })
+      )
+  );
 
-      log(`Failed to refund entry ${entry.id} for user ${entry.userId}: ${errorMessage}`);
+  // Process refund results
+  for (const result of refundResults) {
+    if (result.status === 'fulfilled') {
+      const refundResult = result.value;
+      if (refundResult.success) {
+        refundedEntries++;
+        totalRefunded += crucible.entryFee;
+      } else {
+        failedRefunds.push({
+          entryId: refundResult.entry.id,
+          userId: refundResult.entry.userId,
+          error: refundResult.error!,
+        });
+      }
     }
   }
 

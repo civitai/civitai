@@ -60,8 +60,8 @@ export const createCrucibleInputSchema = z.object({
   description: z.string().nonempty(),
   coverImage: crucibleImageSchema,
   nsfwLevel: z.number(),
-  entryFee: z.number().min(0),
-  entryLimit: z.number().min(1).max(10),
+  entryFee: z.number().min(0).max(1_000_000), // Max 1M Buzz to prevent integer overflow
+  entryLimit: z.number().min(1).max(10_000), // Max 10K entries per user to prevent abuse
   maxTotalEntries: z.number().min(1).optional(),
   prizePositions: z.record(z.string(), z.number()).refine(
     (positions) => {
