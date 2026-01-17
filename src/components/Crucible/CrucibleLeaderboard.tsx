@@ -1,14 +1,11 @@
-import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button } from '@mantine/core';
-import { IconCrown, IconTrophy, IconChevronRight, IconChevronLeft } from '@tabler/icons-react';
+import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button, Avatar } from '@mantine/core';
+import { IconTrophy, IconChevronRight, IconChevronLeft } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { PrizePosition, parsePrizePositions } from '~/components/Crucible/CruciblePrizeBreakdown';
+import type { PrizePosition } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { useState } from 'react';
+import { getInitials } from '~/utils/string-helpers';
 
 export type LeaderboardEntry = {
   id: number;
@@ -78,6 +75,27 @@ export function CrucibleLeaderboard({
   const prizeMap = new Map<number, PrizePosition>();
   prizePositions.forEach((prize) => prizeMap.set(prize.position, prize));
 
+  // Calculate remaining prize pool for 4th-10th place
+  const top3Percentage = prizePositions
+    .filter((p) => p.position <= 3)
+    .reduce((sum, p) => sum + p.percentage, 0);
+  const remainingPercentage = 100 - top3Percentage;
+  const remainingPrizeAmount = Math.floor((remainingPercentage / 100) * totalPrizePool);
+  const hasRemainingPrize = remainingPercentage > 0;
+
+  // Get the range of remaining positions (e.g., "4th - 10th")
+  const remainingPositions = prizePositions.filter((p) => p.position > 3);
+  const minRemainingPos =
+    remainingPositions.length > 0 ? Math.min(...remainingPositions.map((p) => p.position)) : 4;
+  const maxRemainingPos =
+    remainingPositions.length > 0 ? Math.max(...remainingPositions.map((p) => p.position)) : 10;
+  const remainingPosLabel =
+    minRemainingPos === maxRemainingPos
+      ? `${minRemainingPos}${getOrdinalSuffix(minRemainingPos)} Place`
+      : `${minRemainingPos}${getOrdinalSuffix(
+          minRemainingPos
+        )} - ${maxRemainingPos}${getOrdinalSuffix(maxRemainingPos)} Place`;
+
   return (
     <Paper className={clsx('rounded-lg p-6', className)} bg="dark.6">
       {/* Section header */}
@@ -98,7 +116,7 @@ export function CrucibleLeaderboard({
         </Box>
       </div>
 
-      {/* Leaderboard entries */}
+      {/* Leaderboard entries - only show top 3 with full details */}
       <Stack gap="sm">
         {paginatedEntries.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="md">
@@ -117,6 +135,18 @@ export function CrucibleLeaderboard({
           ))
         )}
       </Stack>
+
+      {/* Distribution box for remaining prize positions */}
+      {hasRemainingPrize && (
+        <Box className="mt-4 rounded-lg bg-[#25262b] p-3">
+          <Text size="sm" fw={600} c="white" mb={4}>
+            {remainingPosLabel}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {remainingPercentage}% ({abbreviateNumber(remainingPrizeAmount)} Buzz) - Divided equally
+          </Text>
+        </Box>
+      )}
 
       {/* Pagination controls */}
       {showPagination && (
@@ -260,16 +290,25 @@ function LeaderboardEntryItem({
           {style.icon || rank}
         </div>
 
-        {/* Entry thumbnail */}
-        <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-md bg-[#373a40]">
-          <EdgeMedia
-            src={entry.image.url}
-            name={entry.image.name}
-            type="image"
-            width={40}
-            className="h-full w-full object-cover"
-          />
-        </div>
+        {/* User avatar */}
+        <Avatar
+          src={entry.user.image}
+          size={40}
+          radius="xl"
+          styles={{
+            root: {
+              flexShrink: 0,
+            },
+            placeholder: {
+              background: 'linear-gradient(135deg, #7950f2 0%, #228be6 100%)',
+              color: 'white',
+              fontWeight: 600,
+              fontSize: '14px',
+            },
+          }}
+        >
+          {getInitials(entry.user.username || 'A')}
+        </Avatar>
 
         {/* User info */}
         <div className="min-w-0 flex-1">
