@@ -133,6 +133,88 @@ type BranchesRecord<Ctx = any, ExternalCtx = any> = Record<
   BranchDefinition<Ctx, ExternalCtx>
 >;
 
+// ============================================================================
+// Grouped Discriminator Types
+// ============================================================================
+
+/**
+ * A grouped branch definition - multiple discriminator values share one graph.
+ * At the type level, this creates ONE union member with a union of string literals.
+ */
+interface GroupedBranch<
+  Values extends readonly string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Graph extends BranchDefinition<any, any>
+> {
+  /** The discriminator values that map to this graph */
+  readonly values: Values;
+  /** The graph for these values */
+  readonly graph: Graph;
+}
+
+/** Array of grouped branches */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type GroupedBranchesArray<Ctx = any, ExternalCtx = any> = readonly GroupedBranch<
+  readonly string[],
+  BranchDefinition<Ctx, ExternalCtx>
+>[];
+
+/**
+ * Build discriminated union from grouped branches.
+ * Each GroupedBranch creates ONE type branch with a union of its values.
+ *
+ * Example:
+ *   GroupedBranch<['txt2img', 'img2img'], ecosystemGraph>
+ *   → { workflow: 'txt2img' | 'img2img' } & EcosystemGraphCtx
+ *
+ * This reduces type complexity from O(n) branches to O(groups) branches.
+ */
+type BuildGroupedDiscriminatedUnion<
+  ParentCtx extends Record<string, unknown>,
+  DiscKey extends string,
+  Groups extends GroupedBranchesArray
+> = Groups extends readonly [infer First, ...infer Rest]
+  ? First extends GroupedBranch<infer Values, infer Graph>
+    ?
+        | MergePreferRight<
+            OmitDistributive<ParentCtx, DiscKey>,
+            MergePreferRight<
+              { [K in DiscKey]: Values[number] },
+              OmitDistributive<InferGraphContext<Graph>, DiscKey>
+            >
+          >
+        | (Rest extends GroupedBranchesArray
+            ? BuildGroupedDiscriminatedUnion<ParentCtx, DiscKey, Rest>
+            : never)
+    : never
+  : never;
+
+/**
+ * Build meta union from grouped branches.
+ */
+type BuildGroupedMetaUnion<
+  ParentCtxMeta extends Record<string, unknown>,
+  Groups extends GroupedBranchesArray
+> = ParentCtxMeta &
+  FlattenUnion<
+    Groups[number] extends GroupedBranch<readonly string[], infer Graph>
+      ? InferGraphMeta<Graph>
+      : never
+  >;
+
+/**
+ * Build values union from grouped branches.
+ */
+type BuildGroupedValuesUnion<
+  ParentCtx extends Record<string, unknown>,
+  Groups extends GroupedBranchesArray
+> = ParentCtx &
+  FlattenUnion<
+    Groups[number] extends GroupedBranch<readonly string[], infer Graph>
+      ? InferGraphValues<Graph>
+      : never
+  >;
+
 // Helper: Distributive Omit that preserves discriminated unions
 type OmitDistributive<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -449,6 +531,12 @@ export class DataGraph<
         const def = root.nodeDefs.get(entry.key);
         if (!def?.output) continue;
 
+        // Skip validation if node's `when` condition is false (node not active)
+        if (def.when === false) continue;
+
+        // Also skip if node is not in context (conditionally excluded)
+        if (!(entry.key in root._ctx)) continue;
+
         const value = (root._ctx as Record<string, unknown>)[entry.key];
         const result = def.output.safeParse(value);
         if (!result.success) {
@@ -480,6 +568,23 @@ export class DataGraph<
     });
 
     return { success: false, errors };
+  }
+
+  /**
+   * Initialize the graph with input and external context, then validate.
+   * This is a convenience method for server-side validation where you want
+   * to validate in a single call without mutating a shared instance.
+   *
+   * @param input - Initial values to set on the graph
+   * @param externalCtx - External context for node factories
+   * @returns ValidationResult with either validated data or errors
+   */
+  parse(
+    input: Partial<Ctx> = {},
+    externalCtx: ExternalCtx = {} as ExternalCtx
+  ): ValidationResult<Ctx> {
+    this.init(input, externalCtx);
+    return this.validate();
   }
 
   private watchNode(key: string, callback: NodeCallback): () => void {
@@ -730,6 +835,59 @@ export class DataGraph<
       kind: 'discriminator',
       discriminatorKey: key,
       factory,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this as any;
+  }
+
+  /**
+   * Add a grouped discriminator that collapses multiple values into fewer type branches.
+   *
+   * This is useful when many discriminator values share the same subgraph - instead of
+   * creating a type union member for each value, this creates ONE member per group.
+   *
+   * @example
+   * ```typescript
+   * // Before: 12 branches → 12 type union members
+   * .discriminator('workflow', {
+   *   txt2img: ecosystemGraph,
+   *   'txt2img:draft': ecosystemGraph,
+   *   // ... 10 more pointing to ecosystemGraph
+   *   'vid2vid:interpolate': videoInterpolationGraph,
+   * })
+   *
+   * // After: 5 groups → 5 type union members
+   * .groupedDiscriminator('workflow', [
+   *   { values: ['txt2img', 'txt2img:draft', ...] as const, graph: ecosystemGraph },
+   *   { values: ['vid2vid:interpolate'] as const, graph: videoInterpolationGraph },
+   *   // ...
+   * ])
+   * ```
+   */
+  groupedDiscriminator<
+    const DiscKey extends keyof Ctx & string,
+    const Groups extends GroupedBranchesArray<Ctx, ExternalCtx>
+  >(
+    key: DiscKey,
+    groups: Groups
+  ): DataGraph<
+    BuildGroupedDiscriminatedUnion<Ctx, DiscKey, Groups>,
+    ExternalCtx,
+    BuildGroupedMetaUnion<CtxMeta, Groups>,
+    BuildGroupedValuesUnion<CtxValues, Groups>
+  > {
+    // Convert grouped branches to a flat BranchesRecord for runtime
+    const branches: BranchesRecord = {};
+    for (const group of groups) {
+      for (const value of group.values) {
+        branches[value] = group.graph;
+      }
+    }
+
+    this.addEntry({
+      kind: 'discriminator',
+      discriminatorKey: key,
+      factory: () => branches,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return this as any;
@@ -1443,6 +1601,9 @@ export type {
   InferGraphContext,
   InferGraphMeta,
   BuildDiscriminatedUnion,
+  BuildGroupedDiscriminatedUnion,
+  GroupedBranch,
+  GroupedBranchesArray,
   InferOutput,
   AnyZodSchema,
   NodeError,

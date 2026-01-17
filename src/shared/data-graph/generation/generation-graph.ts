@@ -167,29 +167,40 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
 
   // Discriminator: include ecosystem-dependent nodes only for workflows with ecosystem support
   // Workflows without ecosystem support (vid2vid:*) use their own specialized graphs
-  .discriminator('workflow', {
-    // Text to image workflows
-    txt2img: ecosystemGraph,
-    'txt2img:draft': ecosystemGraph,
-    'txt2img:face-fix': ecosystemGraph,
-    'txt2img:hires-fix': ecosystemGraph,
-    // Image to image workflows
-    img2img: ecosystemGraph,
-    'img2img:face-fix': ecosystemGraph,
-    'img2img:hires-fix': ecosystemGraph,
-    'image-edit': ecosystemGraph,
-    // Video workflows with ecosystem support
-    txt2vid: ecosystemGraph,
-    img2vid: ecosystemGraph,
-    'img2vid:first-last-frame': ecosystemGraph,
-    'img2vid:ref2vid': ecosystemGraph,
-    // Video enhancement workflows (no ecosystem support)
-    'vid2vid:interpolate': videoInterpolationGraph,
-    'vid2vid:upscale': videoUpscaleGraph,
+  //
+  // Using groupedDiscriminator to reduce TypeScript type complexity:
+  // - All ecosystem workflows share the same graph, so they're grouped into ONE type branch
+  // - Standalone workflows each get their own type branch
+  // - Result: 5 type branches instead of 16, significantly reducing union type size
+  .groupedDiscriminator('workflow', [
+    // Ecosystem workflows - all share ecosystemGraph (ONE type branch)
+    {
+      values: [
+        // Text to image workflows
+        'txt2img',
+        'txt2img:draft',
+        'txt2img:face-fix',
+        'txt2img:hires-fix',
+        // Image to image workflows
+        'img2img',
+        'img2img:face-fix',
+        'img2img:hires-fix',
+        'image-edit',
+        // Video workflows with ecosystem support
+        'txt2vid',
+        'img2vid',
+        'img2vid:first-last-frame',
+        'img2vid:ref2vid',
+      ] as const,
+      graph: ecosystemGraph,
+    },
+    // Video enhancement workflows (no ecosystem support) - each gets its own type branch
+    { values: ['vid2vid:interpolate'] as const, graph: videoInterpolationGraph },
+    { values: ['vid2vid:upscale'] as const, graph: videoUpscaleGraph },
     // Image enhancement workflows (no ecosystem support)
-    'img2img:upscale': imageUpscaleGraph,
-    'img2img:remove-background': imageRemoveBackgroundGraph,
-  });
+    { values: ['img2img:upscale'] as const, graph: imageUpscaleGraph },
+    { values: ['img2img:remove-background'] as const, graph: imageRemoveBackgroundGraph },
+  ]);
 
 /** Type helper for the generation graph context */
 export type GenerationGraphCtx = ReturnType<typeof generationGraph.init>;
@@ -212,10 +223,11 @@ if ('test'.length > 5) {
     }
     if (data.workflow === 'txt2img:draft') {
       console.log(data.baseModel);
-      if (data.modelFamily === 'flux') {
+      // Now discriminating on baseModel instead of modelFamily
+      if (data.baseModel === 'Flux1') {
         console.log(data.fluxMode);
       }
-      if (data.modelFamily === 'stable-diffusion') {
+      if (data.baseModel === 'SDXL') {
         console.log(data.aspectRatio);
         console.log(data.seed);
         console.log(data.model);
@@ -229,7 +241,8 @@ if ('test'.length > 5) {
     }
 
     if (data.workflow === 'txt2vid') {
-      if (data.modelFamily === 'vidu') {
+      // Now discriminating on baseModel instead of modelFamily
+      if (data.baseModel === 'Vidu') {
         console.log(data.movementAmplitude);
       }
     }

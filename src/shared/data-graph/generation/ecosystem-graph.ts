@@ -85,8 +85,6 @@ export const ecosystemGraph = new DataGraph<
       const compatibleEcosystems = getEcosystemsForWorkflow(ctx.workflow);
       // Default to first compatible ecosystem, or SDXL as fallback
       const defaultValue = compatibleEcosystems[0] ?? 'SDXL';
-      // Disable selection when there's only one option
-      const disabled = compatibleEcosystems.length <= 1;
 
       return {
         input: z.string().optional(),
@@ -95,7 +93,6 @@ export const ecosystemGraph = new DataGraph<
         meta: {
           compatibleEcosystems,
           mediaType: ctx.output, // 'image' or 'video'
-          disabled,
         },
       };
     },
@@ -158,15 +155,35 @@ export const ecosystemGraph = new DataGraph<
     ['workflow', 'baseModel', 'model', 'input']
   )
 
-  // Compute model family from baseModel to determine which subgraph to use
-  .computed(
-    'modelFamily',
-    (ctx) => {
-      // These are ecosystem keys, not base model names
-      const sdFamilyEcosystems = ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'];
-      const fluxFamilyEcosystems = ['Flux1', 'FluxKrea'];
-      // Wan family includes all Wan video ecosystems
-      const wanFamilyEcosystems = [
+  // Use groupedDiscriminator to reduce TypeScript type complexity:
+  // - Multiple baseModel values that share the same graph are grouped into ONE type branch
+  // - This reduces union type bloat from O(ecosystems) to O(families)
+  .groupedDiscriminator('baseModel', [
+    // Image ecosystems - Stable Diffusion family (ONE type branch)
+    {
+      values: ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'] as const,
+      graph: stableDiffusionGraph,
+    },
+    // Image ecosystems - Flux family (ONE type branch)
+    {
+      values: ['Flux1', 'FluxKrea'] as const,
+      graph: fluxGraph,
+    },
+    // Image ecosystems - individual families
+    { values: ['Qwen'] as const, graph: qwenGraph },
+    { values: ['NanoBanana'] as const, graph: nanoBananaGraph },
+    { values: ['Seedream'] as const, graph: seedreamGraph },
+    { values: ['Imagen4'] as const, graph: imagen4Graph },
+    { values: ['Flux2'] as const, graph: flux2Graph },
+    { values: ['Flux1Kontext'] as const, graph: fluxKontextGraph },
+    { values: ['ZImageTurbo'] as const, graph: zImageTurboGraph },
+    { values: ['Chroma'] as const, graph: chromaGraph },
+    { values: ['HiDream'] as const, graph: hiDreamGraph },
+    { values: ['PonyV7'] as const, graph: ponyV7Graph },
+    { values: ['OpenAI'] as const, graph: openaiGraph },
+    // Video ecosystems - Wan family (ONE type branch for all Wan variants)
+    {
+      values: [
         'WanVideo',
         'WanVideo1_3B_T2V',
         'WanVideo14B_T2V',
@@ -177,68 +194,20 @@ export const ecosystemGraph = new DataGraph<
         'WanVideo22_T2V_A14B',
         'WanVideo25_T2V',
         'WanVideo25_I2V',
-      ];
-      const baseModel = ctx.baseModel ?? '';
-
-      // Image ecosystems
-      if (sdFamilyEcosystems.includes(baseModel)) return 'stable-diffusion';
-      if (fluxFamilyEcosystems.includes(baseModel)) return 'flux';
-      if (ctx.baseModel === 'Qwen') return 'qwen';
-      if (ctx.baseModel === 'NanoBanana') return 'nano-banana';
-      if (ctx.baseModel === 'Seedream') return 'seedream';
-      if (ctx.baseModel === 'Imagen4') return 'imagen4';
-      if (ctx.baseModel === 'Flux2') return 'flux2';
-      if (ctx.baseModel === 'Flux1Kontext') return 'flux-kontext';
-      if (ctx.baseModel === 'ZImageTurbo') return 'z-image-turbo';
-      if (ctx.baseModel === 'Chroma') return 'chroma';
-      if (ctx.baseModel === 'HiDream') return 'hi-dream';
-      if (ctx.baseModel === 'PonyV7') return 'pony-v7';
-      if (ctx.baseModel === 'OpenAI') return 'openai';
-
-      // Video ecosystems
-      if (ctx.baseModel === 'Vidu') return 'vidu';
-      if (ctx.baseModel === 'Kling') return 'kling';
-      if (wanFamilyEcosystems.includes(baseModel)) return 'wan';
-      if (ctx.baseModel === 'HyV1') return 'hunyuan';
-      if (ctx.baseModel === 'MiniMax') return 'minimax';
-      if (ctx.baseModel === 'Haiper') return 'haiper';
-      if (ctx.baseModel === 'Mochi') return 'mochi';
-      if (ctx.baseModel === 'Lightricks') return 'lightricks';
-      if (ctx.baseModel === 'Sora2') return 'sora';
-      if (ctx.baseModel === 'Veo3') return 'veo3';
-
-      return undefined;
+      ] as const,
+      graph: wanGraph,
     },
-    ['baseModel']
-  )
-
-  .discriminator('modelFamily', {
-    // Image ecosystems
-    'stable-diffusion': stableDiffusionGraph,
-    flux: fluxGraph,
-    qwen: qwenGraph,
-    'nano-banana': nanoBananaGraph,
-    seedream: seedreamGraph,
-    imagen4: imagen4Graph,
-    flux2: flux2Graph,
-    'flux-kontext': fluxKontextGraph,
-    'z-image-turbo': zImageTurboGraph,
-    chroma: chromaGraph,
-    'hi-dream': hiDreamGraph,
-    'pony-v7': ponyV7Graph,
-    openai: openaiGraph,
-    // Video ecosystems
-    vidu: viduGraph,
-    kling: klingGraph,
-    wan: wanGraph,
-    hunyuan: hunyuanGraph,
-    minimax: minimaxGraph,
-    haiper: haiperGraph,
-    mochi: mochiGraph,
-    lightricks: lightricksGraph,
-    sora: soraGraph,
-    veo3: veo3Graph,
-  });
+    // Video ecosystems - individual families
+    { values: ['Vidu'] as const, graph: viduGraph },
+    { values: ['Kling'] as const, graph: klingGraph },
+    { values: ['HyV1'] as const, graph: hunyuanGraph },
+    { values: ['MiniMax'] as const, graph: minimaxGraph },
+    { values: ['Haiper'] as const, graph: haiperGraph },
+    { values: ['Mochi'] as const, graph: mochiGraph },
+    { values: ['Lightricks'] as const, graph: lightricksGraph },
+    { values: ['Sora2'] as const, graph: soraGraph },
+    { values: ['Veo3'] as const, graph: veo3Graph },
+  ]);
 
 type ImageConfig = {
   max?: number;
