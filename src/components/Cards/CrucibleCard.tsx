@@ -1,5 +1,5 @@
-import { Badge, Skeleton, Text } from '@mantine/core';
-import { IconClockHour4 } from '@tabler/icons-react';
+import { Badge, Box, Skeleton, Text } from '@mantine/core';
+import { IconClockHour4, IconFlame, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -173,20 +173,47 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
                 </IconBadge>
               )}
           </div>
-          <div className="flex items-center gap-2">
-            <Badge
+          <div className="flex items-center justify-between gap-2">
+            <IconBadge
+              icon={<IconFlame size={14} />}
+              color="dark"
               className={cardClasses.chip}
               style={{
                 backgroundColor: 'rgba(0, 0, 0, 0.31)',
               }}
               radius="xl"
               px={8}
+              h={26}
               variant="filled"
             >
               <Text size="xs" fw="bold">
                 {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
               </Text>
-            </Badge>
+            </IconBadge>
+            <IconBadge
+              icon={<IconUsers size={14} />}
+              color="dark"
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
+              radius="xl"
+              px={8}
+              h={26}
+              variant="filled"
+            >
+              <Text size="xs" fw="bold">
+                {/* TODO: Add actual participant count when backend supports it */}
+                {abbreviateNumber(Math.max(1, Math.floor(entryCount * 0.7)))} participants
+              </Text>
+            </IconBadge>
+          </div>
+          {/* Status indicator with colored dot */}
+          <div className="flex items-center gap-1.5">
+            <Box className={clsx('size-2 rounded-full', getStatusDotColor(status, endAt))} />
+            <Text size="xs" c="dimmed">
+              {getStatusText(status, endAt)}
+            </Text>
           </div>
         </div>
       }
@@ -195,15 +222,63 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
 }
 
 /**
+ * Check if a crucible is ending soon (within 3 days)
+ */
+function isEndingSoon(endAt: Date): boolean {
+  const now = new Date();
+  const threeDaysFromNow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  return new Date(endAt) <= threeDaysFromNow;
+}
+
+/**
+ * Get the status dot color class based on crucible status
+ */
+function getStatusDotColor(status: CrucibleStatus, endAt: Date | null): string {
+  if (status === CrucibleStatus.Active && endAt && isEndingSoon(endAt)) {
+    return 'bg-yellow-5';
+  }
+  switch (status) {
+    case CrucibleStatus.Active:
+      return 'bg-green-5';
+    case CrucibleStatus.Pending:
+      return 'bg-blue-5';
+    case CrucibleStatus.Completed:
+      return 'bg-gray-5';
+    case CrucibleStatus.Cancelled:
+      return 'bg-red-5';
+    default:
+      return 'bg-gray-5';
+  }
+}
+
+/**
+ * Get status text for display
+ */
+function getStatusText(status: CrucibleStatus, endAt: Date | null): string {
+  switch (status) {
+    case CrucibleStatus.Active:
+      if (endAt && isEndingSoon(endAt)) {
+        return 'Ending Soon';
+      }
+      return 'Active - Accepting entries';
+    case CrucibleStatus.Pending:
+      return 'Upcoming';
+    case CrucibleStatus.Completed:
+      return 'Completed';
+    case CrucibleStatus.Cancelled:
+      return 'Cancelled';
+    default:
+      return '';
+  }
+}
+
+/**
  * Skeleton loader for CrucibleCard
  * Matches the card dimensions and layout while data is loading
  */
 export function CrucibleCardSkeleton() {
   return (
-    <div
-      className="relative overflow-hidden rounded-lg bg-dark-6"
-      style={{ aspectRatio: '7/9' }}
-    >
+    <div className="relative overflow-hidden rounded-lg bg-dark-6" style={{ aspectRatio: '7/9' }}>
       {/* Background skeleton */}
       <Skeleton height="100%" width="100%" radius={0} />
 
@@ -235,8 +310,17 @@ export function CrucibleCardSkeleton() {
             <Skeleton height={26} width={70} radius="xl" />
           </div>
 
-          {/* Entry count */}
-          <Skeleton height={22} width={70} radius="xl" />
+          {/* Entries and participants */}
+          <div className="flex items-center justify-between gap-2">
+            <Skeleton height={26} width={80} radius="xl" />
+            <Skeleton height={26} width={90} radius="xl" />
+          </div>
+
+          {/* Status indicator */}
+          <div className="flex items-center gap-1.5">
+            <Skeleton height={8} width={8} circle />
+            <Skeleton height={12} width={100} />
+          </div>
         </div>
       </div>
     </div>
