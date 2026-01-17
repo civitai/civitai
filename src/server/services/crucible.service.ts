@@ -602,7 +602,8 @@ export async function markPairVoted(
 ): Promise<void> {
   const key = getVotedPairsKey(crucibleId, userId);
   const pairKey = createPairKey(entryId1, entryId2);
-  await sysRedis.sAdd(key, [pairKey]);
+  // sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
+  await sysRedis.sAdd(key, pairKey);
   // Set TTL to 30 days (for crucible cleanup)
   await sysRedis.expire(key, 30 * 24 * 60 * 60);
 }
@@ -1086,9 +1087,10 @@ export const submitVote = async ({
 
   // Race condition protection: Atomically mark the pair as voted before processing
   // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
+  // Note: sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
   const key = getVotedPairsKey(crucibleId, userId);
   const pairKey = createPairKey(winnerEntryId, loserEntryId);
-  const addResult = await sysRedis.sAdd(key, [pairKey]);
+  const addResult = await sysRedis.sAdd(key, pairKey);
   await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
 
   if (addResult === 0) {
