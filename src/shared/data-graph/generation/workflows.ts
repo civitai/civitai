@@ -29,6 +29,8 @@ export type WorkflowOption = {
   id: string;
   /** Display label */
   label: string;
+  /** Brief description of what this workflow does */
+  description?: string;
   /** Category for grouping in UI */
   category: WorkflowCategory;
   /** Input type required */
@@ -48,6 +50,7 @@ function toWorkflowOption(workflow: WorkflowRecord): WorkflowOption {
   return {
     id: workflow.key,
     label: workflow.label,
+    description: workflow.description,
     category: workflow.category,
     inputType: workflow.inputType,
     ecosystemSpecific: workflow.ecosystemIds.length === 1,

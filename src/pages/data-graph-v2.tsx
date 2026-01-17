@@ -16,6 +16,7 @@ import {
   Collapse,
   Container,
   Group,
+  Modal,
   NumberInput,
   Stack,
   Text,
@@ -26,12 +27,13 @@ import {
   Radio,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconChevronDown } from '@tabler/icons-react';
-import React, { type ReactNode, useState } from 'react';
+import { IconChevronDown, IconArrowRight } from '@tabler/icons-react';
+import React, { type ReactNode, useState, useCallback } from 'react';
 import clsx from 'clsx';
 
 import { IsClient } from '~/components/IsClient/IsClient';
 import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
+import { useCompatibilityInfo } from '~/components/generation_v2/hooks/useCompatibilityInfo';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { DataGraphProvider, useGraph, Controller } from '~/libs/data-graph/react';
 import {
@@ -198,34 +200,230 @@ function AccordionLayout({ children, label, storeKey, defaultOpen = true }: Acco
 }
 
 // =============================================================================
+// Pending Change Types for Confirmation Modal
+// =============================================================================
+
+type PendingChange =
+  | {
+      type: 'workflow';
+      value: string;
+      workflowLabel: string;
+      currentEcosystem: string;
+      targetEcosystem: string;
+    }
+  | {
+      type: 'ecosystem';
+      value: string;
+      ecosystemLabel: string;
+      currentWorkflow: string;
+      targetWorkflow: string;
+    };
+
+// =============================================================================
+// Confirmation Modal Component
+// =============================================================================
+
+interface CompatibilityConfirmModalProps {
+  pendingChange: PendingChange | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function CompatibilityConfirmModal({
+  pendingChange,
+  onConfirm,
+  onCancel,
+}: CompatibilityConfirmModalProps) {
+  if (!pendingChange) return null;
+
+  const isWorkflowChange = pendingChange.type === 'workflow';
+
+  return (
+    <Modal
+      opened
+      onClose={onCancel}
+      title={isWorkflowChange ? 'Change ecosystem?' : 'Change workflow?'}
+      size="sm"
+    >
+      <Stack gap="md">
+        <Text size="sm">
+          {isWorkflowChange ? (
+            <>
+              <strong>{pendingChange.workflowLabel}</strong> is not available for{' '}
+              <strong>{pendingChange.currentEcosystem}</strong>.
+            </>
+          ) : (
+            <>
+              <strong>{pendingChange.ecosystemLabel}</strong> doesn&apos;t support{' '}
+              <strong>{pendingChange.currentWorkflow}</strong>.
+            </>
+          )}
+        </Text>
+
+        <Card withBorder p="sm" className="bg-gray-0 dark:bg-dark-6">
+          <Group gap="sm" wrap="nowrap">
+            <Text size="sm" c="dimmed">
+              {isWorkflowChange ? 'Ecosystem' : 'Workflow'}
+            </Text>
+            <Text size="sm" fw={500} className="line-through opacity-60">
+              {isWorkflowChange ? pendingChange.currentEcosystem : pendingChange.currentWorkflow}
+            </Text>
+            <IconArrowRight size={14} className="text-gray-5" />
+            <Text size="sm" fw={600} c="blue">
+              {isWorkflowChange ? pendingChange.targetEcosystem : pendingChange.targetWorkflow}
+            </Text>
+          </Group>
+        </Card>
+
+        <Group justify="flex-end" gap="sm">
+          <Button variant="default" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm}>Continue</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+// =============================================================================
 // Main Form Component using Controller Pattern
 // =============================================================================
 
 function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
+  // Access graph snapshot directly for workflow/baseModel (they exist in discriminated branches)
+  const snapshot = graph.getSnapshot() as { workflow?: string; baseModel?: string };
+  const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
+  // Force re-render when workflow or baseModel changes
+  // Use loose typing for subscribe since baseModel is in a discriminated branch
+  const [, forceUpdate] = useState({});
+  React.useEffect(() => {
+    const unsubWorkflow = graph.subscribe('workflow', () => forceUpdate({}));
+    type LooseGraph = { subscribe: (key: string, cb: () => void) => () => void };
+    const unsubBaseModel = (graph as LooseGraph).subscribe('baseModel', () => forceUpdate({}));
+    return () => {
+      unsubWorkflow();
+      unsubBaseModel();
+    };
+  }, [graph]);
+
+  // Get compatibility info based on current workflow and baseModel
+  const compatibility = useCompatibilityInfo({
+    workflow: snapshot.workflow,
+    baseModel: snapshot.baseModel,
+  });
+
+  // Handle workflow selection with compatibility check
+  const handleWorkflowChange = useCallback(
+    (newWorkflow: string, workflowLabel: string) => {
+      if (!compatibility.isWorkflowCompatible(newWorkflow)) {
+        const target = compatibility.getTargetEcosystemForWorkflow(newWorkflow);
+        if (target && compatibility.currentEcosystemKey) {
+          // Get current ecosystem display name
+          const currentEcoName =
+            graph
+              .getNodeMeta('baseModel')
+              ?.compatibleEcosystems?.find(
+                (key: string) => key === compatibility.currentEcosystemKey
+              ) ?? compatibility.currentEcosystemKey;
+
+          setPendingChange({
+            type: 'workflow',
+            value: newWorkflow,
+            workflowLabel,
+            currentEcosystem: currentEcoName,
+            targetEcosystem: target.displayName,
+          });
+          return;
+        }
+      }
+      graph.set({ workflow: newWorkflow } as Parameters<typeof graph.set>[0]);
+    },
+    [compatibility, graph]
+  );
+
+  // Handle ecosystem selection with compatibility check
+  const handleBaseModelChange = useCallback(
+    (newBaseModel: string, ecosystemLabel: string) => {
+      if (!compatibility.isEcosystemKeyCompatible(newBaseModel)) {
+        const target = compatibility.getTargetWorkflowForEcosystem();
+        setPendingChange({
+          type: 'ecosystem',
+          value: newBaseModel,
+          ecosystemLabel,
+          currentWorkflow: snapshot.workflow ?? 'txt2img',
+          targetWorkflow: target.label,
+        });
+        return;
+      }
+      graph.set({ baseModel: newBaseModel } as Parameters<typeof graph.set>[0]);
+    },
+    [compatibility, graph, snapshot.workflow]
+  );
+
+  // Confirm pending change
+  const confirmChange = useCallback(() => {
+    if (!pendingChange) return;
+    if (pendingChange.type === 'workflow') {
+      graph.set({ workflow: pendingChange.value } as Parameters<typeof graph.set>[0]);
+    } else {
+      graph.set({ baseModel: pendingChange.value } as Parameters<typeof graph.set>[0]);
+    }
+    setPendingChange(null);
+  }, [pendingChange, graph]);
+
+  // Cancel pending change
+  const cancelChange = useCallback(() => {
+    setPendingChange(null);
+  }, []);
 
   return (
     <div className="flex size-full flex-1 flex-col">
+      {/* Confirmation modal for incompatible selections */}
+      <CompatibilityConfirmModal
+        pendingChange={pendingChange}
+        onConfirm={confirmChange}
+        onCancel={cancelChange}
+      />
+
       <div className="flex-1 overflow-auto px-3 py-2">
         <Stack gap="sm" className="w-full">
           {/* Feature selector - primary way users select what they want to do */}
           <Controller
             graph={graph}
             name="workflow"
-            render={({ value, onChange }) => <WorkflowInput value={value} onChange={onChange} />}
+            render={({ value }) => (
+              <WorkflowInput
+                value={value}
+                onChange={(newValue) => {
+                  // Get workflow label for the modal
+                  const label = newValue; // WorkflowInput doesn't expose label, using value
+                  handleWorkflowChange(newValue, label);
+                }}
+                isCompatible={compatibility.isWorkflowCompatible}
+              />
+            )}
           />
 
           {/* Base model selector */}
           <Controller
             graph={graph}
             name="baseModel"
-            render={({ value, meta, onChange }) => (
+            render={({ value, meta }) => (
               <BaseModelInput
                 value={value}
-                onChange={onChange}
+                onChange={(newValue) => {
+                  // Get ecosystem label for the modal
+                  const label = newValue; // Will be resolved in the component
+                  handleBaseModelChange(newValue, label);
+                }}
                 label="Base Model"
                 compatibleEcosystems={meta?.compatibleEcosystems}
                 disabled={meta?.disabled}
+                isCompatible={compatibility.isEcosystemKeyCompatible}
+                targetWorkflow={compatibility.getTargetWorkflowForEcosystem().label}
+                outputType={compatibility.currentOutputType}
               />
             )}
           />
@@ -729,7 +927,7 @@ function DataGraphV2Demo() {
   };
 
   return (
-    <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden py-3">
+    <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden px-0 py-3">
       <IsClient>
         <ResourceDataProvider>
           <DataGraphProvider

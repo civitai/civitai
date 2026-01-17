@@ -91,6 +91,8 @@ export type WorkflowRecord = {
   key: string;
   /** Display label for the workflow */
   label: string;
+  /** Brief description of what this workflow does */
+  description?: string;
   /** Input type required (text = txt2img, image = img2img, video = vid2vid) */
   inputType: 'text' | 'image' | 'video';
   /** Output type produced (defaults to 'image' if not specified) */
@@ -1094,6 +1096,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'txt2img',
     label: 'Create Image',
+    description: 'Generate an image from a text prompt',
     inputType: 'text',
     category: 'text-to-image',
     ecosystemIds: TXT2IMG_IDS,
@@ -1101,6 +1104,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'txt2img:draft',
     label: 'Draft',
+    description: 'Fast generation for quick iterations',
     inputType: 'text',
     category: 'text-to-image',
     ecosystemIds: DRAFT_IDS,
@@ -1108,6 +1112,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'txt2img:face-fix',
     label: 'Create + Face Fix',
+    description: 'Generate with automatic face correction',
     inputType: 'text',
     category: 'text-to-image',
     ecosystemIds: SD_FAMILY_IDS,
@@ -1115,6 +1120,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'txt2img:hires-fix',
     label: 'Create + Hires Fix',
+    description: 'Generate with upscaling for higher detail',
     inputType: 'text',
     category: 'text-to-image',
     ecosystemIds: SD_FAMILY_IDS,
@@ -1123,21 +1129,24 @@ export const workflows: WorkflowRecord[] = [
   // Image to Image workflows
   {
     key: 'img2img',
-    label: 'Variations',
+    label: 'Image Variations',
+    description: 'Create variations of an existing image',
     inputType: 'image',
     category: 'image-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'img2img:face-fix',
-    label: 'Face Fix',
+    label: 'Image Face Fix',
+    description: 'Fix and enhance faces in an image',
     inputType: 'image',
     category: 'image-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'img2img:hires-fix',
-    label: 'Hires Fix',
+    label: 'Image Hires Fix',
+    description: 'Upscale and add detail to an image',
     inputType: 'image',
     category: 'image-to-image',
     ecosystemIds: SD_FAMILY_IDS,
@@ -1145,6 +1154,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'image-edit',
     label: 'Image Edit',
+    description: 'Edit specific parts of an image with prompts',
     inputType: 'image',
     category: 'image-to-image',
     ecosystemIds: [ECO.Qwen, ECO.Seedream, ECO.NanoBanana, ECO.OpenAI, ECO.Flux2, ECO.Flux1Kontext],
@@ -1154,6 +1164,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'img2img:remove-background',
     label: 'Remove Background',
+    description: 'Remove the background from an image',
     inputType: 'image',
     category: 'image-enhancements',
     ecosystemIds: [], // No ecosystems currently support this
@@ -1161,6 +1172,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'img2img:upscale',
     label: 'Upscale',
+    description: 'Increase image resolution',
     inputType: 'image',
     category: 'image-enhancements',
     ecosystemIds: [], // No ecosystems currently support this
@@ -1170,6 +1182,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'txt2vid',
     label: 'Create Video',
+    description: 'Generate a video from a text prompt',
     inputType: 'text',
     outputType: 'video',
     category: 'text-to-video',
@@ -1178,6 +1191,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'img2vid',
     label: 'Animate Image',
+    description: 'Animate a still image into a video',
     inputType: 'image',
     outputType: 'video',
     category: 'image-to-video',
@@ -1186,6 +1200,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'img2vid:first-last-frame',
     label: 'First/Last Frame',
+    description: 'Create video from start and end images',
     inputType: 'image',
     outputType: 'video',
     category: 'image-to-video',
@@ -1194,6 +1209,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'img2vid:ref2vid',
     label: 'Reference Video',
+    description: 'Generate video using a reference image',
     inputType: 'image',
     outputType: 'video',
     category: 'image-to-video',
@@ -1204,6 +1220,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'vid2vid:upscale',
     label: 'Upscale',
+    description: 'Increase video resolution',
     inputType: 'video',
     outputType: 'video',
     category: 'video-enhancements',
@@ -1212,6 +1229,7 @@ export const workflows: WorkflowRecord[] = [
   {
     key: 'vid2vid:interpolate',
     label: 'Interpolate',
+    description: 'Smooth video by adding frames',
     inputType: 'video',
     outputType: 'video',
     category: 'video-enhancements',

@@ -6,9 +6,9 @@
  * re-evaluate resource compatibility.
  */
 
-import { Badge, Divider, Group, Modal, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Divider, Group, Modal, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
-import { IconCheck, IconChevronDown } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconArrowRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useMemo } from 'react';
 import {
@@ -16,6 +16,7 @@ import {
   ecosystemByKey,
   ecosystemFamilies,
   ecosystemFamilyById,
+  getGenerationEcosystemsForMediaType,
 } from '~/shared/constants/basemodel.constants';
 
 // =============================================================================
@@ -31,6 +32,12 @@ export interface BaseModelInputProps {
   compatibleEcosystems?: string[];
   /** Whether the input is disabled */
   disabled?: boolean;
+  /** Check if an ecosystem is compatible with the current workflow */
+  isCompatible?: (ecosystemKey: string) => boolean;
+  /** Target workflow label when selecting an incompatible ecosystem */
+  targetWorkflow?: string;
+  /** Current output type - only ecosystems supporting this type will be shown */
+  outputType?: 'image' | 'video';
 }
 
 type EcosystemItem = {
@@ -38,6 +45,7 @@ type EcosystemItem = {
   name: string;
   description?: string;
   familyId?: number;
+  compatible: boolean;
 };
 
 type FamilyGroup = {
@@ -63,6 +71,9 @@ export function BaseModelInput({
   label = 'Base Model',
   compatibleEcosystems,
   disabled,
+  isCompatible,
+  targetWorkflow,
+  outputType,
 }: BaseModelInputProps) {
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
@@ -83,6 +94,7 @@ export function BaseModelInput({
   );
 
   // Build set of supported ecosystems from compatibleEcosystems prop
+  // Used to prioritize compatible ecosystems in sorting
   const supportedEcosystems = useMemo(() => {
     if (compatibleEcosystems && compatibleEcosystems.length > 0) {
       return new Set(compatibleEcosystems);
@@ -90,22 +102,44 @@ export function BaseModelInput({
     return null; // No filtering
   }, [compatibleEcosystems]);
 
-  // Get filtered ecosystem items
+  // Get ecosystems valid for the current output type (image/video)
+  const outputTypeEcosystems = useMemo(() => {
+    if (!outputType) return null; // No filtering if no output type specified
+    const keys = getGenerationEcosystemsForMediaType(outputType);
+    return new Set(keys);
+  }, [outputType]);
+
+  // Get ecosystem items filtered by output type, with compatibility marking
   const items = useMemo(() => {
     return ecosystems
-      .filter((eco) => !supportedEcosystems || supportedEcosystems.has(eco.key))
-      .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999))
+      .filter((eco) => {
+        // Filter by output type if specified
+        if (outputTypeEcosystems && !outputTypeEcosystems.has(eco.key)) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        // Sort compatible items first, then by sortOrder
+        const aCompatible = !supportedEcosystems || supportedEcosystems.has(a.key);
+        const bCompatible = !supportedEcosystems || supportedEcosystems.has(b.key);
+        if (aCompatible !== bCompatible) return aCompatible ? -1 : 1;
+        return (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
+      })
       .map((eco) => {
         // Get description from ecosystem's family
         const family = eco.familyId ? ecosystemFamilyById.get(eco.familyId) : undefined;
+        // Use isCompatible prop if provided, otherwise fall back to supportedEcosystems
+        const compatible = isCompatible
+          ? isCompatible(eco.key)
+          : !supportedEcosystems || supportedEcosystems.has(eco.key);
         return {
           key: eco.key,
           name: eco.displayName,
           description: eco.description ?? family?.description,
           familyId: eco.familyId,
+          compatible,
         };
       });
-  }, [supportedEcosystems]);
+  }, [supportedEcosystems, isCompatible, outputTypeEcosystems]);
 
   // Get readable name for current value
   const readableName = useMemo(() => {
@@ -209,20 +243,37 @@ export function BaseModelInput({
                 <Text size="xs" c="dimmed" fw={500}>
                   Recent
                 </Text>
-                {recentItems.map((item) => (
-                  <Badge
-                    key={item.key}
-                    component="button"
-                    onClick={() => handleSelect(item.key)}
-                    variant={value === item.key ? 'filled' : 'outline'}
-                    color={value === item.key ? 'blue' : 'gray'}
-                    size="sm"
-                    radius="sm"
-                    className="cursor-pointer"
-                  >
-                    {item.name}
-                  </Badge>
-                ))}
+                {recentItems.map((item) => {
+                  const badge = (
+                    <Badge
+                      key={item.key}
+                      component="button"
+                      onClick={() => handleSelect(item.key)}
+                      variant={value === item.key ? 'filled' : 'outline'}
+                      color={value === item.key ? 'blue' : 'gray'}
+                      size="sm"
+                      radius="sm"
+                      className={clsx('cursor-pointer', !item.compatible && 'opacity-60')}
+                    >
+                      {item.name}
+                    </Badge>
+                  );
+
+                  if (!item.compatible && targetWorkflow) {
+                    return (
+                      <Tooltip
+                        key={item.key}
+                        label={`Will switch to ${targetWorkflow}`}
+                        withArrow
+                        openDelay={300}
+                      >
+                        {badge}
+                      </Tooltip>
+                    );
+                  }
+
+                  return badge;
+                })}
               </Group>
               <Divider />
             </>
@@ -238,30 +289,54 @@ export function BaseModelInput({
 
               {/* List of ecosystems */}
               <Stack gap={0}>
-                {familyGroup.items.map((item) => (
-                  <UnstyledButton
-                    key={item.key}
-                    onClick={() => handleSelect(item.key)}
-                    className={clsx(
-                      'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
-                      value === item.key
-                        ? 'bg-blue-0 dark:bg-blue-9/20'
-                        : 'hover:bg-gray-0 dark:hover:bg-dark-6'
-                    )}
-                  >
-                    <div className="flex-1">
-                      <Text size="sm" fw={value === item.key ? 600 : 400}>
-                        {item.name}
-                      </Text>
-                      {item.description && (
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          {item.description}
-                        </Text>
+                {familyGroup.items.map((item) => {
+                  const isSelected = value === item.key;
+                  const button = (
+                    <UnstyledButton
+                      key={item.key}
+                      onClick={() => handleSelect(item.key)}
+                      className={clsx(
+                        'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
+                        isSelected
+                          ? 'bg-blue-0 dark:bg-blue-9/20'
+                          : 'hover:bg-gray-0 dark:hover:bg-dark-6',
+                        !item.compatible && 'opacity-60'
                       )}
-                    </div>
-                    {value === item.key && <IconCheck size={16} className="text-blue-6" />}
-                  </UnstyledButton>
-                ))}
+                    >
+                      <div className="flex-1">
+                        <Text size="sm" fw={isSelected ? 600 : 400}>
+                          {item.name}
+                        </Text>
+                        {item.description && (
+                          <Text size="xs" c="dimmed" lineClamp={1}>
+                            {item.description}
+                          </Text>
+                        )}
+                      </div>
+                      {isSelected && <IconCheck size={16} className="text-blue-6" />}
+                      {!item.compatible && !isSelected && (
+                        <IconArrowRight size={14} className="text-gray-5" />
+                      )}
+                    </UnstyledButton>
+                  );
+
+                  // Show tooltip for incompatible ecosystems
+                  if (!item.compatible && targetWorkflow) {
+                    return (
+                      <Tooltip
+                        key={item.key}
+                        label={`Will switch to ${targetWorkflow}`}
+                        position="right"
+                        withArrow
+                        openDelay={300}
+                      >
+                        {button}
+                      </Tooltip>
+                    );
+                  }
+
+                  return button;
+                })}
               </Stack>
             </div>
           ))}
