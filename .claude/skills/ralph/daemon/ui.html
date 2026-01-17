@@ -1019,7 +1019,6 @@
       if (!logsEl) return;
 
       logsEl.innerHTML = renderLogEntries(sessionId);
-      logsEl.scrollTop = logsEl.scrollHeight;
     }
 
     function renderLogEntries(sessionId) {
@@ -1027,7 +1026,8 @@
       if (logs.length === 0) {
         return '<div class="log-entry" style="color: var(--text-secondary)">Waiting for logs...</div>';
       }
-      return logs.slice(-100).map(log => `
+      // Newest first - take last 100, then reverse so newest is at top
+      return logs.slice(-100).reverse().map(log => `
         <div class="log-entry ${log.level}">
           <span class="time">${log.time}</span>
           <span class="message">${escapeHtml(log.message)}</span>
