@@ -1,9 +1,12 @@
+import { chunk } from 'lodash-es';
 import { createJob } from './job';
 import { createLogger } from '~/utils/logging';
 import { logToAxiom } from '~/server/logging/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
+
+const BATCH_SIZE = 50;
 
 const log = createLogger('sync-crucible-scores', 'blue');
 
@@ -73,31 +76,63 @@ export const syncCrucibleScoresJob = createJob(
           `Crucible ${crucible.id}: Found ${entryIds.length} entries in Redis, syncing to database...`
         );
 
-        // Update all entries for this crucible in a single transaction
-        // Use updateMany with individual updates for each entry
-        await dbWrite.$transaction(async (tx) => {
-          for (const entryId of entryIds) {
-            const score = eloScores[entryId];
-            const voteCount = voteCounts[entryId] || 0;
+        // Process updates in batches to avoid database lock timeouts on large crucibles
+        const batches = chunk(entryIds, BATCH_SIZE);
+        let successCount = 0;
+        let errorCount = 0;
 
-            await tx.crucibleEntry.updateMany({
-              where: {
-                id: entryId,
-                crucibleId: crucible.id,
-              },
+        for (const batch of batches) {
+          try {
+            // Process each batch with Promise.all for concurrent updates within the batch
+            await Promise.all(
+              batch.map(async (entryId) => {
+                const score = eloScores[entryId];
+                const voteCount = voteCounts[entryId] || 0;
+
+                await dbWrite.crucibleEntry.updateMany({
+                  where: {
+                    id: entryId,
+                    crucibleId: crucible.id,
+                  },
+                  data: {
+                    score,
+                    voteCount,
+                  },
+                });
+              })
+            );
+            successCount += batch.length;
+          } catch (batchError) {
+            // Log error for this batch but continue with other batches
+            const batchErrorMessage =
+              batchError instanceof Error ? batchError.message : String(batchError);
+            log(
+              `Crucible ${crucible.id}: Batch error (${batch.length} entries): ${batchErrorMessage}`
+            );
+            errorCount += batch.length;
+
+            logJob({
+              message: 'Batch sync error',
               data: {
-                score,
-                voteCount,
+                crucibleId: crucible.id,
+                batchSize: batch.length,
+                error: batchErrorMessage,
               },
             });
           }
-        });
+        }
 
-        log(`Crucible ${crucible.id}: Successfully synced ${entryIds.length} entries`);
+        if (errorCount > 0) {
+          log(
+            `Crucible ${crucible.id}: Synced ${successCount} entries, ${errorCount} failed`
+          );
+        } else {
+          log(`Crucible ${crucible.id}: Successfully synced ${successCount} entries`);
+        }
 
         results.push({
           crucibleId: crucible.id,
-          entriesSynced: entryIds.length,
+          entriesSynced: successCount,
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
