@@ -424,10 +424,41 @@
       top: 0;
     }
 
-    .logs-header span {
+    .logs-header > span {
       font-size: 0.75rem;
       color: var(--text-secondary);
     }
+
+    .log-filters {
+      display: flex;
+      gap: 4px;
+      flex: 1;
+      margin: 0 10px;
+      flex-wrap: wrap;
+    }
+
+    .log-filter {
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.65rem;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.15s;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+
+    .log-filter.active {
+      opacity: 1;
+    }
+
+    .log-filter.text { background: var(--success); color: var(--bg-dark); }
+    .log-filter.tool { background: var(--accent); color: var(--bg-dark); }
+    .log-filter.story { background: var(--success); color: var(--bg-dark); }
+    .log-filter.info { background: var(--text-secondary); color: var(--bg-dark); }
+    .log-filter.warn { background: var(--warning); color: var(--bg-dark); }
+    .log-filter.error { background: var(--danger); color: white; }
+    .log-filter.inject { background: #ff79c6; color: var(--bg-dark); }
 
     .logs-body {
       padding: 10px;
@@ -679,6 +710,10 @@
     let sessions = [];
     let wsConnections = new Map();
     let sessionLogs = new Map();
+    let openPrdViewers = new Set();  // Track which PRD viewers are open
+    let openChildrenLists = new Set();  // Track which children lists are expanded
+    let logFilters = new Map();  // Track log level filters per session (Map<sessionId, Set<level>>)
+    const defaultLogLevels = ['text', 'tool', 'story', 'info', 'warn', 'error', 'inject'];
 
     // API Functions
     async function fetchSessions() {
@@ -759,6 +794,9 @@
 
     async function destroySession(id) {
       if (!confirm('Delete this session permanently?')) return;
+      closeWebSocket(id);  // Clean up WebSocket
+      sessionLogs.delete(id);  // Clean up logs
+      openPrdViewers.delete(id);  // Clean up PRD viewer state
       await fetch(`${API_BASE}/sessions/${id}`, { method: 'DELETE' });
       fetchSessions();
     }
@@ -768,12 +806,23 @@
       const content = input.value.trim();
       if (!content) return;
 
-      await fetch(`${API_BASE}/sessions/${id}/inject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, source: 'web-ui', type: 'HINT' })
-      });
-      input.value = '';
+      try {
+        const res = await fetch(`${API_BASE}/sessions/${id}/inject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, source: 'web-ui', type: 'HINT' })
+        });
+        const data = await res.json();
+        if (data.error) {
+          console.error('Inject failed:', data.error);
+          alert('Failed to inject guidance: ' + data.error);
+          return;
+        }
+        input.value = '';
+      } catch (err) {
+        console.error('Inject error:', err);
+        alert('Failed to inject guidance: ' + err.message);
+      }
     }
 
     async function approveOperation(id) {
@@ -826,9 +875,11 @@
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${protocol}//${window.location.host}/api/sessions/${session.id}/stream`);
+      let retryCount = 0;
 
       ws.onopen = () => {
         console.log(`WebSocket connected for ${session.id}`);
+        retryCount = 0;  // Reset on successful connection
       };
 
       ws.onmessage = (event) => {
@@ -836,8 +887,16 @@
         handleWebSocketMessage(session.id, data);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         wsConnections.delete(session.id);
+        // Reconnect if session is still active (not a clean close)
+        const currentSession = sessions.find(s => s.id === session.id);
+        if (currentSession && ['CREATED', 'RUNNING', 'PAUSED', 'WAITING', 'WAITING_APPROVAL'].includes(currentSession.status)) {
+          retryCount++;
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);  // Max 30s
+          console.log(`WebSocket closed for ${session.id}, reconnecting in ${delay}ms...`);
+          setTimeout(() => connectWebSocket(session), delay);
+        }
       };
 
       ws.onerror = (err) => {
@@ -845,6 +904,14 @@
       };
 
       wsConnections.set(session.id, ws);
+    }
+
+    function closeWebSocket(sessionId) {
+      const ws = wsConnections.get(sessionId);
+      if (ws) {
+        ws.close();
+        wsConnections.delete(sessionId);
+      }
     }
 
     function handleWebSocketMessage(sessionId, data) {
@@ -869,6 +936,10 @@
           tool: data.tool,
           input: data.input || {}
         });
+      } else if (data.event === 'turnUpdate') {
+        // Update turn counter in real-time without full re-render
+        updateTurnCounter(sessionId, data.storyTurnCount, data.maxTurns, data.turnCount);
+        return;  // Don't render logs for turn updates
       }
 
       // Update logs display
@@ -876,6 +947,10 @@
 
       // Refresh sessions on status changes
       if (['completed', 'aborted', 'paused', 'resumed', 'storyCompleted'].includes(data.event)) {
+        // Clean up WebSocket for completed/aborted sessions
+        if (['completed', 'aborted'].includes(data.event)) {
+          closeWebSocket(sessionId);
+        }
         fetchSessions();
       }
     }
@@ -925,6 +1000,14 @@
       });
 
       container.innerHTML = html;
+
+      // Restore PRD content from cache for open viewers
+      openPrdViewers.forEach(sessionId => {
+        if (prdCache.has(sessionId)) {
+          const session = sessions.find(s => s.id === sessionId);
+          if (session) loadPrd(sessionId);  // Re-render from cache
+        }
+      });
 
       // Connect WebSocket for active sessions
       sessions
@@ -976,7 +1059,7 @@
               </div>
               <div class="stat">
                 <span class="stat-label">Story Turns</span>
-                <span class="stat-value ${turnProgress > 90 ? 'danger' : turnProgress > 70 ? 'warning' : ''}" title="Total session turns: ${s.turnCount || 0}">${storyTurns}/${s.maxTurns || 100}</span>
+                <span id="turns-${s.id}" class="stat-value ${turnProgress > 90 ? 'danger' : turnProgress > 70 ? 'warning' : ''}" title="Total session turns: ${s.turnCount || 0}">${storyTurns}/${s.maxTurns || 100}</span>
               </div>
               <div class="stat">
                 <span class="stat-label">Health</span>
@@ -1004,13 +1087,13 @@
               <button class="btn btn-ghost btn-sm" onclick="togglePrdView('${s.id}')">View PRD</button>
             </div>
 
-            <div class="prd-viewer" id="prd-viewer-${s.id}" style="display: none;">
+            <div class="prd-viewer" id="prd-viewer-${s.id}" style="display: ${openPrdViewers.has(s.id) ? 'block' : 'none'};">
               <div class="prd-header">
                 <span>PRD: ${escapeHtml(s.prdPath || 'Unknown')}</span>
                 <button class="btn btn-ghost btn-sm" onclick="togglePrdView('${s.id}')">Close</button>
               </div>
               <div class="prd-stories" id="prd-stories-${s.id}">
-                <div style="color: var(--text-secondary); padding: 10px;">Loading PRD...</div>
+                ${prdCache.has(s.id) ? '' : '<div style="color: var(--text-secondary); padding: 10px;">Loading PRD...</div>'}
               </div>
             </div>
 
@@ -1024,6 +1107,9 @@
             <div class="logs-container" id="logs-container-${s.id}">
               <div class="logs-header">
                 <span>Live Logs</span>
+                <div class="log-filters" id="log-filters-${s.id}">
+                  ${renderLogFilters(s.id)}
+                </div>
                 <button class="btn btn-ghost btn-sm" onclick="clearLogs('${s.id}')">Clear</button>
               </div>
               <div class="logs-body" id="logs-${s.id}">
@@ -1035,9 +1121,9 @@
               <div class="children-section">
                 <div class="children-header" onclick="toggleChildren('${s.id}')">
                   <span>Children (${s.childIds.length})</span>
-                  <span id="children-toggle-${s.id}">▼</span>
+                  <span id="children-toggle-${s.id}">${openChildrenLists.has(s.id) ? '▲' : '▼'}</span>
                 </div>
-                <div class="children-list" id="children-list-${s.id}" style="display: none;">
+                <div class="children-list" id="children-list-${s.id}" style="display: ${openChildrenLists.has(s.id) ? 'block' : 'none'};">
                   ${renderChildrenList(s.id, s.childIds)}
                 </div>
               </div>
@@ -1053,6 +1139,37 @@
 
       logsEl.innerHTML = renderLogEntries(sessionId);
       logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    function getLogFilters(sessionId) {
+      if (!logFilters.has(sessionId)) {
+        logFilters.set(sessionId, new Set(defaultLogLevels));
+      }
+      return logFilters.get(sessionId);
+    }
+
+    function renderLogFilters(sessionId) {
+      const filters = getLogFilters(sessionId);
+      return defaultLogLevels.map(level => `
+        <span class="log-filter ${level} ${filters.has(level) ? 'active' : ''}"
+              onclick="toggleLogFilter('${sessionId}', '${level}')">${level}</span>
+      `).join('');
+    }
+
+    function toggleLogFilter(sessionId, level) {
+      const filters = getLogFilters(sessionId);
+      if (filters.has(level)) {
+        filters.delete(level);
+      } else {
+        filters.add(level);
+      }
+      // Update filter display
+      const filtersEl = document.getElementById(`log-filters-${sessionId}`);
+      if (filtersEl) {
+        filtersEl.innerHTML = renderLogFilters(sessionId);
+      }
+      // Re-render logs with filter
+      renderLogs(sessionId);
     }
 
     function formatToolInput(tool, input) {
@@ -1092,10 +1209,19 @@
 
     function renderLogEntries(sessionId) {
       const logs = sessionLogs.get(sessionId) || [];
+      const filters = getLogFilters(sessionId);
+
       if (logs.length === 0) {
         return '<div class="log-entry" style="color: var(--text-secondary)">Waiting for logs...</div>';
       }
-      return logs.slice(-100).map(log => {
+
+      const filteredLogs = logs.slice(-100).filter(log => filters.has(log.level));
+
+      if (filteredLogs.length === 0) {
+        return '<div class="log-entry" style="color: var(--text-secondary)">No logs match current filters</div>';
+      }
+
+      return filteredLogs.map(log => {
         if (log.level === 'tool' && log.tool) {
           return `
             <div class="log-entry tool">
@@ -1133,6 +1259,31 @@
         .replace(/"/g, '&quot;');
     }
 
+    function updateTurnCounter(sessionId, storyTurns, maxTurns, totalTurns) {
+      const el = document.getElementById(`turns-${sessionId}`);
+      if (!el) return;
+
+      // Update the local session data
+      const session = sessions.find(s => s.id === sessionId);
+      if (session) {
+        session.storyTurnCount = storyTurns;
+        session.turnCount = totalTurns;
+      }
+
+      // Update display
+      el.textContent = `${storyTurns}/${maxTurns}`;
+      el.title = `Total session turns: ${totalTurns}`;
+
+      // Update warning class
+      const progress = Math.round((storyTurns / maxTurns) * 100);
+      el.classList.remove('danger', 'warning');
+      if (progress > 90) {
+        el.classList.add('danger');
+      } else if (progress > 70) {
+        el.classList.add('warning');
+      }
+    }
+
     // Children/Orchestration helpers
     function renderChildrenList(parentId, childIds) {
       const children = childIds.map(id => sessions.find(s => s.id === id)).filter(Boolean);
@@ -1159,9 +1310,11 @@
         if (list.style.display === 'none') {
           list.style.display = 'block';
           toggle.textContent = '▲';
+          openChildrenLists.add(sessionId);
         } else {
           list.style.display = 'none';
           toggle.textContent = '▼';
+          openChildrenLists.delete(sessionId);
         }
       }
     }
@@ -1184,9 +1337,11 @@
 
       if (viewer.style.display === 'none') {
         viewer.style.display = 'block';
+        openPrdViewers.add(sessionId);
         await loadPrd(sessionId);
       } else {
         viewer.style.display = 'none';
+        openPrdViewers.delete(sessionId);
       }
     }
 

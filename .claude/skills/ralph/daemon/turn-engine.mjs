@@ -274,9 +274,19 @@ export class TurnEngine extends EventEmitter {
 
         // Update session turn counts (both total and per-story)
         const currentSession = this.storage.getSession(this.sessionId);
+        const newTurnCount = (currentSession.turnCount || 0) + 1;
+        const newStoryTurnCount = (currentSession.storyTurnCount || 0) + 1;
         this.storage.updateSession(this.sessionId, {
-          turnCount: (currentSession.turnCount || 0) + 1,
-          storyTurnCount: (currentSession.storyTurnCount || 0) + 1,
+          turnCount: newTurnCount,
+          storyTurnCount: newStoryTurnCount,
+        });
+
+        // Emit turn update for real-time UI updates
+        this.emit('turnUpdate', {
+          sessionId: this.sessionId,
+          turnCount: newTurnCount,
+          storyTurnCount: newStoryTurnCount,
+          maxTurns: this.options.maxTurns,
         });
 
         // Check for sensitive operations

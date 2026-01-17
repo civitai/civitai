@@ -327,11 +327,32 @@ export class SessionManager extends EventEmitter {
 
     // Log immediately so it shows in UI even before session processes it
     const preview = content.substring(0, 100);
-    this.storage.addLog(sessionId, 'inject', `[${source || 'external'}] ${preview}`, {
+    const logMessage = `[${source || 'external'}] ${preview}`;
+    this.storage.addLog(sessionId, 'inject', logMessage, {
       source,
       type,
       queued: true,
     });
+
+    // Also broadcast to WebSocket subscribers so it shows immediately
+    const subscribers = this.subscribers.get(sessionId);
+    if (subscribers) {
+      const logEvent = {
+        event: 'log',
+        sessionId,
+        level: 'inject',
+        message: logMessage,
+        metadata: { source, type, queued: true },
+        timestamp: new Date().toISOString(),
+      };
+      for (const callback of subscribers) {
+        try {
+          callback(logEvent);
+        } catch (err) {
+          console.error(`Subscriber error: ${err.message}`);
+        }
+      }
+    }
 
     return { injected: true };
   }
