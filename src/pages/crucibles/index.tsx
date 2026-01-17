@@ -1,36 +1,18 @@
-import { Group, SegmentedControl, Stack, Title } from '@mantine/core';
+import { Group, Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
 import { CrucibleSortDropdown } from '~/components/Crucible/CrucibleSortDropdown';
+import { CrucibleFilterTabs } from '~/components/Crucible/CrucibleFilterTabs';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
-import { useCrucibleFilters, useCrucibleQueryParams } from '~/components/Crucible/crucible.utils';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { useCrucibleFilters } from '~/components/Crucible/crucible.utils';
 
 function CruciblesPage() {
   const filters = useCrucibleFilters();
-  const { replace } = useCrucibleQueryParams();
-
-  const handleStatusChange = (value: string) => {
-    if (value === 'All') {
-      replace({ status: undefined });
-    } else {
-      replace({ status: value as CrucibleStatus });
-    }
-  };
-
-  const statusData = [
-    { label: 'All', value: 'All' },
-    { label: 'Active', value: CrucibleStatus.Active },
-    { label: 'Upcoming', value: CrucibleStatus.Pending },
-    { label: 'Completed', value: CrucibleStatus.Completed },
-  ];
-
-  const currentStatusValue = filters.status || 'All';
 
   return (
     <>
@@ -50,16 +32,9 @@ function CruciblesPage() {
           {/* Featured crucible hero card */}
           <FeaturedCrucibleHero />
 
-          {/* Filter controls with status tabs and sort dropdown */}
-          <Group justify="space-between" align="center" wrap="wrap">
-            <SegmentedControl
-              data={statusData}
-              value={currentStatusValue}
-              onChange={handleStatusChange}
-              radius="xl"
-              fullWidth={false}
-            />
-
+          {/* Filter controls with underline tabs and sort dropdown */}
+          <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
+            <CrucibleFilterTabs />
             <CrucibleSortDropdown />
           </Group>
 
