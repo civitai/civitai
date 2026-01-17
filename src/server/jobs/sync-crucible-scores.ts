@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { createJob } from './job';
 import { createLogger } from '~/utils/logging';
@@ -83,24 +84,21 @@ export const syncCrucibleScoresJob = createJob(
 
         for (const batch of batches) {
           try {
-            // Process each batch with Promise.all for concurrent updates within the batch
-            await Promise.all(
-              batch.map(async (entryId) => {
+            // Build values for bulk UPDATE - single query instead of N concurrent connections
+            const values = batch
+              .map((entryId) => {
                 const score = eloScores[entryId];
                 const voteCount = voteCounts[entryId] || 0;
-
-                await dbWrite.crucibleEntry.updateMany({
-                  where: {
-                    id: entryId,
-                    crucibleId: crucible.id,
-                  },
-                  data: {
-                    score,
-                    voteCount,
-                  },
-                });
+                return `(${entryId}, ${score}, ${voteCount})`;
               })
-            );
+              .join(', ');
+
+            await dbWrite.$executeRaw`
+              UPDATE "CrucibleEntry" AS e
+              SET score = v.score, "voteCount" = v.vote_count
+              FROM (VALUES ${Prisma.raw(values)}) AS v(id, score, vote_count)
+              WHERE e.id = v.id AND e."crucibleId" = ${crucible.id}
+            `;
             successCount += batch.length;
           } catch (batchError) {
             // Log error for this batch but continue with other batches
