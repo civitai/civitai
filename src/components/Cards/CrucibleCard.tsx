@@ -1,5 +1,5 @@
 import { Badge, Box, Skeleton, Text } from '@mantine/core';
-import { IconClockHour4, IconFlame, IconUsers } from '@tabler/icons-react';
+import { IconClockHour4, IconFlame } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -173,41 +173,22 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
                 </IconBadge>
               )}
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <IconBadge
-              icon={<IconFlame size={14} />}
-              color="dark"
-              className={cardClasses.chip}
-              style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.31)',
-              }}
-              radius="xl"
-              px={8}
-              h={26}
-              variant="filled"
-            >
-              <Text size="xs" fw="bold">
-                {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
-              </Text>
-            </IconBadge>
-            <IconBadge
-              icon={<IconUsers size={14} />}
-              color="dark"
-              className={cardClasses.chip}
-              style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.31)',
-              }}
-              radius="xl"
-              px={8}
-              h={26}
-              variant="filled"
-            >
-              <Text size="xs" fw="bold">
-                {/* TODO: Add actual participant count when backend supports it */}
-                {abbreviateNumber(Math.max(1, Math.floor(entryCount * 0.7)))} participants
-              </Text>
-            </IconBadge>
-          </div>
+          <IconBadge
+            icon={<IconFlame size={14} />}
+            color="dark"
+            className={cardClasses.chip}
+            style={{
+              backgroundColor: 'rgba(0, 0, 0, 0.31)',
+            }}
+            radius="xl"
+            px={8}
+            h={26}
+            variant="filled"
+          >
+            <Text size="xs" fw="bold">
+              {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
+            </Text>
+          </IconBadge>
           {/* Status indicator with colored dot */}
           <div className="flex items-center gap-1.5">
             <Box className={clsx('size-2 rounded-full', getStatusDotColor(status, endAt))} />
@@ -310,11 +291,8 @@ export function CrucibleCardSkeleton() {
             <Skeleton height={26} width={70} radius="xl" />
           </div>
 
-          {/* Entries and participants */}
-          <div className="flex items-center justify-between gap-2">
-            <Skeleton height={26} width={80} radius="xl" />
-            <Skeleton height={26} width={90} radius="xl" />
-          </div>
+          {/* Entries */}
+          <Skeleton height={26} width={80} radius="xl" />
 
           {/* Status indicator */}
           <div className="flex items-center gap-1.5">
