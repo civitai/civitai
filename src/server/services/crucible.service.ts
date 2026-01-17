@@ -735,9 +735,7 @@ export async function getUserJudgeStats(userId: number): Promise<{
     if (userRank !== -1) {
       // Percentile = ((total - rank) / total) * 100
       // E.g., if rank 10 out of 100, percentile = 90 (top 10%)
-      judgeRankingPercentile = Math.round(
-        ((allCounts.length - userRank) / allCounts.length) * 100
-      );
+      judgeRankingPercentile = Math.round(((allCounts.length - userRank) / allCounts.length) * 100);
     }
   }
 

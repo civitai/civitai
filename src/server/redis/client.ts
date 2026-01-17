@@ -761,6 +761,7 @@ export const REDIS_SYS_KEYS = {
     ELO: 'crucible:elo', // Hash: entryId -> elo score
     VOTED_PAIRS: 'crucible:voted', // Set: crucibleId:userId -> 'entryId1:entryId2' pairs user has voted on
     JUDGES: 'crucible:judges', // Set: crucibleId -> userId of users who have voted
+    USER_VOTES: 'crucible:user-votes', // Hash: userId -> total vote count across all crucibles
   },
 } as const;
 

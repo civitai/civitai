@@ -286,7 +286,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   if (entryCount < 2) {
     return (
       <Container size="lg" className="py-16 text-center">
-        <IconUsers className="mx-auto mb-4 h-16 w-16 text-gray-500" />
+        <IconUsers className="mx-auto mb-4 size-16 text-gray-500" />
         <Title order={2} mb="md">
           Not Enough Entries Yet
         </Title>
@@ -338,13 +338,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         ]}
       />
 
-      {/* Header Section */}
-      <Box className="border-b border-[#373a40] bg-[#25262b] py-4">
+      {/* Header Section - Two-tier with dark background */}
+      <Box className="border-b border-[#373a40] bg-[#25262b]" py="md">
         <Container size="xl">
           {/* Back Link */}
           <Link
             href={`/crucibles/${id}/${slugit(crucible.name)}`}
-            className="mb-4 flex items-center gap-2 text-blue-500 transition-colors hover:text-blue-400"
+            className="mb-4 inline-flex items-center gap-2 font-medium text-[#228be6] transition-colors hover:text-[#4dabf7]"
           >
             <IconArrowLeft size={16} />
             Back to Crucible
@@ -353,25 +353,27 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           {/* Title Row */}
           <div className="mt-4 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
             <div>
-              <Title order={2} className="text-white">
+              <h1 className="text-[1.875rem] font-bold leading-tight text-white">
                 Judging: {crucible.name}
-              </Title>
+              </h1>
               <Text size="sm" c="dimmed" mt={4}>
                 Compare pairs and vote for your favorite
               </Text>
             </div>
 
-            {/* Time Remaining Badge */}
+            {/* Time Remaining Badge - red/pink styling matching mockup */}
             {timeRemaining && (
-              <Paper
-                className="flex items-center gap-2 border border-red-500/30 bg-red-500/10 px-4 py-2"
-                radius="md"
+              <div
+                className="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-semibold"
+                style={{
+                  background: 'rgba(250, 82, 82, 0.1)',
+                  border: '1px solid rgba(250, 82, 82, 0.3)',
+                  color: '#ff8787',
+                }}
               >
-                <IconClock size={16} className="text-red-400" />
-                <Text size="sm" fw={600} className="text-red-400">
-                  {timeRemaining} remaining
-                </Text>
-              </Paper>
+                <IconClock size={16} />
+                <span>{timeRemaining} remaining</span>
+              </div>
             )}
           </div>
         </Container>
@@ -476,14 +478,20 @@ type StatItemProps = {
 function StatItem({ label, value, secondary }: StatItemProps) {
   return (
     <div className="flex flex-col gap-1">
-      <Text size="xs" c="dimmed" fw={600} tt="uppercase" className="tracking-wider">
+      {/* Matching mockup: 0.75rem, #909296, 600 weight, uppercase, 0.05em letter-spacing */}
+      <div
+        className="text-xs font-semibold uppercase"
+        style={{ color: '#909296', letterSpacing: '0.05em' }}
+      >
         {label}
-      </Text>
-      <Text className="text-2xl font-bold text-white">{value}</Text>
+      </div>
+      {/* Matching mockup: 1.5rem, 700 weight, #fff */}
+      <div className="text-2xl font-bold text-white">{value}</div>
+      {/* Matching mockup: 0.75rem, #a6e3a1 */}
       {secondary && (
-        <Text size="xs" className="text-green-400">
+        <div className="text-xs" style={{ color: '#a6e3a1' }}>
           {secondary}
-        </Text>
+        </div>
       )}
     </div>
   );
@@ -510,7 +518,7 @@ function EndCrucibleState({ crucibleId, crucibleName, sessionVotes }: EndCrucibl
   return (
     <div className="mx-auto max-w-4xl py-8 text-center">
       <div className="mb-2 text-4xl">
-        <IconTrophy className="mx-auto h-16 w-16 text-green-400" />
+        <IconTrophy className="mx-auto size-16 text-green-400" />
       </div>
       <Title order={2} className="mb-2 text-white">
         You've rated all available pairs!
@@ -573,7 +581,7 @@ function SuggestedCrucibleCard({ id, name, entryFee, entryCount }: SuggestedCruc
 
   return (
     <Paper
-      className="rounded-xl border border-[#373a40] p-6 text-left transition-all hover:border-blue-500 hover:-translate-y-0.5"
+      className="rounded-xl border border-[#373a40] p-6 text-left transition-all hover:-translate-y-0.5 hover:border-blue-500"
       bg="dark.7"
     >
       <Text className="mb-4 text-lg font-bold text-white" lineClamp={1}>
