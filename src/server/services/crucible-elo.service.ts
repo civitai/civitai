@@ -13,17 +13,24 @@ const K_FACTOR_ESTABLISHED = 32;
 const PROVISIONAL_VOTE_THRESHOLD = 10;
 
 /**
- * Calculate the ELO rating change after a match
+ * Estimate the ELO rating change after a match (for UI preview only)
+ *
+ * **NOTE:** This is a simplified estimation function for UI/preview purposes only.
+ * The actual ELO changes are calculated atomically in Redis using the Lua script in
+ * `src/server/redis/crucible-elo.redis.ts` (see `processVoteAtomic` method).
+ * The Lua script is the authoritative implementation and uses averaged K-factors
+ * to ensure zero-sum outcomes.
+ *
  * Based on the standard ELO formula:
  * - Expected score: Ea = 1 / (1 + 10^((Rb - Ra) / 400))
  * - New rating: Ra' = Ra + K * (Sa - Ea)
  *
  * @param winnerElo - Current ELO of the winner
  * @param loserElo - Current ELO of the loser
- * @param kFactor - K-factor to use (default: 32)
- * @returns [winnerChange, loserChange] - The change in ELO for winner (positive) and loser (negative)
+ * @param kFactor - K-factor to use (default: 32) - Note: actual votes use averaged K-factors
+ * @returns [winnerChange, loserChange] - Estimated change in ELO for winner (positive) and loser (negative)
  */
-export const calculateEloChange = (
+export const estimateEloChange = (
   winnerElo: number,
   loserElo: number,
   kFactor: number = K_FACTOR_ESTABLISHED

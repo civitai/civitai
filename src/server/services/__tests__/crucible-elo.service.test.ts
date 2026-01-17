@@ -26,12 +26,15 @@
 // ============================================================
 
 /**
- * Calculate the ELO rating change after a match
+ * Estimate the ELO rating change after a match (for UI preview only)
+ * NOTE: Actual ELO changes are calculated atomically in Redis.
+ * See src/server/redis/crucible-elo.redis.ts (processVoteAtomic method) for authoritative implementation.
+ *
  * Based on the standard ELO formula:
  * - Expected score: Ea = 1 / (1 + 10^((Rb - Ra) / 400))
  * - New rating: Ra' = Ra + K * (Sa - Ea)
  */
-const calculateEloChange = (
+const estimateEloChange = (
   winnerElo: number,
   loserElo: number,
   kFactor: number = K_FACTOR_ESTABLISHED
@@ -128,12 +131,12 @@ function expect<T>(actual: T) {
 // TEST SUITE
 // ============================================================
 
-describe('calculateEloChange', () => {
+describe('estimateEloChange', () => {
   test('equal ratings (1500 vs 1500) should give moderate change', () => {
     // With equal ratings, expected score is 0.5 for both
     // Winner: K * (1 - 0.5) = K * 0.5 = 16 (with K=32)
     // Loser: K * (0 - 0.5) = K * -0.5 = -16 (with K=32)
-    const [winnerChange, loserChange] = calculateEloChange(1500, 1500, 32);
+    const [winnerChange, loserChange] = estimateEloChange(1500, 1500, 32);
 
     expect(winnerChange).toBe(16); // Winner gains 16
     expect(loserChange).toBe(-16); // Loser loses 16
@@ -141,7 +144,7 @@ describe('calculateEloChange', () => {
 
   test('equal ratings uses default K-factor of 32', () => {
     // Without specifying K-factor, should use default 32
-    const [winnerChange, loserChange] = calculateEloChange(1500, 1500);
+    const [winnerChange, loserChange] = estimateEloChange(1500, 1500);
 
     expect(winnerChange).toBe(16);
     expect(loserChange).toBe(-16);
@@ -152,7 +155,7 @@ describe('calculateEloChange', () => {
     // Expected score for winner (1200): 1 / (1 + 10^((1800-1200)/400)) = 1 / (1 + 10^1.5) ~ 0.031
     // Winner gains: 32 * (1 - 0.031) ~ 31
     // Loser loses: 32 * (0 - 0.969) ~ -31
-    const [winnerChange, loserChange] = calculateEloChange(1200, 1800, 32);
+    const [winnerChange, loserChange] = estimateEloChange(1200, 1800, 32);
 
     expect(winnerChange).toBeGreaterThan(25); // Large gain for upset
     expect(loserChange).toBeLessThan(-25); // Large loss for favorite
@@ -164,7 +167,7 @@ describe('calculateEloChange', () => {
     // Expected score for winner (1800): 1 / (1 + 10^((1200-1800)/400)) = 1 / (1 + 10^-1.5) ~ 0.969
     // Winner gains: 32 * (1 - 0.969) ~ 1
     // Loser loses: 32 * (0 - 0.031) ~ -1
-    const [winnerChange, loserChange] = calculateEloChange(1800, 1200, 32);
+    const [winnerChange, loserChange] = estimateEloChange(1800, 1200, 32);
 
     expect(winnerChange).toBeLessThan(5); // Small gain (expected outcome)
     expect(loserChange).toBeGreaterThan(-5); // Small loss (expected outcome)
@@ -182,14 +185,14 @@ describe('calculateEloChange', () => {
     ];
 
     for (const [winnerElo, loserElo] of scenarios) {
-      const [winnerChange, loserChange] = calculateEloChange(winnerElo, loserElo, 32);
+      const [winnerChange, loserChange] = estimateEloChange(winnerElo, loserElo, 32);
       expect([winnerChange, loserChange]).toBeSymmetric();
     }
   });
 
   test('changes scale with K-factor', () => {
-    const [winnerChange32, loserChange32] = calculateEloChange(1500, 1500, 32);
-    const [winnerChange64, loserChange64] = calculateEloChange(1500, 1500, 64);
+    const [winnerChange32, loserChange32] = estimateEloChange(1500, 1500, 32);
+    const [winnerChange64, loserChange64] = estimateEloChange(1500, 1500, 64);
 
     // K=64 should give double the change of K=32
     expect(winnerChange64).toBe(winnerChange32 * 2);
@@ -197,12 +200,12 @@ describe('calculateEloChange', () => {
   });
 
   test('winner always gains rating (positive change)', () => {
-    const [winnerChange] = calculateEloChange(1200, 1800, 32);
+    const [winnerChange] = estimateEloChange(1200, 1800, 32);
     expect(winnerChange).toBeGreaterThan(0);
   });
 
   test('loser always loses rating (negative change)', () => {
-    const [, loserChange] = calculateEloChange(1200, 1800, 32);
+    const [, loserChange] = estimateEloChange(1200, 1800, 32);
     expect(loserChange).toBeLessThan(0);
   });
 });
