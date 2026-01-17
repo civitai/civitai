@@ -1,0 +1,178 @@
+{
+  "testCrucible": {
+    "id": 20,
+    "name": "E2E Test Crucible",
+    "url": "http://localhost:3000/crucibles/20",
+    "entryFee": 100,
+    "entryLimitPerUser": 2,
+    "duration": "8 hours",
+    "createdBy": "member",
+    "createdAt": "2026-01-17T17:52:40Z",
+    "prizePool": 600,
+    "totalEntries": 6
+  },
+  "cancellationTestCrucible": {
+    "id": 21,
+    "name": "Cancellation Test",
+    "url": "http://localhost:3000/crucibles/21",
+    "entryFee": 50,
+    "entryLimitPerUser": 2,
+    "createdBy": "member",
+    "createdAt": "2026-01-17T18:52:00Z",
+    "prizePool": 200,
+    "totalEntries": 4,
+    "status": "Cancelled",
+    "cancelledAt": "2026-01-17T19:07:21Z",
+    "entriesBeforeCancellation": {
+      "user1": {
+        "count": 2,
+        "buzzSpent": 100,
+        "buzzBefore": "501k"
+      },
+      "user2": {
+        "count": 2,
+        "buzzSpent": 100,
+        "buzzBefore": "885k"
+      }
+    },
+    "expectedRefunds": {
+      "user1": 100,
+      "user2": 100,
+      "note": "Each user should receive 100 Buzz refund (2 entries x 50 Buzz)"
+    },
+    "actualRefunds": {
+      "refundedEntries": 4,
+      "totalRefunded": 200,
+      "failedRefunds": [],
+      "user1BuzzAfter": 501706,
+      "user2BuzzAfter": 885584
+    }
+  },
+  "users": {
+    "user1": {
+      "profile": "member",
+      "userId": 1,
+      "entries": 2,
+      "buzzBefore": "501k",
+      "buzzSpent": 200,
+      "buzzAfter": "501k",
+      "pairsJudged": 3,
+      "judgingCompleted": true,
+      "judgedAt": "2026-01-17T18:30:00Z",
+      "note": "Voted on 3 pairs (all available pairs from user2 and user3 entries). Used keyboard shortcuts 1 and 2, plus Vote1 button click."
+    },
+    "user2": {
+      "profile": "testing-login",
+      "userId": 4,
+      "username": "manuelurenah",
+      "entries": 2,
+      "buzzBefore": "885k",
+      "buzzSpent": 200,
+      "buzzAfter": "885k",
+      "pairsJudged": 6,
+      "judgingCompleted": true,
+      "judgedAt": "2026-01-17T18:39:00Z",
+      "note": "Used testing-login with user ID 4 (moderator). Judged 6 pairs (all available pairs from user1 and user3 entries). Used keyboard shortcuts 1, 2 and Vote1 button click."
+    },
+    "user3": {
+      "profile": "testing-login",
+      "userId": 5,
+      "username": "bkdiehl482",
+      "entries": 2,
+      "buzzBefore": "489k",
+      "buzzSpent": 200,
+      "buzzAfter": "489k",
+      "pairsJudged": 0,
+      "note": "Used testing-login with user ID 5 (moderator) since crucible feature requires mod permissions in dev"
+    }
+  },
+  "flows": {
+    "e2e-create-crucible": {
+      "saved": true,
+      "profile": "member"
+    },
+    "e2e-user1-submit": {
+      "saved": true,
+      "profile": "member",
+      "entriesSubmitted": 2,
+      "buzzSpent": 200
+    },
+    "e2e-user2-submit": {
+      "saved": true,
+      "profile": "testing-login",
+      "userId": 4,
+      "entriesSubmitted": 2,
+      "buzzSpent": 200
+    },
+    "e2e-user3-submit": {
+      "saved": true,
+      "profile": "testing-login",
+      "userId": 5,
+      "entriesSubmitted": 2,
+      "buzzSpent": 200
+    },
+    "e2e-user1-judge": {
+      "saved": true,
+      "profile": "member",
+      "pairsJudged": 3,
+      "votingMethods": ["keyboard-1", "keyboard-2", "vote-button-click"],
+      "finalStreak": 3,
+      "influence": 0
+    },
+    "e2e-user2-judge": {
+      "saved": true,
+      "profile": "testing-login",
+      "userId": 4,
+      "pairsJudged": 6,
+      "votingMethods": ["keyboard-1", "keyboard-2", "vote-button-click"],
+      "finalStreak": 6,
+      "influence": 0,
+      "note": "User2 can judge all 6 pairs (from user1 and user3 entries) since they don't own those entries"
+    },
+    "e2e-cancel-create": {
+      "saved": true,
+      "profile": "member",
+      "crucibleId": 21,
+      "entryFee": 50,
+      "entryLimitPerUser": 2
+    },
+    "e2e-cancel-user1-submit": {
+      "saved": true,
+      "profile": "member",
+      "crucibleId": 21,
+      "entriesSubmitted": 2,
+      "buzzSpent": 100
+    },
+    "e2e-cancel-user2-submit": {
+      "saved": true,
+      "profile": "testing-login",
+      "userId": 4,
+      "crucibleId": 21,
+      "entriesSubmitted": 2,
+      "buzzSpent": 100
+    },
+    "e2e-cancel-refund": {
+      "saved": true,
+      "profile": "member",
+      "crucibleId": 21,
+      "cancelMethod": "API fetch to /api/trpc/crucible.cancel",
+      "refundedEntries": 4,
+      "totalRefunded": 200
+    }
+  },
+  "leaderboard": {
+    "verifiedAt": "2026-01-17T18:46:00Z",
+    "screenshot": ".browser/sessions/c9623225/screenshots/leaderboard-after-voting.png",
+    "entries": [
+      { "rank": 1, "username": "bkdiehl482", "score": 1500, "note": "Currently on track to win" },
+      { "rank": 2, "username": "bkdiehl482", "score": 1500, "note": "Closing in quickly" },
+      { "rank": 3, "username": "manuelurenah", "score": 1500, "note": "Strong position" },
+      { "rank": 4, "username": "manuelurenah", "score": 1500 },
+      { "rank": 5, "username": "JustMaier", "score": 1500, "note": "Your entry" },
+      { "rank": 6, "username": "JustMaier", "score": 1500, "note": "Your entry" }
+    ],
+    "uniqueScores": [1500],
+    "scoresChangedFromInitial": false,
+    "issue": "CRITICAL: All scores are 1500 (initial ELO unchanged despite 9 votes from 2 judges). Votes not persisted to database - CrucibleEntry.voteCount=0 for all entries, crucible_votes ClickHouse table is empty."
+  }
+}
