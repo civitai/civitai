@@ -559,6 +559,29 @@ const commands = {
     return data;
   },
 
+  // Daemon management
+  async shutdown(options) {
+    // Check if daemon is running first
+    if (!(await isDaemonRunning())) {
+      console.log('Ralph daemon is not running.');
+      return { type: 'not_running' };
+    }
+
+    console.log('Shutting down Ralph daemon...');
+    try {
+      const data = await request('POST', '/api/exit');
+      console.log('Ralph daemon stopped.');
+      return data;
+    } catch (err) {
+      // Connection reset is expected when server shuts down
+      if (err.message.includes('fetch failed') || err.message.includes('ECONNRESET')) {
+        console.log('Ralph daemon stopped.');
+        return { type: 'shutting_down' };
+      }
+      throw err;
+    }
+  },
+
   async help() {
     console.log(`
 Ralph - Autonomous Agent Management
@@ -616,6 +639,9 @@ Orchestration Commands:
 
   tree <session-id>      Show session tree (parent + all descendants)
 
+Daemon Commands:
+  shutdown               Stop the Ralph daemon gracefully
+
 Global Options:
   --json                 Output raw JSON
   --help                 Show this help
@@ -657,7 +683,13 @@ async function main() {
   }
 
   try {
-    // Ensure daemon is running before any command
+    // Shutdown command doesn't need daemon to be started
+    if (command === 'shutdown') {
+      await commands.shutdown(options);
+      process.exit(0);
+    }
+
+    // Ensure daemon is running before any other command
     await ensureDaemon();
     await commands[command](options, positional);
   } catch (err) {
