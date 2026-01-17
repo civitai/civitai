@@ -36,7 +36,10 @@ export const crucibleImageSchema = z.object({
 export type CrucibleImageSchema = z.infer<typeof crucibleImageSchema>;
 
 // Re-export crucible constants for backward compatibility
-export { CRUCIBLE_DURATION_COSTS, CRUCIBLE_PRIZE_CUSTOMIZATION_COST } from '~/shared/constants/crucible.constants';
+export {
+  CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+} from '~/shared/constants/crucible.constants';
 
 /**
  * Calculate the total setup cost for creating a crucible
@@ -44,10 +47,7 @@ export { CRUCIBLE_DURATION_COSTS, CRUCIBLE_PRIZE_CUSTOMIZATION_COST } from '~/sh
  * @param prizeCustomized - Whether prize distribution was customized
  * @returns Total Buzz cost
  */
-export function calculateCrucibleSetupCost(
-  duration: number,
-  prizeCustomized: boolean
-): number {
+export function calculateCrucibleSetupCost(duration: number, prizeCustomized: boolean): number {
   const durationCost = CRUCIBLE_DURATION_COSTS[duration] ?? 0;
   const prizeCustomizationCost = prizeCustomized ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST : 0;
   return durationCost + prizeCustomizationCost;
@@ -105,3 +105,15 @@ export type CancelCrucibleSchema = z.infer<typeof cancelCrucibleSchema>;
 export const cancelCrucibleSchema = z.object({
   id: z.number(),
 });
+
+// Schema for user crucible stats (no input needed - uses authenticated user)
+export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;
+export const getUserCrucibleStatsSchema = z.object({});
+
+// User crucible stats response type
+export type UserCrucibleStats = {
+  totalCrucibles: number;
+  buzzWon: number;
+  bestPlacement: number | null;
+  winRate: number;
+};

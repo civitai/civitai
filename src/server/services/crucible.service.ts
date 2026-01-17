@@ -30,7 +30,12 @@ import type {
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { getEntryElo, CRUCIBLE_DEFAULT_ELO, processVote as processEloVote, getAllEntryElos } from './crucible-elo.service';
+import {
+  getEntryElo,
+  CRUCIBLE_DEFAULT_ELO,
+  processVote as processEloVote,
+  getAllEntryElos,
+} from './crucible-elo.service';
 import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
 import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
@@ -111,7 +116,9 @@ export const createCrucible = async ({
     });
 
     buzzTransactionId = transactionPrefix;
-    log(`Charged ${setupCost} Buzz setup fee for user ${userId} (transaction: ${transactionPrefix})`);
+    log(
+      `Charged ${setupCost} Buzz setup fee for user ${userId} (transaction: ${transactionPrefix})`
+    );
   }
 
   // Create the crucible with cover image in a transaction
@@ -174,10 +181,14 @@ export const createCrucible = async ({
             prizeCustomized: prizeCustomized ?? false,
           },
         });
-        log(`Refunded setup fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`);
+        log(
+          `Refunded setup fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`
+        );
       } catch (refundError) {
         const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
-        log(`CRITICAL: Failed to refund setup fee for user ${userId} after database failure: ${refundErrorMsg}`);
+        log(
+          `CRITICAL: Failed to refund setup fee for user ${userId} after database failure: ${refundErrorMsg}`
+        );
         // Re-throw original error even if refund fails so user is aware of the failure
       }
     }
@@ -261,10 +272,7 @@ export const getCrucibleEntries = async <TSelect extends Prisma.CrucibleEntrySel
  * Generate a unique transaction prefix for crucible entry fees
  * This prefix is used to identify and refund transactions if needed
  */
-export const getCrucibleEntryTransactionPrefix = (
-  crucibleId: number,
-  userId: number
-): string => {
+export const getCrucibleEntryTransactionPrefix = (crucibleId: number, userId: number): string => {
   return `crucible-entry-${crucibleId}-${userId}-${Date.now()}`;
 };
 
@@ -301,7 +309,11 @@ async function acquireEntryLock(crucibleId: number, userId: number): Promise<boo
 
     return result === 'OK';
   } catch (error) {
-    log(`Failed to acquire entry lock for crucible ${crucibleId}, user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    log(
+      `Failed to acquire entry lock for crucible ${crucibleId}, user ${userId}: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`
+    );
     // On Redis failure, allow the operation to proceed (fail-open)
     // The database transaction will still provide some protection
     return true;
@@ -317,7 +329,11 @@ async function releaseEntryLock(crucibleId: number, userId: number): Promise<voi
   try {
     await sysRedis.del(lockKey);
   } catch (error) {
-    log(`Failed to release entry lock for crucible ${crucibleId}, user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    log(
+      `Failed to release entry lock for crucible ${crucibleId}, user ${userId}: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`
+    );
     // Lock will auto-expire due to TTL, so failure is not critical
   }
 }
@@ -388,7 +404,9 @@ export const submitEntry = async ({
 
     if (userEntryCount >= crucible.entryLimit) {
       return throwBadRequestError(
-        `You have reached the maximum of ${crucible.entryLimit} ${crucible.entryLimit === 1 ? 'entry' : 'entries'} for this crucible`
+        `You have reached the maximum of ${crucible.entryLimit} ${
+          crucible.entryLimit === 1 ? 'entry' : 'entries'
+        } for this crucible`
       );
     }
 
@@ -463,7 +481,10 @@ export const submitEntry = async ({
 
     if (crucible.entryFee > 0) {
       // Check if user has sufficient Buzz
-      const userAccount = await getUserBuzzAccount({ accountId: userId, accountTypes: ['yellow', 'green'] });
+      const userAccount = await getUserBuzzAccount({
+        accountId: userId,
+        accountTypes: ['yellow', 'green'],
+      });
       const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
 
       if (totalBalance < crucible.entryFee) {
@@ -537,7 +558,11 @@ export const submitEntry = async ({
             entrantUsername: entry.user.username ?? 'Anonymous',
           },
         }).catch((err) => {
-          log(`Failed to send entry notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          log(
+            `Failed to send entry notification: ${
+              err instanceof Error ? err.message : 'Unknown error'
+            }`
+          );
         });
       }
 
@@ -554,10 +579,15 @@ export const submitEntry = async ({
               entityType: 'Crucible',
             },
           });
-          log(`Refunded entry fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`);
+          log(
+            `Refunded entry fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`
+          );
         } catch (refundError) {
-          const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
-          log(`CRITICAL: Failed to refund entry fee for user ${userId} after database failure: ${refundErrorMsg}`);
+          const refundErrorMsg =
+            refundError instanceof Error ? refundError.message : 'Unknown error';
+          log(
+            `CRITICAL: Failed to refund entry fee for user ${userId} after database failure: ${refundErrorMsg}`
+          );
           // Re-throw original error even if refund fails so user is aware of the failure
         }
       }
@@ -907,7 +937,11 @@ export const getJudgingPair = async ({
     if (imageA && imageB) break;
 
     // No valid pair in this sample, try another sample
-    log(`Attempt ${attempt + 1}: No valid pair found in sample of ${sampleEntries.length} entries for crucible ${crucibleId}`);
+    log(
+      `Attempt ${attempt + 1}: No valid pair found in sample of ${
+        sampleEntries.length
+      } entries for crucible ${crucibleId}`
+    );
   }
 
   // If no valid pair found after all attempts
@@ -1182,9 +1216,7 @@ function getOrdinalPosition(position: number): string {
   const suffixes = ['th', 'st', 'nd', 'rd'];
   const remainder = position % 100;
   const suffix =
-    remainder >= 11 && remainder <= 13
-      ? 'th'
-      : suffixes[Math.min(position % 10, 4)] || 'th';
+    remainder >= 11 && remainder <= 13 ? 'th' : suffixes[Math.min(position % 10, 4)] || 'th';
   return `${position}${suffix}`;
 }
 
@@ -1224,9 +1256,7 @@ function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
  * @param crucibleId - The crucible ID to finalize
  * @returns Finalization results including final standings and prize amounts
  */
-export const finalizeCrucible = async (
-  crucibleId: number
-): Promise<FinalizeCrucibleResult> => {
+export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCrucibleResult> => {
   // Fetch the crucible metadata (without loading all entries into memory)
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -1299,7 +1329,11 @@ export const finalizeCrucible = async (
         prizePool: 0,
       },
     }).catch((err) => {
-      log(`Failed to send crucible-ended notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      log(
+        `Failed to send crucible-ended notification: ${
+          err instanceof Error ? err.message : 'Unknown error'
+        }`
+      );
     });
 
     return {
@@ -1347,7 +1381,9 @@ export const finalizeCrucible = async (
     allEntries.push(...batch);
     cursor = batch[batch.length - 1].id;
 
-    log(`Loaded batch of ${batch.length} entries (total so far: ${allEntries.length}/${entryCount})`);
+    log(
+      `Loaded batch of ${batch.length} entries (total so far: ${allEntries.length}/${entryCount})`
+    );
   }
 
   // ============================================================================
@@ -1391,7 +1427,9 @@ export const finalizeCrucible = async (
   for (const [score, entries] of scoreGroups) {
     if (entries.length > 1) {
       const entryIds = entries.map((e) => e.entryId).join(', ');
-      log(`Edge case: Crucible ${crucibleId} - ${entries.length} entries tied at ELO ${score} (entry IDs: ${entryIds}). Resolved by entry time (earlier entry wins).`);
+      log(
+        `Edge case: Crucible ${crucibleId} - ${entries.length} entries tied at ELO ${score} (entry IDs: ${entryIds}). Resolved by entry time (earlier entry wins).`
+      );
     }
   }
 
@@ -1449,7 +1487,9 @@ export const finalizeCrucible = async (
       WHERE ce.id = v.id
     `;
 
-    log(`Updated batch of ${batch.length} entries (${i + batch.length}/${finalizedEntries.length})`);
+    log(
+      `Updated batch of ${batch.length} entries (${i + batch.length}/${finalizedEntries.length})`
+    );
   }
 
   // Update crucible status to completed (separate transaction after all entries)
@@ -1492,7 +1532,9 @@ export const finalizeCrucible = async (
     } catch (error) {
       // Log the error but don't fail finalization - prizes can be manually distributed
       log(
-        `Failed to distribute prizes for crucible ${crucibleId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `Failed to distribute prizes for crucible ${crucibleId}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
       );
       // Re-throw to ensure the finalization job knows about the failure
       throw error;
@@ -1505,7 +1547,9 @@ export const finalizeCrucible = async (
   // This keeps data available for a while in case of issues
   await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
 
-  log(`Finalized crucible ${crucibleId}: ${finalizedEntries.length} entries, ${totalPrizesDistributed} Buzz in prizes`);
+  log(
+    `Finalized crucible ${crucibleId}: ${finalizedEntries.length} entries, ${totalPrizesDistributed} Buzz in prizes`
+  );
 
   // Send notifications (fire-and-forget, don't block finalization)
 
@@ -1522,7 +1566,11 @@ export const finalizeCrucible = async (
       prizePool: totalPrizePool,
     },
   }).catch((err) => {
-    log(`Failed to send crucible-ended notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    log(
+      `Failed to send crucible-ended notification: ${
+        err instanceof Error ? err.message : 'Unknown error'
+      }`
+    );
   });
 
   // 2. Send 'crucible-won' notifications to all participants with their final position
@@ -1553,7 +1601,11 @@ export const finalizeCrucible = async (
         prizeAmount: bestEntry.prizeAmount,
       },
     }).catch((err) => {
-      log(`Failed to send crucible-won notification to user ${participantUserId}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      log(
+        `Failed to send crucible-won notification to user ${participantUserId}: ${
+          err instanceof Error ? err.message : 'Unknown error'
+        }`
+      );
     });
   }
 
@@ -1619,7 +1671,10 @@ export const cancelCrucible = async ({
   id,
   userId,
   isModerator,
-}: CancelCrucibleSchema & { userId: number; isModerator: boolean }): Promise<CancelCrucibleResult> => {
+}: CancelCrucibleSchema & {
+  userId: number;
+  isModerator: boolean;
+}): Promise<CancelCrucibleResult> => {
   // Only moderators can cancel crucibles
   if (!isModerator) {
     throw throwAuthorizationError('Only moderators can cancel crucibles');
@@ -1730,7 +1785,9 @@ export const cancelCrucible = async ({
       });
 
       creatorSetupFeeRefunded = true;
-      log(`Refunded creator setup fee for crucible ${id} (transaction: ${crucible.buzzTransactionId})`);
+      log(
+        `Refunded creator setup fee for crucible ${id} (transaction: ${crucible.buzzTransactionId})`
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       log(`Failed to refund creator setup fee for crucible ${id}: ${errorMessage}`);
@@ -1761,5 +1818,115 @@ export const cancelCrucible = async ({
     refundedEntries,
     totalRefunded,
     failedRefunds,
+  };
+};
+
+// ============================================================================
+// User Crucible Stats
+// ============================================================================
+
+/**
+ * Get user's crucible stats for the discovery page welcome section
+ *
+ * Stats include:
+ * - Total crucibles entered (not created)
+ * - Total Buzz won from crucible prizes
+ * - Best placement (lowest position number)
+ * - Win rate (percentage of crucibles where user placed in prize positions)
+ */
+export const getUserCrucibleStats = async ({
+  userId,
+}: {
+  userId: number;
+}): Promise<{
+  totalCrucibles: number;
+  buzzWon: number;
+  bestPlacement: number | null;
+  winRate: number;
+}> => {
+  // Get all entries for this user in completed crucibles
+  const entries = await dbRead.crucibleEntry.findMany({
+    where: {
+      userId,
+      crucible: {
+        status: CrucibleStatus.Completed,
+      },
+    },
+    select: {
+      id: true,
+      position: true,
+      crucibleId: true,
+      crucible: {
+        select: {
+          prizePositions: true,
+        },
+      },
+    },
+  });
+
+  if (entries.length === 0) {
+    return {
+      totalCrucibles: 0,
+      buzzWon: 0,
+      bestPlacement: null,
+      winRate: 0,
+    };
+  }
+
+  // Calculate unique crucibles entered
+  const uniqueCrucibleIds = new Set(entries.map((e) => e.crucibleId));
+  const totalCrucibles = uniqueCrucibleIds.size;
+
+  // Calculate best placement (lowest non-null position)
+  const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
+  const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
+
+  // Calculate win rate (per crucible, not per entry)
+  // Get the best entry per crucible
+  const bestEntryPerCrucible = new Map<number, number | null>();
+  for (const entry of entries) {
+    const current = bestEntryPerCrucible.get(entry.crucibleId);
+    if (
+      current === undefined ||
+      (entry.position !== null && (current === null || entry.position < current))
+    ) {
+      bestEntryPerCrucible.set(entry.crucibleId, entry.position);
+    }
+  }
+
+  let cruciblesWon = 0;
+  for (const [crucibleId, bestPosition] of bestEntryPerCrucible) {
+    if (bestPosition !== null) {
+      const entry = entries.find((e) => e.crucibleId === crucibleId);
+      if (entry) {
+        const prizePositions = parsePrizePositions(entry.crucible.prizePositions);
+        const isWinner = prizePositions.some((p) => p.position === bestPosition);
+        if (isWinner) {
+          cruciblesWon++;
+        }
+      }
+    }
+  }
+
+  const winRate = totalCrucibles > 0 ? Math.round((cruciblesWon / totalCrucibles) * 100) : 0;
+
+  // Calculate total Buzz won
+  // Query buzz transactions for crucible prizes
+  // Note: Prize transactions have type 'Reward' and description matching 'Crucible prize'
+  const buzzWonResult = await dbRead.$queryRaw<[{ total: bigint }]>`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM "BuzzTransaction"
+    WHERE "toUserId" = ${userId}
+      AND type = 'Reward'
+      AND description LIKE 'Crucible prize%'
+  `;
+
+  const buzzWon = Number(buzzWonResult[0]?.total ?? 0);
+
+  return {
+    totalCrucibles,
+    buzzWon,
+    bestPlacement,
+    winRate,
   };
 };

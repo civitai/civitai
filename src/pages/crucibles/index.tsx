@@ -2,6 +2,7 @@ import { SegmentedControl, Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
+import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
@@ -40,6 +41,9 @@ function CruciblesPage() {
       <MasonryContainer>
         <Stack gap="md">
           <Title order={1}>Crucibles</Title>
+
+          {/* User welcome section with stats */}
+          <UserCrucibleWelcome />
 
           <SegmentedControl
             data={statusData}
