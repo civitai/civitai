@@ -1,9 +1,10 @@
-import { SegmentedControl, Stack, Title } from '@mantine/core';
+import { Group, SegmentedControl, Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
+import { CrucibleSortDropdown } from '~/components/Crucible/CrucibleSortDropdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
@@ -49,13 +50,18 @@ function CruciblesPage() {
           {/* Featured crucible hero card */}
           <FeaturedCrucibleHero />
 
-          <SegmentedControl
-            data={statusData}
-            value={currentStatusValue}
-            onChange={handleStatusChange}
-            radius="xl"
-            fullWidth={false}
-          />
+          {/* Filter controls with status tabs and sort dropdown */}
+          <Group justify="space-between" align="center" wrap="wrap">
+            <SegmentedControl
+              data={statusData}
+              value={currentStatusValue}
+              onChange={handleStatusChange}
+              radius="xl"
+              fullWidth={false}
+            />
+
+            <CrucibleSortDropdown />
+          </Group>
 
           <CruciblesInfinite filters={filters} />
         </Stack>

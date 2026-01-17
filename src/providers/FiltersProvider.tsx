@@ -143,7 +143,7 @@ const bountyFilterSchema = z.object({
 type CrucibleFilterSchema = z.infer<typeof crucibleFilterSchema>;
 const crucibleFilterSchema = z.object({
   status: z.nativeEnum(CrucibleStatus).optional(),
-  sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.Newest),
+  sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.PrizePool),
 });
 
 // type ClubFilterSchema = z.infer<typeof clubFilterSchema>;

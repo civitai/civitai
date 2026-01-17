@@ -16,7 +16,7 @@ export { CrucibleSort };
 export type GetCruciblesInfiniteSchema = z.infer<typeof getCruciblesInfiniteSchema>;
 export const getCruciblesInfiniteSchema = infiniteQuerySchema.extend({
   status: z.nativeEnum(CrucibleStatus).optional(),
-  sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.Newest),
+  sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.PrizePool),
   limit: z.coerce.number().min(1).max(200).default(20),
 });
 

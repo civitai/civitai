@@ -237,6 +237,10 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   } else if (sort === CrucibleSort.EndingSoon) {
     // Sort by end date ascending (soonest first)
     orderBy.push({ endAt: 'asc' });
+  } else if (sort === CrucibleSort.MostEntries) {
+    // Sort by entry count descending
+    orderBy.push({ entries: { _count: 'desc' } });
+    orderBy.push({ createdAt: 'desc' }); // Secondary sort
   } else {
     // Default: Newest
     orderBy.push({ createdAt: 'desc' });

@@ -161,6 +161,7 @@ export enum CrucibleSort {
   PrizePool = 'Prize Pool',
   EndingSoon = 'Ending Soon',
   Newest = 'Newest',
+  MostEntries = 'Most Entries',
 }
 
 export enum BountyStatus {
