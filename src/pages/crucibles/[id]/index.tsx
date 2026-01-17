@@ -290,6 +290,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
                   {/* Judging */}
                   <RuleItem label="Judging" content="Continuous & Live" />
+
+                  {/* Tie-Breaking */}
+                  <RuleItem
+                    label="Tie-Breaking"
+                    content="Earlier entries rank higher in case of tied scores"
+                  />
                 </div>
               </Paper>
             </div>
