@@ -295,7 +295,8 @@
     "ts-node": "^10.9.1",
     "tsx": "^4.19.2",
     "typed-scss-modules": "^8.1.1",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "ws": "^8.19.0"
   },
   "ct3aMetadata": {
     "initVersion": "6.2.1"
