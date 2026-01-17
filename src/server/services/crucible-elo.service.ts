@@ -79,10 +79,10 @@ export const processVote = async (
   winnerVoteCount: number,
   loserVoteCount: number
 ): Promise<{ winnerElo: number; loserElo: number }> => {
-  // Calculate K-factor based on vote counts
+  // Calculate K-factor for each player based on their vote counts
+  // Each player uses their own K-factor for their rating change (standard ELO)
   const winnerKFactor = getKFactor(winnerVoteCount);
   const loserKFactor = getKFactor(loserVoteCount);
-  const kFactor = Math.round((winnerKFactor + loserKFactor) / 2);
 
   // Use Lua script for atomic read-compute-update
   // This prevents race conditions from concurrent votes
@@ -90,11 +90,12 @@ export const processVote = async (
     crucibleId,
     winnerEntryId,
     loserEntryId,
-    kFactor
+    winnerKFactor,
+    loserKFactor
   );
 
   log(
-    `Vote processed: crucible ${crucibleId}, winner ${winnerEntryId} (${result.winnerOldElo} + ${result.winnerChange} = ${result.winnerElo}), loser ${loserEntryId} (${result.loserOldElo} + ${result.loserChange} = ${result.loserElo}), K=${kFactor}`
+    `Vote processed: crucible ${crucibleId}, winner ${winnerEntryId} (${result.winnerOldElo} + ${result.winnerChange} = ${result.winnerElo}, K=${winnerKFactor}), loser ${loserEntryId} (${result.loserOldElo} + ${result.loserChange} = ${result.loserElo}, K=${loserKFactor})`
   );
 
   return {

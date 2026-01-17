@@ -81,14 +81,16 @@ export class CrucibleEloRedisClient {
    * @param crucibleId - The crucible ID
    * @param winnerEntryId - The entry ID that won
    * @param loserEntryId - The entry ID that lost
-   * @param kFactor - The K-factor to use for ELO calculation
+   * @param winnerKFactor - The K-factor for the winner
+   * @param loserKFactor - The K-factor for the loser
    * @returns Object with old and new ELO values and changes for both entries
    */
   async processVoteAtomic(
     crucibleId: number,
     winnerEntryId: number,
     loserEntryId: number,
-    kFactor: number
+    winnerKFactor: number,
+    loserKFactor: number
   ): Promise<{
     winnerElo: number;
     loserElo: number;
@@ -105,8 +107,9 @@ export class CrucibleEloRedisClient {
       local eloKey = KEYS[1]
       local winnerField = ARGV[1]
       local loserField = ARGV[2]
-      local kFactor = tonumber(ARGV[3])
-      local defaultElo = tonumber(ARGV[4])
+      local winnerK = tonumber(ARGV[3])
+      local loserK = tonumber(ARGV[4])
+      local defaultElo = tonumber(ARGV[5])
 
       -- Get current ELO scores (use default if not set)
       local winnerElo = tonumber(redis.call('HGET', eloKey, winnerField)) or defaultElo
@@ -115,13 +118,14 @@ export class CrucibleEloRedisClient {
       -- Calculate expected scores using ELO formula
       -- Expected probability that winner beats loser: 1 / (1 + 10^((loserElo - winnerElo) / 400))
       local expectedWinner = 1 / (1 + math.pow(10, (loserElo - winnerElo) / 400))
+      -- Expected probability that loser beats winner: 1 / (1 + 10^((winnerElo - loserElo) / 400))
+      local expectedLoser = 1 / (1 + math.pow(10, (winnerElo - loserElo) / 400))
 
-      -- Calculate winner's rating change
+      -- Calculate rating changes using each player's own K-factor
       -- Winner gets actual score of 1, expected was expectedWinner
-      local winnerChange = math.floor(kFactor * (1 - expectedWinner) + 0.5)
-
-      -- Loser change is negation of winner change (ensures zero-sum)
-      local loserChange = -winnerChange
+      local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)
+      -- Loser gets actual score of 0, expected was expectedLoser
+      local loserChange = math.floor(loserK * (0 - expectedLoser) + 0.5)
 
       -- Update ELO scores
       local newWinnerElo = winnerElo + winnerChange
@@ -139,7 +143,8 @@ export class CrucibleEloRedisClient {
       arguments: [
         winnerEntryId.toString(),
         loserEntryId.toString(),
-        kFactor.toString(),
+        winnerKFactor.toString(),
+        loserKFactor.toString(),
         DEFAULT_ELO.toString(),
       ],
     }) as number[];

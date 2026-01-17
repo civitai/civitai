@@ -244,6 +244,75 @@ describe('Constants', () => {
   });
 });
 
+describe('Individual K-Factor Application', () => {
+  test('winner and loser use their own K-factors (not averaged)', () => {
+    // Scenario: Provisional winner (K=64) beats established loser (K=32)
+    const winnerElo = 1500;
+    const loserElo = 1500;
+    const winnerVoteCount = 5; // Provisional (K=64)
+    const loserVoteCount = 15; // Established (K=32)
+
+    const winnerK = getKFactor(winnerVoteCount); // 64
+    const loserK = getKFactor(loserVoteCount);   // 32
+
+    // Calculate expected scores
+    const expectedWinner = 1 / (1 + Math.pow(10, (loserElo - winnerElo) / 400)); // 0.5 for equal ELO
+    const expectedLoser = 1 / (1 + Math.pow(10, (winnerElo - loserElo) / 400));   // 0.5 for equal ELO
+
+    // Winner uses their K-factor (64)
+    const winnerChange = Math.round(winnerK * (1 - expectedWinner)); // 64 * 0.5 = 32
+    // Loser uses their K-factor (32)
+    const loserChange = Math.round(loserK * (0 - expectedLoser));     // 32 * -0.5 = -16
+
+    // Verify each player uses their own K-factor
+    expect(winnerChange).toBe(32); // Provisional winner gets larger change (K=64)
+    expect(loserChange).toBe(-16); // Established loser gets smaller change (K=32)
+
+    // NOTE: With individual K-factors, changes are NOT zero-sum (32 + (-16) = 16)
+    // This is correct behavior - each player's rating changes based on their own K-factor
+  });
+
+  test('both provisional players use K=64', () => {
+    const winnerElo = 1500;
+    const loserElo = 1500;
+    const winnerVoteCount = 3; // Provisional (K=64)
+    const loserVoteCount = 7;  // Provisional (K=64)
+
+    const winnerK = getKFactor(winnerVoteCount); // 64
+    const loserK = getKFactor(loserVoteCount);   // 64
+
+    const expectedWinner = 1 / (1 + Math.pow(10, (loserElo - winnerElo) / 400)); // 0.5
+    const expectedLoser = 1 / (1 + Math.pow(10, (winnerElo - loserElo) / 400));   // 0.5
+
+    const winnerChange = Math.round(winnerK * (1 - expectedWinner)); // 64 * 0.5 = 32
+    const loserChange = Math.round(loserK * (0 - expectedLoser));     // 64 * -0.5 = -32
+
+    expect(winnerChange).toBe(32);
+    expect(loserChange).toBe(-32);
+    // When both K-factors are equal, changes are zero-sum
+  });
+
+  test('both established players use K=32', () => {
+    const winnerElo = 1500;
+    const loserElo = 1500;
+    const winnerVoteCount = 20; // Established (K=32)
+    const loserVoteCount = 50;  // Established (K=32)
+
+    const winnerK = getKFactor(winnerVoteCount); // 32
+    const loserK = getKFactor(loserVoteCount);   // 32
+
+    const expectedWinner = 1 / (1 + Math.pow(10, (loserElo - winnerElo) / 400)); // 0.5
+    const expectedLoser = 1 / (1 + Math.pow(10, (winnerElo - loserElo) / 400));   // 0.5
+
+    const winnerChange = Math.round(winnerK * (1 - expectedWinner)); // 32 * 0.5 = 16
+    const loserChange = Math.round(loserK * (0 - expectedLoser));     // 32 * -0.5 = -16
+
+    expect(winnerChange).toBe(16);
+    expect(loserChange).toBe(-16);
+    // When both K-factors are equal, changes are zero-sum
+  });
+});
+
 // ============================================================
 // RUN TESTS & REPORT
 // ============================================================
