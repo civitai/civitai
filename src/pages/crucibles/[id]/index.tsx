@@ -1,19 +1,9 @@
-import {
-  Box,
-  Button,
-  Container,
-  Group,
-  Paper,
-  Progress,
-  Stack,
-  Text,
-  Title,
-  Skeleton,
-} from '@mantine/core';
+import { Button, Container, Paper, Progress, Stack, Text, Title } from '@mantine/core';
+import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
-import { IconGavel, IconUpload, IconBook, IconTrophy, IconPencil } from '@tabler/icons-react';
+import { IconGavel, IconUpload, IconBook, IconPencil, IconX } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -25,14 +15,8 @@ import { env } from '~/env/client';
 import { slugit } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
-import {
-  CrucibleLeaderboard,
-  CrucibleLeaderboardSkeleton,
-} from '~/components/Crucible/CrucibleLeaderboard';
-import {
-  CrucibleEntryGrid,
-  CrucibleEntryGridSkeleton,
-} from '~/components/Crucible/CrucibleEntryGrid';
+import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
+import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
 import { parsePrizePositions } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { CrucibleStatus, Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -41,6 +25,7 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { formatDate } from '~/utils/date-helpers';
 import type { Prisma } from '@prisma/client';
 import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
+import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -66,12 +51,33 @@ export const getServerSideProps = createServerSideProps({
 function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
   const { data: judgesData } = trpc.crucible.getJudgesCount.useQuery(
     { crucibleId: id },
     { enabled: !!id }
   );
+
+  // Cancel mutation for moderators
+  const cancelMutation = trpc.crucible.cancel.useMutation({
+    onSuccess: (result) => {
+      showSuccessNotification({
+        title: 'Crucible Cancelled',
+        message: `Successfully cancelled. ${
+          result.refundedEntries
+        } entries refunded (${result.totalRefunded.toLocaleString()} Buzz total).`,
+      });
+      // Invalidate the query to refetch the crucible data
+      queryUtils.crucible.getById.invalidate({ id });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to cancel crucible',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
@@ -96,6 +102,43 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   // Parse allowed resources if present
   const allowedResources = crucible.allowedResources as Prisma.JsonValue;
+
+  // Moderator-only: check if crucible can be cancelled
+  const isModerator = currentUser?.isModerator ?? false;
+  const canCancel =
+    isModerator &&
+    crucible.status !== CrucibleStatus.Completed &&
+    crucible.status !== CrucibleStatus.Cancelled;
+
+  // Handle cancel action with confirmation dialog
+  const handleCancelCrucible = () => {
+    openConfirmModal({
+      title: 'Cancel Crucible',
+      children: (
+        <Stack gap="sm">
+          <Text size="sm">
+            Are you sure you want to cancel this crucible? This action cannot be undone.
+          </Text>
+          <Text size="sm" c="dimmed">
+            All entry fees ({entryCount} entries × {crucible.entryFee.toLocaleString()} Buzz ={' '}
+            {totalPrizePool.toLocaleString()} Buzz total) will be refunded to participants.
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      closeOnConfirm: false,
+      labels: { cancel: 'Keep it', confirm: 'Cancel Crucible' },
+      confirmProps: { color: 'red', loading: cancelMutation.isPending },
+      onConfirm: async () => {
+        try {
+          await cancelMutation.mutateAsync({ id });
+          closeAllModals();
+        } catch {
+          // Error handled by mutation onError callback
+        }
+      },
+    });
+  };
 
   return (
     <>
@@ -325,6 +368,34 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   />
                 </div>
               </Paper>
+
+              {/* Moderator Actions - Cancel Button */}
+              {canCancel && (
+                <Paper className="rounded-lg border border-red-500/30 p-6" bg="dark.6">
+                  <Title
+                    order={5}
+                    className="mb-4 flex items-center gap-2 uppercase tracking-wider text-red-400"
+                  >
+                    <IconX size={16} />
+                    Moderator Actions
+                  </Title>
+
+                  <Button
+                    variant="outline"
+                    color="red"
+                    fullWidth
+                    leftSection={<IconX size={16} />}
+                    onClick={handleCancelCrucible}
+                    loading={cancelMutation.isPending}
+                  >
+                    Cancel Crucible
+                  </Button>
+
+                  <Text size="xs" c="dimmed" mt="sm">
+                    Cancelling will refund all entry fees to participants.
+                  </Text>
+                </Paper>
+              )}
             </div>
           </div>
         </Container>
