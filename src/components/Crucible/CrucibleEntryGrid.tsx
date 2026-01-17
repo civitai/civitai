@@ -35,6 +35,7 @@ export type CrucibleEntryGridProps = {
   title?: string;
   showUserEntries?: boolean;
   currentUserId?: number | null;
+  maxUserEntries?: number;
   className?: string;
   emptyMessage?: string;
   onEntryClick?: (entry: CrucibleEntryData) => void;
@@ -55,6 +56,7 @@ export function CrucibleEntryGrid({
   title,
   showUserEntries = false,
   currentUserId,
+  maxUserEntries,
   className,
   emptyMessage = 'No entries yet',
   onEntryClick,
@@ -70,14 +72,12 @@ export function CrucibleEntryGrid({
   }));
 
   // Filter user's entries if requested
-  const userEntries = showUserEntries && userId
-    ? rankedEntries.filter((e) => e.userId === userId)
-    : [];
+  const userEntries =
+    showUserEntries && userId ? rankedEntries.filter((e) => e.userId === userId) : [];
 
   // All entries (or non-user entries if showing user entries separately)
-  const displayEntries = showUserEntries && userId
-    ? rankedEntries.filter((e) => e.userId !== userId)
-    : rankedEntries;
+  const displayEntries =
+    showUserEntries && userId ? rankedEntries.filter((e) => e.userId !== userId) : rankedEntries;
 
   return (
     <div className={clsx(className)}>
@@ -88,7 +88,8 @@ export function CrucibleEntryGrid({
             <IconPhoto size={20} className="text-blue-500" />
             Your Entries
             <Text component="span" size="sm" c="dimmed" fw="normal">
-              ({userEntries.length})
+              ({userEntries.length}
+              {maxUserEntries ? ` of ${maxUserEntries}` : ''})
             </Text>
           </Title>
           <SimpleGrid
@@ -196,9 +197,7 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
               <IconChartLine size={12} />
               <span>{Math.round(entry.score)} pts</span>
             </div>
-            <div className="flex items-center gap-1">
-              #{rank}
-            </div>
+            <div className="flex items-center gap-1">#{rank}</div>
           </div>
         </div>
       </div>
@@ -226,8 +225,7 @@ function PositionBadge({ rank, isTopThree }: PositionBadgeProps) {
         px={8}
         size="sm"
       >
-        <IconTrophy size={12} />
-        #{rank}
+        <IconTrophy size={12} />#{rank}
       </Badge>
     );
   }
@@ -240,8 +238,7 @@ function PositionBadge({ rank, isTopThree }: PositionBadgeProps) {
       px={8}
       size="sm"
     >
-      <IconChartLine size={12} />
-      #{rank}
+      <IconChartLine size={12} />#{rank}
     </Badge>
   );
 }
@@ -291,10 +288,7 @@ export function CrucibleEntryGridEmpty({
  */
 export function CrucibleEntryGridSkeleton({ count = 12 }: { count?: number }) {
   return (
-    <SimpleGrid
-      cols={{ base: 2, xs: 3, sm: 4, md: 5, lg: 6 }}
-      spacing={{ base: 'sm', md: 'md' }}
-    >
+    <SimpleGrid cols={{ base: 2, xs: 3, sm: 4, md: 5, lg: 6 }} spacing={{ base: 'sm', md: 'md' }}>
       {Array.from({ length: count }).map((_, i) => (
         <Skeleton key={i} radius="md" style={{ aspectRatio: '4 / 5' }} />
       ))}

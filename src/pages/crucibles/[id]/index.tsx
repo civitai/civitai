@@ -181,6 +181,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 title="All Entries"
                 showUserEntries={!!currentUser}
                 currentUserId={currentUser?.id}
+                maxUserEntries={maxUserEntries}
               />
             </div>
 
