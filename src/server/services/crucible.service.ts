@@ -1930,3 +1930,152 @@ export const getUserCrucibleStats = async ({
     winRate,
   };
 };
+
+// ============================================================================
+// User Active Crucibles
+// ============================================================================
+
+/**
+ * Format time remaining until end date
+ */
+function formatTimeRemaining(endAt: Date): string {
+  const now = new Date();
+  const diffMs = endAt.getTime() - now.getTime();
+
+  if (diffMs <= 0) return 'Ended';
+
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffDays > 0) {
+    return `${diffDays} day${diffDays === 1 ? '' : 's'}`;
+  }
+
+  if (diffHours > 0) {
+    return `${diffHours} hour${diffHours === 1 ? '' : 's'}`;
+  }
+
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  return `${diffMinutes} min${diffMinutes === 1 ? '' : 's'}`;
+}
+
+/**
+ * Get user's active crucibles they have entries in
+ *
+ * Returns crucibles with:
+ * - Basic crucible info (id, name, cover image)
+ * - User's current position (best position among their entries)
+ * - Prize pool (total entry fees)
+ * - Time remaining
+ */
+export const getUserActiveCrucibles = async ({
+  userId,
+}: {
+  userId: number;
+}): Promise<
+  Array<{
+    id: number;
+    name: string;
+    prizePool: number;
+    timeRemaining: string;
+    endAt: Date | null;
+    position: number | null;
+    imageUrl: string | null;
+  }>
+> => {
+  // Get all entries for this user in active crucibles
+  const entries = await dbRead.crucibleEntry.findMany({
+    where: {
+      userId,
+      crucible: {
+        status: CrucibleStatus.Active,
+      },
+    },
+    select: {
+      id: true,
+      position: true,
+      crucibleId: true,
+      crucible: {
+        select: {
+          id: true,
+          name: true,
+          entryFee: true,
+          endAt: true,
+          image: {
+            select: {
+              url: true,
+            },
+          },
+          _count: {
+            select: {
+              entries: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: {
+      crucible: {
+        endAt: 'asc', // Closest to ending first
+      },
+    },
+  });
+
+  if (entries.length === 0) {
+    return [];
+  }
+
+  // Group entries by crucible and find best position
+  const crucibleMap = new Map<
+    number,
+    {
+      id: number;
+      name: string;
+      prizePool: number;
+      timeRemaining: string;
+      endAt: Date | null;
+      position: number | null;
+      imageUrl: string | null;
+    }
+  >();
+
+  for (const entry of entries) {
+    const crucibleId = entry.crucibleId;
+    const existing = crucibleMap.get(crucibleId);
+
+    // Calculate best position for this crucible
+    const currentBestPosition = existing?.position ?? null;
+    let newBestPosition = currentBestPosition;
+
+    if (entry.position !== null) {
+      if (currentBestPosition === null || entry.position < currentBestPosition) {
+        newBestPosition = entry.position;
+      }
+    }
+
+    // Only add/update if not already in map or we have a better position
+    if (!existing || newBestPosition !== currentBestPosition) {
+      const prizePool = entry.crucible.entryFee * entry.crucible._count.entries;
+      const timeRemaining = entry.crucible.endAt
+        ? formatTimeRemaining(entry.crucible.endAt)
+        : 'No end date';
+
+      crucibleMap.set(crucibleId, {
+        id: entry.crucible.id,
+        name: entry.crucible.name,
+        prizePool,
+        timeRemaining,
+        endAt: entry.crucible.endAt,
+        position: newBestPosition,
+        imageUrl: entry.crucible.image?.url ?? null,
+      });
+    }
+  }
+
+  // Convert to array and sort by endAt (closest first)
+  return Array.from(crucibleMap.values()).sort((a, b) => {
+    if (!a.endAt) return 1;
+    if (!b.endAt) return -1;
+    return a.endAt.getTime() - b.endAt.getTime();
+  });
+};

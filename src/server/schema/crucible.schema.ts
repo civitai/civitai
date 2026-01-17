@@ -117,3 +117,18 @@ export type UserCrucibleStats = {
   bestPlacement: number | null;
   winRate: number;
 };
+
+// Schema for getting user's active crucibles (no input needed - uses authenticated user)
+export type GetUserActiveCruciblesSchema = z.infer<typeof getUserActiveCruciblesSchema>;
+export const getUserActiveCruciblesSchema = z.object({});
+
+// User active crucible response type
+export type UserActiveCrucible = {
+  id: number;
+  name: string;
+  prizePool: number;
+  timeRemaining: string;
+  endAt: Date | null;
+  position: number | null;
+  imageUrl: string | null;
+};

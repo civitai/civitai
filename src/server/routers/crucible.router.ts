@@ -8,6 +8,7 @@ import {
   submitVoteSchema,
   cancelCrucibleSchema,
   getUserCrucibleStatsSchema,
+  getUserActiveCruciblesSchema,
 } from '~/server/schema/crucible.schema';
 import {
   createCrucible,
@@ -18,6 +19,7 @@ import {
   submitVote,
   cancelCrucible,
   getUserCrucibleStats,
+  getUserActiveCrucibles,
 } from '~/server/services/crucible.service';
 import { isModerator } from '~/server/routers/base.router';
 import { Prisma } from '@prisma/client';
@@ -241,5 +243,16 @@ export const crucibleRouter = router({
       });
 
       return stats;
+    }),
+
+  getUserActiveCrucibles: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getUserActiveCruciblesSchema)
+    .query(async ({ ctx }) => {
+      const crucibles = await getUserActiveCrucibles({
+        userId: ctx.user.id,
+      });
+
+      return crucibles;
     }),
 });

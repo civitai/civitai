@@ -3,6 +3,7 @@ import { IconTrophy, IconCoin, IconMedal, IconChartBar } from '@tabler/icons-rea
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { ActiveCruciblesCarousel } from './ActiveCruciblesCarousel';
 
 /**
  * UserCrucibleWelcome - Welcome section with user crucible stats
@@ -81,6 +82,9 @@ function UserCrucibleWelcomeContent({ username }: { username: string }) {
           formatValue={(v) => `${v ?? 0}%`}
         />
       </div>
+
+      {/* Active Crucibles Carousel */}
+      <ActiveCruciblesCarousel />
     </Card>
   );
 }
