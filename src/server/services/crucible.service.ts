@@ -606,24 +606,6 @@ export async function markPairVoted(
   // Set TTL to 30 days (for crucible cleanup)
   await sysRedis.expire(key, 30 * 24 * 60 * 60);
 }
-
-/**
- * Check if a specific pair has been voted on by a user
- * Uses SISMEMBER for O(1) lookup instead of fetching all pairs
- */
-async function isPairVoted(
-  crucibleId: number,
-  userId: number,
-  entryId1: number,
-  entryId2: number
-): Promise<boolean> {
-  const key = getVotedPairsKey(crucibleId, userId);
-  const pairKey = createPairKey(entryId1, entryId2);
-  // sIsMember returns 1 if member exists, 0 if not - convert to boolean
-  const result = await sysRedis.sIsMember(key, pairKey);
-  return Boolean(result);
-}
-
 /**
  * Check multiple pairs for voted status in parallel
  * Uses SISMEMBER for each pair in parallel for better performance
@@ -1102,26 +1084,17 @@ export const submitVote = async ({
     throw throwBadRequestError('You cannot vote on your own entries');
   }
 
-  // Check if user has already voted on this pair using SISMEMBER (O(1) lookup)
-  const alreadyVoted = await isPairVoted(crucibleId, userId, winnerEntryId, loserEntryId);
-
-  if (alreadyVoted) {
-    throw throwBadRequestError(
-      'You have already voted on this pair. Please wait for the next pair to load.'
-    );
-  }
-
-  // Race condition protection: Try to atomically mark the pair as voted before processing
-  // Use SADD to add to the set - if it returns 0, the pair was already added by another request
+  // Race condition protection: Atomically mark the pair as voted before processing
+  // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
   const key = getVotedPairsKey(crucibleId, userId);
   const pairKey = createPairKey(winnerEntryId, loserEntryId);
   const addResult = await sysRedis.sAdd(key, [pairKey]);
   await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
 
   if (addResult === 0) {
-    // Another concurrent request already processed this vote
+    // User has already voted on this pair
     throw throwBadRequestError(
-      'This vote is already being processed. Please wait for the next pair to load.'
+      'You have already voted on this pair. Please wait for the next pair to load.'
     );
   }
 
