@@ -11,6 +11,7 @@ import {
   getUserActiveCruciblesSchema,
   getFeaturedCrucibleSchema,
   getJudgesCountSchema,
+  getJudgeStatsSchema,
 } from '~/server/schema/crucible.schema';
 import {
   createCrucible,
@@ -24,6 +25,7 @@ import {
   getUserActiveCrucibles,
   getFeaturedCrucible,
   getJudgesCount,
+  getJudgeStats,
 } from '~/server/services/crucible.service';
 import { isModerator } from '~/server/routers/base.router';
 import { Prisma } from '@prisma/client';
@@ -274,5 +276,16 @@ export const crucibleRouter = router({
     .query(async ({ input }) => {
       const count = await getJudgesCount(input.crucibleId);
       return { count };
+    }),
+
+  getJudgeStats: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getJudgeStatsSchema)
+    .query(async ({ ctx, input }) => {
+      const stats = await getJudgeStats({
+        userId: ctx.user.id,
+        crucibleId: input.crucibleId,
+      });
+      return stats;
     }),
 });

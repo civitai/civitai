@@ -153,3 +153,19 @@ export type FeaturedCrucible = {
   entriesCount: number;
   imageUrl: string | null;
 };
+
+// Schema for getting judge stats for the rating page
+export type GetJudgeStatsSchema = z.infer<typeof getJudgeStatsSchema>;
+export const getJudgeStatsSchema = z.object({
+  crucibleId: z.number(),
+});
+
+// Judge stats response type
+export type JudgeStats = {
+  // Total pairs this user has rated across all crucibles
+  totalPairsRated: number;
+  // Percentile rank among all judges (e.g., "Top 8%" means they're in top 8%)
+  percentileRank: number | null;
+  // User's influence score based on voting consistency with final rankings
+  influenceScore: number;
+};

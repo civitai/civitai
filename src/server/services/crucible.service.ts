@@ -668,6 +668,92 @@ export async function getJudgesCount(crucibleId: number): Promise<number> {
 }
 
 /**
+ * Redis key for tracking user vote counts
+ */
+function getUserVotesKey(): RedisKeyTemplateSys {
+  return REDIS_SYS_KEYS.CRUCIBLE.USER_VOTES as RedisKeyTemplateSys;
+}
+
+/**
+ * Increment a user's total vote count across all crucibles
+ */
+export async function incrementUserVoteCount(userId: number): Promise<number> {
+  const key = getUserVotesKey();
+  return await sysRedis.hIncrBy(key, userId.toString(), 1);
+}
+
+/**
+ * Get a user's total vote count across all crucibles
+ */
+export async function getUserVoteCount(userId: number): Promise<number> {
+  const key = getUserVotesKey();
+  const count = await sysRedis.hGet<string>(key, userId.toString());
+  return count ? parseInt(count, 10) : 0;
+}
+
+/**
+ * Get all user vote counts (for calculating rankings)
+ * Returns array of [userId, voteCount] pairs sorted by vote count descending
+ */
+export async function getAllUserVoteCounts(): Promise<Array<[number, number]>> {
+  const key = getUserVotesKey();
+  const counts = await sysRedis.hGetAll<string>(key);
+
+  const entries: Array<[number, number]> = [];
+  for (const [userIdStr, countStr] of Object.entries(counts)) {
+    const userId = parseInt(userIdStr, 10);
+    const count = parseInt(countStr as string, 10);
+    if (!isNaN(userId) && !isNaN(count)) {
+      entries.push([userId, count]);
+    }
+  }
+
+  // Sort by count descending
+  entries.sort((a, b) => b[1] - a[1]);
+  return entries;
+}
+
+/**
+ * Get user judge stats for the rating page
+ * Returns: total pairs rated, judge ranking percentile, influence score
+ */
+export async function getUserJudgeStats(userId: number): Promise<{
+  totalPairsRated: number;
+  judgeRankingPercentile: number;
+  influenceScore: number;
+}> {
+  const [userVoteCount, allCounts] = await Promise.all([
+    getUserVoteCount(userId),
+    getAllUserVoteCounts(),
+  ]);
+
+  // Calculate ranking percentile
+  let judgeRankingPercentile = 0;
+  if (allCounts.length > 0 && userVoteCount > 0) {
+    // Find user's rank
+    const userRank = allCounts.findIndex(([id]) => id === userId);
+    if (userRank !== -1) {
+      // Percentile = ((total - rank) / total) * 100
+      // E.g., if rank 10 out of 100, percentile = 90 (top 10%)
+      judgeRankingPercentile = Math.round(
+        ((allCounts.length - userRank) / allCounts.length) * 100
+      );
+    }
+  }
+
+  // Calculate influence score
+  // Base formula: Each 10 votes = 1 influence point, with diminishing returns
+  // sqrt(votes) * 10 gives nice scaling: 100 votes = 100 influence, 400 votes = 200 influence
+  const influenceScore = Math.round(Math.sqrt(userVoteCount) * 10);
+
+  return {
+    totalPairsRated: userVoteCount,
+    judgeRankingPercentile,
+    influenceScore,
+  };
+}
+
+/**
  * Check multiple pairs for voted status in parallel
  * Uses SISMEMBER for each pair in parallel for better performance
  */
@@ -1181,11 +1267,12 @@ export const submitVote = async ({
 
   // Increment voteCount on both entries in Redis (not DB)
   // Vote counts are synced to PostgreSQL on finalization
-  // Also track unique judge (fire-and-forget, uses Redis SADD which is idempotent)
+  // Also track unique judge and user's total vote count (fire-and-forget)
   await Promise.all([
     crucibleEloRedis.incrementVoteCount(crucibleId, winnerEntryId),
     crucibleEloRedis.incrementVoteCount(crucibleId, loserEntryId),
     addJudge(crucibleId, userId),
+    incrementUserVoteCount(userId),
   ]);
 
   // Note: Pair was already marked as voted atomically at the start of this function
@@ -2185,5 +2272,56 @@ export const getFeaturedCrucible = async (): Promise<{
     timeRemaining: featured.endAt ? formatTimeRemaining(featured.endAt) : 'No end date',
     entriesCount: featured._count.entries,
     imageUrl: featured.image?.url ?? null,
+  };
+};
+
+// ============================================================================
+// Judge Stats
+// ============================================================================
+
+/**
+ * Get judge stats for the rating page
+ * Tracks global stats across all crucibles for the user
+ */
+export const getJudgeStats = async ({
+  userId,
+  crucibleId,
+}: {
+  userId: number;
+  crucibleId: number;
+}): Promise<{
+  totalPairsRated: number;
+  percentileRank: number | null;
+  influenceScore: number;
+}> => {
+  // Get GLOBAL vote count for this user (across all crucibles)
+  const [globalVoteCount, allUserCounts] = await Promise.all([
+    getUserVoteCount(userId),
+    getAllUserVoteCounts(),
+  ]);
+
+  // Calculate percentile rank among ALL judges globally
+  let percentileRank: number | null = null;
+
+  if (allUserCounts.length > 1 && globalVoteCount > 0) {
+    // Find user's position in the sorted list
+    const userRankIndex = allUserCounts.findIndex(([id]) => id === userId);
+
+    if (userRankIndex !== -1) {
+      // Calculate what percentile this user is in
+      // e.g., if rank 10 out of 100, they're in top 10%
+      const percentile = ((userRankIndex + 1) / allUserCounts.length) * 100;
+      percentileRank = Math.ceil(percentile);
+    }
+  }
+
+  // Influence score using sqrt scaling for diminishing returns
+  // sqrt(votes) * 10 gives nice scaling: 100 votes = 100 influence, 400 votes = 200 influence
+  const influenceScore = Math.round(Math.sqrt(globalVoteCount) * 10);
+
+  return {
+    totalPairsRated: globalVoteCount,
+    percentileRank,
+    influenceScore,
   };
 };

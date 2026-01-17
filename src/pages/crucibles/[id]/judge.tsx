@@ -1,9 +1,29 @@
-import { Alert, Container, Group, Paper, Text, Title, Button, Box, Anchor, Loader } from '@mantine/core';
+import {
+  Alert,
+  Container,
+  Group,
+  Paper,
+  Text,
+  Title,
+  Button,
+  Box,
+  Anchor,
+  Loader,
+} from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import * as z from 'zod';
-import { IconArrowLeft, IconClock, IconTrophy, IconCoin, IconUsers, IconLayoutGrid, IconRefresh, IconAlertCircle } from '@tabler/icons-react';
+import {
+  IconArrowLeft,
+  IconClock,
+  IconTrophy,
+  IconCoin,
+  IconUsers,
+  IconLayoutGrid,
+  IconRefresh,
+  IconAlertCircle,
+} from '@tabler/icons-react';
 import { useState, useCallback, useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -15,7 +35,10 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { slugit } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CrucibleJudgingUI, CrucibleJudgingUISkeleton } from '~/components/Crucible/CrucibleJudgingUI';
+import {
+  CrucibleJudgingUI,
+  CrucibleJudgingUISkeleton,
+} from '~/components/Crucible/CrucibleJudgingUI';
 import type { JudgingPairData } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -50,10 +73,14 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   // Session stats
   const [sessionVotes, setSessionVotes] = useState(0);
   const [sessionSkips, setSessionSkips] = useState(0);
+  const [currentStreak, setCurrentStreak] = useState(0); // Consecutive votes without skip
   const [isVoting, setIsVoting] = useState(false);
   const [allPairsJudged, setAllPairsJudged] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
-  const [lastVoteAttempt, setLastVoteAttempt] = useState<{ winnerId: number; loserId: number } | null>(null);
+  const [lastVoteAttempt, setLastVoteAttempt] = useState<{
+    winnerId: number;
+    loserId: number;
+  } | null>(null);
 
   // Track skipped entry IDs to prevent immediate return
   // Keep last 20 entries (~10 pairs) so skipped pairs can return after showing others
@@ -75,6 +102,16 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     }
   );
 
+  // Fetch judge stats for this user
+  const { data: judgeStats } = trpc.crucible.getJudgeStats.useQuery(
+    { crucibleId: id },
+    {
+      enabled: !!currentUser,
+      refetchOnWindowFocus: false,
+      staleTime: 30000, // Cache for 30 seconds
+    }
+  );
+
   // Submit vote mutation
   const submitVoteMutation = trpc.crucible.submitVote.useMutation({
     onError: (error) => {
@@ -88,7 +125,10 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
       if (isNetworkError) {
         setVoteError('Network error. Please check your connection and try again.');
-      } else if (error.message.includes('already voted') || error.message.includes('already being processed')) {
+      } else if (
+        error.message.includes('already voted') ||
+        error.message.includes('already being processed')
+      ) {
         // Race condition - silently fetch next pair
         setVoteError(null);
         refetchPair();
@@ -148,6 +188,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         });
 
         setSessionVotes((prev) => prev + 1);
+        setCurrentStreak((prev) => prev + 1); // Increment streak on vote
         setLastVoteAttempt(null);
         // Refetch immediately - UI feedback delay is handled in CrucibleJudgingUI (200ms)
         const result = await refetchPair();
@@ -175,6 +216,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
     setIsVoting(true);
     setSessionSkips((prev) => prev + 1);
+    setCurrentStreak(0); // Reset streak on skip
 
     // Track skipped entry IDs to exclude from next pair selection
     // Keep only the last 20 entries (~10 pairs) so skipped pairs can eventually return
@@ -346,19 +388,27 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 secondary={sessionSkips > 0 ? `${sessionSkips} skipped` : undefined}
               />
               <StatItem
-                label="Total Entries"
-                value={abbreviateNumber(entryCount)}
-                secondary={`${Math.max(0, Math.floor((entryCount * (entryCount - 1)) / 2))} possible pairs`}
+                label="Total Pairs Rated"
+                value={abbreviateNumber((judgeStats?.totalPairsRated ?? 0) + sessionVotes)}
+                secondary={
+                  judgeStats?.percentileRank
+                    ? `Top ${judgeStats.percentileRank}% of judges`
+                    : 'Keep judging!'
+                }
               />
               <StatItem
-                label="Prize Pool"
-                value={abbreviateNumber(totalPrizePool)}
-                secondary="Buzz"
+                label="Current Streak"
+                value={currentStreak > 0 ? `${currentStreak} pairs` : '0'}
+                secondary={currentStreak >= 5 ? '+2 influence score' : 'Vote to build streak'}
               />
               <StatItem
-                label="Session Progress"
-                value={sessionVotes > 0 ? 'Active' : 'Starting'}
-                secondary={sessionVotes > 0 ? `Keep going!` : 'Make your first vote'}
+                label="Your Influence"
+                value={(judgeStats?.influenceScore ?? 100).toString()}
+                secondary={
+                  (judgeStats?.influenceScore ?? 100) >= 150
+                    ? "You're influential!"
+                    : 'Growing influence'
+                }
               />
             </div>
           </Container>
@@ -396,7 +446,11 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         )}
 
         {allPairsJudged ? (
-          <EndCrucibleState crucibleId={id} crucibleName={crucible.name} sessionVotes={sessionVotes} />
+          <EndCrucibleState
+            crucibleId={id}
+            crucibleName={crucible.name}
+            sessionVotes={sessionVotes}
+          />
         ) : (
           <CrucibleJudgingUI
             pair={pair}
@@ -518,7 +572,10 @@ function SuggestedCrucibleCard({ id, name, entryFee, entryCount }: SuggestedCruc
   const pairsToJudge = Math.max(0, Math.floor((entryCount * (entryCount - 1)) / 2));
 
   return (
-    <Paper className="rounded-xl border border-[#373a40] p-6 text-left transition-all hover:border-blue-500 hover:-translate-y-0.5" bg="dark.7">
+    <Paper
+      className="rounded-xl border border-[#373a40] p-6 text-left transition-all hover:border-blue-500 hover:-translate-y-0.5"
+      bg="dark.7"
+    >
       <Text className="mb-4 text-lg font-bold text-white" lineClamp={1}>
         {name}
       </Text>
