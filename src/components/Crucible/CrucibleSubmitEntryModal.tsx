@@ -1,5 +1,4 @@
 import {
-  Badge,
   Button,
   Center,
   CloseButton,
@@ -16,7 +15,8 @@ import {
   IconBolt,
   IconCheck,
   IconCloudUpload,
-  IconEye,
+  IconCube,
+  IconEyeOff,
   IconPhoto,
   IconRefresh,
   IconSend,
@@ -46,6 +46,8 @@ export interface CrucibleSubmitEntryModalProps {
   entryLimit: number;
   nsfwLevel: number;
   currentEntryCount: number;
+  /** Optional array of allowed resource names to display in requirements */
+  allowedResourceNames?: string[];
   onSuccess?: () => void;
 }
 
@@ -162,6 +164,7 @@ export default function CrucibleSubmitEntryModal({
   entryLimit,
   nsfwLevel,
   currentEntryCount,
+  allowedResourceNames,
   onSuccess,
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
@@ -433,29 +436,65 @@ export default function CrucibleSubmitEntryModal({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6">
           {/* Entry Requirements */}
-          <div className="mb-4 rounded-lg border border-[#373a40] bg-[#2c2e33] p-3">
-            <Text size="xs" fw={600} tt="uppercase" className="mb-2 tracking-wide" c="dimmed">
+          <div className="mb-4 rounded-lg border border-[#373a40] bg-[#2c2e33] px-4 py-3">
+            <Text
+              size="xs"
+              fw={600}
+              tt="uppercase"
+              className="mb-2 tracking-wide"
+              c="dimmed"
+              style={{ fontSize: '0.7rem', letterSpacing: '0.5px' }}
+            >
               Entry Requirements
             </Text>
             <div className="flex flex-wrap gap-2">
-              <Badge
-                variant="light"
-                color="blue"
-                leftSection={<IconPhoto size={12} />}
-                radius="sm"
-                size="sm"
+              {/* Model Requirements Badge */}
+              <div
+                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5"
+                style={{
+                  background: 'rgba(34, 139, 230, 0.1)',
+                  border: '1px solid rgba(34, 139, 230, 0.3)',
+                  color: '#74c0fc',
+                  fontSize: '0.75rem',
+                }}
               >
-                Images only
-              </Badge>
-              <Badge
-                variant="light"
-                color="blue"
-                leftSection={<IconEye size={12} />}
-                radius="sm"
-                size="sm"
+                <IconCube size={14} />
+                <span>
+                  {allowedResourceNames && allowedResourceNames.length > 0
+                    ? allowedResourceNames.length === 1
+                      ? allowedResourceNames[0]
+                      : `${allowedResourceNames.length} models`
+                    : 'Any model'}
+                </span>
+              </div>
+
+              {/* Image Type Badge */}
+              <div
+                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5"
+                style={{
+                  background: 'rgba(34, 139, 230, 0.1)',
+                  border: '1px solid rgba(34, 139, 230, 0.3)',
+                  color: '#74c0fc',
+                  fontSize: '0.75rem',
+                }}
               >
-                {getNsfwLabel(nsfwLevel)} content
-              </Badge>
+                <IconPhoto size={14} />
+                <span>Images only</span>
+              </div>
+
+              {/* Content Level Badge */}
+              <div
+                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5"
+                style={{
+                  background: 'rgba(34, 139, 230, 0.1)',
+                  border: '1px solid rgba(34, 139, 230, 0.3)',
+                  color: '#74c0fc',
+                  fontSize: '0.75rem',
+                }}
+              >
+                <IconEyeOff size={14} />
+                <span>{getNsfwLabel(nsfwLevel)} only</span>
+              </div>
             </div>
           </div>
 
