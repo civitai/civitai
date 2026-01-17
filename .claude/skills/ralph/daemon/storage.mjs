@@ -71,7 +71,8 @@ export class SessionStorage {
       maxTurns: session.maxTurns || 100,
       currentStoryId: null,
       currentStoryTitle: null,
-      turnCount: 0,
+      turnCount: 0,        // Total turns across all stories in the session
+      storyTurnCount: 0,   // Turns in the current story (resets each story)
       storiesCompleted: 0,
       storiesTotal: session.storiesTotal || 0,
       tokensInput: 0,

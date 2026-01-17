@@ -173,8 +173,9 @@ function formatOutput(data, options = {}) {
       const progress = `${s.storiesCompleted || 0}/${s.storiesTotal || 0}`;
       const parent = s.parentId ? ` (child of ${s.parentId})` : '';
       const children = s.childIds?.length ? ` [${s.childIds.length} children]` : '';
+      const storyTurns = s.storyTurnCount || 0;
       console.log(`  ${s.status.padEnd(10)} ${s.id}${parent}${children}`);
-      console.log(`             ${s.name || 'Unnamed'} - ${progress} stories, turn ${s.turnCount || 0}/${s.maxTurns || 100}`);
+      console.log(`             ${s.name || 'Unnamed'} - ${progress} stories, story turn ${storyTurns}/${s.maxTurns || 100} (total: ${s.turnCount || 0})`);
     }
     return;
   }
@@ -187,7 +188,7 @@ function formatOutput(data, options = {}) {
       console.log(`  Story:    ${data.currentStory.id} - ${data.currentStory.title}`);
     }
     console.log(`  Progress: ${data.progress.storiesCompleted}/${data.progress.storiesTotal} stories`);
-    console.log(`  Turns:    ${data.progress.turnCount}/${data.progress.maxTurns}`);
+    console.log(`  Turns:    ${data.progress.storyTurnCount || 0}/${data.progress.maxTurns} (story), ${data.progress.turnCount} total`);
     if (data.lock) {
       console.log(`  Locked:   By ${data.lock.holder} (${data.lock.reason || 'no reason'})`);
     }

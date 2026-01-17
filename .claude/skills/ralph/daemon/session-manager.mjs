@@ -536,6 +536,7 @@ export class SessionManager extends EventEmitter {
         storiesCompleted: session.storiesCompleted,
         storiesTotal: session.storiesTotal,
         turnCount: session.turnCount,
+        storyTurnCount: session.storyTurnCount,
         maxTurns: session.maxTurns,
       },
       timing: {

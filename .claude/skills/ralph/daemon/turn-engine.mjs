@@ -183,10 +183,11 @@ export class TurnEngine extends EventEmitter {
         break;
       }
 
-      // Update current story in session
+      // Update current story in session and reset per-story turn counter
       this.storage.updateSession(this.sessionId, {
         currentStoryId: this.currentStory.id,
         currentStoryTitle: this.currentStory.title,
+        storyTurnCount: 0,
       });
 
       // Log iteration banner
@@ -271,9 +272,11 @@ export class TurnEngine extends EventEmitter {
           toolOutput: typeof toolOutput === 'string' ? toolOutput.substring(0, 10000) : JSON.stringify(toolOutput).substring(0, 10000),
         });
 
-        // Update session turn count
+        // Update session turn counts (both total and per-story)
+        const currentSession = this.storage.getSession(this.sessionId);
         this.storage.updateSession(this.sessionId, {
-          turnCount: (this.session.turnCount || 0) + 1,
+          turnCount: (currentSession.turnCount || 0) + 1,
+          storyTurnCount: (currentSession.storyTurnCount || 0) + 1,
         });
 
         // Log to streaming with context

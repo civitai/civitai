@@ -902,7 +902,8 @@
 
     function renderSessionCard(s, isChild = false) {
       const progress = s.storiesTotal > 0 ? Math.round((s.storiesCompleted / s.storiesTotal) * 100) : 0;
-      const turnProgress = s.maxTurns > 0 ? Math.round((s.turnCount / s.maxTurns) * 100) : 0;
+      const storyTurns = s.storyTurnCount || 0;
+      const turnProgress = s.maxTurns > 0 ? Math.round((storyTurns / s.maxTurns) * 100) : 0;
 
       return `
         <div class="session-card ${s.status}${isChild ? ' is-child' : ''}" data-id="${s.id}">
@@ -942,8 +943,8 @@
                 <span class="stat-value">${s.storiesCompleted || 0}/${s.storiesTotal || 0} stories</span>
               </div>
               <div class="stat">
-                <span class="stat-label">Turns</span>
-                <span class="stat-value ${turnProgress > 90 ? 'danger' : turnProgress > 70 ? 'warning' : ''}">${s.turnCount || 0}/${s.maxTurns || 100}</span>
+                <span class="stat-label">Story Turns</span>
+                <span class="stat-value ${turnProgress > 90 ? 'danger' : turnProgress > 70 ? 'warning' : ''}" title="Total session turns: ${s.turnCount || 0}">${storyTurns}/${s.maxTurns || 100}</span>
               </div>
               <div class="stat">
                 <span class="stat-label">Health</span>
@@ -1019,6 +1020,7 @@
       if (!logsEl) return;
 
       logsEl.innerHTML = renderLogEntries(sessionId);
+      logsEl.scrollTop = logsEl.scrollHeight;
     }
 
     function renderLogEntries(sessionId) {
@@ -1026,8 +1028,7 @@
       if (logs.length === 0) {
         return '<div class="log-entry" style="color: var(--text-secondary)">Waiting for logs...</div>';
       }
-      // Newest first - take last 100, then reverse so newest is at top
-      return logs.slice(-100).reverse().map(log => `
+      return logs.slice(-100).map(log => `
         <div class="log-entry ${log.level}">
           <span class="time">${log.time}</span>
           <span class="message">${escapeHtml(log.message)}</span>
