@@ -919,6 +919,9 @@ export const REDIS_KEYS = {
   QUEUES: {
     SEEN_IMAGES: 'queues:recent-images',
   },
+  CRUCIBLE: {
+    USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

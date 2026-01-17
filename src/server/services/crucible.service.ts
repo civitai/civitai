@@ -28,8 +28,10 @@ import type {
   CancelCrucibleSchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getEntryElo,
   CRUCIBLE_DEFAULT_ELO,
@@ -1646,6 +1648,14 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       log(
         `Distributed prizes for crucible ${crucibleId}: ${prizeWinners.length} winners, ${result.transactions.length} transactions`
       );
+
+      // Invalidate buzz won cache for all winners so their stats reflect the new prize
+      const uniqueWinnerUserIds = [...new Set(prizeWinners.map((w) => w.userId))];
+      await Promise.all(
+        uniqueWinnerUserIds.map((winnerId) =>
+          redis.del(`${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${winnerId}`)
+        )
+      );
     } catch (error) {
       // Log the error but don't fail finalization - prizes can be manually distributed
       log(
@@ -2027,18 +2037,23 @@ export const getUserCrucibleStats = async ({
 
   const winRate = totalCrucibles > 0 ? Math.round((cruciblesWon / totalCrucibles) * 100) : 0;
 
-  // Calculate total Buzz won
-  // Query buzz transactions for crucible prizes
-  // Note: Prize transactions have type 'Reward' and description matching 'Crucible prize'
-  const buzzWonResult = await dbRead.$queryRaw<[{ total: bigint }]>`
-    SELECT COALESCE(SUM(amount), 0) as total
-    FROM "BuzzTransaction"
-    WHERE "toUserId" = ${userId}
-      AND type = 'Reward'
-      AND description LIKE 'Crucible prize%'
-  `;
-
-  const buzzWon = Number(buzzWonResult[0]?.total ?? 0);
+  // Calculate total Buzz won from crucible prizes
+  // Uses externalTransactionId prefix which is more specific and potentially better indexed
+  // Results are cached since prize totals only change when new crucibles complete
+  const cacheKey = `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${userId}` as RedisKeyTemplateCache;
+  const buzzWon = await fetchThroughCache(
+    cacheKey,
+    async () => {
+      const buzzWonResult = await dbRead.$queryRaw<[{ total: bigint }]>`
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM "BuzzTransaction"
+        WHERE "toUserId" = ${userId}
+          AND "externalTransactionId" LIKE 'crucible-prize-%'
+      `;
+      return Number(buzzWonResult[0]?.total ?? 0);
+    },
+    { ttl: CacheTTL.hour }
+  );
 
   return {
     totalCrucibles,
