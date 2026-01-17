@@ -446,13 +446,50 @@
 
     .log-entry.error { color: var(--danger); }
     .log-entry.warn { color: var(--warning); }
-    .log-entry.tool { color: var(--accent); font-weight: 500; }
+    .log-entry.tool { color: var(--accent); font-weight: 500; flex-wrap: wrap; }
     .log-entry.result { color: var(--text-secondary); padding-left: 20px; font-size: 0.75rem; }
     .log-entry.text { color: var(--success); font-style: italic; }
     .log-entry.inject { color: #ff79c6; font-weight: 500; } /* Pink for injections */
     .log-entry.story { color: var(--success); font-weight: 600; background: rgba(0, 255, 136, 0.1); padding: 4px 8px; border-radius: 4px; margin: 4px 0; }
     .log-entry.info { color: var(--text-primary); }
     .log-entry.debug { color: var(--text-secondary); opacity: 0.7; }
+
+    /* Tool call formatting */
+    .tool-name {
+      background: var(--accent);
+      color: var(--bg-primary);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .tool-inputs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+    .tool-desc {
+      color: var(--text-primary);
+      font-weight: 400;
+      font-style: italic;
+    }
+    .tool-badge {
+      background: rgba(100, 100, 100, 0.3);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+    .tool-key {
+      color: var(--accent);
+      margin-right: 4px;
+    }
+    .tool-key::after {
+      content: ':';
+    }
 
     .empty-state {
       text-align: center;
@@ -825,17 +862,12 @@
         });
         // Keep last 500 logs
         if (logs.length > 500) logs.shift();
-      } else if (data.event === 'text') {
-        logs.push({
-          time: new Date().toLocaleTimeString(),
-          level: 'text',
-          message: data.text?.substring(0, 200) || ''
-        });
       } else if (data.event === 'toolUse') {
         logs.push({
           time: new Date().toLocaleTimeString(),
           level: 'tool',
-          message: `[${data.tool}] ${JSON.stringify(data.input || {}).substring(0, 100)}`
+          tool: data.tool,
+          input: data.input || {}
         });
       }
 
@@ -1023,17 +1055,63 @@
       logsEl.scrollTop = logsEl.scrollHeight;
     }
 
+    function formatToolInput(tool, input) {
+      const parts = [];
+
+      // Show description first if available (full text)
+      if (input.description) {
+        parts.push(`<span class="tool-desc">${escapeHtml(input.description)}</span>`);
+      }
+
+      // Format other keys as badges
+      const skipKeys = ['description'];
+      const keyOrder = ['command', 'file_path', 'pattern', 'query', 'path', 'content', 'old_string', 'new_string'];
+
+      // Sort keys: prioritized keys first, then others
+      const keys = Object.keys(input).filter(k => !skipKeys.includes(k));
+      keys.sort((a, b) => {
+        const aIdx = keyOrder.indexOf(a);
+        const bIdx = keyOrder.indexOf(b);
+        if (aIdx === -1 && bIdx === -1) return 0;
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+
+      for (const key of keys) {
+        let value = input[key];
+        if (typeof value === 'object') value = JSON.stringify(value);
+        if (typeof value === 'string' && value.length > 60) {
+          value = value.substring(0, 60) + '…';
+        }
+        parts.push(`<span class="tool-badge"><span class="tool-key">${escapeHtml(key)}</span>${escapeHtml(String(value))}</span>`);
+      }
+
+      return parts.join(' ');
+    }
+
     function renderLogEntries(sessionId) {
       const logs = sessionLogs.get(sessionId) || [];
       if (logs.length === 0) {
         return '<div class="log-entry" style="color: var(--text-secondary)">Waiting for logs...</div>';
       }
-      return logs.slice(-100).map(log => `
-        <div class="log-entry ${log.level}">
-          <span class="time">${log.time}</span>
-          <span class="message">${escapeHtml(log.message)}</span>
-        </div>
-      `).join('');
+      return logs.slice(-100).map(log => {
+        if (log.level === 'tool' && log.tool) {
+          return `
+            <div class="log-entry tool">
+              <span class="time">${log.time}</span>
+              <span class="tool-name">${escapeHtml(log.tool)}</span>
+              <span class="tool-inputs">${formatToolInput(log.tool, log.input)}</span>
+            </div>
+          `;
+        }
+        return `
+          <div class="log-entry ${log.level}">
+            <span class="time">${log.time}</span>
+            <span class="message">${escapeHtml(log.message)}</span>
+          </div>
+        `;
+      }).join('');
     }
 
     function clearLogs(sessionId) {

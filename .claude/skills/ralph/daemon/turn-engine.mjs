@@ -279,23 +279,6 @@ export class TurnEngine extends EventEmitter {
           storyTurnCount: (currentSession.storyTurnCount || 0) + 1,
         });
 
-        // Log to streaming with context
-        const context = this.getToolContext(toolName, toolInput);
-        const percentUsed = Math.round((this.currentTurn / this.options.maxTurns) * 100);
-        const contextStr = context ? ` ${context}` : '';
-        this.log('tool', `[${this.currentTurn}/${this.options.maxTurns} ${percentUsed}%] ${toolName}${contextStr}`, {
-          toolName,
-          input: toolInput,
-        });
-
-        // Log output snippet if available
-        if (toolOutput) {
-          const outputSnippet = this.formatToolOutput(toolOutput, 300);
-          if (outputSnippet) {
-            this.log('result', outputSnippet, { toolName });
-          }
-        }
-
         // Check for sensitive operations
         if (this.options.sensitiveToolsEnabled && this.isSensitiveTool(toolName, toolInput)) {
           this.log('warn', `Sensitive operation detected: ${toolName}`);
@@ -344,10 +327,10 @@ export class TurnEngine extends EventEmitter {
           hooks: {
             PostToolUse: [{
               hooks: [async (context) => {
-                // Extract tool info from context if available
-                const toolName = context?.toolName || 'unknown';
-                const toolInput = context?.input || {};
-                const toolOutput = context?.output || '';
+                // Extract tool info from context (SDK uses snake_case)
+                const toolName = context?.tool_name || 'unknown';
+                const toolInput = context?.tool_input || {};
+                const toolOutput = context?.tool_response || '';
                 return turnHook(toolName, toolInput, toolOutput);
               }]
             }]
@@ -361,11 +344,10 @@ export class TurnEngine extends EventEmitter {
             for (const block of content) {
               if (block.type === 'text' && block.text) {
                 fullResponse += block.text;
-                // Only log meaningful text (skip very short fragments)
+                // Log full text for CLI access (skip very short fragments)
                 if (block.text.trim().length > 10) {
-                  this.log('text', block.text.substring(0, 400));
+                  this.log('text', block.text);
                 }
-                this.emit('text', { sessionId: this.sessionId, text: block.text });
               }
               if (block.type === 'tool_use') {
                 this.emit('toolUse', {
