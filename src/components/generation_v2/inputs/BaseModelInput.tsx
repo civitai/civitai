@@ -2,15 +2,31 @@
  * BaseModelInput
  *
  * A form input component for selecting the base model group for generation.
+ * Uses Popover on desktop and dialogStore modal on mobile.
  * When the base model changes, it notifies the ResourceDataProvider to
  * re-evaluate resource compatibility.
  */
 
-import { Badge, Divider, Group, Modal, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import {
+  Badge,
+  Divider,
+  Group,
+  Modal,
+  Popover,
+  Stack,
+  Switch,
+  Text,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
 import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { IconCheck, IconChevronDown, IconArrowRight } from '@tabler/icons-react';
+import { useState } from 'react';
 import clsx from 'clsx';
-import { useCallback, useMemo } from 'react';
+import { forwardRef, useCallback, useMemo } from 'react';
+
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   ecosystems,
   ecosystemByKey,
@@ -59,7 +75,252 @@ type FamilyGroup = {
 // =============================================================================
 
 const RECENT_ECOSYSTEMS_KEY = 'generation-recent-ecosystems';
-const MAX_RECENT_ECOSYSTEMS = 3;
+const MAX_RECENT_DISPLAY = 3;
+
+// =============================================================================
+// Trigger Button
+// =============================================================================
+
+interface TriggerButtonProps {
+  label: string;
+  disabled?: boolean;
+  opened?: boolean;
+  onClick: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+}
+
+const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
+  ({ label, disabled, opened, onClick, onMouseEnter, onMouseLeave }, ref) => {
+    return (
+      <UnstyledButton
+        ref={ref}
+        onClick={onClick}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        disabled={disabled}
+        className={clsx(
+          'relative flex min-w-0 items-center gap-1.5 rounded-md border px-3 py-1.5 transition-colors',
+          'border-gray-3 bg-white text-gray-7 hover:border-blue-3',
+          'dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
+          disabled && 'cursor-not-allowed opacity-50',
+          opened &&
+            'ring-2 ring-blue-5/20 after:absolute after:-bottom-2 after:left-0 after:h-2 after:w-full'
+        )}
+      >
+        <Text size="sm" fw={500} className="min-w-0 truncate">
+          {label}
+        </Text>
+        <IconChevronDown
+          size={14}
+          className={clsx('shrink-0 text-gray-5 transition-transform', opened && 'rotate-180')}
+        />
+      </UnstyledButton>
+    );
+  }
+);
+
+TriggerButton.displayName = 'TriggerButton';
+
+// =============================================================================
+// List Content (shared between Popover and Modal)
+// =============================================================================
+
+interface BaseModelListContentProps {
+  value?: string;
+  recentItems: EcosystemItem[];
+  groupedByFamily: FamilyGroup[];
+  targetWorkflow?: string;
+  onSelect: (key: string) => void;
+  /** Whether there are any incompatible items (to show the toggle) */
+  hasIncompatibleItems?: boolean;
+}
+
+function BaseModelListContent({
+  value,
+  recentItems,
+  groupedByFamily,
+  targetWorkflow,
+  onSelect,
+  hasIncompatibleItems,
+}: BaseModelListContentProps) {
+  const [showAll, setShowAll] = useState(false);
+
+  // Filter grouped items based on toggle state
+  const filteredGroups = useMemo(() => {
+    if (showAll) return groupedByFamily;
+
+    return groupedByFamily
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.compatible),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [groupedByFamily, showAll]);
+
+  return (
+    <Stack gap="md">
+      {/* Header row: Recent label (if any) and toggle */}
+      {(recentItems.length > 0 || hasIncompatibleItems) && (
+        <Group justify="space-between">
+          {recentItems.length > 0 && (
+            <Text size="xs" c="dimmed" fw={500}>
+              Recent
+            </Text>
+          )}
+          {hasIncompatibleItems && (
+            <Switch
+              label="Show all"
+              size="xs"
+              checked={showAll}
+              onChange={(e) => setShowAll(e.currentTarget.checked)}
+              className={recentItems.length === 0 ? 'ml-auto' : ''}
+            />
+          )}
+        </Group>
+      )}
+
+      {/* Recent selections as inline badges (always compatible) */}
+      {recentItems.length > 0 && (
+        <>
+          <Group gap="xs">
+            {recentItems.map((item) => (
+              <Badge
+                key={item.key}
+                component="button"
+                onClick={() => onSelect(item.key)}
+                variant={value === item.key ? 'filled' : 'outline'}
+                color={value === item.key ? 'blue' : 'gray'}
+                size="sm"
+                radius="sm"
+                className="cursor-pointer"
+              >
+                {item.name}
+              </Badge>
+            ))}
+          </Group>
+          <Divider />
+        </>
+      )}
+
+      {/* All models grouped by family */}
+      {filteredGroups.map((familyGroup) => (
+        <div key={familyGroup.familyId ?? 'standalone'}>
+          {/* Family header */}
+          <Text size="xs" c="dimmed" fw={600} tt="uppercase" className="mb-2">
+            {familyGroup.familyName ?? 'Other'}
+          </Text>
+
+          {/* List of ecosystems */}
+          <Stack gap={0}>
+            {familyGroup.items.map((item) => {
+              const isSelected = value === item.key;
+              const button = (
+                <UnstyledButton
+                  key={item.key}
+                  onClick={() => onSelect(item.key)}
+                  className={clsx(
+                    'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
+                    isSelected
+                      ? 'bg-blue-0 dark:bg-blue-9/20'
+                      : 'hover:bg-gray-1 dark:hover:bg-dark-5',
+                    !item.compatible && 'opacity-60'
+                  )}
+                >
+                  <div className="flex-1">
+                    <Text size="sm" fw={isSelected ? 600 : 400}>
+                      {item.name}
+                    </Text>
+                    {item.description && (
+                      <Text size="xs" c="dimmed" lineClamp={1}>
+                        {item.description}
+                      </Text>
+                    )}
+                  </div>
+                  {isSelected && <IconCheck size={16} className="text-blue-6" />}
+                  {!item.compatible && !isSelected && (
+                    <IconArrowRight size={14} className="text-gray-5" />
+                  )}
+                </UnstyledButton>
+              );
+
+              // Show tooltip for incompatible ecosystems
+              if (!item.compatible && targetWorkflow) {
+                return (
+                  <Tooltip
+                    key={item.key}
+                    label={`Will switch to ${targetWorkflow}`}
+                    position="right"
+                    withArrow
+                    openDelay={300}
+                  >
+                    {button}
+                  </Tooltip>
+                );
+              }
+
+              return button;
+            })}
+          </Stack>
+        </div>
+      ))}
+    </Stack>
+  );
+}
+
+// =============================================================================
+// Mobile Modal Component (for dialogStore)
+// =============================================================================
+
+interface BaseModelSelectModalProps {
+  value?: string;
+  recentItems: EcosystemItem[];
+  groupedByFamily: FamilyGroup[];
+  targetWorkflow?: string;
+  onSelect: (key: string) => void;
+  hasIncompatibleItems?: boolean;
+}
+
+function BaseModelSelectModal({
+  value,
+  recentItems,
+  groupedByFamily,
+  targetWorkflow,
+  onSelect,
+  hasIncompatibleItems,
+}: BaseModelSelectModalProps) {
+  const dialog = useDialogContext();
+
+  const handleSelect = (key: string) => {
+    onSelect(key);
+    dialog.onClose();
+  };
+
+  return (
+    <Modal
+      {...dialog}
+      onClose={dialog.onClose}
+      title="Select Base Model"
+      fullScreen
+      styles={{
+        header: {
+          borderBottom: '1px solid var(--mantine-color-default-border)',
+        },
+      }}
+    >
+      <div className="pt-4">
+        <BaseModelListContent
+          value={value}
+          recentItems={recentItems}
+          groupedByFamily={groupedByFamily}
+          targetWorkflow={targetWorkflow}
+          onSelect={handleSelect}
+          hasIncompatibleItems={hasIncompatibleItems}
+        />
+      </div>
+    </Modal>
+  );
+}
 
 // =============================================================================
 // Component
@@ -68,7 +329,6 @@ const MAX_RECENT_ECOSYSTEMS = 3;
 export function BaseModelInput({
   value,
   onChange,
-  label = 'Base Model',
   compatibleEcosystems,
   disabled,
   isCompatible,
@@ -76,18 +336,18 @@ export function BaseModelInput({
   outputType,
 }: BaseModelInputProps) {
   const isMobile = useMediaQuery('(max-width: 768px)');
-  const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
+  const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
   const [recentEcosystems, setRecentEcosystems] = useLocalStorage<string[]>({
     key: RECENT_ECOSYSTEMS_KEY,
     defaultValue: [],
   });
 
-  // Track selection in recent ecosystems
+  // Track selection in recent ecosystems (keeps all unique selections, most recent first)
   const trackRecentSelection = useCallback(
     (ecosystem: string) => {
       setRecentEcosystems((prev) => {
         const filtered = prev.filter((e) => e !== ecosystem);
-        return [ecosystem, ...filtered].slice(0, MAX_RECENT_ECOSYSTEMS);
+        return [ecosystem, ...filtered];
       });
     },
     [setRecentEcosystems]
@@ -141,6 +401,11 @@ export function BaseModelInput({
       });
   }, [supportedEcosystems, isCompatible, outputTypeEcosystems]);
 
+  // Check if there are any incompatible items (to show the toggle)
+  const hasIncompatibleItems = useMemo(() => {
+    return items.some((item) => !item.compatible);
+  }, [items]);
+
   // Get readable name for current value
   const readableName = useMemo(() => {
     const eco = value ? ecosystemByKey.get(value) : undefined;
@@ -193,155 +458,87 @@ export function BaseModelInput({
   const handleSelect = (key: string) => {
     onChange?.(key);
     trackRecentSelection(key);
-    closeModal();
+    closePopover();
   };
 
-  // Get recent items that are in the current supported ecosystems
+  // Get recent items - filter for compatible ones first, then take up to MAX_RECENT_DISPLAY
   const recentItems = useMemo(() => {
     return recentEcosystems
-      .filter((eco) => items.some((item) => item.key === eco))
-      .map((eco) => items.find((item) => item.key === eco)!)
-      .filter(Boolean);
+      .map((eco) => items.find((item) => item.key === eco))
+      .filter((item): item is EcosystemItem => item !== undefined && item.compatible)
+      .slice(0, MAX_RECENT_DISPLAY);
   }, [recentEcosystems, items]);
 
+  const openMobileModal = () => {
+    dialogStore.trigger({
+      id: 'basemodel-select',
+      component: BaseModelSelectModal,
+      props: {
+        value,
+        recentItems,
+        groupedByFamily,
+        targetWorkflow,
+        hasIncompatibleItems,
+        onSelect: (key: string) => {
+          onChange?.(key);
+          trackRecentSelection(key);
+        },
+      },
+    });
+  };
+
+  // Mobile: use dialogStore modal
+  if (isMobile) {
+    return (
+      <TriggerButton
+        label={readableName}
+        disabled={disabled}
+        opened={false}
+        onClick={openMobileModal}
+      />
+    );
+  }
+
+  // Desktop: use Popover with hover
+  const handleMouseEnter = () => {
+    if (!disabled) {
+      openPopover();
+    }
+  };
+
   return (
-    <>
-      <div className="flex items-center gap-1">
-        <Text size="sm" c="dimmed">
-          {label}:
-        </Text>
-        {disabled ? (
-          <Text size="sm" fw={500}>
-            {readableName}
-          </Text>
-        ) : (
-          <UnstyledButton onClick={openModal} className="group flex items-center gap-0.5">
-            <Text
-              size="sm"
-              fw={500}
-              className="underline decoration-dotted underline-offset-2 group-hover:decoration-solid"
-            >
-              {readableName}
-            </Text>
-            <IconChevronDown size={14} className="text-gray-500" />
-          </UnstyledButton>
-        )}
-      </div>
-
-      <Modal
-        opened={modalOpened}
-        onClose={closeModal}
-        title="Select Base Model"
-        size="md"
-        fullScreen={isMobile}
+    <Popover
+      opened={popoverOpened}
+      onChange={(isOpen) => !isOpen && closePopover()}
+      position="bottom-start"
+      shadow="md"
+      withinPortal
+    >
+      <Popover.Target>
+        <TriggerButton
+          label={readableName}
+          disabled={disabled}
+          opened={popoverOpened}
+          onClick={() => undefined}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={closePopover}
+        />
+      </Popover.Target>
+      <Popover.Dropdown
+        p="sm"
+        className="max-h-[70vh] min-w-[280px] overflow-y-auto before:absolute before:-top-2 before:left-0 before:h-2 before:w-full"
+        onMouseEnter={openPopover}
+        onMouseLeave={closePopover}
       >
-        <Stack gap="md">
-          {/* Recent selections as inline badges */}
-          {recentItems.length > 0 && (
-            <>
-              <Group gap="xs">
-                <Text size="xs" c="dimmed" fw={500}>
-                  Recent
-                </Text>
-                {recentItems.map((item) => {
-                  const badge = (
-                    <Badge
-                      key={item.key}
-                      component="button"
-                      onClick={() => handleSelect(item.key)}
-                      variant={value === item.key ? 'filled' : 'outline'}
-                      color={value === item.key ? 'blue' : 'gray'}
-                      size="sm"
-                      radius="sm"
-                      className={clsx('cursor-pointer', !item.compatible && 'opacity-60')}
-                    >
-                      {item.name}
-                    </Badge>
-                  );
-
-                  if (!item.compatible && targetWorkflow) {
-                    return (
-                      <Tooltip
-                        key={item.key}
-                        label={`Will switch to ${targetWorkflow}`}
-                        withArrow
-                        openDelay={300}
-                      >
-                        {badge}
-                      </Tooltip>
-                    );
-                  }
-
-                  return badge;
-                })}
-              </Group>
-              <Divider />
-            </>
-          )}
-
-          {/* All models grouped by family */}
-          {groupedByFamily.map((familyGroup) => (
-            <div key={familyGroup.familyId ?? 'standalone'}>
-              {/* Family header */}
-              <Text size="xs" c="dimmed" fw={600} tt="uppercase" className="mb-2">
-                {familyGroup.familyName ?? 'Other'}
-              </Text>
-
-              {/* List of ecosystems */}
-              <Stack gap={0}>
-                {familyGroup.items.map((item) => {
-                  const isSelected = value === item.key;
-                  const button = (
-                    <UnstyledButton
-                      key={item.key}
-                      onClick={() => handleSelect(item.key)}
-                      className={clsx(
-                        'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
-                        isSelected
-                          ? 'bg-blue-0 dark:bg-blue-9/20'
-                          : 'hover:bg-gray-0 dark:hover:bg-dark-6',
-                        !item.compatible && 'opacity-60'
-                      )}
-                    >
-                      <div className="flex-1">
-                        <Text size="sm" fw={isSelected ? 600 : 400}>
-                          {item.name}
-                        </Text>
-                        {item.description && (
-                          <Text size="xs" c="dimmed" lineClamp={1}>
-                            {item.description}
-                          </Text>
-                        )}
-                      </div>
-                      {isSelected && <IconCheck size={16} className="text-blue-6" />}
-                      {!item.compatible && !isSelected && (
-                        <IconArrowRight size={14} className="text-gray-5" />
-                      )}
-                    </UnstyledButton>
-                  );
-
-                  // Show tooltip for incompatible ecosystems
-                  if (!item.compatible && targetWorkflow) {
-                    return (
-                      <Tooltip
-                        key={item.key}
-                        label={`Will switch to ${targetWorkflow}`}
-                        position="right"
-                        withArrow
-                        openDelay={300}
-                      >
-                        {button}
-                      </Tooltip>
-                    );
-                  }
-
-                  return button;
-                })}
-              </Stack>
-            </div>
-          ))}
-        </Stack>
-      </Modal>
-    </>
+        <BaseModelListContent
+          value={value}
+          recentItems={recentItems}
+          groupedByFamily={groupedByFamily}
+          targetWorkflow={targetWorkflow}
+          onSelect={handleSelect}
+          hasIncompatibleItems={hasIncompatibleItems}
+        />
+      </Popover.Dropdown>
+    </Popover>
   );
 }

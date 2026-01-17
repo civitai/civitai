@@ -95,7 +95,6 @@ export function ImageUploadMultipleInput({
           warnOnMissingAiMetadata={warnOnMissingAiMetadata}
           aspectRatios={aspectRatios}
           cropToFirstImage={cropToFirstImage}
-          error={typeof error === 'string' ? error : undefined}
           disabled={disabled}
         />
       </Input.Wrapper>
@@ -119,7 +118,6 @@ export function ImageUploadMultipleInput({
           warnOnMissingAiMetadata={warnOnMissingAiMetadata}
           aspectRatios={aspectRatios}
           cropToFirstImage={cropToFirstImage}
-          error={typeof error === 'string' ? error : undefined}
           disabled={disabled}
         />
       </Input.Wrapper>
@@ -146,7 +144,6 @@ export function ImageUploadMultipleInput({
         warnOnMissingAiMetadata={warnOnMissingAiMetadata}
         aspectRatios={aspectRatios}
         cropToFirstImage={cropToFirstImage}
-        error={typeof error === 'string' ? error : undefined}
         disabled={disabled}
       >
         {(previewItems) => {

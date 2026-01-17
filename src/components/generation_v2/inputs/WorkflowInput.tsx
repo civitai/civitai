@@ -3,15 +3,27 @@
  *
  * A form input for selecting generation features (workflows).
  * Displays inline menu cards for Image and Video features, each opening their own dropdown.
+ * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import { IconChevronDown, IconCheck, IconPhoto, IconVideo, IconArrowRight } from '@tabler/icons-react';
+import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
+import {
+  IconChevronDown,
+  IconCheck,
+  IconPhoto,
+  IconVideo,
+  IconArrowRight,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { forwardRef, useMemo } from 'react';
 
-import { getAllWorkflowsGrouped } from '~/shared/data-graph/generation/workflows';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import {
+  getAllWorkflowsGrouped,
+  workflowOptionById,
+} from '~/shared/data-graph/generation/workflows';
 
 // =============================================================================
 // Types
@@ -113,20 +125,24 @@ interface WorkflowTypeButtonProps {
   opened: boolean;
   disabled?: boolean;
   onClick: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 
 const WorkflowTypeButton = forwardRef<HTMLButtonElement, WorkflowTypeButtonProps>(
-  ({ icon, label, isActive, opened, disabled, onClick }, ref) => {
+  ({ icon, label, isActive, opened, disabled, onClick, onMouseEnter, onMouseLeave }, ref) => {
     return (
       <UnstyledButton
         ref={ref}
         onClick={onClick}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
         disabled={disabled}
         className={clsx(
           'flex items-center gap-1.5 rounded-md border px-3 py-1.5 transition-colors',
           isActive
             ? 'border-blue-5 bg-blue-0 text-blue-7 dark:border-blue-6 dark:bg-blue-9/20 dark:text-blue-4'
-            : 'border-gray-3 bg-white text-gray-7 hover:border-gray-4 hover:bg-gray-0 dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
+            : 'border-gray-3 bg-white text-gray-7 hover:border-blue-3 dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
           disabled && 'cursor-not-allowed opacity-50',
           opened && 'ring-2 ring-blue-5/20'
         )}
@@ -147,22 +163,22 @@ const WorkflowTypeButton = forwardRef<HTMLButtonElement, WorkflowTypeButtonProps
 WorkflowTypeButton.displayName = 'WorkflowTypeButton';
 
 // =============================================================================
-// Workflow Popover Content
+// Workflow List Content (shared between Popover and Modal)
 // =============================================================================
 
-interface WorkflowPopoverProps {
+interface WorkflowListContentProps {
   categories: WorkflowCategoryGroup[];
   selectedValue?: string;
   onSelect: (workflowId: string) => void;
   isCompatible?: (workflowId: string) => boolean;
 }
 
-function WorkflowPopoverContent({
+function WorkflowListContent({
   categories,
   selectedValue,
   onSelect,
   isCompatible,
-}: WorkflowPopoverProps) {
+}: WorkflowListContentProps) {
   // Flatten all workflows with compatibility info
   const allWorkflows = useMemo(() => {
     const workflows: Array<{ workflow: WorkflowOption; compatible: boolean }> = [];
@@ -193,6 +209,95 @@ function WorkflowPopoverContent({
 }
 
 // =============================================================================
+// Mobile Modal Component (for dialogStore)
+// =============================================================================
+
+interface WorkflowSelectModalProps {
+  title: string;
+  categories: WorkflowCategoryGroup[];
+  selectedValue?: string;
+  onSelect: (workflowId: string) => void;
+  isCompatible?: (workflowId: string) => boolean;
+}
+
+function WorkflowSelectModal({
+  title,
+  categories,
+  selectedValue,
+  onSelect,
+  isCompatible,
+}: WorkflowSelectModalProps) {
+  const dialog = useDialogContext();
+
+  const handleSelect = (workflowId: string) => {
+    onSelect(workflowId);
+    dialog.onClose();
+  };
+
+  return (
+    <Modal
+      {...dialog}
+      onClose={dialog.onClose}
+      title={title}
+      fullScreen
+      styles={{
+        header: {
+          borderBottom: '1px solid var(--mantine-color-default-border)',
+        },
+      }}
+    >
+      <Stack gap="xs" pt="md">
+        <WorkflowListContent
+          categories={categories}
+          selectedValue={selectedValue}
+          onSelect={handleSelect}
+          isCompatible={isCompatible}
+        />
+      </Stack>
+    </Modal>
+  );
+}
+
+// =============================================================================
+// Selected Workflow Display (standalone component)
+// =============================================================================
+
+export interface SelectedWorkflowDisplayProps {
+  /** The workflow ID to display */
+  workflowId?: string;
+  /** Additional class name */
+  className?: string;
+}
+
+/**
+ * Displays the currently selected workflow with its label and description.
+ * Can be used independently from WorkflowInput.
+ */
+export function SelectedWorkflowDisplay({ workflowId, className }: SelectedWorkflowDisplayProps) {
+  const workflow = workflowId ? workflowOptionById.get(workflowId) : undefined;
+
+  if (!workflow) return null;
+
+  return (
+    <div
+      className={clsx(
+        'rounded-lg border border-gray-2 bg-gray-0 px-3 py-2.5 dark:border-dark-4 dark:bg-dark-6',
+        className
+      )}
+    >
+      <Text size="md" fw={600} className="leading-tight">
+        {workflow.label}
+      </Text>
+      {workflow.description && (
+        <Text size="sm" c="dimmed" className="mt-0.5">
+          {workflow.description}
+        </Text>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
 // Component
 // =============================================================================
 
@@ -203,8 +308,9 @@ export function WorkflowInput({
   className,
   isCompatible,
 }: WorkflowInputProps) {
-  const [imageOpened, { close: closeImage, toggle: toggleImage }] = useDisclosure(false);
-  const [videoOpened, { close: closeVideo, toggle: toggleVideo }] = useDisclosure(false);
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
+  const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
 
   // Get all workflows grouped by category (static - no ecosystem filtering)
   const options = useMemo(() => getAllWorkflowsGrouped(), []);
@@ -246,16 +352,119 @@ export function WorkflowInput({
     closeVideo();
   };
 
+  const openImageModal = () => {
+    dialogStore.trigger({
+      id: 'workflow-select-image',
+      component: WorkflowSelectModal,
+      props: {
+        title: 'Select Image Workflow',
+        categories: imageCategories,
+        selectedValue: value,
+        onSelect: (workflowId: string) => onChange?.(workflowId),
+        isCompatible,
+      },
+    });
+  };
+
+  const openVideoModal = () => {
+    dialogStore.trigger({
+      id: 'workflow-select-video',
+      component: WorkflowSelectModal,
+      props: {
+        title: 'Select Video Workflow',
+        categories: videoCategories,
+        selectedValue: value,
+        onSelect: (workflowId: string) => onChange?.(workflowId),
+        isCompatible,
+      },
+    });
+  };
+
   // Check if video workflows are available
   const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
 
+  // Mobile: use dialogStore modal
+  if (isMobile) {
+    return (
+      <Group gap="xs" className={className} wrap="nowrap">
+        <WorkflowTypeButton
+          icon={null}
+          label="Image"
+          isActive={isImageWorkflow ?? false}
+          opened={false}
+          disabled={disabled}
+          onClick={openImageModal}
+        />
+        {hasVideoWorkflows && (
+          <WorkflowTypeButton
+            icon={null}
+            label="Video"
+            isActive={isVideoWorkflow ?? false}
+            opened={false}
+            disabled={disabled}
+            onClick={openVideoModal}
+          />
+        )}
+      </Group>
+    );
+  }
+
+  // Desktop: use Popover with hover
+  const handleImageMouseEnter = () => {
+    if (!disabled) {
+      closeVideo();
+      openImage();
+    }
+  };
+
+  const handleVideoMouseEnter = () => {
+    if (!disabled) {
+      closeImage();
+      openVideo();
+    }
+  };
+
   return (
-    <Stack gap="xs" className={className}>
-      {/* Type selector buttons */}
-      <Group gap="xs">
+    <Group gap="xs" className={className} wrap="nowrap">
+      <Popover
+        opened={imageOpened}
+        onChange={(isOpen) => !isOpen && closeImage()}
+        position="bottom-start"
+        width={300}
+        shadow="md"
+        withinPortal
+      >
+        <Popover.Target>
+          <WorkflowTypeButton
+            icon={<IconPhoto size={16} />}
+            label="Image"
+            isActive={isImageWorkflow ?? false}
+            opened={imageOpened}
+            disabled={disabled}
+            onClick={() => undefined}
+            onMouseEnter={handleImageMouseEnter}
+            onMouseLeave={closeImage}
+          />
+        </Popover.Target>
+        <Popover.Dropdown
+          p="xs"
+          onMouseEnter={openImage}
+          onMouseLeave={closeImage}
+          className="before:absolute before:-top-2 before:left-0 before:h-2 before:w-full"
+        >
+          <WorkflowListContent
+            categories={imageCategories}
+            selectedValue={value}
+            onSelect={handleImageSelect}
+            isCompatible={isCompatible}
+          />
+        </Popover.Dropdown>
+      </Popover>
+
+      {hasVideoWorkflows && (
         <Popover
-          opened={imageOpened}
-          onChange={(isOpen) => !isOpen && closeImage()}
+          opened={videoOpened}
+          onChange={(isOpen) => !isOpen && closeVideo()}
           position="bottom-start"
           width={300}
           shadow="md"
@@ -263,74 +472,31 @@ export function WorkflowInput({
         >
           <Popover.Target>
             <WorkflowTypeButton
-              icon={<IconPhoto size={16} />}
-              label="Image"
-              isActive={isImageWorkflow ?? false}
-              opened={imageOpened}
+              icon={<IconVideo size={16} />}
+              label="Video"
+              isActive={isVideoWorkflow ?? false}
+              opened={videoOpened}
               disabled={disabled}
-              onClick={() => {
-                closeVideo();
-                toggleImage();
-              }}
+              onClick={() => undefined}
+              onMouseEnter={handleVideoMouseEnter}
+              onMouseLeave={closeVideo}
             />
           </Popover.Target>
-          <Popover.Dropdown p="xs">
-            <WorkflowPopoverContent
-              categories={imageCategories}
+          <Popover.Dropdown
+            p="xs"
+            onMouseEnter={openVideo}
+            onMouseLeave={closeVideo}
+            className="before:absolute before:-top-2 before:left-0 before:h-2 before:w-full"
+          >
+            <WorkflowListContent
+              categories={videoCategories}
               selectedValue={value}
-              onSelect={handleImageSelect}
+              onSelect={handleVideoSelect}
               isCompatible={isCompatible}
             />
           </Popover.Dropdown>
         </Popover>
-
-        {hasVideoWorkflows && (
-          <Popover
-            opened={videoOpened}
-            onChange={(isOpen) => !isOpen && closeVideo()}
-            position="bottom-start"
-            width={300}
-            shadow="md"
-            withinPortal
-          >
-            <Popover.Target>
-              <WorkflowTypeButton
-                icon={<IconVideo size={16} />}
-                label="Video"
-                isActive={isVideoWorkflow ?? false}
-                opened={videoOpened}
-                disabled={disabled}
-                onClick={() => {
-                  closeImage();
-                  toggleVideo();
-                }}
-              />
-            </Popover.Target>
-            <Popover.Dropdown p="xs">
-              <WorkflowPopoverContent
-                categories={videoCategories}
-                selectedValue={value}
-                onSelect={handleVideoSelect}
-                isCompatible={isCompatible}
-              />
-            </Popover.Dropdown>
-          </Popover>
-        )}
-      </Group>
-
-      {/* Selected workflow display */}
-      {selected && (
-        <div className="rounded-lg border border-gray-2 bg-gray-0 px-3 py-2.5 dark:border-dark-4 dark:bg-dark-6">
-          <Text size="md" fw={600} className="leading-tight">
-            {selected.workflow.label}
-          </Text>
-          {selected.workflow.description && (
-            <Text size="sm" c="dimmed" className="mt-0.5">
-              {selected.workflow.description}
-            </Text>
-          )}
-        </div>
       )}
-    </Stack>
+    </Group>
   );
 }

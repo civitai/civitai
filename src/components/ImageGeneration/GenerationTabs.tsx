@@ -18,7 +18,7 @@ import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { GenerationForm } from '~/components/Generate/GenerationForm';
+import { GenerationFormV2 } from '~/components/generation_v2';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -147,7 +147,7 @@ const tabs: Tabs = {
   generate: {
     Icon: IconBrush,
     label: 'Generate',
-    Component: GenerationForm,
+    Component: GenerationFormV2,
   },
   queue: {
     Icon: IconClockHour9,

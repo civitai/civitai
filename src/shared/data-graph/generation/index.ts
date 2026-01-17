@@ -37,12 +37,14 @@ export {
 } from './wan-graph';
 export { hunyuanGraph, hunyuanAspectRatios, hunyuanDurations } from './hunyuan-graph';
 export { minimaxGraph } from './minimax-graph';
-export { haiperGraph, haiperAspectRatios, haiperDurations, haiperResolutions } from './haiper-graph';
-export { mochiGraph } from './mochi-graph';
 export {
-  lightricksGraph,
-  lightricksAspectRatios,
-} from './lightricks-graph';
+  haiperGraph,
+  haiperAspectRatios,
+  haiperDurations,
+  haiperResolutions,
+} from './haiper-graph';
+export { mochiGraph } from './mochi-graph';
+export { lightricksGraph, lightricksAspectRatios } from './lightricks-graph';
 export { soraGraph, soraAspectRatios, soraResolutions } from './sora-graph';
 export {
   veo3Graph,
