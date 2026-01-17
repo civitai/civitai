@@ -1,4 +1,24 @@
 <!DOCTYPE html>
+<!--
+  ==============================================================================
+  IMPLEMENTATION NOTE: WIZARD vs SINGLE-PAGE LAYOUT
+  ==============================================================================
+
+  This mockup shows a single-page form layout where all sections are visible
+  simultaneously. The live implementation at src/pages/crucibles/create.tsx
+  INTENTIONALLY differs by using a WIZARD (multi-step) approach.
+
+  Reasons for the wizard pattern:
+  1. Progressive Disclosure - Reduces cognitive load
+  2. Better Mobile UX - One section at a time vs scrolling
+  3. Step-by-step Validation - Ensures completion before proceeding
+  4. Guided Experience - Helps new users navigate complex options
+
+  The core functionality remains identical; only navigation differs.
+  See the comment in create.tsx for full details.
+
+  ==============================================================================
+-->
 <html lang="en">
 <head>
   <meta charset="UTF-8">

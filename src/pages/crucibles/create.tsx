@@ -44,20 +44,47 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useStepper } from '~/hooks/useStepper';
-import {
-  Form,
-  InputNumber,
-  InputSelect,
-  InputText,
-  InputTextArea,
-  useForm,
-} from '~/libs/form';
+import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * ==============================================================================
+ * DESIGN DECISION: WIZARD vs SINGLE-PAGE LAYOUT
+ * ==============================================================================
+ *
+ * The mockup at docs/features/crucible/mockups/creation.html shows a single-page
+ * form where all sections (Basic Info, Entry Settings, Prize Distribution) are
+ * visible simultaneously.
+ *
+ * The live implementation intentionally differs by using a WIZARD (multi-step)
+ * approach. This design decision was made for the following reasons:
+ *
+ * 1. **Progressive Disclosure**: Each step focuses the user's attention on one
+ *    category of settings, reducing cognitive load and preventing overwhelm.
+ *
+ * 2. **Mobile Experience**: On smaller screens, a single-page form with all
+ *    options would require extensive scrolling. The wizard provides a better
+ *    mobile UX by showing one manageable section at a time.
+ *
+ * 3. **Validation Flow**: Step-by-step validation ensures users complete required
+ *    fields before moving forward, preventing form submission errors.
+ *
+ * 4. **Preview Context**: The persistent sidebar preview card and cost breakdown
+ *    remain visible at each step, giving context without cluttering the form.
+ *
+ * 5. **Guided Experience**: New users benefit from the guided flow, especially
+ *    for complex features like prize distribution customization.
+ *
+ * The core functionality and all form fields remain identical to the mockup;
+ * only the navigation pattern differs.
+ *
+ * ==============================================================================
+ */
 
 // Duration options with pricing
 const durationOptions = [
@@ -176,8 +203,7 @@ export default function CrucibleCreate() {
   // Step validation
   const isStep1Valid = () => {
     return (
-      formData.name.trim().length > 0 &&
-      (imageFile?.status === 'success' || formData.coverImageId)
+      formData.name.trim().length > 0 && (imageFile?.status === 'success' || formData.coverImageId)
     );
   };
 
@@ -331,10 +357,7 @@ export default function CrucibleCreate() {
                   <IconTrash size={14} />
                 </LegacyActionIcon>
               </Tooltip>
-              <div
-                className="overflow-hidden rounded-lg"
-                style={{ aspectRatio: '16 / 9' }}
-              >
+              <div className="overflow-hidden rounded-lg" style={{ aspectRatio: '16 / 9' }}>
                 <EdgeMedia
                   src={imageFile.objectUrl ?? imageFile.url}
                   width={800}
@@ -355,16 +378,14 @@ export default function CrucibleCreate() {
       </div>
 
       {/* Name */}
-      <Input.Wrapper
-        label="Crucible Name"
-        description="Maximum 100 characters"
-        withAsterisk
-      >
+      <Input.Wrapper label="Crucible Name" description="Maximum 100 characters" withAsterisk>
         <Input
           mt={4}
           placeholder="e.g., Anime Character Design Challenge"
           value={formData.name}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateFormData({ name: e.target.value.slice(0, 100) })}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateFormData({ name: e.target.value.slice(0, 100) })
+          }
           maxLength={100}
         />
       </Input.Wrapper>
@@ -396,12 +417,7 @@ export default function CrucibleCreate() {
       >
         <SimpleGrid cols={{ base: 2, sm: 4 }} mt={8}>
           {durationOptions.map((option) => (
-            <Tooltip
-              key={option.value}
-              label="Coming Soon"
-              disabled={!option.disabled}
-              withArrow
-            >
+            <Tooltip key={option.value} label="Coming Soon" disabled={!option.disabled} withArrow>
               <Paper
                 className={`cursor-pointer border p-3 text-center transition-all ${
                   formData.duration === option.value
@@ -459,7 +475,9 @@ export default function CrucibleCreate() {
             type="number"
             min={0}
             value={formData.entryFee}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateFormData({ entryFee: Math.max(0, parseInt(e.target.value) || 0) })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              updateFormData({ entryFee: Math.max(0, parseInt(e.target.value) || 0) })
+            }
             style={{ flex: 1 }}
             leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
           />
@@ -469,7 +487,9 @@ export default function CrucibleCreate() {
         </Group>
         <Text size="xs" c="dimmed" mt={4}>
           {formData.entryFee === 0 ? (
-            <Text span c="green">Free Entry (No Prize Pool)</Text>
+            <Text span c="green">
+              Free Entry (No Prize Pool)
+            </Text>
           ) : (
             `${formData.entryFee} Buzz entry fee`
           )}
@@ -526,11 +546,7 @@ export default function CrucibleCreate() {
         >
           <Paper p="md" mt={8} className="border border-dark-4">
             <Group gap={8} mb="sm">
-              <Input
-                placeholder="Search models, LoRAs..."
-                disabled
-                style={{ flex: 1 }}
-              />
+              <Input placeholder="Search models, LoRAs..." disabled style={{ flex: 1 }} />
               <ActionIcon variant="light" disabled>
                 <IconPlus size={16} />
               </ActionIcon>
@@ -569,8 +585,7 @@ export default function CrucibleCreate() {
             </Text>
             <div className="mb-3 flex h-8 overflow-hidden rounded border border-dark-4">
               {sortedPositions.map(([position, percentage], index) => {
-                const colorClass =
-                  positionColors[index]?.bg || 'from-gray-500 to-gray-600';
+                const colorClass = positionColors[index]?.bg || 'from-gray-500 to-gray-600';
                 return (
                   <div
                     key={position}
@@ -588,12 +603,7 @@ export default function CrucibleCreate() {
           {/* Distribution Summary Cards */}
           <SimpleGrid cols={{ base: 2, sm: 3 }}>
             {sortedPositions.slice(0, 3).map(([position, percentage]) => (
-              <Paper
-                key={position}
-                p="md"
-                className="border border-dark-4 text-center"
-                bg="dark.7"
-              >
+              <Paper key={position} p="md" className="border border-dark-4 text-center" bg="dark.7">
                 <Text size="xs" c="dimmed" mb={6}>
                   {position}
                   {getOrdinalSuffix(parseInt(position))} Place
@@ -677,7 +687,9 @@ export default function CrucibleCreate() {
                 max={100}
                 step={1}
                 style={{ flex: 1 }}
-                color={index === 0 ? 'blue' : index === 1 ? 'green' : index === 2 ? 'yellow' : 'gray'}
+                color={
+                  index === 0 ? 'blue' : index === 1 ? 'green' : index === 2 ? 'yellow' : 'gray'
+                }
                 styles={{
                   track: { height: 6 },
                   thumb: { borderWidth: 2 },
@@ -923,8 +935,8 @@ export default function CrucibleCreate() {
                   currentStep === index + 1
                     ? 'border-blue-500 bg-blue-500/20'
                     : currentStep > index + 1
-                      ? 'border-green-500 bg-green-500/10'
-                      : 'border-dark-4'
+                    ? 'border-green-500 bg-green-500/10'
+                    : 'border-dark-4'
                 }`}
                 onClick={() => {
                   // Allow navigating to previous steps
@@ -946,7 +958,7 @@ export default function CrucibleCreate() {
           {/* Section Card */}
           <Paper p="xl" className="border border-dark-4">
             <Group gap="sm" mb="lg" pb="md" className="border-b border-dark-4">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-blue-500/10">
                 {currentStep === 1 && <IconInfoCircle size={18} className="text-blue-5" />}
                 {currentStep === 2 && <IconTicket size={18} className="text-blue-5" />}
                 {currentStep === 3 && <IconTrophy size={18} className="text-blue-5" />}
@@ -1047,15 +1059,17 @@ export default function CrucibleCreate() {
                 size="lg"
                 mb="md"
                 className="bg-gradient-to-r from-yellow-500 to-yellow-600"
-                leftSection={isSubmitting ? <Loader size={20} color="dark" /> : <IconCoin size={20} />}
+                leftSection={
+                  isSubmitting ? <Loader size={20} color="dark" /> : <IconCoin size={20} />
+                }
                 onClick={handleSubmit}
                 disabled={isSubmitting}
               >
                 {isSubmitting
                   ? 'Creating Crucible...'
                   : getTotalCost() === 0
-                    ? 'Create Crucible - Free'
-                    : `Create Crucible - ${getTotalCost().toLocaleString()} Buzz`}
+                  ? 'Create Crucible - Free'
+                  : `Create Crucible - ${getTotalCost().toLocaleString()} Buzz`}
               </Button>
             )}
 
@@ -1070,7 +1084,9 @@ export default function CrucibleCreate() {
                     Duration
                   </Text>
                   <Text size="sm" c="yellow" fw={600}>
-                    {getDurationCost() === 0 ? 'Free' : `+${getDurationCost().toLocaleString()} Buzz`}
+                    {getDurationCost() === 0
+                      ? 'Free'
+                      : `+${getDurationCost().toLocaleString()} Buzz`}
                   </Text>
                 </Group>
                 <Group justify="space-between">
