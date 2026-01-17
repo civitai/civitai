@@ -45,8 +45,9 @@ const calculateEloChange = (
   const actualLoser = 0;
 
   // Calculate rating changes
+  // Ensure zero-sum: loserChange = -winnerChange to prevent ELO drift from rounding
   const winnerChange = Math.round(kFactor * (actualWinner - expectedWinner));
-  const loserChange = Math.round(kFactor * (actualLoser - expectedLoser));
+  const loserChange = -winnerChange;
 
   return [winnerChange, loserChange];
 };

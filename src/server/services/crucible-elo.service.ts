@@ -58,13 +58,12 @@ export const getKFactor = (voteCount: number): number => {
 };
 
 /**
- * Process a vote by updating ELO scores in Redis
- * Uses the average of both entries' K-factors for balanced rating changes
+ * Process a vote by updating ELO scores in Redis atomically
+ * Uses a Lua script to prevent race conditions from concurrent votes
  *
- * PERFORMANCE: Uses Promise.all for parallel Redis operations
- * - Round-trip 1: Get both ELO scores in parallel
- * - Round-trip 2: Update both ELO scores in parallel (incrementElo or initialize+set)
- * Total: 2 round-trips maximum (down from 4-6)
+ * ATOMICITY: All read-compute-update operations happen atomically in Redis
+ * - Eliminates race conditions where concurrent votes could corrupt ELO scores
+ * - Prevents lost updates by ensuring sequential processing
  *
  * @param crucibleId - The crucible ID
  * @param winnerEntryId - The entry ID that won the vote
@@ -80,46 +79,27 @@ export const processVote = async (
   winnerVoteCount: number,
   loserVoteCount: number
 ): Promise<{ winnerElo: number; loserElo: number }> => {
-  // Get current ELO scores from Redis in parallel (1 effective round-trip)
-  const [winnerEloRaw, loserEloRaw] = await Promise.all([
-    crucibleEloRedis.getElo(crucibleId, winnerEntryId),
-    crucibleEloRedis.getElo(crucibleId, loserEntryId),
-  ]);
-
-  // Use default ELO if not set (entries should have ELO set on submission, but be defensive)
-  const winnerElo = winnerEloRaw ?? CRUCIBLE_DEFAULT_ELO;
-  const loserElo = loserEloRaw ?? CRUCIBLE_DEFAULT_ELO;
-
-  // Calculate K-factor (use average of both entries' K-factors for fairness)
+  // Calculate K-factor based on vote counts
   const winnerKFactor = getKFactor(winnerVoteCount);
   const loserKFactor = getKFactor(loserVoteCount);
   const kFactor = Math.round((winnerKFactor + loserKFactor) / 2);
 
-  // Calculate ELO changes
-  const [winnerChange, loserChange] = calculateEloChange(winnerElo, loserElo, kFactor);
-
-  // Update Redis in parallel (1 effective round-trip)
-  // For entries without ELO in Redis, we set the new ELO directly instead of incrementing
-  const [newWinnerElo, newLoserElo] = await Promise.all([
-    winnerEloRaw === null
-      ? crucibleEloRedis.setElo(crucibleId, winnerEntryId, winnerElo + winnerChange).then(
-          () => winnerElo + winnerChange
-        )
-      : crucibleEloRedis.incrementElo(crucibleId, winnerEntryId, winnerChange),
-    loserEloRaw === null
-      ? crucibleEloRedis.setElo(crucibleId, loserEntryId, loserElo + loserChange).then(
-          () => loserElo + loserChange
-        )
-      : crucibleEloRedis.incrementElo(crucibleId, loserEntryId, loserChange),
-  ]);
+  // Use Lua script for atomic read-compute-update
+  // This prevents race conditions from concurrent votes
+  const result = await crucibleEloRedis.processVoteAtomic(
+    crucibleId,
+    winnerEntryId,
+    loserEntryId,
+    kFactor
+  );
 
   log(
-    `Vote processed: crucible ${crucibleId}, winner ${winnerEntryId} (${winnerElo} + ${winnerChange} = ${newWinnerElo}), loser ${loserEntryId} (${loserElo} + ${loserChange} = ${newLoserElo}), K=${kFactor}`
+    `Vote processed: crucible ${crucibleId}, winner ${winnerEntryId} (${result.winnerOldElo} + ${result.winnerChange} = ${result.winnerElo}), loser ${loserEntryId} (${result.loserOldElo} + ${result.loserChange} = ${result.loserElo}), K=${kFactor}`
   );
 
   return {
-    winnerElo: newWinnerElo,
-    loserElo: newLoserElo,
+    winnerElo: result.winnerElo,
+    loserElo: result.loserElo,
   };
 };
 

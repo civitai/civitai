@@ -75,6 +75,92 @@ export class CrucibleEloRedisClient {
   }
 
   /**
+   * Process a vote atomically using a Lua script
+   * This prevents race conditions from concurrent votes by ensuring read-compute-update happens atomically
+   *
+   * @param crucibleId - The crucible ID
+   * @param winnerEntryId - The entry ID that won
+   * @param loserEntryId - The entry ID that lost
+   * @param kFactor - The K-factor to use for ELO calculation
+   * @returns Object with old and new ELO values and changes for both entries
+   */
+  async processVoteAtomic(
+    crucibleId: number,
+    winnerEntryId: number,
+    loserEntryId: number,
+    kFactor: number
+  ): Promise<{
+    winnerElo: number;
+    loserElo: number;
+    winnerOldElo: number;
+    loserOldElo: number;
+    winnerChange: number;
+    loserChange: number;
+  }> {
+    const key = this.getKey(crucibleId);
+
+    // Lua script for atomic read-compute-update of ELO scores
+    // This prevents race conditions by running all operations on the Redis server
+    const script = `
+      local eloKey = KEYS[1]
+      local winnerField = ARGV[1]
+      local loserField = ARGV[2]
+      local kFactor = tonumber(ARGV[3])
+      local defaultElo = tonumber(ARGV[4])
+
+      -- Get current ELO scores (use default if not set)
+      local winnerElo = tonumber(redis.call('HGET', eloKey, winnerField)) or defaultElo
+      local loserElo = tonumber(redis.call('HGET', eloKey, loserField)) or defaultElo
+
+      -- Calculate expected scores using ELO formula
+      -- Expected probability that winner beats loser: 1 / (1 + 10^((loserElo - winnerElo) / 400))
+      local expectedWinner = 1 / (1 + math.pow(10, (loserElo - winnerElo) / 400))
+
+      -- Calculate winner's rating change
+      -- Winner gets actual score of 1, expected was expectedWinner
+      local winnerChange = math.floor(kFactor * (1 - expectedWinner) + 0.5)
+
+      -- Loser change is negation of winner change (ensures zero-sum)
+      local loserChange = -winnerChange
+
+      -- Update ELO scores
+      local newWinnerElo = winnerElo + winnerChange
+      local newLoserElo = loserElo + loserChange
+
+      redis.call('HSET', eloKey, winnerField, newWinnerElo)
+      redis.call('HSET', eloKey, loserField, newLoserElo)
+
+      -- Return old and new values for logging
+      return {winnerElo, loserElo, newWinnerElo, newLoserElo, winnerChange, loserChange}
+    `;
+
+    const result = await this.redis.eval(script, {
+      keys: [key],
+      arguments: [
+        winnerEntryId.toString(),
+        loserEntryId.toString(),
+        kFactor.toString(),
+        DEFAULT_ELO.toString(),
+      ],
+    }) as number[];
+
+    const [winnerOldElo, loserOldElo, newWinnerElo, newLoserElo, winnerChange, loserChange] = result;
+
+    log(
+      `Atomic vote: crucible ${crucibleId}, winner ${winnerEntryId} (${winnerOldElo} -> ${newWinnerElo}), loser ${loserEntryId} (${loserOldElo} -> ${newLoserElo})`
+    );
+
+    return {
+      winnerElo: newWinnerElo,
+      loserElo: newLoserElo,
+      winnerOldElo,
+      loserOldElo,
+      winnerChange,
+      loserChange,
+    };
+  }
+
+  /**
    * Initialize ELO for a new entry with the default value (1500)
    */
   async initializeElo(crucibleId: number, entryId: number): Promise<void> {
