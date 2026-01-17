@@ -114,50 +114,75 @@ export const createCrucible = async ({
   }
 
   // Create the crucible with cover image in a transaction
-  const crucible = await dbWrite.$transaction(async (tx) => {
-    // First, create the Image record from the CF upload data
-    const image = await tx.image.create({
-      data: {
-        userId,
-        url: coverImage.url,
-        width: coverImage.width,
-        height: coverImage.height,
-        hash: coverImage.hash ?? null,
-        nsfwLevel,
-        type: MediaType.image,
-      },
+  // Wrap in try/catch to refund setup fee if database write fails
+  try {
+    const crucible = await dbWrite.$transaction(async (tx) => {
+      // First, create the Image record from the CF upload data
+      const image = await tx.image.create({
+        data: {
+          userId,
+          url: coverImage.url,
+          width: coverImage.width,
+          height: coverImage.height,
+          hash: coverImage.hash ?? null,
+          nsfwLevel,
+          type: MediaType.image,
+        },
+      });
+
+      // Then create the crucible with the image reference
+      const newCrucible = await tx.crucible.create({
+        data: {
+          userId,
+          name,
+          description: description ?? null,
+          imageId: image.id,
+          nsfwLevel,
+          entryFee,
+          entryLimit,
+          maxTotalEntries: maxTotalEntries ?? null,
+          prizePositions: prizePositions as Prisma.JsonObject,
+          allowedResources: allowedResources
+            ? (allowedResources as Prisma.JsonArray)
+            : Prisma.JsonNull,
+          judgeRequirements: judgeRequirements
+            ? (judgeRequirements as Prisma.JsonObject)
+            : Prisma.JsonNull,
+          duration: duration * 60, // Convert hours to minutes for storage
+          startAt,
+          endAt,
+          status: CrucibleStatus.Active,
+          buzzTransactionId, // Store the setup fee transaction ID for potential refunds
+        },
+      });
+
+      return newCrucible;
     });
 
-    // Then create the crucible with the image reference
-    const newCrucible = await tx.crucible.create({
-      data: {
-        userId,
-        name,
-        description: description ?? null,
-        imageId: image.id,
-        nsfwLevel,
-        entryFee,
-        entryLimit,
-        maxTotalEntries: maxTotalEntries ?? null,
-        prizePositions: prizePositions as Prisma.JsonObject,
-        allowedResources: allowedResources
-          ? (allowedResources as Prisma.JsonArray)
-          : Prisma.JsonNull,
-        judgeRequirements: judgeRequirements
-          ? (judgeRequirements as Prisma.JsonObject)
-          : Prisma.JsonNull,
-        duration: duration * 60, // Convert hours to minutes for storage
-        startAt,
-        endAt,
-        status: CrucibleStatus.Active,
-        buzzTransactionId, // Store the setup fee transaction ID for potential refunds
-      },
-    });
-
-    return newCrucible;
-  });
-
-  return crucible;
+    return crucible;
+  } catch (error) {
+    // Database write failed - refund setup fee if it was charged
+    if (buzzTransactionId) {
+      try {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: buzzTransactionId,
+          description: 'Crucible creation fee refund - database write failed',
+          details: {
+            entityType: 'Crucible',
+            duration,
+            prizeCustomized: prizeCustomized ?? false,
+          },
+        });
+        log(`Refunded setup fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`);
+      } catch (refundError) {
+        const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
+        log(`CRITICAL: Failed to refund setup fee for user ${userId} after database failure: ${refundErrorMsg}`);
+        // Re-throw original error even if refund fails so user is aware of the failure
+      }
+    }
+    // Re-throw the original error
+    throw error;
+  }
 };
 
 /**
@@ -470,50 +495,74 @@ export const submitEntry = async ({
     }
 
     // Create the entry with default ELO score (1500)
-    const entry = await dbWrite.crucibleEntry.create({
-      data: {
-        crucibleId,
-        userId,
-        imageId,
-        score: 1500, // Default ELO score
-        buzzTransactionId,
-      },
-      select: {
-        id: true,
-        crucibleId: true,
-        userId: true,
-        imageId: true,
-        score: true,
-        position: true,
-        buzzTransactionId: true,
-        createdAt: true,
-        user: {
-          select: {
-            username: true,
+    // Wrap in try/catch to refund entry fee if database write fails
+    try {
+      const entry = await dbWrite.crucibleEntry.create({
+        data: {
+          crucibleId,
+          userId,
+          imageId,
+          score: 1500, // Default ELO score
+          buzzTransactionId,
+        },
+        select: {
+          id: true,
+          crucibleId: true,
+          userId: true,
+          imageId: true,
+          score: true,
+          position: true,
+          buzzTransactionId: true,
+          createdAt: true,
+          user: {
+            select: {
+              username: true,
+            },
           },
         },
-      },
-    });
-
-    // Send notification to crucible creator (don't notify if creator is submitting to their own crucible)
-    if (crucible.userId !== userId) {
-      // Fire-and-forget notification
-      createNotification({
-        userId: crucible.userId,
-        type: 'crucible-entry-submitted',
-        category: NotificationCategory.Crucible,
-        key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
-        details: {
-          crucibleId,
-          crucibleName: crucible.name,
-          entrantUsername: entry.user.username ?? 'Anonymous',
-        },
-      }).catch((err) => {
-        log(`Failed to send entry notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
       });
-    }
 
-    return entry;
+      // Send notification to crucible creator (don't notify if creator is submitting to their own crucible)
+      if (crucible.userId !== userId) {
+        // Fire-and-forget notification
+        createNotification({
+          userId: crucible.userId,
+          type: 'crucible-entry-submitted',
+          category: NotificationCategory.Crucible,
+          key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
+          details: {
+            crucibleId,
+            crucibleName: crucible.name,
+            entrantUsername: entry.user.username ?? 'Anonymous',
+          },
+        }).catch((err) => {
+          log(`Failed to send entry notification: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        });
+      }
+
+      return entry;
+    } catch (error) {
+      // Database write failed - refund entry fee if it was charged
+      if (buzzTransactionId) {
+        try {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: buzzTransactionId,
+            description: 'Crucible entry fee refund - database write failed',
+            details: {
+              entityId: crucibleId,
+              entityType: 'Crucible',
+            },
+          });
+          log(`Refunded entry fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`);
+        } catch (refundError) {
+          const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
+          log(`CRITICAL: Failed to refund entry fee for user ${userId} after database failure: ${refundErrorMsg}`);
+          // Re-throw original error even if refund fails so user is aware of the failure
+        }
+      }
+      // Re-throw the original error
+      throw error;
+    }
   } finally {
     // Always release the lock, even if an error occurs
     await releaseEntryLock(crucibleId, userId);
