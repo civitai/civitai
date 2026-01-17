@@ -1416,26 +1416,33 @@ export const finalizeCrucible = async (
 
   // Update all entries and crucible status in a transaction
   // This syncs vote counts from Redis to PostgreSQL for persistence
-  await dbWrite.$transaction(async (tx) => {
-    // Update each entry with final score, position, and vote count
-    for (const entry of finalizedEntries) {
-      await tx.crucibleEntry.update({
-        where: { id: entry.entryId },
-        data: {
-          score: entry.finalScore,
-          position: entry.position,
-          voteCount: entry.voteCount, // Sync vote count from Redis
-        },
-      });
-    }
+  // Batch updates in chunks to prevent transaction timeout for large crucibles
+  const BATCH_SIZE = 50;
 
-    // Update crucible status to completed
-    await tx.crucible.update({
-      where: { id: crucibleId },
-      data: {
-        status: CrucibleStatus.Completed,
-      },
+  for (let i = 0; i < finalizedEntries.length; i += BATCH_SIZE) {
+    const batch = finalizedEntries.slice(i, i + BATCH_SIZE);
+
+    await dbWrite.$transaction(async (tx) => {
+      // Update entries in this batch
+      for (const entry of batch) {
+        await tx.crucibleEntry.update({
+          where: { id: entry.entryId },
+          data: {
+            score: entry.finalScore,
+            position: entry.position,
+            voteCount: entry.voteCount, // Sync vote count from Redis
+          },
+        });
+      }
     });
+  }
+
+  // Update crucible status to completed (separate transaction after all entries)
+  await dbWrite.crucible.update({
+    where: { id: crucibleId },
+    data: {
+      status: CrucibleStatus.Completed,
+    },
   });
 
   // Distribute prizes to winners
