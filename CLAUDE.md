@@ -38,10 +38,7 @@ Occasionally, we comment back and forth as we make plans. Comments from us, are 
 ## Build Commands
 
 ### Development
-```bash
-npm run dev               # Start development server
-npm run prod             # Run in production mode locally
-```
+**Always use the `/dev-server` skill** to manage dev servers. Never use `npm run dev` directly.
 
 ### Build & Deploy
 ```bash
@@ -160,8 +157,7 @@ const currentUser = useCurrentUser();
 ### Local Development
 1. Install dependencies: `npm install`
 2. Generate Prisma client: `npm run db:generate`
-3. Run migrations: `npm run db:migrate`
-4. Start dev server: `npm run dev`
+3. Start dev server: Use `/dev-server` skill
 
 ## Important Notes
 

@@ -8,6 +8,7 @@
     "dev": "next dev",
     "dev-debug": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",
     "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",
+    "dev:daemon": "node .claude/skills/dev-server/console.mjs",
     "prod": "cross-env NODE_ENV=production next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
