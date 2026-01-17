@@ -103,6 +103,7 @@ export class CrucibleEloRedisClient {
 
     // Lua script for atomic read-compute-update of ELO scores
     // This prevents race conditions by running all operations on the Redis server
+    // IMPORTANT: Uses zero-sum ELO calculation to prevent rating inflation
     const script = `
       local eloKey = KEYS[1]
       local winnerField = ARGV[1]
@@ -115,17 +116,19 @@ export class CrucibleEloRedisClient {
       local winnerElo = tonumber(redis.call('HGET', eloKey, winnerField)) or defaultElo
       local loserElo = tonumber(redis.call('HGET', eloKey, loserField)) or defaultElo
 
-      -- Calculate expected scores using ELO formula
+      -- Calculate expected score for winner using ELO formula
       -- Expected probability that winner beats loser: 1 / (1 + 10^((loserElo - winnerElo) / 400))
       local expectedWinner = 1 / (1 + math.pow(10, (loserElo - winnerElo) / 400))
-      -- Expected probability that loser beats winner: 1 / (1 + 10^((winnerElo - loserElo) / 400))
-      local expectedLoser = 1 / (1 + math.pow(10, (winnerElo - loserElo) / 400))
 
-      -- Calculate rating changes using each player's own K-factor
+      -- Use averaged K-factor to ensure zero-sum outcome
+      -- This prevents ELO inflation that occurs when players have different K-factors
+      local avgK = (winnerK + loserK) / 2
+
+      -- Calculate winner's rating change using averaged K-factor
       -- Winner gets actual score of 1, expected was expectedWinner
-      local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)
-      -- Loser gets actual score of 0, expected was expectedLoser
-      local loserChange = math.floor(loserK * (0 - expectedLoser) + 0.5)
+      local winnerChange = math.floor(avgK * (1 - expectedWinner) + 0.5)
+      -- Loser change is negative of winner change (zero-sum)
+      local loserChange = -winnerChange
 
       -- Update ELO scores
       local newWinnerElo = winnerElo + winnerChange
