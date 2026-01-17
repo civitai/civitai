@@ -238,3 +238,5 @@ npm run dev-debug  # Includes --max_old_space_size=8192
 1. Check connection string
 2. Run migrations: `npm run db:migrate`
 3. Regenerate client: `npm run db:generate`
+
+<!-- PR Preview Pipeline Test - 2026-01-16T18:41:02-06:00 -->
