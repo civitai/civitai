@@ -1,0 +1,7 @@
+# Session data (ephemeral, not committed)
+data/
+
+# Test files
+test/hello.txt
+test/goodbye.txt
+test/progress.txt

@@ -1,42 +1,34 @@
 ---
 name: ralph
-description: Convert a markdown plan/PRD into prd.json format for the Ralph autonomous agent loop. Use when the user wants to tackle a big project, has a plan document to execute, or mentions "ralph" or autonomous agent. This skill creates the PRD, runs the agent loop, reviews results, and creates follow-up PRDs as needed.
+description: Prepare PRDs for autonomous agent execution. Converts markdown plans into structured prd.json files with user stories, acceptance criteria, and mockup references. After PRD is ready, use /ralph-daemon to run and monitor execution.
 ---
 
-# Ralph - Autonomous Agent Loop
+# Ralph - PRD Preparation
 
-Ralph is an autonomous coding agent that tackles big projects by:
-1. Breaking work into discrete user stories
-2. Running fresh Claude instances for each story (avoiding context rot)
-3. Tracking progress across iterations
-4. Self-correcting through progress logs
+Ralph is an autonomous coding agent that tackles big projects. This skill helps you **prepare PRDs** (Product Requirement Documents) that Ralph can execute.
 
-## Complete Workflow
-
-When the user invokes `/ralph` with a plan document, follow this complete workflow:
+## Workflow Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  1. PLAN → PRD                                               │
+│  1. PLAN → PRD (this skill)                                  │
 │     Convert markdown plan to structured prd.json             │
 ├─────────────────────────────────────────────────────────────┤
-│  2. RUN RALPH                                                │
-│     Execute autonomous loop (10-40+ minutes)                 │
+│  2. EXECUTE (/ralph-daemon)                                  │
+│     Run autonomous loop with monitoring & control            │
 ├─────────────────────────────────────────────────────────────┤
-│  3. REVIEW                                                   │
-│     Check work done, run agent-review against spec           │
-├─────────────────────────────────────────────────────────────┤
-│  4. FOLLOW-UP PRD (if needed)                                │
-│     Create new PRD with fixes, remaining work                │
-│     → Loop back to step 2                                    │
+│  3. REVIEW & ITERATE                                         │
+│     Check results, create follow-up PRD if needed            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
+**After creating a PRD, use `/ralph-daemon` to execute it.** The daemon provides session management, real-time monitoring, pause/resume, and recovery across restarts.
+
 ---
 
-## Phase 1: Convert Plan to PRD
+## Creating a PRD
 
-### Step 1.1: Read and Understand the Plan
+### Step 1: Read and Understand the Plan
 
 The user provides a markdown plan document (path or content). **Read it thoroughly first.**
 
@@ -47,7 +39,7 @@ Look for:
 - Technical constraints or dependencies
 - Non-goals or out-of-scope items
 
-### Step 1.2: Ask Clarifying Questions (if needed)
+### Step 2: Ask Clarifying Questions (if needed)
 
 If the plan is ambiguous, ask 3-5 clarifying questions with lettered options:
 
@@ -67,16 +59,11 @@ If the plan is ambiguous, ask 3-5 clarifying questions with lettered options:
 
 Users can respond quickly with "1A, 2B" format.
 
-### Step 1.3: Create the PRD
+### Step 3: Create the PRD
 
 Create a project folder based on the feature/branch name:
 ```
 .claude/skills/ralph/projects/<project-name>/prd.json
-```
-
-For example, if building a user profile page:
-```
-.claude/skills/ralph/projects/user-profile-page/prd.json
 ```
 
 Use this structure:
@@ -115,35 +102,20 @@ Use this structure:
 }
 ```
 
-### PRD Fields Reference
+---
+
+## PRD Reference
+
+### PRD Fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `description` | Yes | Brief summary of the project |
 | `branchName` | Yes | Git branch to work on |
-| `type` | No | PRD type: `code` (default), `orchestrator`, `testing`, or `original` |
+| `type` | No | PRD type: `code` (default), `orchestrator`, `testing` |
 | `mockups` | No | Array of HTML mockup files with paths and descriptions |
 | `designReferences` | No | Array of images/screenshots referenced in the plan |
 | `userStories` | Yes | Array of stories to implement |
-
-### PRD Types
-
-Ralph supports four PRD types:
-
-| Type | Prompt | Use Case |
-|------|--------|----------|
-| `code` | `base.md` + `code.md` | Code implementation - commits code, runs typecheck |
-| `orchestrator` | `base.md` + `orchestrator.md` | Coordinates sub-Ralphs, manages shared state |
-| `testing` | `base.md` + `testing.md` | Browser automation testing, creates reports |
-| `original` | `original.md` (standalone) | Uses the original monolithic prompt without composition |
-
-The first three types composite `base.md` with their specialized prompt. The `original` type uses the legacy monolithic prompt directly - useful if the new composite prompts cause issues.
-
-**Code (default)**: For implementing features. Commits code, runs typecheck, works on git branches.
-
-**Orchestrator**: For coordinating multiple sub-PRDs. Spawns other Ralph instances, passes data via shared state files, creates summary reports. Does NOT commit code.
-
-**Testing**: For visual comparison testing using browser automation. Takes screenshots, compares against mockups, creates markdown reports. Does NOT commit code.
 
 ### User Story Fields
 
@@ -157,36 +129,48 @@ The first three types composite `base.md` with their specialized prompt. The `or
 | `priority` | Yes | 1-N where 1 is highest priority |
 | `passes` | Yes | Always start as `false` |
 
-### Conversion Guidelines
+### PRD Types
 
-**Priority Assignment:**
+| Type | Use Case |
+|------|----------|
+| `code` (default) | Code implementation - commits code, runs typecheck |
+| `orchestrator` | Coordinates multiple sub-Ralphs, manages shared state |
+| `testing` | Browser automation testing, creates comparison reports |
+
+---
+
+## Writing Good PRDs
+
+### Priority Assignment
+
 - **Priority 1**: Foundation/setup - database migrations, types, base components
 - **Priority 2-3**: Core functionality - main features that depend on foundation
 - **Priority 4-5**: Secondary features - enhancements, additional functionality
 - **Priority 6+**: Polish - edge cases, nice-to-haves, refinements
 
-**Story Sizing:**
+### Story Sizing
+
 - Each story = 1-3 files of changes (not 10-file refactors)
 - If a feature is big, split into multiple stories
 - Stories should be independently completable where possible
 
-**Acceptance Criteria:**
+### Acceptance Criteria
+
 - Write testable, specific criteria (not vague like "works correctly")
 - Include "Typecheck passes" for code changes
 - **For UI stories:** Include "Matches mockup [filename]" if mockup exists
 - Mention any integration points or dependencies
 
-**Mockup Handling:**
+### Mockup Handling
+
 - If plan references mockups (`.html` files), include them in `mockups` array
 - If plan references images/screenshots, include them in `designReferences`
 - Link stories to their relevant mockups via `mockupRef`
 - Ralph will read these files to understand the expected UI
 
-**Branch Naming:**
-- Use descriptive branch names: `feature/crucible-discovery`, `fix/auth-timeout`
-- Match the project's existing branch conventions
+---
 
-### Example Conversion
+## Example Conversion
 
 **Input markdown:**
 ```markdown
@@ -280,7 +264,9 @@ Reference design: docs/designs/profile-figma.png
 }
 ```
 
-### Orchestrator PRD Example
+---
+
+## Orchestrator PRD Example
 
 For coordinating multiple sub-PRDs:
 
@@ -302,7 +288,7 @@ For coordinating multiple sub-PRDs:
       "title": "Run setup tests first",
       "description": "As an orchestrator, I want to run setup tests first since they create test data",
       "acceptanceCriteria": [
-        "Run: node .claude/skills/ralph/ralph.mjs --prd .claude/skills/ralph/projects/test-setup/prd.json",
+        "Spawn child session for test-setup PRD",
         "Wait for completion",
         "Verify shared state contains expected outputs"
       ],
@@ -313,296 +299,35 @@ For coordinating multiple sub-PRDs:
 }
 ```
 
-### Testing PRD Example
+---
 
-For browser automation visual testing:
+## After Creating the PRD
 
-```json
-{
-  "description": "Compare login page against mockup",
-  "branchName": "feature/login",
-  "type": "testing",
-  "mockups": [
-    {
-      "path": "docs/mockups/login.html",
-      "description": "Login page mockup"
-    }
-  ],
-  "userStories": [
-    {
-      "id": "US001",
-      "title": "Compare login page against mockup",
-      "description": "As a tester, I want to compare the live login page against the mockup",
-      "acceptanceCriteria": [
-        "Browser session created: curl -X POST http://localhost:9222/sessions -d '{\"name\": \"login-test\", \"url\": \"file:///path/to/mockup.html\", \"profile\": \"my-profile\"}'",
-        "Full-page screenshot of mockup taken and read",
-        "Navigate to live page and screenshot",
-        "Comparison report created at docs/reports/login-findings.md",
-        "Browser session closed"
-      ],
-      "mockupRef": "login.html",
-      "priority": 1,
-      "passes": false
-    }
-  ]
-}
-```
+Once your PRD is ready, **use `/ralph-daemon` to execute it**. The daemon provides:
+
+- **Session management** - Create, start, pause, resume, abort sessions
+- **Real-time monitoring** - WebSocket streaming, Web UI dashboard
+- **Persistence** - Sessions survive daemon restarts
+- **Guidance injection** - Send hints or corrections mid-execution
+- **Orchestration** - Parent-child sessions for complex workflows
 
 ---
 
-## Phase 2: Run Ralph
+## Review and Follow-up
 
-After creating the PRD, run the Ralph autonomous loop.
+After execution completes, review the results:
 
-### Command
+1. **Check git history** - `git log --oneline -20`
+2. **Review changes** - `git diff main..HEAD --stat`
+3. **Check PRD status** - Look at which stories have `passes: true`
+4. **Run quality checks** - `npm run typecheck`, `npm run lint`
 
-```bash
-node .claude/skills/ralph/ralph.mjs [options]
-```
+If issues remain, create a **follow-up PRD**:
 
-### Options
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--prd <path>` | `-p` | `.claude/skills/ralph/prd.json` | Path to PRD |
-| `--max-iterations <n>` | `-n` | story count | Max iterations (fresh contexts) |
-| `--max-turns <n>` | `-t` | 100 | Max tool calls per iteration |
-| `--model <model>` | `-m` | opus | Model: opus, sonnet, haiku |
-| `--cwd <path>` | `-C` | script location | Working directory for Ralph |
-| `--quiet` | `-q` | | Suppress banners |
-| `--dry-run` | | | Preview without executing |
-| `--no-commit` | | | Skip git commits (for testing) |
-
-### Turn Budget & Context Management
-
-Ralph tracks tool calls (turns) within each iteration and injects warnings:
-- **70% used**: Warning to consider checkpointing progress
-- **90% used**: Critical warning to wrap up immediately
-
-This prevents context rot by encouraging graceful handoffs before the context degrades.
-
-### Recommended Usage
-
-```bash
-# Run with project-specific PRD
-node .claude/skills/ralph/ralph.mjs --prd .claude/skills/ralph/projects/user-profile/prd.json
-
-# Dry run first to verify PRD
-node .claude/skills/ralph/ralph.mjs --prd .claude/skills/ralph/projects/user-profile/prd.json --dry-run
-```
-
-### Execution Time
-
-Ralph runs autonomously. Depending on story complexity:
-- Simple stories: ~2-5 minutes each
-- Complex stories: ~10-15 minutes each
-- A 10-story PRD: ~20-60 minutes total
-
-The user can walk away and return when complete.
-
-### Monitoring (Optional)
-
-```bash
-# Check remaining stories (replace <project> with your project name)
-cat .claude/skills/ralph/projects/<project>/prd.json | node -e "
-  const p=JSON.parse(require('fs').readFileSync(0,'utf8'));
-  const done = p.userStories.filter(s=>s.passes).length;
-  const total = p.userStories.length;
-  console.log('Progress:', done + '/' + total);
-"
-
-# Read progress log
-cat .claude/skills/ralph/projects/<project>/progress.txt
-```
-
----
-
-## Phase 3: Review Results
-
-After Ralph completes (or reaches max iterations), review the work.
-
-### 3.1 Check What Was Done
-
-```bash
-# See all commits made
-git log --oneline -20
-
-# See files changed
-git diff main..HEAD --stat
-
-# Check remaining stories (replace <project> with your project name)
-cat .claude/skills/ralph/projects/<project>/prd.json | node -e "
-  const p=JSON.parse(require('fs').readFileSync(0,'utf8'));
-  p.userStories.filter(s=>!s.passes).forEach(s =>
-    console.log('INCOMPLETE:', s.id, '-', s.title)
-  );
-"
-```
-
-### 3.2 Run Agent Review
-
-Use the agent-review skill to get an external perspective on the changes:
-
-```bash
-# Get the original spec (replace <project> with your project name)
-SPEC=$(cat .claude/skills/ralph/projects/<project>/prd.json)
-
-# Review changes against spec
-git diff main..HEAD | node .claude/skills/agent-review/query.mjs -m gemini "
-Review these code changes against this specification:
-
-$SPEC
-
-Check for:
-1. Does the implementation fully satisfy each acceptance criterion?
-2. Are there any bugs, edge cases, or issues?
-3. What's missing or incomplete?
-4. Any code quality concerns?
-
-Provide a structured report with:
-- Stories that are COMPLETE and correct
-- Stories that are INCOMPLETE or have issues
-- Specific fixes needed
-"
-```
-
-### 3.3 Review Progress Log
-
-Read the progress log for issues Ralph noted:
-
-```bash
-cat .claude/skills/ralph/projects/<project>/progress.txt
-```
-
-Look for:
-- TODOs or deferred work
-- Patterns that caused issues
-- Workarounds or shortcuts taken
-
-### 3.4 Run Quality Checks
-
-```bash
-npm run typecheck
-npm run lint
-npm test  # if applicable
-```
-
----
-
-## Phase 4: Follow-up PRD (if needed)
-
-If review identifies remaining work, create a follow-up PRD.
-
-### When to Create Follow-up
-
-Create a new PRD if:
-- Stories remain with `passes: false`
-- Agent review identified bugs or missing features
-- Quality checks revealed issues
-- Progress log noted TODOs
-
-### Follow-up PRD Structure
-
-1. **Copy incomplete stories** from original PRD (reset `passes: false`)
-2. **Add bug fix stories** for issues found in review
-3. **Add polish stories** for any rough edges
-4. **Re-prioritize** based on dependencies
-
-### Example Follow-up PRD
-
-```json
-{
-  "description": "User profile page - follow-up fixes",
-  "branchName": "feature/user-profile-page",
-  "userStories": [
-    {
-      "id": "US003-FIX",
-      "title": "Fix pagination in posts list",
-      "description": "Posts pagination was not working correctly - fix the offset calculation",
-      "acceptanceCriteria": [
-        "Page 2 shows different posts than page 1",
-        "No duplicate posts across pages",
-        "Total count is accurate"
-      ],
-      "priority": 1,
-      "passes": false
-    },
-    {
-      "id": "US004-RETRY",
-      "title": "Complete profile editing feature",
-      "description": "Profile editing was partially implemented - complete the save functionality",
-      "acceptanceCriteria": [
-        "Save button calls API endpoint",
-        "Success toast appears after save",
-        "Profile updates without page refresh"
-      ],
-      "priority": 1,
-      "passes": false
-    }
-  ]
-}
-```
-
-### Run Ralph Again
-
-```bash
-# Run with the follow-up PRD
-node .claude/skills/ralph/ralph.mjs --prd .claude/skills/ralph/projects/<project>/prd.json
-
-# Then review again (Phase 3)
-```
-
----
-
-## The Complete Loop
-
-```
-/ralph <plan.md>
-    │
-    ├── Read plan, create project folder
-    │   └── .claude/skills/ralph/projects/<project>/prd.json
-    │
-    ├── Run: node .claude/skills/ralph/ralph.mjs --prd .../prd.json
-    │   └── (wait 20-60 minutes)
-    │
-    ├── Review results
-    │   ├── git log, git diff
-    │   ├── agent-review against spec
-    │   └── npm run typecheck
-    │
-    ├── If all good → DONE
-    │
-    └── If issues remain:
-        ├── Update prd.json with fixes
-        └── Loop back to Run
-```
-
----
-
-## Files Reference
-
-| File | Purpose |
-|------|---------|
-| `.claude/skills/ralph/ralph.mjs` | Main loop script |
-| `.claude/skills/ralph/prompts/base.md` | Core instructions shared by composite PRD types |
-| `.claude/skills/ralph/prompts/code.md` | Additional instructions for code PRDs |
-| `.claude/skills/ralph/prompts/orchestrator.md` | Additional instructions for orchestrator PRDs |
-| `.claude/skills/ralph/prompts/testing.md` | Additional instructions for testing PRDs |
-| `.claude/skills/ralph/prompts/original.md` | Legacy monolithic prompt (for `type: "original"`) |
-| `.claude/skills/ralph/projects/<name>/prd.json` | Project PRD (you create this) |
-| `.claude/skills/ralph/projects/<name>/progress.txt` | Auto-generated progress log |
-
-The `projects/` folder is gitignored - PRDs are temporary working files.
-
-### Prompt Composition
-
-Ralph composites prompts at runtime:
-1. Loads `base.md` (core task loop, progress format, completion signal)
-2. Loads the specialized prompt based on PRD `type` field
-3. Injects actual paths (`{{PRD_PATH}}`, `{{PROGRESS_PATH}}`) from the `--prd` flag
-4. Concatenates them into the final agent prompt
-
-This allows shared concepts to live in one place while specialized behavior is modular.
+1. Copy incomplete stories (reset `passes: false`)
+2. Add bug fix stories for issues found
+3. Re-prioritize based on dependencies
+4. Execute again with `/ralph-daemon`
 
 ---
 
@@ -610,45 +335,9 @@ This allows shared concepts to live in one place while specialized behavior is m
 
 1. **Quality PRD = Quality Results** - Spend time on clear acceptance criteria
 2. **Start Small** - First time? Try a 3-5 story PRD
-3. **Use Dry Run** - Preview with `--dry-run` before committing to execution
-4. **Monitor Early** - Check progress after 10 minutes to catch issues
-5. **Review Thoroughly** - Agent review catches things Ralph might miss
-6. **Iterate** - Expect 2-3 Ralph runs for complex features
-7. **Increase iterations if needed** - Use `-n 20` if stories need retries
+3. **Review Thoroughly** - Agent review catches things Ralph might miss
+4. **Iterate** - Expect 2-3 Ralph runs for complex features
 
 ## Project Isolation
 
 Each project gets its own folder in `.claude/skills/ralph/projects/`, so multiple projects can coexist without conflicts. PRDs and progress files are preserved for history.
-
-### Running Ralph in a Worktree
-
-To run Ralph in a different worktree from your current directory:
-
-```bash
-# 1. Create the worktree (if needed)
-git worktree add ../model-share-feature feature/my-feature
-
-# 2. Create PRD in the worktree's project folder
-mkdir -p ../model-share-feature/.claude/skills/ralph/projects/my-feature
-
-# 3. Run Ralph with --cwd pointing to the worktree
-node .claude/skills/ralph/ralph.mjs \
-  --cwd ../model-share-feature \
-  --prd ../model-share-feature/.claude/skills/ralph/projects/my-feature/prd.json
-```
-
-Ralph will work entirely within the worktree - it has no knowledge of where it was spawned from.
-
-### Spawning Ralph from an Agent
-
-When invoking Ralph from another agent, use `run_in_background: true` to avoid timeout issues:
-
-```javascript
-// Ralph can take 20-60+ minutes - don't use a short timeout
-Bash({
-  command: "node .claude/skills/ralph/ralph.mjs --prd .../prd.json",
-  run_in_background: true  // Ralph continues independently
-})
-```
-
-Without `run_in_background`, a bash timeout will KILL Ralph mid-execution, leaving uncommitted changes.
