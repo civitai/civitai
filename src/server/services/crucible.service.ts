@@ -641,6 +641,32 @@ export async function markPairVoted(
   // Set TTL to 30 days (for crucible cleanup)
   await sysRedis.expire(key, 30 * 24 * 60 * 60);
 }
+
+/**
+ * Redis key for tracking unique judges (voters) per crucible
+ */
+function getJudgesKey(crucibleId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGES}:${crucibleId}` as RedisKeyTemplateSys;
+}
+
+/**
+ * Add a user to the judges set for a crucible (called when user first votes)
+ */
+export async function addJudge(crucibleId: number, userId: number): Promise<void> {
+  const key = getJudgesKey(crucibleId);
+  await sysRedis.sAdd(key, userId.toString());
+  // Set TTL to 30 days (for crucible cleanup)
+  await sysRedis.expire(key, 30 * 24 * 60 * 60);
+}
+
+/**
+ * Get the count of unique judges for a crucible
+ */
+export async function getJudgesCount(crucibleId: number): Promise<number> {
+  const key = getJudgesKey(crucibleId);
+  return await sysRedis.sCard(key);
+}
+
 /**
  * Check multiple pairs for voted status in parallel
  * Uses SISMEMBER for each pair in parallel for better performance
@@ -1155,9 +1181,11 @@ export const submitVote = async ({
 
   // Increment voteCount on both entries in Redis (not DB)
   // Vote counts are synced to PostgreSQL on finalization
+  // Also track unique judge (fire-and-forget, uses Redis SADD which is idempotent)
   await Promise.all([
     crucibleEloRedis.incrementVoteCount(crucibleId, winnerEntryId),
     crucibleEloRedis.incrementVoteCount(crucibleId, loserEntryId),
+    addJudge(crucibleId, userId),
   ]);
 
   // Note: Pair was already marked as voted atomically at the start of this function

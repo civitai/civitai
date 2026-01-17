@@ -137,6 +137,12 @@ export type UserActiveCrucible = {
 export type GetFeaturedCrucibleSchema = z.infer<typeof getFeaturedCrucibleSchema>;
 export const getFeaturedCrucibleSchema = z.object({});
 
+// Schema for getting judges count for a crucible
+export type GetJudgesCountSchema = z.infer<typeof getJudgesCountSchema>;
+export const getJudgesCountSchema = z.object({
+  crucibleId: z.number(),
+});
+
 // Featured crucible response type
 export type FeaturedCrucible = {
   id: number;

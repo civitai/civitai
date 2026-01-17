@@ -13,13 +13,7 @@ import {
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
-import {
-  IconGavel,
-  IconUpload,
-  IconBook,
-  IconTrophy,
-  IconPencil,
-} from '@tabler/icons-react';
+import { IconGavel, IconUpload, IconBook, IconTrophy, IconPencil } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -74,9 +68,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const currentUser = useCurrentUser();
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
+  const { data: judgesData } = trpc.crucible.getJudgesCount.useQuery(
+    { crucibleId: id },
+    { enabled: !!id }
+  );
 
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
+
+  const judgesCount = judgesData?.count ?? 0;
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
   const entryCount = crucible._count?.entries ?? 0;
@@ -134,7 +134,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               {/* Stats Grid */}
               <div className="mb-6 grid grid-cols-3 gap-4">
                 <StatBox value={entryCount.toString()} label="Entries" />
-                <StatBox value={abbreviateNumber(totalPrizePool)} label="Prize Pool" />
+                <StatBox value={abbreviateNumber(judgesCount)} label="Judges" />
                 <StatBox
                   value={crucible.endAt ? getTimeRemaining(crucible.endAt, crucible.status) : '-'}
                   label="Time Left"
