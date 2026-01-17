@@ -93,8 +93,13 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   };
 
   return (
-    <div className={clsx('relative h-[500px] overflow-hidden', className)}>
-      {/* Background image */}
+    <div
+      className={clsx('relative h-[350px] overflow-hidden sm:h-[500px]', className)}
+      style={{
+        background: !image ? 'linear-gradient(135deg, #1a1b1e 0%, #25262b 100%)' : undefined,
+      }}
+    >
+      {/* Background image (uses crucible cover image) */}
       {image && (
         <div className="absolute inset-0">
           <EdgeMedia
