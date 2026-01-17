@@ -8,7 +8,6 @@ import {
   Modal,
   Progress,
   Text,
-  useMantineTheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import {
@@ -250,7 +249,6 @@ export default function CrucibleSubmitEntryModal({
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
 
   const [selectedImages, setSelectedImages] = useState<number[]>([]);
