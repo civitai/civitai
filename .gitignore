@@ -103,3 +103,6 @@ nul
 
 scripts/local-dev/
 .direnv
+
+# Claude agent temp directories
+tmpclaude-*-cwd

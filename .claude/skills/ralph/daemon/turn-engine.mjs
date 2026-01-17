@@ -17,7 +17,7 @@ import { randomBytes } from 'crypto';
 import { getStorage, PrdStorage } from './storage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ralphDir = resolve(__dirname, '../ralph');
+const ralphDir = resolve(__dirname, '..');
 const promptsDir = resolve(ralphDir, 'prompts');
 
 // Session states

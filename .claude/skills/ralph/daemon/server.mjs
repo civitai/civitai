@@ -448,6 +448,19 @@ async function main() {
           }
         }
 
+        // POST /api/sessions/:id/wait-state - Wait for significant state change
+        if (action === 'wait-state' && req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const { timeout = 0, pollInterval = 2000 } = body;
+
+          try {
+            const result = await manager.waitForStateChange(sessionId, { timeout, pollInterval });
+            return jsonResponse(res, 200, { type: 'state_change', sessionId, ...result });
+          } catch (err) {
+            return errorResponse(res, 400, err.message);
+          }
+        }
+
         // GET /api/sessions/:id/tree - Get session tree (parent + all descendants)
         if (action === 'tree' && req.method === 'GET') {
           try {

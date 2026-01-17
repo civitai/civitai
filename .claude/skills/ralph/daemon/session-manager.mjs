@@ -14,8 +14,15 @@ import { EventEmitter } from 'events';
 import { randomBytes } from 'crypto';
 import { resolve, dirname, basename } from 'path';
 import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { getStorage, PrdStorage, closeStorage } from './storage.mjs';
 import { TurnEngine, SessionState, CommandType, GuidanceType } from './turn-engine.mjs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const promptsDir = resolve(__dirname, '..', 'prompts');
+
+// Valid PRD types that have corresponding prompt files
+const VALID_PRD_TYPES = ['code', 'orchestrator', 'testing'];
 
 /**
  * Session Manager - Coordinates multiple Ralph sessions
@@ -53,13 +60,15 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Generate a unique session ID
+   * @param {string} name - Base name for the session
+   * @param {string} prefix - Optional prefix (e.g., 'child' for child sessions)
    */
-  generateSessionId(name) {
+  generateSessionId(name, prefix = null) {
     const shortId = randomBytes(4).toString('hex');
     const safeName = name
       ? name.replace(/[^a-z0-9-]/gi, '-').toLowerCase().substring(0, 30)
       : 'ralph';
-    return `${safeName}-${shortId}`;
+    return prefix ? `${prefix}-${safeName}-${shortId}` : `${safeName}-${shortId}`;
   }
 
   /**
@@ -73,6 +82,7 @@ export class SessionManager extends EventEmitter {
       maxTurns = 100,
       workingDirectory,
       autoStart = false,
+      prefix = null, // Optional prefix for session ID (e.g., 'child')
     } = options;
 
     // Validate PRD path
@@ -83,11 +93,23 @@ export class SessionManager extends EventEmitter {
 
     // Generate session ID
     const sessionName = name || basename(dirname(prdPath));
-    const sessionId = this.generateSessionId(sessionName);
+    const sessionId = this.generateSessionId(sessionName, prefix);
 
-    // Read PRD to get story count
+    // Read PRD to get story count and validate type
     const prdStorage = new PrdStorage(prdPath);
     const prdData = prdStorage.read();
+
+    // Validate PRD type has a corresponding prompt file
+    const prdType = prdData.type || 'code';
+    if (!VALID_PRD_TYPES.includes(prdType)) {
+      const promptPath = resolve(promptsDir, `${prdType}.md`);
+      if (!existsSync(promptPath)) {
+        throw new Error(
+          `Invalid PRD type "${prdType}". Valid types are: ${VALID_PRD_TYPES.join(', ')}. ` +
+          `If you need a custom type, create ${promptPath} first.`
+        );
+      }
+    }
 
     // Create session in storage
     const session = this.storage.createSession({
@@ -555,6 +577,7 @@ export class SessionManager extends EventEmitter {
     const childSession = await this.createSession({
       ...options,
       autoStart: false, // Don't auto-start, let parent control
+      prefix: 'child', // Prefix child session IDs for clarity
     });
 
     // Link parent-child relationship
@@ -667,6 +690,88 @@ export class SessionManager extends EventEmitter {
       };
 
       checkChildren();
+    });
+  }
+
+  /**
+   * Wait for a session to have a significant state change
+   * Returns when session: completes, aborts, pauses (blocked), needs approval, or finishes a story
+   */
+  async waitForStateChange(sessionId, options = {}) {
+    const { timeout = 0, pollInterval = 2000 } = options;
+    const startTime = Date.now();
+
+    const session = this.storage.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    // Capture initial state
+    const initialStatus = session.status;
+    const initialStoriesCompleted = session.storiesCompleted || 0;
+
+    // States that indicate something significant happened
+    const significantStates = [
+      SessionState.PAUSED,
+      SessionState.WAITING,
+      SessionState.WAITING_APPROVAL,
+      SessionState.COMPLETED,
+      SessionState.ABORTED,
+    ];
+
+    return new Promise((resolve, reject) => {
+      const checkState = () => {
+        const current = this.storage.getSession(sessionId);
+        if (!current) {
+          resolve({ changed: true, reason: 'session_deleted', sessionId });
+          return;
+        }
+
+        // Check if status changed to a significant state
+        if (current.status !== initialStatus && significantStates.includes(current.status)) {
+          resolve({
+            changed: true,
+            reason: 'status_change',
+            sessionId,
+            previousStatus: initialStatus,
+            currentStatus: current.status,
+            storiesCompleted: current.storiesCompleted,
+            storiesTotal: current.storiesTotal,
+          });
+          return;
+        }
+
+        // Check if a story was completed (even if status is still RUNNING)
+        if ((current.storiesCompleted || 0) > initialStoriesCompleted) {
+          resolve({
+            changed: true,
+            reason: 'story_completed',
+            sessionId,
+            status: current.status,
+            storiesCompleted: current.storiesCompleted,
+            storiesTotal: current.storiesTotal,
+          });
+          return;
+        }
+
+        // Check timeout
+        if (timeout > 0 && (Date.now() - startTime) > timeout) {
+          resolve({
+            changed: false,
+            reason: 'timeout',
+            sessionId,
+            status: current.status,
+            storiesCompleted: current.storiesCompleted,
+            storiesTotal: current.storiesTotal,
+          });
+          return;
+        }
+
+        // Continue polling
+        setTimeout(checkState, pollInterval);
+      };
+
+      checkState();
     });
   }
 
