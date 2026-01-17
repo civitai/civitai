@@ -3,17 +3,19 @@ import {
   Center,
   CloseButton,
   Group,
+  HoverCard,
   Loader,
   Modal,
   Progress,
   Text,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import {
   IconBolt,
   IconCheck,
+  IconCircleCheck,
+  IconCircleX,
   IconCloudUpload,
   IconCube,
   IconEyeOff,
@@ -70,13 +72,24 @@ function getNsfwLabel(level: number): string {
 }
 
 /**
+ * Validation criteria type for hover card display
+ */
+type ValidationCriterion = {
+  label: string;
+  passes: boolean;
+  passText?: string;
+  failReason?: string;
+};
+
+/**
  * Image card with selection and validation status
+ * Shows detailed validation hover card matching mockup design
  */
 function ImageCard({
   image,
   isSelected,
   isValid,
-  validationMessage,
+  validationCriteria,
   onClick,
   isAlreadySubmitted,
 }: {
@@ -90,7 +103,7 @@ function ImageCard({
   };
   isSelected: boolean;
   isValid: boolean;
-  validationMessage?: string;
+  validationCriteria: ValidationCriterion[];
   onClick: () => void;
   isAlreadySubmitted: boolean;
 }) {
@@ -99,7 +112,7 @@ function ImageCard({
   return (
     <div
       className={clsx(
-        'group relative aspect-square cursor-pointer overflow-hidden rounded-lg border-2 transition-all',
+        'group relative aspect-square cursor-pointer overflow-visible rounded-lg border-2 transition-all',
         isSelected
           ? 'border-green-500 shadow-[0_0_10px_rgba(81,207,102,0.4)]'
           : isValid
@@ -109,42 +122,110 @@ function ImageCard({
       )}
       onClick={disabled ? undefined : onClick}
     >
-      <EdgeMedia
-        src={image.url}
-        type={image.type}
-        width={200}
-        className="h-full w-full object-cover"
-      />
+      <div className="size-full overflow-hidden rounded-md">
+        <EdgeMedia
+          src={image.url}
+          type={image.type}
+          width={200}
+          className="size-full object-cover"
+        />
+      </div>
 
-      {/* Status Badge */}
-      <Tooltip
-        label={
-          isAlreadySubmitted
-            ? 'Already submitted to this crucible'
-            : validationMessage || (isValid ? 'Valid entry' : 'Invalid entry')
-        }
-        withArrow
+      {/* Status Badge with Hover Card */}
+      <HoverCard
+        width={220}
+        shadow="lg"
         position="top"
+        withArrow
+        arrowSize={8}
+        openDelay={100}
+        closeDelay={50}
       >
-        <div
-          className={clsx(
-            'absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-md',
-            isAlreadySubmitted ? 'bg-gray-500' : isValid ? 'bg-green-500' : 'bg-red-500'
-          )}
+        <HoverCard.Target>
+          <div
+            className={clsx(
+              'absolute right-1.5 top-1.5 z-10 flex size-6 cursor-pointer items-center justify-center rounded-full text-white shadow-md transition-transform hover:scale-110',
+              isAlreadySubmitted ? 'bg-gray-500' : isValid ? 'bg-green-500' : 'bg-red-500'
+            )}
+          >
+            {isAlreadySubmitted ? (
+              <IconCheck size={14} />
+            ) : isValid ? (
+              <IconCheck size={14} />
+            ) : (
+              <IconX size={14} />
+            )}
+          </div>
+        </HoverCard.Target>
+
+        <HoverCard.Dropdown
+          className="border border-[#373a40] bg-[#2c2e33] p-3"
+          style={{ pointerEvents: 'auto' }}
         >
-          {isAlreadySubmitted ? (
-            <IconCheck size={14} />
-          ) : isValid ? (
-            <IconCheck size={14} />
-          ) : (
-            <IconX size={14} />
+          {/* Hover Card Title */}
+          <div
+            className={clsx(
+              'mb-2 flex items-center gap-1.5 text-xs font-semibold',
+              isAlreadySubmitted ? 'text-gray-400' : isValid ? 'text-green-400' : 'text-red-400'
+            )}
+          >
+            {isAlreadySubmitted ? (
+              <>
+                <IconCheck size={14} />
+                Already Submitted
+              </>
+            ) : isValid ? (
+              <>
+                <IconCircleCheck size={14} />
+                Valid Entry
+              </>
+            ) : (
+              <>
+                <IconCircleX size={14} />
+                Invalid Entry
+              </>
+            )}
+          </div>
+
+          {/* Validation Criteria List */}
+          {!isAlreadySubmitted && (
+            <div className="flex flex-col gap-1">
+              {validationCriteria.map((criterion, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-[0.7rem]">
+                  {/* Criterion Icon */}
+                  <div
+                    className={clsx(
+                      'flex size-3.5 shrink-0 items-center justify-center rounded-full',
+                      criterion.passes
+                        ? 'bg-green-500/20 text-green-400'
+                        : 'bg-red-500/20 text-red-400'
+                    )}
+                  >
+                    {criterion.passes ? <IconCheck size={10} /> : <IconX size={10} />}
+                  </div>
+                  {/* Criterion Text */}
+                  <span className={clsx(criterion.passes ? 'text-[#c1c2c5]' : 'text-red-400')}>
+                    {criterion.passes
+                      ? criterion.passText || criterion.label
+                      : criterion.failReason || criterion.label}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
-        </div>
-      </Tooltip>
+
+          {/* Already submitted message */}
+          {isAlreadySubmitted && (
+            <Text size="xs" c="dimmed">
+              This image is already submitted to this crucible.
+            </Text>
+          )}
+        </HoverCard.Dropdown>
+      </HoverCard>
 
       {/* Selection Indicator */}
       {isSelected && !disabled && (
-        <div className="absolute inset-0 flex items-center justify-center bg-green-500/20">
+        <div className="absolute inset-0 flex items-center justify-center rounded-md bg-green-500/20">
           <div className="rounded-full bg-green-500 p-2">
             <IconCheck size={24} className="text-white" />
           </div>
@@ -251,19 +332,46 @@ export default function CrucibleSubmitEntryModal({
   const canSubmitMore = remainingEntries > 0;
 
   // Validate image and check if it's selectable
+  // Returns detailed validation criteria for hover card display
   const validateImage = (image: (typeof images)[0]) => {
     const isCompatibleNsfw = isNsfwLevelCompatible(image.nsfwLevel ?? 1, nsfwLevel);
     const isAlreadySubmitted = submittedImageIds.has(image.id);
+    const imageNsfwLabel = getNsfwLabel(image.nsfwLevel ?? 1);
+    const requiredNsfwLabel = getNsfwLabel(nsfwLevel);
+
+    // Build detailed validation criteria
+    const criteria = [
+      {
+        label: allowedResourceNames?.length
+          ? `Uses ${allowedResourceNames[0] ?? 'required model'}`
+          : 'Any model allowed',
+        // For now, model validation is always passing since we don't have model metadata yet
+        // TODO: Add actual model validation when backend supports it
+        passes: true,
+        failReason: 'Model validation not available',
+      },
+      {
+        label: 'Image type',
+        passes: image.type === MediaType.image,
+        passText: 'Valid image format',
+        failReason: 'Must be an image file',
+      },
+      {
+        label: 'Content level',
+        passes: isCompatibleNsfw,
+        passText: `${imageNsfwLabel} content`,
+        failReason: `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`,
+      },
+    ];
 
     return {
       isValid: isCompatibleNsfw && !isAlreadySubmitted,
       isAlreadySubmitted,
+      criteria,
       message: isAlreadySubmitted
         ? 'Already submitted'
         : !isCompatibleNsfw
-        ? `Content level mismatch (${getNsfwLabel(
-            image.nsfwLevel ?? 1
-          )} image, requires ${getNsfwLabel(nsfwLevel)})`
+        ? `Content level mismatch (${imageNsfwLabel} image, requires ${requiredNsfwLabel})`
         : undefined,
     };
   };
@@ -547,7 +655,8 @@ export default function CrucibleSubmitEntryModal({
                 }}
               />
               <Text size="xs" c="dimmed" ta="center" mt={4}>
-                Uploading {uploadingFiles.length} {uploadingFiles.length === 1 ? 'image' : 'images'}...
+                Uploading {uploadingFiles.length} {uploadingFiles.length === 1 ? 'image' : 'images'}
+                ...
               </Text>
             </div>
           )}
@@ -570,7 +679,7 @@ export default function CrucibleSubmitEntryModal({
             <>
               <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
                 {images.map((image) => {
-                  const { isValid, isAlreadySubmitted, message } = validateImage(image);
+                  const { isValid, isAlreadySubmitted, criteria } = validateImage(image);
                   const isSelected = selectedImages.includes(image.id);
 
                   return (
@@ -586,7 +695,7 @@ export default function CrucibleSubmitEntryModal({
                       }}
                       isSelected={isSelected}
                       isValid={isValid}
-                      validationMessage={message}
+                      validationCriteria={criteria}
                       onClick={() => toggleImage(image.id)}
                       isAlreadySubmitted={isAlreadySubmitted}
                     />
@@ -631,7 +740,7 @@ export default function CrucibleSubmitEntryModal({
 
           <div className="flex gap-3">
             {/* Cancel Button */}
-            <Button variant="default" onClick={handleClose} className="flex-shrink-0">
+            <Button variant="default" onClick={handleClose} className="shrink-0">
               Cancel
             </Button>
 
