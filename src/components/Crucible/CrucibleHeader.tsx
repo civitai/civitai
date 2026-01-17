@@ -1,13 +1,13 @@
-import { Badge, Text, Title } from '@mantine/core';
+import { Avatar, Badge, Text, Title } from '@mantine/core';
 import { IconClock, IconUsers, IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { getInitials } from '~/utils/string-helpers';
 
 export type CrucibleHeaderData = {
   id: number;
@@ -148,9 +148,36 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             </ContentClamp>
           )}
 
-          {/* Creator info */}
+          {/* Creator info with avatar */}
           <div className="flex items-center gap-3">
-            <UserAvatarSimple {...user} />
+            <Avatar
+              src={user.image}
+              radius="xl"
+              size={40}
+              styles={{
+                root: {
+                  flexShrink: 0,
+                },
+                placeholder: {
+                  background: 'linear-gradient(135deg, #7950f2 0%, #228be6 100%)',
+                  color: 'white',
+                  fontWeight: 600,
+                  fontSize: 14,
+                },
+              }}
+            >
+              {user.username ? getInitials(user.username) : null}
+            </Avatar>
+            <div className="flex flex-col">
+              <Text size="sm" fw={600} c="white" lh={1.3}>
+                {user.deletedAt ? '[deleted]' : user.username}
+              </Text>
+              {!user.deletedAt && user.username && (
+                <Text size="xs" c="dimmed" lh={1.3}>
+                  @{user.username}
+                </Text>
+              )}
+            </div>
           </div>
         </div>
       </div>
