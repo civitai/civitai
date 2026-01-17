@@ -1,4 +1,6 @@
-import { Group, Stack, Title } from '@mantine/core';
+import { Button, Group, Stack, Text, Title } from '@mantine/core';
+import { IconPlus } from '@tabler/icons-react';
+import Link from 'next/link';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
@@ -10,9 +12,11 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
 import { useCrucibleFilters } from '~/components/Crucible/crucible.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 function CruciblesPage() {
   const filters = useCrucibleFilters();
+  const currentUser = useCurrentUser();
 
   return (
     <>
@@ -24,13 +28,31 @@ function CruciblesPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          <Title order={1}>Crucibles</Title>
+          {/* Page header with title and Create button */}
+          <Group justify="space-between" align="center" wrap="wrap">
+            <Title order={1}>Crucible Discovery</Title>
+            {currentUser && (
+              <Button
+                component={Link}
+                href="/crucibles/create"
+                leftSection={<IconPlus size={18} />}
+                radius="xl"
+              >
+                Create Crucible
+              </Button>
+            )}
+          </Group>
 
           {/* User welcome section with stats */}
           <UserCrucibleWelcome />
 
           {/* Featured crucible hero card */}
           <FeaturedCrucibleHero />
+
+          {/* Section header for discovery grid */}
+          <Text fz="xl" fw={600} mt="md">
+            Discover Crucibles
+          </Text>
 
           {/* Filter controls with underline tabs and sort dropdown */}
           <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
