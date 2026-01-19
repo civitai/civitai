@@ -1,12 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
 import { Badge, Group, Text } from '@mantine/core';
-import {
-  IconClockHour4,
-  IconPhoto,
-  IconTrophy,
-  IconCurrencyDollar,
-  IconSparkles,
-} from '@tabler/icons-react';
+import { IconClockHour4, IconPhoto, IconTrophy, IconSparkles } from '@tabler/icons-react';
 import React from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

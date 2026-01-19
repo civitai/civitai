@@ -1,9 +1,7 @@
 import { ArticleSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
-  getActiveChallengeFromDb,
   getChallengeById,
-  getUpcomingChallengesFromDb,
   type ChallengeDetails as NewChallengeDetails,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import {

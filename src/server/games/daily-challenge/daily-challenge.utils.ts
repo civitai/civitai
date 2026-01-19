@@ -1,11 +1,9 @@
-import type { Prisma } from '@prisma/client';
 import { mergeWith } from 'lodash-es';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 const challengeConfigSchema = z.object({
   challengeType: z.string(),
@@ -58,7 +56,9 @@ export const dailyChallengeConfig: ChallengeConfig = {
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
   try {
-    const redisConfig = await sysRedis.packed.get<any>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG);
+    const redisConfig = await sysRedis.packed.get<Partial<ChallengeConfig>>(
+      REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG
+    );
     if (redisConfig) config = challengeConfigSchema.partial().parse(redisConfig);
   } catch (e) {
     console.error('Invalid daily challenge config in redis:', e);

@@ -1,4 +1,4 @@
-import { Autocomplete, Group, Loader, Text } from '@mantine/core';
+import { Autocomplete, Loader } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
