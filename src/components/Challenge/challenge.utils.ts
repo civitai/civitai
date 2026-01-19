@@ -34,12 +34,7 @@ export function useQueryChallenges(
 export function useQueryChallenge(id: number, options?: { enabled?: boolean }) {
   const { enabled = true } = options ?? {};
 
-  return trpc.challenge.getById.useQuery(
-    { id },
-    {
-      enabled: enabled && id > 0,
-    }
-  );
+  return trpc.challenge.getById.useQuery({ id }, { enabled: enabled && id > 0 });
 }
 
 // Note: Challenge entries are stored as CollectionItems in the challenge's collection.
@@ -51,12 +46,6 @@ export function useQueryChallengeWinners(challengeId: number, options?: { enable
 
   return trpc.challenge.getWinners.useQuery(
     { challengeId },
-    {
-      enabled: enabled && challengeId > 0,
-    }
+    { enabled: enabled && challengeId > 0 }
   );
 }
-
-// Re-export types and constants
-export { ChallengeSort } from '~/server/schema/challenge.schema';
-export type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';

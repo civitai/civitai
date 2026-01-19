@@ -17,8 +17,16 @@ import {
   type UpsertChallengeInput,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
-import { ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeStatus,
+  CollectionMode,
+  CollectionReadConfiguration,
+  CollectionType,
+  CollectionWriteConfiguration,
+} from '~/shared/utils/prisma/enums';
 import { createImage } from '~/server/services/image.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 // Service functions
 export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
@@ -392,49 +400,93 @@ export async function upsertChallenge({
 
   if (id) {
     // Update existing challenge
-    const challenge = await dbWrite.challenge.update({
+    const challenge = await dbRead.challenge.findUnique({
       where: { id },
-      data: {
-        ...data,
-        coverImageId,
-        modelVersionIds: data.modelVersionIds ?? [],
-        prizes: data.prizes as Prisma.InputJsonValue,
-        entryPrize: data.entryPrize as Prisma.InputJsonValue | undefined,
-      },
+      select: { collectionId: true, metadata: true },
     });
-    return challenge;
-  } else {
-    // Create new challenge with a Contest Collection for entries
-    // First create the collection with proper Contest Mode settings
-    const collection = await dbWrite.collection.create({
-      data: {
-        name: `Challenge: ${data.title}`,
-        description: data.description || `Entries for challenge: ${data.title}`,
-        userId,
-        mode: CollectionMode.Contest,
-        metadata: {
-          maxItemsPerUser: data.maxEntriesPerUser ?? 20,
+    if (!challenge) throw throwNotFoundError('Challenge not found');
+
+    // Use transaction to update both challenge and collection metadata atomically
+    const updatedChallenge = await dbWrite.$transaction(async (tx) => {
+      // Update the challenge
+      const updated = await tx.challenge.update({
+        where: { id },
+        data: {
+          ...data,
+          coverImageId,
+          modelVersionIds: data.modelVersionIds ?? [],
+          prizes: data.prizes,
+          entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
+        },
+      });
+
+      // Sync collection metadata if challenge has a collection
+      if (challenge.collectionId) {
+        // Get current collection metadata to merge with updates
+        const collection = await tx.collection.findUnique({
+          where: { id: challenge.collectionId },
+          select: { metadata: true },
+        });
+
+        const currentMetadata = {
+          ...(collection?.metadata as CollectionMetadataSchema),
           submissionStartDate: data.startsAt,
           submissionEndDate: data.endsAt,
-          forcedBrowsingLevel: data.allowedNsfwLevel ?? 1,
-        },
-      },
+          maxItemsPerUser: data.maxEntriesPerUser,
+          forcedBrowsingLevel: data.allowedNsfwLevel,
+        };
+
+        await tx.collection.update({
+          where: { id: challenge.collectionId },
+          data: { metadata: currentMetadata },
+        });
+      }
+
+      return updated;
     });
 
-    // Then create the challenge linked to the collection
-    const challenge = await dbWrite.challenge.create({
-      data: {
-        ...data,
-        coverImageId,
-        collectionId: collection.id,
-        createdById: userId,
-        modelVersionIds: data.modelVersionIds ?? [],
-        allowedNsfwLevel: data.allowedNsfwLevel ?? 1,
-        entryPrizeRequirement: data.entryPrizeRequirement ?? 10,
-        prizes: data.prizes as Prisma.InputJsonValue,
-        entryPrize: data.entryPrize as Prisma.InputJsonValue | undefined,
-      },
+    return updatedChallenge;
+  } else {
+    // Create new challenge with a Contest Collection for entries
+    const challenge = await dbWrite.$transaction(async (tx) => {
+      // First create the collection with proper Contest Mode settings
+      const collection = await tx.collection.create({
+        data: {
+          name: `Challenge: ${data.title}`,
+          description: data.description || `Entries for challenge: ${data.title}`,
+          userId,
+          mode: CollectionMode.Contest,
+          write: CollectionWriteConfiguration.Review,
+          read: CollectionReadConfiguration.Public,
+          type: CollectionType.Image,
+          imageId: coverImageId,
+          metadata: {
+            maxItemsPerUser: data.maxEntriesPerUser ?? 20,
+            submissionStartDate: data.startsAt,
+            submissionEndDate: data.endsAt,
+            forcedBrowsingLevel: data.allowedNsfwLevel ?? 1,
+            disableFollowOnSubmission: true,
+            disableTagRequired: true,
+          },
+        },
+      });
+
+      // Then create the challenge linked to the collection
+      return await tx.challenge.create({
+        data: {
+          ...data,
+          coverImageId,
+          collectionId: collection.id,
+          createdById: userId,
+          modelVersionIds: data.modelVersionIds ?? [],
+          allowedNsfwLevel: data.allowedNsfwLevel ?? 1,
+          entryPrizeRequirement: data.entryPrizeRequirement ?? 10,
+          prizes: data.prizes,
+          entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
+        },
+      });
     });
+
     return challenge;
   }
 }

@@ -103,6 +103,7 @@ export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
 export const collectionMetadataSchema = z
   .object({
     endsAt: z.coerce.date().nullish(),
+    challengeDatate: z.coerce.date().nullish(),
     maxItemsPerUser: z.coerce.number().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),

@@ -1,5 +1,4 @@
 import { Center, Loader, LoadingOverlay, Stack } from '@mantine/core';
-import { useMemo } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';

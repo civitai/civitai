@@ -1,63 +1,40 @@
-import {
-  Button,
-  Divider,
-  Group,
-  NumberInput,
-  Paper,
-  Select,
-  Stack,
-  Textarea,
-  TextInput,
-  Title,
-} from '@mantine/core';
-import { DateTimePicker } from '@mantine/dates';
+import { Button, Divider, Group, Paper, SimpleGrid, Stack, Title } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
-import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
+import {
+  Form,
+  InputDateTimePicker,
+  InputNumber,
+  InputRTE,
+  InputSelect,
+  InputSimpleImageUpload,
+  InputText,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
+import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
-import type { Prize } from '~/server/schema/challenge.schema';
+import { upsertChallengeSchema, type Prize } from '~/server/schema/challenge.schema';
 
-// Cover image type for the form
-type CoverImageData = {
-  id?: number;
-  url: string;
-  name?: string;
-} | null;
+// Wrapped custom components for form integration
+const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
+const InputContentRatingSelect = withController(ContentRatingSelect);
 
-// Form data type (explicit, no zod inference issues)
-type ChallengeFormData = {
-  title: string;
-  description: string;
-  theme: string;
-  invitation: string;
-  coverImage: CoverImageData;
-  modelVersionIds: number[]; // Array of allowed model version IDs
-  nsfwLevel: number;
-  allowedNsfwLevel: number; // Bitwise NSFW levels for entries
-  judgingPrompt: string;
-  reviewPercentage: number;
-  maxEntriesPerUser: number;
-  entryPrizeRequirement: number;
-  prizePool: number;
-  operationBudget: number;
-  startsAt: Date;
-  endsAt: Date;
-  visibleAt: Date;
-  status: ChallengeStatus;
-  source: ChallengeSource;
-  prize1Buzz: number;
-  prize2Buzz: number;
-  prize3Buzz: number;
-  entryPrizeBuzz: number;
-};
+// Form schema - extends server schema with flattened prize fields for UI
+const schema = upsertChallengeSchema.omit({ prizes: true, entryPrize: true }).extend({
+  prize1Buzz: z.number().min(0).default(5000),
+  prize2Buzz: z.number().min(0).default(2500),
+  prize3Buzz: z.number().min(0).default(1000),
+  entryPrizeBuzz: z.number().min(0).default(0),
+});
 
 type ChallengeForEdit = {
   id: number;
@@ -102,13 +79,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const existingPrizes = challenge?.prizes ?? [];
   const existingEntryPrize = challenge?.entryPrize;
 
-  const {
-    register,
-    control,
-    handleSubmit,
-    watch,
-    formState: { errors, isSubmitting },
-  } = useForm<ChallengeFormData>({
+  const form = useForm({
+    schema,
     defaultValues: {
       title: challenge?.title ?? '',
       description: challenge?.description ?? '',
@@ -149,7 +121,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     },
   });
 
-  const onSubmit = (data: ChallengeFormData) => {
+  const handleSubmit = (data: z.infer<typeof schema>) => {
     // Build prizes array
     const prizes: Prize[] = [
       { buzz: data.prize1Buzz, points: 150 },
@@ -169,11 +141,11 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       description: data.description || undefined,
       theme: data.theme || undefined,
       invitation: data.invitation || undefined,
-      coverImage: data.coverImage ?? undefined, // Send full image object, server creates Image record if needed
+      coverImage: data.coverImage ?? undefined,
       modelVersionIds: data.modelVersionIds,
       nsfwLevel: data.nsfwLevel,
       allowedNsfwLevel: data.allowedNsfwLevel,
-      judgingPrompt: data.judgingPrompt,
+      judgingPrompt: data.judgingPrompt || undefined,
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
       entryPrizeRequirement: data.entryPrizeRequirement,
@@ -190,361 +162,240 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   };
 
   // Watch prize values for total calculation
-  const prize1 = watch('prize1Buzz');
-  const prize2 = watch('prize2Buzz');
-  const prize3 = watch('prize3Buzz');
+  const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
   const totalPrizePool = (prize1 || 0) + (prize2 || 0) + (prize3 || 0);
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
-      <Stack gap="xl">
+    <Form form={form} onSubmit={handleSubmit}>
+      <Stack gap="md">
         {/* Header */}
-        <Group>
+        <Group wrap="wrap">
           <BackButton url="/moderator/challenges" />
-          <Title order={2}>{isEditing ? 'Edit Challenge' : 'Create Challenge'}</Title>
+          <Title order={2} size="h3" className="sm:text-2xl">
+            {isEditing ? 'Edit Challenge' : 'Create Challenge'}
+          </Title>
         </Group>
 
         {/* Main Content */}
-        <Paper withBorder p="md">
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>Basic Information</Title>
 
-            <TextInput
+            <InputText
+              name="title"
               label="Title"
               placeholder="Enter challenge title"
-              required
-              error={errors.title?.message}
-              {...register('title')}
+              withAsterisk
             />
 
-            <TextInput
+            <InputText
+              name="theme"
               label="Theme"
               placeholder="1-2 word theme (e.g., 'Neon Dreams')"
-              error={errors.theme?.message}
-              {...register('theme')}
             />
 
-            <TextInput
+            <InputText
+              name="invitation"
               label="Invitation"
               placeholder="Short tagline to invite participants"
-              error={errors.invitation?.message}
-              {...register('invitation')}
             />
 
-            <Textarea
+            <InputRTE
+              name="description"
               label="Description"
-              placeholder="Full challenge description (supports markdown)"
-              minRows={4}
-              error={errors.description?.message}
-              {...register('description')}
+              description="Full challenge description"
+              placeholder="Enter challenge description..."
+              includeControls={['heading', 'formatting', 'list', 'link']}
+              editorSize="lg"
+              stickyToolbar
             />
 
-            <Controller
+            <InputSimpleImageUpload
               name="coverImage"
-              control={control}
-              render={({ field }) => (
-                <SimpleImageUpload
-                  label="Cover Image"
-                  description="Suggested resolution: 1200 x 630 (optional)"
-                  value={field.value ?? undefined}
-                  onChange={field.onChange}
-                  withNsfwLevel={false}
-                />
-              )}
+              label="Cover Image"
+              description="Suggested resolution: 1200 x 630 (optional)"
+              withNsfwLevel={false}
             />
           </Stack>
         </Paper>
 
         {/* Model Version Selection */}
-        <Paper withBorder p="md">
-          <Controller
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+          <InputModelVersionMultiSelect
             name="modelVersionIds"
-            control={control}
-            render={({ field }) => (
-              <ModelVersionMultiSelect
-                value={field.value}
-                onChange={field.onChange}
-                label="Required Model Versions"
-                description="Optionally require specific model versions for entries. Entries must use at least one of these models (OR logic). Leave empty to allow any model."
-              />
-            )}
+            label="Required Model Versions"
+            description="Optionally require specific model versions for entries. Entries must use at least one of these models (OR logic). Leave empty to allow any model."
           />
         </Paper>
 
         {/* Timing */}
-        <Paper withBorder p="md">
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>Schedule</Title>
 
-            <Group grow>
-              <Controller
+            <SimpleGrid cols={{ base: 1, sm: 3 }}>
+              <InputDateTimePicker
                 name="visibleAt"
-                control={control}
-                render={({ field }) => (
-                  <DateTimePicker
-                    label="Visible From"
-                    placeholder="When challenge appears in feed"
-                    value={field.value}
-                    onChange={field.onChange}
-                    error={errors.visibleAt?.message}
-                  />
-                )}
+                label="Visible From"
+                placeholder="When challenge appears in feed"
               />
 
-              <Controller
+              <InputDateTimePicker
                 name="startsAt"
-                control={control}
-                render={({ field }) => (
-                  <DateTimePicker
-                    label="Starts At"
-                    placeholder="When submissions open"
-                    value={field.value}
-                    onChange={field.onChange}
-                    error={errors.startsAt?.message}
-                  />
-                )}
+                label="Starts At"
+                placeholder="When submissions open"
               />
 
-              <Controller
+              <InputDateTimePicker
                 name="endsAt"
-                control={control}
-                render={({ field }) => (
-                  <DateTimePicker
-                    label="Ends At"
-                    placeholder="When submissions close"
-                    value={field.value}
-                    onChange={field.onChange}
-                    error={errors.endsAt?.message}
-                  />
-                )}
+                label="Ends At"
+                placeholder="When submissions close"
               />
-            </Group>
+            </SimpleGrid>
           </Stack>
         </Paper>
 
         {/* Prizes */}
-        <Paper withBorder p="md">
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
-            <Group justify="space-between">
+            <Group justify="space-between" wrap="wrap">
               <Title order={4}>Prizes</Title>
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={totalPrizePool} size="lg" />
             </Group>
 
-            <Group grow>
-              <Controller
-                name="prize1Buzz"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="1st Place (Buzz)"
-                    min={0}
-                    step={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-              <Controller
-                name="prize2Buzz"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="2nd Place (Buzz)"
-                    min={0}
-                    step={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-              <Controller
-                name="prize3Buzz"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="3rd Place (Buzz)"
-                    min={0}
-                    step={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-            </Group>
+            <SimpleGrid cols={{ base: 1, xs: 3 }}>
+              <InputNumber name="prize1Buzz" label="1st Place (Buzz)" min={0} step={100} />
+              <InputNumber name="prize2Buzz" label="2nd Place (Buzz)" min={0} step={100} />
+              <InputNumber name="prize3Buzz" label="3rd Place (Buzz)" min={0} step={100} />
+            </SimpleGrid>
 
             <Divider />
 
-            <Controller
+            <InputNumber
               name="entryPrizeBuzz"
-              control={control}
-              render={({ field }) => (
-                <NumberInput
-                  label="Participation Prize (Buzz per valid entry)"
-                  description="Optional buzz reward for all valid entries"
-                  min={0}
-                  step={10}
-                  value={field.value}
-                  onChange={field.onChange}
-                  style={{ maxWidth: 300 }}
-                />
-              )}
+              label="Participation Prize (Buzz per valid entry)"
+              description="Optional buzz reward for all valid entries"
+              min={0}
+              step={10}
             />
           </Stack>
         </Paper>
 
         {/* Entry Requirements */}
-        <Paper withBorder p="md">
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>Entry Requirements</Title>
 
             {/* Content Rating Selection */}
-            <Controller
-              name="allowedNsfwLevel"
-              control={control}
-              render={({ field }) => (
-                <ContentRatingSelect value={field.value} onChange={field.onChange} />
-              )}
-            />
+            <InputContentRatingSelect name="allowedNsfwLevel" />
 
             <Divider />
 
             {/* Entry Limits */}
-            <Group grow>
-              <Controller
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <InputNumber
                 name="maxEntriesPerUser"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="Max Entries Per User"
-                    description="Maximum submissions per participant"
-                    min={1}
-                    max={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
+                label="Max Entries Per User"
+                description="Maximum submissions per participant"
+                min={1}
+                max={100}
               />
 
-              <Controller
+              <InputNumber
                 name="entryPrizeRequirement"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="Entry Prize Requirement"
-                    description="Min entries to qualify for participation prize"
-                    min={1}
-                    max={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
+                label="Entry Prize Requirement"
+                description="Min entries to qualify for participation prize"
+                min={1}
+                max={100}
               />
-            </Group>
+            </SimpleGrid>
           </Stack>
         </Paper>
 
         {/* Configuration */}
-        <Paper withBorder p="md">
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>AI Configuration</Title>
 
-            <Group grow>
-              <Controller
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <InputNumber
                 name="reviewPercentage"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="Review Percentage"
-                    description="% of entries to AI-score"
-                    min={0}
-                    max={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
+                label="Review Percentage"
+                description="% of entries to AI-score"
+                min={0}
+                max={100}
               />
 
-              <Controller
+              <InputNumber
                 name="operationBudget"
-                control={control}
-                render={({ field }) => (
-                  <NumberInput
-                    label="Operation Budget (Buzz)"
-                    description="Budget for AI review costs"
-                    min={0}
-                    step={100}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
+                label="Operation Budget (Buzz)"
+                description="Budget for AI review costs"
+                min={0}
+                step={100}
               />
-            </Group>
+            </SimpleGrid>
 
-            <Textarea
+            <InputTextArea
+              name="judgingPrompt"
               label="Custom Judging Prompt"
               placeholder="Custom prompt for AI judging (leave empty for default)"
               minRows={3}
-              {...register('judgingPrompt')}
             />
           </Stack>
         </Paper>
 
         {/* Status */}
-        <Paper withBorder p="md">
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>Status</Title>
 
-            <Group grow>
-              <Controller
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <InputSelect
                 name="status"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    label="Challenge Status"
-                    data={[
-                      { value: ChallengeStatus.Draft, label: 'Draft' },
-                      { value: ChallengeStatus.Scheduled, label: 'Scheduled' },
-                      { value: ChallengeStatus.Active, label: 'Active' },
-                      { value: ChallengeStatus.Judging, label: 'Judging' },
-                      { value: ChallengeStatus.Completed, label: 'Completed' },
-                      { value: ChallengeStatus.Cancelled, label: 'Cancelled' },
-                    ]}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
+                label="Challenge Status"
+                data={[
+                  { value: ChallengeStatus.Draft, label: 'Draft' },
+                  { value: ChallengeStatus.Scheduled, label: 'Scheduled' },
+                  { value: ChallengeStatus.Active, label: 'Active' },
+                  { value: ChallengeStatus.Judging, label: 'Judging' },
+                  { value: ChallengeStatus.Completed, label: 'Completed' },
+                  { value: ChallengeStatus.Cancelled, label: 'Cancelled' },
+                ]}
               />
 
-              <Controller
+              <InputSelect
                 name="source"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    label="Challenge Source"
-                    data={[
-                      { value: ChallengeSource.System, label: 'System (Auto-generated)' },
-                      { value: ChallengeSource.Mod, label: 'Moderator' },
-                      { value: ChallengeSource.User, label: 'User' },
-                    ]}
-                    value={field.value}
-                    onChange={field.onChange}
-                  />
-                )}
+                label="Challenge Source"
+                data={[
+                  { value: ChallengeSource.System, label: 'System (Auto-generated)' },
+                  { value: ChallengeSource.Mod, label: 'Moderator' },
+                  { value: ChallengeSource.User, label: 'User' },
+                ]}
               />
-            </Group>
+            </SimpleGrid>
           </Stack>
         </Paper>
 
         {/* Actions */}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={() => router.push('/moderator/challenges')}>
+        <Group justify="flex-end" wrap="wrap">
+          <Button
+            variant="default"
+            onClick={() => router.push('/moderator/challenges')}
+            fullWidth
+            className="sm:w-auto"
+          >
             Cancel
           </Button>
-          <Button type="submit" loading={isSubmitting || upsertMutation.isPending}>
+          <Button
+            type="submit"
+            loading={form.formState.isSubmitting || upsertMutation.isPending}
+            fullWidth
+            className="sm:w-auto"
+          >
             {isEditing ? 'Update Challenge' : 'Create Challenge'}
           </Button>
         </Group>
       </Stack>
-    </form>
+    </Form>
   );
 }

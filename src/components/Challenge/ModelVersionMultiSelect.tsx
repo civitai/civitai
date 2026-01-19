@@ -1,9 +1,11 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
   Button,
   Card,
   Group,
+  Input,
   Loader,
   Stack,
   Text,
@@ -17,26 +19,22 @@ import type { GenerationResource } from '~/server/services/generation/generation
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
-type Props = {
-  value: number[];
-  onChange: (ids: number[]) => void;
-  label?: string;
-  description?: string;
-  error?: string;
+type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
+  value?: number[];
+  onChange?: (ids: number[]) => void;
   maxSelections?: number;
 };
 
 /**
  * Multi-select component for model versions using the resource select modal.
  * Returns just the model version IDs for storage.
+ * Compatible with withController HOC for form integration.
  */
 export function ModelVersionMultiSelect({
   value = [],
   onChange,
-  label = 'Required Model Versions',
-  description = 'Entries must use one of these model versions (OR logic)',
-  error,
   maxSelections = 10,
+  ...inputWrapperProps
 }: Props) {
   // Track selected resources for display
   const [selectedResources, setSelectedResources] = useState<GenerationResource[]>([]);
@@ -82,7 +80,7 @@ export function ModelVersionMultiSelect({
       onSelect: (resource) => {
         if (resource && !value.includes(resource.id)) {
           setSelectedResources((prev) => [...prev, resource]);
-          onChange([...value, resource.id]);
+          onChange?.([...value, resource.id]);
         }
       },
       options: {
@@ -100,96 +98,83 @@ export function ModelVersionMultiSelect({
 
   const handleRemove = (id: number) => {
     setSelectedResources((prev) => prev.filter((r) => r.id !== id));
-    onChange(value.filter((v) => v !== id));
+    onChange?.(value.filter((v) => v !== id));
   };
 
   const isLoading = isLoadingDetails && value.length > 0 && selectedResources.length === 0;
 
   return (
-    <Stack gap="xs">
-      <div>
-        <Text size="sm" fw={500}>
-          {label}
-        </Text>
-        <Text size="xs" c="dimmed">
-          {description}
-        </Text>
-      </div>
-
-      {isLoading ? (
-        <Card withBorder p="sm">
-          <Group justify="center">
-            <Loader size="sm" />
-            <Text size="sm" c="dimmed">
-              Loading selected versions...
-            </Text>
-          </Group>
-        </Card>
-      ) : selectedResources.length > 0 ? (
-        <Card withBorder p="xs">
-          <Stack gap="xs">
-            {selectedResources.map((resource) => (
-              <Group key={resource.id} justify="space-between" wrap="nowrap">
-                <Group gap="xs" wrap="nowrap" style={{ overflow: 'hidden' }}>
-                  <ThemeIcon size="sm" variant="light" color="blue">
-                    <IconCube size={14} />
-                  </ThemeIcon>
-                  <div style={{ overflow: 'hidden' }}>
-                    <Text size="sm" fw={500} truncate>
-                      {resource.model.name}
-                    </Text>
-                    <Group gap={4}>
-                      <Text size="xs" c="dimmed" truncate>
-                        {resource.name}
+    <Input.Wrapper {...inputWrapperProps}>
+      <Stack gap="xs" mt={5}>
+        {isLoading ? (
+          <Card withBorder p="sm">
+            <Group justify="center">
+              <Loader size="sm" />
+              <Text size="sm" c="dimmed">
+                Loading selected versions...
+              </Text>
+            </Group>
+          </Card>
+        ) : selectedResources.length > 0 ? (
+          <Card withBorder p="xs">
+            <Stack gap="xs">
+              {selectedResources.map((resource) => (
+                <Group key={resource.id} justify="space-between" wrap="nowrap">
+                  <Group gap="xs" wrap="nowrap" style={{ overflow: 'hidden' }}>
+                    <ThemeIcon size="sm" variant="light" color="blue">
+                      <IconCube size={14} />
+                    </ThemeIcon>
+                    <div style={{ overflow: 'hidden' }}>
+                      <Text size="sm" fw={500} truncate>
+                        {resource.model.name}
                       </Text>
-                      <Badge size="xs" variant="light">
-                        {resource.baseModel}
-                      </Badge>
-                    </Group>
-                  </div>
+                      <Group gap={4}>
+                        <Text size="xs" c="dimmed" truncate>
+                          {resource.name}
+                        </Text>
+                        <Badge size="xs" variant="light">
+                          {resource.baseModel}
+                        </Badge>
+                      </Group>
+                    </div>
+                  </Group>
+                  <Tooltip label="Remove">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="red"
+                      onClick={() => handleRemove(resource.id)}
+                    >
+                      <IconX size={14} />
+                    </ActionIcon>
+                  </Tooltip>
                 </Group>
-                <Tooltip label="Remove">
-                  <ActionIcon
-                    size="sm"
-                    variant="subtle"
-                    color="red"
-                    onClick={() => handleRemove(resource.id)}
-                  >
-                    <IconX size={14} />
-                  </ActionIcon>
-                </Tooltip>
-              </Group>
-            ))}
-          </Stack>
-        </Card>
-      ) : (
-        <Text size="sm" c="dimmed">
-          No model versions required (any model allowed)
-        </Text>
-      )}
+              ))}
+            </Stack>
+          </Card>
+        ) : (
+          <Text size="sm" c="dimmed">
+            No model versions required (any model allowed)
+          </Text>
+        )}
 
-      {canAdd && (
-        <Button
-          variant="light"
-          leftSection={<IconPlus size={16} />}
-          onClick={handleOpenResourceSelect}
-          size="sm"
-        >
-          Add Model Version
-        </Button>
-      )}
+        {canAdd && (
+          <Button
+            variant="light"
+            leftSection={<IconPlus size={16} />}
+            onClick={handleOpenResourceSelect}
+            size="sm"
+          >
+            Add Model Version
+          </Button>
+        )}
 
-      {!canAdd && (
-        <Text size="xs" c="dimmed">
-          Maximum {maxSelections} model versions allowed
-        </Text>
-      )}
-
-      {error && (
-        <Text size="xs" c="red">
-          {error}
-        </Text>
-      )}
-    </Stack>
+        {!canAdd && (
+          <Text size="xs" c="dimmed">
+            Maximum {maxSelections} model versions allowed
+          </Text>
+        )}
+      </Stack>
+    </Input.Wrapper>
   );
 }

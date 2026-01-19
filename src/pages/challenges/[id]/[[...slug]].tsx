@@ -1,5 +1,6 @@
 import {
   Accordion,
+  ActionIcon,
   Badge,
   Button,
   Container,
@@ -104,64 +105,52 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       />
       <SensitiveShield contentNsfwLevel={challenge.nsfwLevel}>
         {/* TODO: Add Challenge to TrackView entity types */}
-        <Container size="xl" mb={32}>
+        <Container size="xl" mb={{ base: 'md', sm: 32 }}>
           <Stack gap="xs" mb="xl">
-            {/* Header Section */}
-            <Group justify="space-between" wrap="nowrap">
-              <Group gap="xs" wrap="wrap">
-                <Title fw="bold" lineClamp={2} order={1}>
-                  {challenge.title}
-                </Title>
-                <Group gap={8}>
-                  <CurrencyBadge
+            {/* Header Section - stacks on mobile */}
+            <Stack gap="xs">
+              <Title fw="bold" lineClamp={2} order={1} fz={{ base: 'h2', sm: 'h1' }}>
+                {challenge.title}
+              </Title>
+              <Group gap={8} wrap="wrap">
+                <CurrencyBadge
+                  size="lg"
+                  radius="sm"
+                  currency={Currency.BUZZ}
+                  unitAmount={challenge.prizePool}
+                  variant="light"
+                />
+                {isCompleted ? (
+                  <IconBadge
                     size="lg"
                     radius="sm"
-                    currency={Currency.BUZZ}
-                    unitAmount={challenge.prizePool}
-                    variant="light"
-                  />
-                  {isCompleted ? (
-                    <IconBadge
-                      size="lg"
-                      radius="sm"
-                      color="yellow.7"
-                      icon={<IconTrophy size={16} fill="currentColor" />}
-                    >
-                      Completed
-                    </IconBadge>
-                  ) : isActive ? (
-                    <IconBadge
-                      size="lg"
-                      radius="sm"
-                      color="green"
-                      icon={<IconSparkles size={16} />}
-                    >
-                      Live
-                    </IconBadge>
-                  ) : isScheduled ? (
-                    <Badge size="lg" radius="sm" color="blue">
-                      Upcoming
-                    </Badge>
-                  ) : null}
-                  {isActive && (
-                    <IconBadge
-                      size="lg"
-                      radius="sm"
-                      icon={<IconClockHour4 size={18} />}
-                      color="gray"
-                    >
-                      <DaysFromNow date={challenge.endsAt} withoutSuffix />
-                    </IconBadge>
-                  )}
-                  <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
-                    {abbreviateNumber(challenge.entryCount)} entries
+                    color="yellow.7"
+                    icon={<IconTrophy size={16} fill="currentColor" />}
+                  >
+                    Completed
                   </IconBadge>
-                </Group>
+                ) : isActive ? (
+                  <IconBadge size="lg" radius="sm" color="green" icon={<IconSparkles size={16} />}>
+                    Live
+                  </IconBadge>
+                ) : isScheduled ? (
+                  <Badge size="lg" radius="sm" color="blue">
+                    Upcoming
+                  </Badge>
+                ) : null}
+                {isActive && (
+                  <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
+                    <DaysFromNow date={challenge.endsAt} withoutSuffix />
+                  </IconBadge>
+                )}
+                <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
+                  {abbreviateNumber(challenge.entryCount)} entries
+                </IconBadge>
               </Group>
-            </Group>
+            </Stack>
 
             {/* Subheader with theme and dates */}
-            <Group gap={8}>
+            <Group gap={8} wrap="wrap">
               {challenge.theme && (
                 <>
                   <Text c="dimmed" size="sm">
@@ -170,7 +159,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                       {challenge.theme}
                     </Text>
                   </Text>
-                  <Divider orientation="vertical" />
+                  <Divider orientation="vertical" visibleFrom="xs" />
                 </>
               )}
               <Text c="dimmed" size="sm">
@@ -180,11 +169,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
             </Group>
           </Stack>
 
-          <ContainerGrid2 gutter={{ md: 32, lg: 64 }}>
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ md: 2 }}>
-              <ChallengeSidebar challenge={challenge} />
-            </ContainerGrid2.Col>
-            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ md: 1 }}>
+          <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
+            <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
               <Stack gap="md">
                 {/* Cover Image */}
                 {challenge.coverUrl && (
@@ -222,7 +208,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                     )}
                   </Stack>
                 </article>
+
+                {/* Mobile CTA - shown after description on mobile only */}
+                <MobileCTAInline challenge={challenge} />
               </Stack>
+            </ContainerGrid2.Col>
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+              <ChallengeSidebar challenge={challenge} />
             </ContainerGrid2.Col>
           </ContainerGrid2>
         </Container>
@@ -313,8 +305,8 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
 
   return (
     <Stack gap="md">
-      {/* Action buttons */}
-      <Group gap={8} wrap="nowrap">
+      {/* Action buttons - hidden on mobile, replaced by sticky CTA */}
+      <Group gap={8} wrap="nowrap" visibleFrom="md">
         {isActive && !currentUser?.muted && (
           <Button
             onClick={() => {
@@ -532,7 +524,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
     >
       <Container size="xl">
         <Stack gap="md" py={32}>
-          <Group>
+          <Group wrap="wrap">
             <Title order={2}>Entries</Title>
             {displaySubmitAction && (
               <Button
@@ -574,6 +566,46 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
         </Stack>
       </Container>
     </Container>
+  );
+}
+
+function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
+  const colorScheme = useComputedColorScheme('dark');
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+  const isActive = challenge.status === ChallengeStatus.Active;
+
+  if (!isActive || currentUser?.muted) return null;
+
+  return (
+    <Group gap="xs" wrap="nowrap" hiddenFrom="md" mt="md">
+      <Button
+        onClick={() => {
+          const modelVersionId = challenge.modelVersionIds?.[0];
+          if (modelVersionId) {
+            generationPanel.open({ type: 'modelVersion', id: modelVersionId });
+          } else {
+            generationPanel.open();
+          }
+          generationFormStore.setType('image');
+        }}
+        leftSection={<IconSparkles size={16} />}
+        variant="filled"
+        color="blue"
+        fullWidth
+      >
+        Enter Challenge
+      </Button>
+      <ShareButton url={router.asPath} title={challenge.title}>
+        <ActionIcon
+          size="lg"
+          variant="default"
+          color={colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+        >
+          <IconShare3 size={18} />
+        </ActionIcon>
+      </ShareButton>
+    </Group>
   );
 }
 

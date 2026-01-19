@@ -1,4 +1,5 @@
-import { Badge, Card, Checkbox, Group, Stack, Text, Tooltip } from '@mantine/core';
+import type { InputWrapperProps } from '@mantine/core';
+import { Badge, Card, Checkbox, Group, Input, Stack, Text, Tooltip } from '@mantine/core';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevelLabels,
@@ -7,10 +8,9 @@ import {
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 
-type Props = {
-  value: number;
-  onChange: (value: number) => void;
-  error?: string;
+type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
+  value?: number;
+  onChange?: (value: number) => void;
 };
 
 // Levels that can be selected (excluding Blocked)
@@ -44,8 +44,9 @@ const presets = [
 /**
  * Content rating selector for challenges.
  * Allows selecting which NSFW levels are allowed for entries.
+ * Compatible with withController HOC for form integration.
  */
-export function ContentRatingSelect({ value, onChange, error }: Props) {
+export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps }: Props) {
   const selectedLevels = parseBitwiseBrowsingLevel(value);
 
   const handleLevelToggle = (level: (typeof selectableLevels)[number], checked: boolean) => {
@@ -73,90 +74,81 @@ export function ContentRatingSelect({ value, onChange, error }: Props) {
       newLevels.push(NsfwLevel.PG);
     }
 
-    onChange(flagifyBrowsingLevel(newLevels));
+    onChange?.(flagifyBrowsingLevel(newLevels));
   };
 
   const handlePreset = (presetValue: number) => {
-    onChange(presetValue);
+    onChange?.(presetValue);
   };
 
   return (
-    <Stack gap="xs">
-      <div>
-        <Text size="sm" fw={500}>
-          Allowed Content Ratings
-        </Text>
-        <Text size="xs" c="dimmed">
-          Select which content ratings are allowed for challenge entries
-        </Text>
-      </div>
-
-      {/* Quick presets */}
-      <Group gap="xs">
-        {presets.map((preset) => (
-          <Badge
-            key={preset.label}
-            variant={value === preset.value ? 'filled' : 'light'}
-            color={value === preset.value ? 'blue' : 'gray'}
-            style={{ cursor: 'pointer' }}
-            onClick={() => handlePreset(preset.value)}
-          >
-            {preset.label}
-          </Badge>
-        ))}
-      </Group>
-
-      {/* Individual level selection */}
-      <Card withBorder p="sm">
-        <Stack gap="xs">
-          {selectableLevels.map((level) => {
-            const isChecked = selectedLevels.includes(level);
-            const label = browsingLevelLabels[level];
-            const description = browsingLevelDescriptions[level];
-            const color = levelColors[level];
-
-            return (
-              <Group key={level} justify="space-between" wrap="nowrap">
-                <Group gap="sm" wrap="nowrap">
-                  <Checkbox
-                    checked={isChecked}
-                    onChange={(e) => handleLevelToggle(level, e.currentTarget.checked)}
-                    disabled={level === NsfwLevel.PG} // PG is always required
-                  />
-                  <Badge color={color} variant="light" size="sm" w={50}>
-                    {label}
-                  </Badge>
-                  <Tooltip label={description} multiline w={300}>
-                    <Text size="sm" c="dimmed" style={{ cursor: 'help' }} lineClamp={1}>
-                      {description}
-                    </Text>
-                  </Tooltip>
-                </Group>
-              </Group>
-            );
-          })}
-        </Stack>
-      </Card>
-
-      {/* Summary */}
-      <Group gap="xs">
-        <Text size="xs" c="dimmed">
-          Allowed:
-        </Text>
-        {selectableLevels
-          .filter((level) => selectedLevels.includes(level))
-          .map((level) => (
-            <Badge key={level} size="xs" color={levelColors[level]} variant="filled">
-              {browsingLevelLabels[level]}
+    <Input.Wrapper
+      label="Allowed Content Ratings"
+      description="Select which content ratings are allowed for challenge entries"
+      {...inputWrapperProps}
+    >
+      <Stack gap="xs" mt={5}>
+        {/* Quick presets */}
+        <Group gap="xs">
+          {presets.map((preset) => (
+            <Badge
+              key={preset.label}
+              variant={value === preset.value ? 'filled' : 'light'}
+              color={value === preset.value ? 'blue' : 'gray'}
+              style={{ cursor: 'pointer' }}
+              onClick={() => handlePreset(preset.value)}
+            >
+              {preset.label}
             </Badge>
           ))}
-      </Group>
+        </Group>
 
-      {error && (
-        <Text size="xs" c="red">
-          {error}
-        </Text>
-      )}
-    </Stack>
+        {/* Individual level selection */}
+        <Card withBorder p="sm">
+          <Stack gap="xs">
+            {selectableLevels.map((level) => {
+              const isChecked = selectedLevels.includes(level);
+              const label = browsingLevelLabels[level];
+              const description = browsingLevelDescriptions[level];
+              const color = levelColors[level];
+
+              return (
+                <Group key={level} justify="space-between" wrap="nowrap">
+                  <Group gap="sm" wrap="nowrap">
+                    <Checkbox
+                      checked={isChecked}
+                      onChange={(e) => handleLevelToggle(level, e.currentTarget.checked)}
+                      disabled={level === NsfwLevel.PG} // PG is always required
+                    />
+                    <Badge color={color} variant="light" size="sm" w={50}>
+                      {label}
+                    </Badge>
+                    <Tooltip label={description} multiline w={300}>
+                      <Text size="sm" c="dimmed" style={{ cursor: 'help' }} lineClamp={1}>
+                        {description}
+                      </Text>
+                    </Tooltip>
+                  </Group>
+                </Group>
+              );
+            })}
+          </Stack>
+        </Card>
+
+        {/* Summary */}
+        <Group gap="xs">
+          <Text size="xs" c="dimmed">
+            Allowed:
+          </Text>
+          {selectableLevels
+            .filter((level) => selectedLevels.includes(level))
+            .map((level) => (
+              <Badge key={level} size="xs" color={levelColors[level]} variant="filled">
+                {browsingLevelLabels[level]}
+              </Badge>
+            ))}
+        </Group>
+      </Stack>
+    </Input.Wrapper>
   );
 }
