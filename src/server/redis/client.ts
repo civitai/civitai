@@ -181,6 +181,26 @@ declare global {
 
 const log = createLogger('redis', 'green');
 
+// Default connection timeout (30 seconds)
+const DEFAULT_CONNECTION_TIMEOUT_MS = 30000;
+
+/**
+ * Wrap a connect() call with a timeout to prevent indefinite hangs.
+ * This is important because Redis cluster connection can hang if nodes are unreachable.
+ */
+async function connectWithTimeout(
+  client: { connect: () => Promise<unknown> },
+  timeoutMs: number = DEFAULT_CONNECTION_TIMEOUT_MS
+): Promise<void> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Redis connection timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  await Promise.race([client.connect(), timeoutPromise]);
+}
+
 // Track topology refresh intervals for cleanup
 const clusterRefreshIntervals = new Map<string, NodeJS.Timeout>();
 
@@ -416,13 +436,16 @@ function getBaseClient(type: 'cache' | 'system') {
 
     // Don't await here - let connection happen in background
     // The client will queue commands until connected
+    // Use connectWithTimeout to prevent indefinite hangs on broken clusters
     log(`Calling connect() for ${type} (cluster) client...`);
-    baseClient.connect().then(async () => {
-      log(`${type} cluster client connected`);
-      await setupEnhancedFailover();
-    }).catch((err) => {
-      log(`Redis connection failed (${type})`, err);
-    });
+    connectWithTimeout(baseClient)
+      .then(async () => {
+        log(`${type} cluster client connected`);
+        await setupEnhancedFailover();
+      })
+      .catch((err) => {
+        log(`Redis connection failed (${type}): ${err instanceof Error ? err.message : err}`);
+      });
 
     return baseClient;
   }
@@ -430,12 +453,15 @@ function getBaseClient(type: 'cache' | 'system') {
   // Non-cluster client - use the normal flow
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
+  // Use connectWithTimeout to prevent indefinite hangs
   log(`Calling connect() for ${type} (single) client...`);
-  baseClient.connect().then(() => {
-    log(`${type} single client connected`);
-  }).catch((err) => {
-    log(`Redis connection failed (${type})`, err);
-  });
+  connectWithTimeout(baseClient)
+    .then(() => {
+      log(`${type} single client connected`);
+    })
+    .catch((err) => {
+      log(`Redis connection failed (${type}): ${err instanceof Error ? err.message : err}`);
+    });
 
   return baseClient;
 }
