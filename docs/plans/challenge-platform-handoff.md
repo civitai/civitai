@@ -12,7 +12,7 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 
 ---
 
-## Current Status: Phase 1 Complete - Ready for Testing
+## Current Status: Phase 1 Complete - Polished & Mobile-Optimized
 
 ### What's Been Built
 
@@ -85,6 +85,30 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 - [x] Moved types to `challenge.schema.ts`
 - [x] Router is now slim (~65 lines) and delegates to service functions
 
+### Form Refactoring ✅ Complete
+- [x] Refactored `ChallengeUpsertForm.tsx` to use `Form` component pattern with custom Input components
+- [x] Replaced Controller wrappers with `InputText`, `InputRTE`, `InputNumber`, `InputSelect`, `InputDateTimePicker`, `InputSimpleImageUpload`, `InputTextArea`
+- [x] Form schema extends `upsertChallengeSchema` from server (single source of truth for validation)
+- [x] Custom components (`ModelVersionMultiSelect`, `ContentRatingSelect`) wrapped with `withController` HOC
+
+### Mobile Optimization ✅ Complete
+- [x] Challenge details page (`/challenges/[id]`) optimized for mobile
+  - Responsive header with stacked layout on mobile
+  - Inline CTA after description on mobile (hidden sidebar CTA)
+  - Responsive grid gutters and padding
+- [x] Challenge upsert form optimized for mobile
+  - `SimpleGrid` with responsive cols (`base: 1, sm: 2/3`) for all field groups
+  - Responsive Paper padding (`p={{ base: 'sm', sm: 'md' }}`)
+  - Full-width action buttons on mobile
+- [x] `ModelVersionMultiSelect` updated to use `Input.Wrapper` for form compatibility
+- [x] `ContentRatingSelect` updated to use `Input.Wrapper` for form compatibility
+
+### Collection Metadata Sync ✅ Complete
+- [x] `upsertChallenge` service syncs collection metadata when updating:
+  - `submissionStartDate` / `submissionEndDate` (from challenge dates)
+  - `maxItemsPerUser` (from `maxEntriesPerUser`)
+  - `forcedBrowsingLevel` (from `allowedNsfwLevel`)
+
 ---
 
 ## What Needs to Be Done
@@ -133,10 +157,12 @@ See `docs/features/challenge-platform.md` for full roadmap:
 | Processing job | `src/server/jobs/daily-challenge-processing.ts` |
 | Challenge feed | `src/components/Challenge/ChallengesInfinite.tsx` |
 | Challenge card | `src/components/Cards/ChallengeCard.tsx` |
+| Challenge details page | `src/pages/challenges/[id]/[[...slug]].tsx` |
 | Create/edit form | `src/components/Challenge/ChallengeUpsertForm.tsx` |
 | Model version selector | `src/components/Challenge/ModelVersionMultiSelect.tsx` |
 | NSFW level selector | `src/components/Challenge/ContentRatingSelect.tsx` |
 | React Query hooks | `src/components/Challenge/challenge.utils.ts` |
+| Form library | `src/libs/form/index.ts` (Input components used in form) |
 
 ---
 
@@ -148,6 +174,7 @@ challenge.schema.ts          # Types (ChallengeDetail, ChallengeListItem, etc.)
 
 challenge.service.ts         # Business logic functions
        ↓                     # getInfiniteChallenges(), upsertChallenge(), etc.
+                             # Syncs collection metadata on update
 
 challenge.router.ts          # tRPC endpoints (slim, delegates to service)
        ↓                     # Re-exports types for backward compatibility
@@ -156,6 +183,15 @@ challenge.utils.ts           # React Query hooks (useQueryChallenges, etc.)
        ↓
 
 UI Components                # ChallengeCard, ChallengesInfinite, etc.
+
+Form Architecture:
+  upsertChallengeSchema      # Server-side validation schema
+         ↓
+  ChallengeUpsertForm        # Extends schema, adds flattened prize fields
+         ↓                   # Uses Form component from ~/libs/form
+  Input Components           # InputText, InputRTE, InputNumber, etc.
+         ↓                   # Custom: InputModelVersionMultiSelect, InputContentRatingSelect
+  withController HOC         # Wraps custom components for form integration
 ```
 
 ---
@@ -172,6 +208,9 @@ All design decisions are documented in `docs/challenge-design-questions.md` with
 6. **Entry prizes distributed immediately** - When user reaches entry count threshold
 7. **Cancelled challenges hidden** - Not visible in public feed
 8. **Cover image uses Image table** - Like Article, creates Image record for cover uploads
+9. **Form schema extends server schema** - `ChallengeUpsertForm` extends `upsertChallengeSchema` to keep validation in sync
+10. **Custom inputs use Input.Wrapper** - `ModelVersionMultiSelect` and `ContentRatingSelect` use Mantine's `Input.Wrapper` for consistent form integration
+11. **Collection metadata synced** - When challenge dates or settings change, collection metadata is updated in the same transaction
 
 ---
 
