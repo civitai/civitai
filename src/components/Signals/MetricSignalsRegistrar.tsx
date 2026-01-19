@@ -17,11 +17,6 @@ export function useMetricSignalsListener() {
       // But we need entityType and entityId from the topic subscription
       // Since signals are topic-based, the worker should include this info
 
-      // For now, handle the case where entityType/entityId might be in the payload
-      // or extracted from the topic by the worker
-
-      console.log('Received metric update signal:', payload);
-
       if (payload.entityType && payload.entityId) {
         const { entityType, entityId, ...updates } = payload;
         applyDelta(entityType, entityId, updates);
@@ -29,8 +24,6 @@ export function useMetricSignalsListener() {
     },
     [applyDelta]
   );
-
-  console.log('Registering metric update signal listener');
 
   useSignalConnection(SignalMessages.MetricUpdate, handleMetricUpdate);
 }

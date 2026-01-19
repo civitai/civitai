@@ -55,6 +55,7 @@ export function MetricSubscriptionProvider({
   const topic = isVisible
     ? (`${SignalTopic.Metric}:${entityType}:${entityId}` as const)
     : undefined;
+
   useSignalTopic(topic);
 
   return (
