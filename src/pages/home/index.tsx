@@ -50,11 +50,11 @@ export function Home() {
   return (
     <>
       <Meta
-        title="Civitai: The Home of Open-Source Generative AI"
-        description="Explore thousands of high-quality Stable Diffusion & Flux models, share your AI-generated art, and engage with a vibrant community of creators"
+        title="Civitai | Discover and Create AI Art"
+        description="Explore thousands of free Stable Diffusion & Flux models, create and share AI-generated art, and join the world's largest community of generative AI creators."
         links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' },
-          { href: `${env.NEXT_PUBLIC_BASE_URL}/home`, rel: 'alternate' },
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/`, rel: 'canonical' },
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/home`, rel: 'alternate' },
         ]}
       />
 
