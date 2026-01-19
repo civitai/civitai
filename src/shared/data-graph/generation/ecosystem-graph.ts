@@ -13,14 +13,16 @@
  */
 
 import { z } from 'zod';
+import { ecosystemById, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
-  ecosystemById,
-  ecosystemByKey,
   getEcosystemsForWorkflow,
-} from '~/shared/constants/basemodel.constants';
+  isWorkflowAvailable,
+  getDefaultEcosystemForWorkflow,
+} from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { quantityNode, imagesNode, promptNode, type ImageSlotConfig } from './common';
+import { quantityNode, imagesNode, promptNode } from './common';
+import { workflowConfigs, getImagesConfig } from './config';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
 import { qwenGraph } from './qwen-graph';
@@ -44,7 +46,6 @@ import { mochiGraph } from './mochi-graph';
 import { lightricksGraph } from './lightricks-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
-import { isWorkflowAvailable, getDefaultEcosystemForWorkflow } from './workflows';
 
 // =============================================================================
 // Helper Functions
@@ -81,8 +82,11 @@ export const ecosystemGraph = new DataGraph<
   .node(
     'baseModel',
     (ctx) => {
-      // Get ecosystems compatible with the selected workflow
-      const compatibleEcosystems = getEcosystemsForWorkflow(ctx.workflow);
+      // Get ecosystems compatible with the selected workflow (as IDs, convert to keys)
+      const compatibleEcosystemIds = getEcosystemsForWorkflow(ctx.workflow);
+      const compatibleEcosystems = compatibleEcosystemIds
+        .map((id) => ecosystemById.get(id)?.key)
+        .filter((key): key is string => !!key);
       // Default to first compatible ecosystem, or SDXL as fallback
       const defaultValue = compatibleEcosystems[0] ?? 'SDXL';
 
@@ -209,80 +213,15 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Veo3'] as const, graph: veo3Graph },
   ]);
 
-type ImageConfig = {
-  max?: number;
-  min?: number;
-  slots?: ImageSlotConfig[];
-};
-
 /**
- * Image config lookup.
- * Keys can be:
- * - Model + workflow: "model:123456:image-edit"
- * - Model only: "model:123456"
- * - Ecosystem + workflow: "Qwen:image-edit"
- * - Ecosystem only: "Qwen"
- * - Workflow only: "image-edit"
+ * Get image config from workflow configs.
  *
- * Lookup priority (most specific wins):
- * 1. model:{id}:{workflow}
- * 2. model:{id}
- * 3. {ecosystem}:{workflow}
- * 4. {ecosystem}
- * 5. {workflow}
- * 6. default (max: 1, min: 1)
+ * Priority (most specific wins):
+ * 1. Version overrides (by version ID or group)
+ * 2. Ecosystem overrides
+ * 3. Workflow base nodes
  */
-const imageConfigs: Record<string, ImageConfig> = {
-  // Ecosystem + workflow combinations
-  'Qwen:image-edit': { max: 1 },
-  'Flux1Kontext:image-edit': { max: 1 },
-
-  // Workflow defaults
-  'image-edit': { max: 7 },
-
-  // Video workflows - default img2vid is single image
-  img2vid: { max: 1, min: 1 },
-  // Vidu-specific video workflows
-  'img2vid:first-last-frame': {
-    slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame' }],
-  },
-  'img2vid:ref2vid': { max: 7, min: 1 },
-};
-
-function getImageConfig(ctx: {
-  workflow?: string;
-  baseModel?: string;
-  model?: { id: number };
-}): ImageConfig | undefined {
-  // 1. Check model + workflow combination
-  if (ctx.model?.id && ctx.workflow) {
-    const modelWorkflowConfig = imageConfigs[`model:${ctx.model.id}:${ctx.workflow}`];
-    if (modelWorkflowConfig) return modelWorkflowConfig;
-  }
-
-  // 2. Check model-specific config
-  if (ctx.model?.id) {
-    const modelConfig = imageConfigs[`model:${ctx.model.id}`];
-    if (modelConfig) return modelConfig;
-  }
-
-  // 3. Check ecosystem + workflow combination
-  if (ctx.baseModel && ctx.workflow) {
-    const comboConfig = imageConfigs[`${ctx.baseModel}:${ctx.workflow}`];
-    if (comboConfig) return comboConfig;
-  }
-
-  // 4. Check ecosystem only
-  if (ctx.baseModel) {
-    const ecosystemConfig = imageConfigs[ctx.baseModel];
-    if (ecosystemConfig) return ecosystemConfig;
-  }
-
-  // 5. Check workflow only
-  if (ctx.workflow) {
-    const workflowConfig = imageConfigs[ctx.workflow];
-    if (workflowConfig) return workflowConfig;
-  }
-
-  return undefined;
+function getImageConfig(ctx: { workflow?: string; baseModel?: string; model?: { id: number } }) {
+  if (!ctx.workflow || !ctx.baseModel) return undefined;
+  return getImagesConfig(workflowConfigs, ctx.workflow, ctx.baseModel, ctx.model?.id);
 }

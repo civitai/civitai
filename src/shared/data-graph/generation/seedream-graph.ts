@@ -13,12 +13,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import {
-  aspectRatioNode,
-  cfgScaleNode,
-  createCheckpointGraph,
-  seedNode,
-} from './common';
+import { aspectRatioNode, cfgScaleNode, createCheckpointGraph, seedNode } from './common';
 
 // =============================================================================
 // Seedream Version Constants
@@ -45,11 +40,22 @@ const seedreamVersionOptions = [
 // Aspect Ratios
 // =============================================================================
 
-/** Seedream aspect ratios */
-const seedreamAspectRatios = [
-  { label: '2:3', value: '2:3', width: 832, height: 1216 },
-  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
-  { label: '3:2', value: '3:2', width: 1216, height: 832 },
+/** Standard Seedream aspect ratios */
+const seedreamSizes = [
+  { label: '16:9', value: '16:9', width: 2560, height: 1440 },
+  { label: '4:3', value: '4:3', width: 2304, height: 1728 },
+  { label: '1:1', value: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', value: '3:4', width: 1728, height: 2304 },
+  { label: '9:16', value: '9:16', width: 1440, height: 2560 },
+];
+
+/** 4K Seedream aspect ratios (v4.5 only) */
+const seedreamSizes4K = [
+  { label: '16:9', value: '16:9', width: 4096, height: 2304 },
+  { label: '4:3', value: '4:3', width: 4096, height: 3072 },
+  { label: '1:1', value: '1:1', width: 4096, height: 4096 },
+  { label: '3:4', value: '3:4', width: 3072, height: 4096 },
+  { label: '9:16', value: '9:16', width: 2304, height: 4096 },
 ];
 
 // =============================================================================
@@ -62,10 +68,7 @@ const seedreamAspectRatios = [
  * Meta only contains dynamic props - static props like label are in components.
  * Note: Seedream doesn't use negative prompts, samplers, steps, or CLIP skip.
  */
-export const seedreamGraph = new DataGraph<
-  { baseModel: string; workflow: string },
-  GenerationCtx
->()
+export const seedreamGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph with version options
   .merge(
     () =>
@@ -75,7 +78,16 @@ export const seedreamGraph = new DataGraph<
       }),
     []
   )
-  .node('aspectRatio', aspectRatioNode({ options: seedreamAspectRatios, defaultValue: '1:1' }))
+  // Aspect ratio depends on model version - 4K sizes for v4.5, standard for others
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const is4K = ctx.model?.id === seedreamVersionIds['v4.5'];
+      const options = is4K ? seedreamSizes4K : seedreamSizes;
+      return aspectRatioNode({ options, defaultValue: '1:1' });
+    },
+    ['model']
+  )
   .node(
     'cfgScale',
     cfgScaleNode({

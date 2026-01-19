@@ -7,17 +7,14 @@
  */
 
 import { useMemo } from 'react';
-import {
-  ecosystemByKey,
-  ecosystemById,
-  getEcosystemsForWorkflow,
-} from '~/shared/constants/basemodel.constants';
+import { ecosystemByKey, ecosystemById } from '~/shared/constants/basemodel.constants';
 import {
   isWorkflowAvailable,
   workflowOptions,
   getDefaultEcosystemForWorkflow,
   getOutputTypeForWorkflow,
-} from '~/shared/data-graph/generation/workflows';
+  getEcosystemsForWorkflow,
+} from '~/shared/data-graph/generation/config/workflows';
 
 /**
  * Get the valid ecosystem for a workflow, considering the current value.
@@ -105,9 +102,12 @@ export function useCompatibilityInfo({
     // Get the current workflow's output type
     const currentOutputType = workflow ? getOutputTypeForWorkflow(workflow) : undefined;
 
-    // Get ecosystem keys compatible with current workflow
+    // Get ecosystem keys compatible with current workflow (convert IDs to keys)
     // If the current workflow has no ecosystem support, all ecosystems are considered compatible
-    const workflowEcosystemKeys = workflow ? getEcosystemsForWorkflow(workflow) : [];
+    const workflowEcosystemIds = workflow ? getEcosystemsForWorkflow(workflow) : [];
+    const workflowEcosystemKeys = workflowEcosystemIds
+      .map((id) => ecosystemById.get(id)?.key)
+      .filter((key): key is string => !!key);
     const currentWorkflowHasNoEcosystemSupport = workflow && workflowEcosystemKeys.length === 0;
     const compatibleEcosystemKeys = new Set<string>(workflowEcosystemKeys);
 

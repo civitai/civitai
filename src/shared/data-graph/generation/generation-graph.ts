@@ -25,7 +25,7 @@ import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
 import { ecosystemGraph } from './ecosystem-graph';
-import { getInputTypeForWorkflow, getOutputTypeForWorkflow } from './workflows';
+import { getInputTypeForWorkflow, getOutputTypeForWorkflow } from './config/workflows';
 
 // =============================================================================
 // Priority & Output Format Types
@@ -185,7 +185,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         'img2img',
         'img2img:face-fix',
         'img2img:hires-fix',
-        'image-edit',
+        'img2img:edit',
         // Video workflows with ecosystem support
         'txt2vid',
         'img2vid',

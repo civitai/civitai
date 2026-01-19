@@ -23,7 +23,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   getAllWorkflowsGrouped,
   workflowOptionById,
-} from '~/shared/data-graph/generation/workflows';
+} from '~/shared/data-graph/generation/config/workflows';
 
 // =============================================================================
 // Types
