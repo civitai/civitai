@@ -19,8 +19,8 @@ function ModelsPage() {
   return (
     <>
       <Meta
-        title="Civitai Models | Discover Free Stable Diffusion & Flux Models"
-        description="Browse from thousands of free Stable Diffusion & Flux models, spanning unique anime art styles, immersive 3D renders, stunning photorealism, and more"
+        title="AI Models | Civitai"
+        description="Browse thousands of free Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings. The largest collection of AI image generation resources."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/models`, rel: 'canonical' }]}
       />
 
