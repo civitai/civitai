@@ -7,21 +7,9 @@
  * re-evaluate resource compatibility.
  */
 
-import {
-  Badge,
-  Divider,
-  Group,
-  Modal,
-  Popover,
-  Stack,
-  Switch,
-  Text,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
+import { Group, Modal, Popover, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { IconCheck, IconChevronDown, IconArrowRight } from '@tabler/icons-react';
-import { useState } from 'react';
 import clsx from 'clsx';
 import { forwardRef, useCallback, useMemo } from 'react';
 
@@ -75,7 +63,9 @@ type FamilyGroup = {
 // =============================================================================
 
 const RECENT_ECOSYSTEMS_KEY = 'generation-recent-ecosystems';
-const MAX_RECENT_DISPLAY = 3;
+const TAB_PREFERENCE_KEY = 'generation-basemodel-tab';
+
+type TabValue = 'compatible' | 'recent' | 'all';
 
 // =============================================================================
 // Trigger Button
@@ -132,8 +122,14 @@ interface BaseModelListContentProps {
   groupedByFamily: FamilyGroup[];
   targetWorkflow?: string;
   onSelect: (key: string) => void;
-  /** Whether there are any incompatible items (to show the toggle) */
+  /** Whether there are any incompatible items */
   hasIncompatibleItems?: boolean;
+  /** Current tab */
+  activeTab: TabValue;
+  /** Tab change handler */
+  onTabChange: (tab: TabValue) => void;
+  /** Whether the recent tab should be available */
+  showRecentTab: boolean;
 }
 
 function BaseModelListContent({
@@ -143,67 +139,117 @@ function BaseModelListContent({
   targetWorkflow,
   onSelect,
   hasIncompatibleItems,
+  activeTab,
+  onTabChange,
+  showRecentTab,
 }: BaseModelListContentProps) {
-  const [showAll, setShowAll] = useState(false);
-
-  // Filter grouped items based on toggle state
+  // Filter grouped items based on active tab
   const filteredGroups = useMemo(() => {
-    if (showAll) return groupedByFamily;
+    if (activeTab === 'all') return groupedByFamily;
 
+    if (activeTab === 'recent') {
+      // For recent tab, show only the recent items (flat list, no grouping)
+      return [];
+    }
+
+    // Compatible tab: filter to compatible items only
     return groupedByFamily
       .map((group) => ({
         ...group,
         items: group.items.filter((item) => item.compatible),
       }))
       .filter((group) => group.items.length > 0);
-  }, [groupedByFamily, showAll]);
+  }, [groupedByFamily, activeTab]);
+
+  // Build available tabs
+  const tabs: { value: TabValue; label: string }[] = useMemo(() => {
+    const result: { value: TabValue; label: string }[] = [{ value: 'compatible', label: 'Compatible' }];
+    if (showRecentTab) {
+      result.push({ value: 'recent', label: 'Recent' });
+    }
+    if (hasIncompatibleItems) {
+      result.push({ value: 'all', label: 'All' });
+    }
+    return result;
+  }, [showRecentTab, hasIncompatibleItems]);
 
   return (
     <Stack gap="md">
-      {/* Header row: Recent label (if any) and toggle */}
-      {(recentItems.length > 0 || hasIncompatibleItems) && (
-        <Group justify="space-between">
-          {recentItems.length > 0 && (
-            <Text size="xs" c="dimmed" fw={500}>
-              Recent
-            </Text>
-          )}
-          {hasIncompatibleItems && (
-            <Switch
-              label="Show all"
-              size="xs"
-              checked={showAll}
-              onChange={(e) => setShowAll(e.currentTarget.checked)}
-              className={recentItems.length === 0 ? 'ml-auto' : ''}
-            />
-          )}
+      {/* Tab header */}
+      {tabs.length > 1 && (
+        <Group gap="xs">
+          {tabs.map((tab) => (
+            <UnstyledButton
+              key={tab.value}
+              onClick={() => onTabChange(tab.value)}
+              className={clsx(
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                activeTab === tab.value
+                  ? 'bg-blue-1 text-blue-7 dark:bg-blue-9/30 dark:text-blue-4'
+                  : 'text-gray-6 hover:bg-gray-1 dark:text-gray-4 dark:hover:bg-dark-5'
+              )}
+            >
+              {tab.label}
+            </UnstyledButton>
+          ))}
         </Group>
       )}
 
-      {/* Recent selections as inline badges (always compatible) */}
-      {recentItems.length > 0 && (
-        <>
-          <Group gap="xs">
-            {recentItems.map((item) => (
-              <Badge
+      {/* Recent tab content */}
+      {activeTab === 'recent' && recentItems.length > 0 && (
+        <Stack gap={0}>
+          {recentItems.map((item) => {
+            const isSelected = value === item.key;
+            const button = (
+              <UnstyledButton
                 key={item.key}
-                component="button"
                 onClick={() => onSelect(item.key)}
-                variant={value === item.key ? 'filled' : 'outline'}
-                color={value === item.key ? 'blue' : 'gray'}
-                size="sm"
-                radius="sm"
-                className="cursor-pointer"
+                className={clsx(
+                  'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
+                  isSelected
+                    ? 'bg-blue-0 dark:bg-blue-9/20'
+                    : 'hover:bg-gray-1 dark:hover:bg-dark-5',
+                  !item.compatible && 'opacity-60'
+                )}
               >
-                {item.name}
-              </Badge>
-            ))}
-          </Group>
-          <Divider />
-        </>
+                <div className="flex-1">
+                  <Text size="sm" fw={isSelected ? 600 : 400}>
+                    {item.name}
+                  </Text>
+                  {item.description && (
+                    <Text size="xs" c="dimmed" lineClamp={1}>
+                      {item.description}
+                    </Text>
+                  )}
+                </div>
+                {isSelected && <IconCheck size={16} className="text-blue-6" />}
+                {!item.compatible && !isSelected && (
+                  <IconArrowRight size={14} className="text-gray-5" />
+                )}
+              </UnstyledButton>
+            );
+
+            // Show tooltip for incompatible ecosystems
+            if (!item.compatible && targetWorkflow) {
+              return (
+                <Tooltip
+                  key={item.key}
+                  label={`Will switch to ${targetWorkflow}`}
+                  position="right"
+                  withArrow
+                  openDelay={300}
+                >
+                  {button}
+                </Tooltip>
+              );
+            }
+
+            return button;
+          })}
+        </Stack>
       )}
 
-      {/* All models grouped by family */}
+      {/* Grouped models (for compatible and all tabs) */}
       {filteredGroups.map((familyGroup) => (
         <div key={familyGroup.familyId ?? 'standalone'}>
           {/* Family header */}
@@ -279,6 +325,9 @@ interface BaseModelSelectModalProps {
   targetWorkflow?: string;
   onSelect: (key: string) => void;
   hasIncompatibleItems?: boolean;
+  activeTab: TabValue;
+  onTabChange: (tab: TabValue) => void;
+  showRecentTab: boolean;
 }
 
 function BaseModelSelectModal({
@@ -288,6 +337,9 @@ function BaseModelSelectModal({
   targetWorkflow,
   onSelect,
   hasIncompatibleItems,
+  activeTab,
+  onTabChange,
+  showRecentTab,
 }: BaseModelSelectModalProps) {
   const dialog = useDialogContext();
 
@@ -316,6 +368,9 @@ function BaseModelSelectModal({
           targetWorkflow={targetWorkflow}
           onSelect={handleSelect}
           hasIncompatibleItems={hasIncompatibleItems}
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          showRecentTab={showRecentTab}
         />
       </div>
     </Modal>
@@ -340,6 +395,10 @@ export function BaseModelInput({
   const [recentEcosystems, setRecentEcosystems] = useLocalStorage<string[]>({
     key: RECENT_ECOSYSTEMS_KEY,
     defaultValue: [],
+  });
+  const [storedTab, setStoredTab] = useLocalStorage<TabValue>({
+    key: TAB_PREFERENCE_KEY,
+    defaultValue: 'compatible',
   });
 
   // Track selection in recent ecosystems (keeps all unique selections, most recent first)
@@ -370,7 +429,7 @@ export function BaseModelInput({
   }, [outputType]);
 
   // Get ecosystem items filtered by output type, with compatibility marking
-  const items = useMemo(() => {
+  const items = useMemo((): EcosystemItem[] => {
     return ecosystems
       .filter((eco) => {
         // Filter by output type if specified
@@ -461,13 +520,31 @@ export function BaseModelInput({
     closePopover();
   };
 
-  // Get recent items - filter for compatible ones first, then take up to MAX_RECENT_DISPLAY
+  // Get recent items - all recent items that exist in items list
   const recentItems = useMemo(() => {
     return recentEcosystems
       .map((eco) => items.find((item) => item.key === eco))
-      .filter((item): item is EcosystemItem => item !== undefined && item.compatible)
-      .slice(0, MAX_RECENT_DISPLAY);
+      .filter((item): item is EcosystemItem => item !== undefined);
   }, [recentEcosystems, items]);
+
+  // Show recent tab only if there are recent items that don't match the current selection
+  const showRecentTab = useMemo(() => {
+    return recentItems.some((item) => item.key !== value);
+  }, [recentItems, value]);
+
+  // Compute active tab - default to 'compatible' if stored tab isn't available
+  const activeTab = useMemo((): TabValue => {
+    if (storedTab === 'recent' && !showRecentTab) return 'compatible';
+    if (storedTab === 'all' && !hasIncompatibleItems) return 'compatible';
+    return storedTab;
+  }, [storedTab, showRecentTab, hasIncompatibleItems]);
+
+  const handleTabChange = useCallback(
+    (tab: TabValue) => {
+      setStoredTab(tab);
+    },
+    [setStoredTab]
+  );
 
   const openMobileModal = () => {
     dialogStore.trigger({
@@ -479,6 +556,9 @@ export function BaseModelInput({
         groupedByFamily,
         targetWorkflow,
         hasIncompatibleItems,
+        activeTab,
+        onTabChange: handleTabChange,
+        showRecentTab,
         onSelect: (key: string) => {
           onChange?.(key);
           trackRecentSelection(key);
@@ -537,6 +617,9 @@ export function BaseModelInput({
           targetWorkflow={targetWorkflow}
           onSelect={handleSelect}
           hasIncompatibleItems={hasIncompatibleItems}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          showRecentTab={showRecentTab}
         />
       </Popover.Dropdown>
     </Popover>
