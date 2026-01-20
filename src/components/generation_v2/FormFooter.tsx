@@ -26,9 +26,11 @@ export function FormFooter() {
 
     setIsSubmitting(true);
     try {
+      // Filter out computed nodes (they're derived, not input)
       const inputData = Object.fromEntries(
         Object.entries(result.data).filter(([k]) => result.nodes[k]?.kind !== 'computed')
       );
+
       console.log('Submitting:', inputData);
       await new Promise((resolve) => setTimeout(resolve, 500));
     } finally {

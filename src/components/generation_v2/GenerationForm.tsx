@@ -6,7 +6,7 @@
  */
 
 import { Checkbox, Group, Input, Radio, SegmentedControl, Stack } from '@mantine/core';
-import React, { useCallback, useState, useRef } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 
 import { Controller, useGraph } from '~/libs/data-graph/react';
 import { type GenerationGraphTypes, type VideoValue } from '~/shared/data-graph/generation';
@@ -44,7 +44,7 @@ export function GenerationForm() {
   // Force re-render when workflow or baseModel changes
   // Use loose typing for subscribe since baseModel is in a discriminated branch
   const [, forceUpdate] = useState({});
-  React.useEffect(() => {
+  useEffect(() => {
     const unsubWorkflow = graph.subscribe('workflow', () => forceUpdate({}));
     type LooseGraph = { subscribe: (key: string, cb: () => void) => () => void };
     const unsubBaseModel = (graph as LooseGraph).subscribe('baseModel', () => forceUpdate({}));

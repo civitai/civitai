@@ -646,7 +646,11 @@ export function createCheckpointGraph(options?: {
           input: checkpointInputSchema,
           output: resourceSchema.optional(),
           defaultValue: modelVersionId
-            ? { id: modelVersionId, baseModel: ctx.baseModel, model: { type: 'Checkpoint' } }
+            ? ({
+                id: modelVersionId,
+                baseModel: ctx.baseModel,
+                model: { type: 'Checkpoint' },
+              } as any)
             : undefined,
           meta: {
             options: {
@@ -947,3 +951,4 @@ export function videoNode() {
     defaultValue: undefined,
   };
 }
+

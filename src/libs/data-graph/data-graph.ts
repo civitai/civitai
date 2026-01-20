@@ -190,30 +190,41 @@ type BuildGroupedDiscriminatedUnion<
   : never;
 
 /**
+ * Lazy evaluation of grouped branch metas via mapped type.
+ * TypeScript defers evaluation until property is accessed.
+ */
+type LazyGroupedBranchMetas<Groups extends GroupedBranchesArray> = {
+  [K in keyof Groups]: Groups[K] extends GroupedBranch<readonly string[], infer Graph>
+    ? InferGraphMeta<Graph>
+    : never;
+};
+
+/**
+ * Lazy evaluation of grouped branch values via mapped type.
+ */
+type LazyGroupedBranchValues<Groups extends GroupedBranchesArray> = {
+  [K in keyof Groups]: Groups[K] extends GroupedBranch<readonly string[], infer Graph>
+    ? InferGraphValues<Graph>
+    : never;
+};
+
+/**
  * Build meta union from grouped branches.
+ * Uses lazy evaluation via mapped type for better TypeScript performance.
  */
 type BuildGroupedMetaUnion<
   ParentCtxMeta extends Record<string, unknown>,
   Groups extends GroupedBranchesArray
-> = ParentCtxMeta &
-  FlattenUnion<
-    Groups[number] extends GroupedBranch<readonly string[], infer Graph>
-      ? InferGraphMeta<Graph>
-      : never
-  >;
+> = ParentCtxMeta & FlattenUnion<LazyGroupedBranchMetas<Groups>[keyof Groups & number]>;
 
 /**
  * Build values union from grouped branches.
+ * Uses lazy evaluation via mapped type for better TypeScript performance.
  */
 type BuildGroupedValuesUnion<
   ParentCtx extends Record<string, unknown>,
   Groups extends GroupedBranchesArray
-> = ParentCtx &
-  FlattenUnion<
-    Groups[number] extends GroupedBranch<readonly string[], infer Graph>
-      ? InferGraphValues<Graph>
-      : never
-  >;
+> = ParentCtx & FlattenUnion<LazyGroupedBranchValues<Groups>[keyof Groups & number]>;
 
 // Helper: Distributive Omit that preserves discriminated unions
 type OmitDistributive<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;

@@ -5,14 +5,11 @@
  * This includes the graph, storage adapter, and external context.
  */
 
-import { type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { DataGraphProvider } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
-import {
-  generationGraph,
-  type GenerationCtx,
-} from '~/shared/data-graph/generation';
+import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
 
 import { ResourceDataProvider } from './inputs/ResourceDataProvider';
 
@@ -55,10 +52,14 @@ const storageAdapter = createLocalStorageAdapter({
 
 export interface GenerationFormProviderProps {
   children: ReactNode;
+  /** Default/initial values to pass to graph.init() (e.g., from API data) */
+  defaultValues?: Record<string, unknown>;
   /** External context to pass to the graph */
   externalContext?: GenerationCtx;
   /** Enable debug mode for the graph */
   debug?: boolean;
+  /** Skip loading values from localStorage (use only defaultValues and node defaults) */
+  skipStorage?: boolean;
 }
 
 // =============================================================================
@@ -85,16 +86,20 @@ const defaultExternalContext: GenerationCtx = {
 
 export function GenerationFormProvider({
   children,
+  defaultValues,
   externalContext = defaultExternalContext,
   debug = false,
+  skipStorage = false,
 }: GenerationFormProviderProps) {
   return (
     <ResourceDataProvider>
       <DataGraphProvider
         graph={generationGraph}
         storage={storageAdapter}
+        defaultValues={defaultValues}
         externalContext={externalContext}
         debug={debug}
+        skipStorage={skipStorage}
       >
         {children}
       </DataGraphProvider>

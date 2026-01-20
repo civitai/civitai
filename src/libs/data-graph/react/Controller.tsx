@@ -23,6 +23,22 @@ export interface ControllerRenderProps<Value, Meta> {
 }
 
 /**
+ * Lookup type that always returns a value (never `never`).
+ * Uses intersection with string to ensure K is treated as a valid key.
+ */
+type SafeValueLookup<CtxValues, K extends string> = K extends keyof CtxValues
+  ? CtxValues[K]
+  : CtxValues extends Record<string, infer V>
+  ? V
+  : unknown;
+
+type SafeMetaLookup<CtxMeta, K extends string> = K extends keyof CtxMeta
+  ? CtxMeta[K]
+  : CtxMeta extends Record<string, infer V>
+  ? V
+  : unknown;
+
+/**
  * Props for the Controller component.
  * Types are inferred directly from the DataGraph instance.
  *
@@ -41,8 +57,8 @@ export interface ControllerProps<
   CtxValues extends Record<string, unknown>,
   K extends string,
   // Explicit type overrides for when inference fails
-  ValueOverride = K extends keyof CtxValues ? CtxValues[K] : unknown,
-  MetaOverride = K extends keyof CtxMeta ? CtxMeta[K] : unknown
+  ValueOverride = SafeValueLookup<CtxValues, K>,
+  MetaOverride = SafeMetaLookup<CtxMeta, K>
 > {
   /** The graph instance */
   graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>;
@@ -93,8 +109,8 @@ export function Controller<
   CtxMeta extends Record<string, unknown>,
   CtxValues extends Record<string, unknown>,
   K extends string,
-  ValueOverride = K extends keyof CtxValues ? CtxValues[K] : unknown,
-  MetaOverride = K extends keyof CtxMeta ? CtxMeta[K] : unknown
+  ValueOverride = SafeValueLookup<CtxValues, K>,
+  MetaOverride = SafeMetaLookup<CtxMeta, K>
 >({
   graph,
   name,

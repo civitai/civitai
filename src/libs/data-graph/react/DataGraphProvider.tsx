@@ -30,6 +30,8 @@ export interface DataGraphProviderProps<
   externalContext?: ExternalCtx;
   /** Enable debug logging */
   debug?: boolean;
+  /** Skip loading values from storage adapter (use only defaultValues and node defaults) */
+  skipStorage?: boolean;
   /** Children */
   children: ReactNode;
 }
@@ -55,6 +57,7 @@ interface UseDataGraphOptions<
   defaultValues?: Partial<Ctx>;
   externalContext?: ExternalCtx;
   debug?: boolean;
+  skipStorage?: boolean;
 }
 
 function useDataGraph<
@@ -67,6 +70,7 @@ function useDataGraph<
   defaultValues,
   externalContext,
   debug = false,
+  skipStorage = false,
 }: UseDataGraphOptions<Ctx, ExternalCtx, CtxMeta>): {
   graph: DataGraph<Ctx, ExternalCtx, CtxMeta>;
 } {
@@ -98,7 +102,10 @@ function useDataGraph<
 
   // Initialize once (handles React Strict Mode double-mount)
   if (!initializedRef.current) {
-    graphRef.current.init(defaultValues ?? {}, externalContext ?? ({} as ExternalCtx), { debug });
+    graphRef.current.init(defaultValues ?? {}, externalContext ?? ({} as ExternalCtx), {
+      debug,
+      skipStorage,
+    });
     initializedRef.current = true;
   }
 
@@ -131,6 +138,7 @@ export function DataGraphProvider<
   defaultValues,
   externalContext,
   debug,
+  skipStorage,
   children,
 }: DataGraphProviderProps<Ctx, ExternalCtx, CtxMeta>) {
   const { graph } = useDataGraph({
@@ -139,6 +147,7 @@ export function DataGraphProvider<
     defaultValues,
     externalContext,
     debug,
+    skipStorage,
   });
 
   return <DataGraphContext.Provider value={graph}>{children}</DataGraphContext.Provider>;

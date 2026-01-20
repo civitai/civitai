@@ -12,6 +12,4 @@ export type GenerationCtx = {
     tier: 'free' | 'basic' | 'pro' | 'enterprise';
   };
   resources: { id: number; baseModel: string; modelType: string }[];
-  /** Recent ecosystem keys from localStorage (limit 3) */
-  recentEcosystems?: string[];
 };
