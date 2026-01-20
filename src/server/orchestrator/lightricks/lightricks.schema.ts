@@ -38,7 +38,7 @@ const ltxv2AirModelVersionMap = new Map([
   [2600562, 'urn:air:ltxv:checkpoint:civitai:2291192@2600562'],
 ]);
 
-const ltx2Resolutions = getResolutionsFromAspectRatios(480, [...ltx2AspectRatios]);
+const ltx2Resolutions = getResolutionsFromAspectRatios(720, [...ltx2AspectRatios]);
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('lightricks').default('lightricks').catch('lightricks'),
@@ -188,14 +188,15 @@ export const ltx2GenerationConfig = VideoGenerationConfig2({
       }, {} as Record<string, number>);
     const [width, height] = ltx2Resolutions[aspectRatio];
     const model = ltx2ModelVersionMap[modelVersionId] ?? '19b-dev';
+    const isDistilled = model === '19b-distilled';
     return {
       ...args,
       operation: 'createVideo',
       width,
       height,
       model,
-      guidanceScale: cfgScale,
-      numInferenceSteps: steps,
+      guidanceScale: isDistilled ? 1 : cfgScale,
+      numInferenceSteps: isDistilled ? 8 : steps,
       images: images?.map((img) => img.url),
       loras: loras && Object.keys(loras).length > 0 ? loras : undefined,
     };

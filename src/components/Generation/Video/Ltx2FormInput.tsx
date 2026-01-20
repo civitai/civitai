@@ -27,7 +27,9 @@ const modelVersionOptions = [
 export function Ltx2FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
+  const modelVersionId = form.watch('modelVersionId');
   const isTxt2Vid = process === 'txt2vid';
+  const isDistilled = modelVersionId === ltx2ModelToVersionMap['19b-distilled'];
 
   return (
     <>
@@ -90,36 +92,40 @@ export function Ltx2FormInput() {
           }))}
         />
       </div>
-      <InputNumberSlider
-        name="cfgScale"
-        label={
-          <div className="flex items-center gap-1">
-            <Input.Label>CFG Scale</Input.Label>
-            <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.
-            </InfoPopover>
-          </div>
-        }
-        min={1}
-        max={10}
-        step={0.5}
-        precision={1}
-        reverse
-      />
-      <InputNumberSlider
-        name="steps"
-        label={
-          <div className="flex items-center gap-1">
-            <Input.Label>Steps</Input.Label>
-            <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              The number of iterations spent generating a video.
-            </InfoPopover>
-          </div>
-        }
-        min={20}
-        max={50}
-        reverse
-      />
+      {!isDistilled && (
+        <>
+          <InputNumberSlider
+            name="cfgScale"
+            label={
+              <div className="flex items-center gap-1">
+                <Input.Label>CFG Scale</Input.Label>
+                <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                  Controls how closely the video generation follows the text prompt.
+                </InfoPopover>
+              </div>
+            }
+            min={1}
+            max={10}
+            step={0.5}
+            precision={1}
+            reverse
+          />
+          <InputNumberSlider
+            name="steps"
+            label={
+              <div className="flex items-center gap-1">
+                <Input.Label>Steps</Input.Label>
+                <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                  The number of iterations spent generating a video.
+                </InfoPopover>
+              </div>
+            }
+            min={20}
+            max={50}
+            reverse
+          />
+        </>
+      )}
       <InputSwitch name="generateAudio" label="Generate Audio" />
       <InputSeed name="seed" label="Seed" />
       <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
