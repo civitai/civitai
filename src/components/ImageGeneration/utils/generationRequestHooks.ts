@@ -476,13 +476,15 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         for (const page of old.pages) {
           page.items = page.items.filter((x) => !toDelete.includes(x.id));
           for (const workflow of page.items) {
-            const addTagsMatch = tags.find((x) => x.workflowId === workflow.id && x.op === 'add');
-            const removeTagsMatch = tags.find(
+            const tagsToAdd = tags.filter((x) => x.workflowId === workflow.id && x.op === 'add');
+            const tagsToRemove = tags.filter(
               (x) => x.workflowId === workflow.id && x.op === 'remove'
             );
-            if (addTagsMatch) workflow.tags.push(addTagsMatch.tag);
-            if (removeTagsMatch)
-              workflow.tags = workflow.tags.filter((tag) => tag !== removeTagsMatch.tag);
+            for (const tagOp of tagsToAdd) workflow.tags.push(tagOp.tag);
+            if (tagsToRemove.length) {
+              const tagsToRemoveSet = new Set(tagsToRemove.map((x) => x.tag));
+              workflow.tags = workflow.tags.filter((tag) => !tagsToRemoveSet.has(tag));
+            }
 
             const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
             if (!toUpdate.length) continue;
@@ -496,10 +498,6 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
       },
     });
 
-    if (updated.some((u) => Object.values(u.images).some((img) => img.hidden))) {
-      queryClient.invalidateQueries(queryKey, { exact: false });
-    }
-
     mutate(
       {
         workflows: workflowPatches.length ? workflowPatches : undefined,
@@ -512,10 +510,13 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           const tagNames = [...new Set(tags.filter((x) => x.op === 'add').map((x) => x.tag))];
           for (const tag of tagNames) {
             const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] });
-            queryClient.invalidateQueries(key, { exact: false });
+            queryClient.invalidateQueries({ queryKey: key, exact: false });
           }
 
           options?.onSuccess?.();
+        },
+        onError: () => {
+          onError?.();
         },
       }
     );
