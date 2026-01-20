@@ -98,7 +98,7 @@ function useDataGraph<
 
   // Initialize once (handles React Strict Mode double-mount)
   if (!initializedRef.current) {
-    graphRef.current.init(defaultValues ?? {}, externalContext ?? ({} as ExternalCtx), {}, debug);
+    graphRef.current.init(defaultValues ?? {}, externalContext ?? ({} as ExternalCtx), { debug });
     initializedRef.current = true;
   }
 

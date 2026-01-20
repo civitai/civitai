@@ -518,34 +518,47 @@ export class DataGraph<
     return result;
   }
 
-  /** Validate all node values against their output schemas */
+  /**
+   * Validate current graph state against output schemas.
+   *
+   * This method validates the current internal state of an initialized graph.
+   * It updates `nodeErrors`, notifies watchers of error changes, and returns
+   * a ValidationResult.
+   *
+   * For non-mutating validation of arbitrary data, use `safeParse()` instead.
+   *
+   * @returns ValidationResult with either validated data or errors
+   *
+   * @example
+   * ```typescript
+   * // Validate current state (for React forms)
+   * const result = graph.validate();
+   *
+   * // Non-mutating validation of arbitrary data (use safeParse)
+   * const result = templateGraph.safeParse(userInput, { session });
+   * ```
+   */
   validate(): ValidationResult<Ctx> {
     const root = this.rootGraph;
-    const previousErrorKeys = new Set(root.nodeErrors.keys());
-    root.nodeErrors.clear();
-    let isValid = true;
+
+    // Evaluate with validateOnly mode - this populates nodeErrors and notifies watchers
+    this._evaluate(root._ctx, true);
+
+    return this._buildValidationResult(root);
+  }
+
+  /** Build a ValidationResult from the current graph state */
+  private _buildValidationResult(
+    graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>
+  ): ValidationResult<Ctx> {
+    const errors: Record<string, NodeError> = {};
     const nodes: Record<string, NodeEntry> = {};
 
-    for (const entry of root.activeEntries) {
+    for (const entry of graph.activeEntries) {
       if (entry.kind === 'node') {
-        const def = root.nodeDefs.get(entry.key);
-        if (!def?.output) continue;
-
-        // Skip validation if node's `when` condition is false (node not active)
-        if (def.when === false) continue;
-
-        // Also skip if node is not in context (conditionally excluded)
-        if (!(entry.key in root._ctx)) continue;
-
-        const value = (root._ctx as Record<string, unknown>)[entry.key];
-        const result = def.output.safeParse(value);
-        if (!result.success) {
-          const firstError = result.error?.issues?.[0];
-          root.nodeErrors.set(entry.key, {
-            message: firstError?.message ?? 'Validation failed',
-            code: firstError?.code ?? 'unknown',
-          });
-          isValid = false;
+        const error = graph.nodeErrors.get(entry.key);
+        if (error) {
+          errors[entry.key] = error;
         }
         nodes[entry.key] = { kind: 'node', key: entry.key, deps: entry.deps };
       } else if (entry.kind === 'computed') {
@@ -553,38 +566,43 @@ export class DataGraph<
       }
     }
 
-    const keysToNotify = new Set([...root.nodeErrors.keys(), ...previousErrorKeys]);
-    keysToNotify.forEach((key) => {
-      root.notifyNodeWatchers(key);
-    });
-
-    if (isValid) {
-      return { success: true, data: root._ctx as Ctx, nodes };
+    if (Object.keys(errors).length === 0) {
+      return { success: true, data: graph._ctx as Ctx, nodes };
     }
-
-    const errors: Record<string, NodeError> = {};
-    root.nodeErrors.forEach((error, key) => {
-      errors[key] = error;
-    });
 
     return { success: false, errors };
   }
 
   /**
-   * Initialize the graph with input and external context, then validate.
-   * This is a convenience method for server-side validation where you want
-   * to validate in a single call without mutating a shared instance.
+   * Validate input against output schemas without mutating the original graph.
+   * Creates an isolated clone, sets up state, evaluates, and validates.
    *
-   * @param input - Initial values to set on the graph
+   * Use this for server-side validation where the template graph should remain unchanged.
+   *
+   * @param input - Values to validate
    * @param externalCtx - External context for node factories
    * @returns ValidationResult with either validated data or errors
+   *
+   * @example
+   * ```typescript
+   * // Server-side validation
+   * const result = generationGraph.safeParse(userInput, { session });
+   * if (result.success) {
+   *   // result.data contains validated values
+   * } else {
+   *   // result.errors contains validation errors
+   * }
+   * ```
    */
-  parse(
+  safeParse(
     input: Partial<Ctx> = {},
     externalCtx: ExternalCtx = {} as ExternalCtx
   ): ValidationResult<Ctx> {
-    this.init(input, externalCtx);
-    return this.validate();
+    const clone = this.clone();
+    clone._setup(externalCtx);
+    clone._evaluate(input, true);
+
+    return clone._buildValidationResult(clone);
   }
 
   private watchNode(key: string, callback: NodeCallback): () => void {
@@ -1045,19 +1063,12 @@ export class DataGraph<
   }
 
   /**
-   * Initialize the graph with optional input values and external context.
+   * Set up internal state for evaluation (shared by init and validate).
+   * This prepares the graph for evaluation without handling storage or watchers.
    */
-  init(
-    input: Partial<Ctx> = {},
-    externalCtx: ExternalCtx = {} as ExternalCtx,
-    parentCtx: Partial<Ctx> = {},
-    debug = false,
-    options: { skipStorage?: boolean } = {}
-  ): Ctx {
-    this._debug = debug;
+  private _setup(externalCtx: ExternalCtx): void {
     this._ext = externalCtx;
-    this._ctx = { ...parentCtx } as Ctx;
-    this._initialized = true;
+    this._ctx = {} as Ctx;
     this.activeDiscriminators.clear();
     this.activeEntries = [];
 
@@ -1065,6 +1076,24 @@ export class DataGraph<
     for (const entry of this.entries) {
       this.activeEntries.push({ ...entry, source: 'root' });
     }
+  }
+
+  /**
+   * Initialize the graph with optional input values and external context.
+   *
+   * @param options.debug - Enable debug logging
+   * @param options.skipStorage - Skip loading values from storage adapter
+   */
+  init(
+    input: Partial<Ctx> = {},
+    externalCtx: ExternalCtx = {} as ExternalCtx,
+    options: { debug?: boolean; skipStorage?: boolean } = {}
+  ): Ctx {
+    this._debug = options.debug ?? false;
+    this._initialized = true;
+
+    // Use common setup
+    this._setup(externalCtx);
 
     let mergedInput = input;
     if (this.storageAdapter && !options.skipStorage) {
@@ -1111,7 +1140,8 @@ export class DataGraph<
       }
     }
 
-    const result = this.init(preservedValues as Partial<Ctx>, this._ext, {}, this._debug, {
+    const result = this.init(preservedValues as Partial<Ctx>, this._ext, {
+      debug: this._debug,
       skipStorage: true,
     });
     if (this.storageAdapter) {
@@ -1296,7 +1326,7 @@ export class DataGraph<
   // Evaluation Loop
   // ===========================================================================
 
-  private _evaluate(inputValues: Partial<Ctx> = {}): Ctx {
+  private _evaluate(inputValues: Partial<Ctx> = {}, validateOnly = false): Ctx {
     const log = this._debug ? console.log.bind(console) : () => {};
 
     const changed = new Set<string>(Object.keys(inputValues));
@@ -1402,23 +1432,32 @@ export class DataGraph<
         }
 
         const raw = inputValue !== undefined ? inputValue : def.defaultValue;
-        const inputSchema = def.input ?? def.output;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let next: any;
-        try {
-          next = inputSchema.parse(raw);
-          if (next === undefined && def.defaultValue !== undefined) {
-            next = def.defaultValue;
-          }
-        } catch {
-          next = def.defaultValue ?? def.output.parse(def.defaultValue);
-        }
 
-        // Apply transform when deps changed (not on direct input)
-        // Transform allows updating value based on context changes
-        const depsChanged = entry.deps.some((dep) => changed.has(dep));
-        if (def.transform && depsChanged && !isDirectUpdate) {
-          next = def.transform(next, this._ctx, this._ext);
+        if (validateOnly) {
+          // In validateOnly mode, skip parsing entirely - use raw value directly.
+          // validate() will check against output schema after evaluation completes.
+          // This ensures no transforms/coercion happen during pure validation.
+          next = raw;
+        } else {
+          // Normal mode: use input schema if available (allows transforms)
+          const schema = def.input ?? def.output;
+          try {
+            next = schema.parse(raw);
+            if (next === undefined && def.defaultValue !== undefined) {
+              next = def.defaultValue;
+            }
+          } catch {
+            next = def.defaultValue ?? def.output.parse(def.defaultValue);
+          }
+
+          // Apply transform when deps changed (not on direct input)
+          // Transform allows updating value based on context changes
+          const depsChanged = entry.deps.some((dep) => changed.has(dep));
+          if (def.transform && depsChanged && !isDirectUpdate) {
+            next = def.transform(next, this._ctx, this._ext);
+          }
         }
 
         const keyExists = entry.key in this._ctx;
@@ -1428,6 +1467,27 @@ export class DataGraph<
           (this._ctx as any)[entry.key] = next;
           changed.add(entry.key);
           if (valueChanged) {
+            this.notifyNodeWatchers(entry.key);
+          }
+        }
+
+        // In validateOnly mode, validate against output schema and populate nodeErrors
+        if (validateOnly) {
+          const hadError = this.nodeErrors.has(entry.key);
+          const result = def.output.safeParse(next);
+          if (!result.success) {
+            const firstError = result.error?.issues?.[0];
+            this.nodeErrors.set(entry.key, {
+              message: firstError?.message ?? 'Validation failed',
+              code: firstError?.code ?? 'unknown',
+            });
+            // Notify if error is new
+            if (!hadError) {
+              this.notifyNodeWatchers(entry.key);
+            }
+          } else if (hadError) {
+            // Error cleared
+            this.nodeErrors.delete(entry.key);
             this.notifyNodeWatchers(entry.key);
           }
         }
