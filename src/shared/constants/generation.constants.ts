@@ -20,7 +20,7 @@ import {
   getBaseModelGroupsByMediaType,
   getBaseModelMediaType,
 } from '~/shared/constants/base-model.constants';
-import type { ModelType } from '~/shared/utils/prisma/enums';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
@@ -162,6 +162,20 @@ export const draftInjectableResources = [
     }),
   } as InjectableResource,
 ];
+
+const SD1DraftResource = {
+  id: 424706,
+  baseModel: 'SD 1.5',
+  strength: 1,
+  model: { id: 195519, type: ModelType.LORA },
+};
+
+const SDXLDraftResource = {
+  id: 391999,
+  baseModel: 'SDXL 1.0',
+  strength: 1,
+  model: { id: 350450, type: ModelType.LORA },
+};
 
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 

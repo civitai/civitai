@@ -1485,10 +1485,14 @@ export class DataGraph<
             if (!hadError) {
               this.notifyNodeWatchers(entry.key);
             }
-          } else if (hadError) {
-            // Error cleared
-            this.nodeErrors.delete(entry.key);
-            this.notifyNodeWatchers(entry.key);
+          } else {
+            // Use Zod-parsed data to strip extra fields not in schema
+            (this._ctx as Record<string, unknown>)[entry.key] = result.data;
+            if (hadError) {
+              // Error cleared
+              this.nodeErrors.delete(entry.key);
+              this.notifyNodeWatchers(entry.key);
+            }
           }
         }
 

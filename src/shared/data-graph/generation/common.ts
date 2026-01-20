@@ -392,6 +392,7 @@ const resourceSchema = z.object({
   strength: z.number().optional(),
   baseModel: z.string(),
   model: z.object({
+    id: z.number(),
     type: z.string(),
   }),
 });
