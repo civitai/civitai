@@ -6,6 +6,10 @@ import type {
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
+import {
+  generateFromGraph,
+  whatIfFromGraph,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
@@ -361,6 +365,74 @@ export const orchestratorRouter = router({
       track: ctx.track,
     });
   }),
+
+  // #region [Generation Graph V2 endpoints]
+  /**
+   * Generate from graph - unified endpoint for all generation types
+   * Accepts { input, ctx } where:
+   * - input: form data from the generation graph
+   * - ctx: GenerationCtx with limits, user info, and resources
+   */
+  generateFromGraph: orchestratorGuardedProcedure
+    .input(z.any())
+    .mutation(async ({ ctx, input }) => {
+      const { input: formInput, ctx: externalCtx, civitaiTip, creatorTip, tags: inputTags } = input;
+      const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
+
+      return generateFromGraph({
+        input: formInput,
+        externalCtx,
+        userId: ctx.user.id,
+        token: ctx.token,
+        experimental: ctx.experimental,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        isModerator: ctx.user.isModerator,
+        track: ctx.track,
+        civitaiTip,
+        creatorTip,
+        tags,
+      });
+    }),
+
+  /**
+   * What-if from graph - cost estimation for generation-graph inputs
+   * Accepts { input, ctx } where:
+   * - input: form data from the generation graph
+   * - ctx: GenerationCtx with limits, user info, and resources
+   */
+  whatIfFromGraph: orchestratorGuardedProcedure
+    .input(z.any())
+    .query(async ({ ctx, input }) => {
+      const { input: formInput, ctx: externalCtx } = input;
+      try {
+        return await whatIfFromGraph({
+          input: formInput,
+          externalCtx,
+          userId: ctx.user.id,
+          token: ctx.token,
+          experimental: ctx.experimental,
+          allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        });
+      } catch (e) {
+        logToAxiom({
+          name: 'what-if-from-graph',
+          type: 'error',
+          payload: input,
+          error:
+            e instanceof TRPCError
+              ? {
+                  code: e.code,
+                  name: e.name,
+                  message: e.message,
+                }
+              : e,
+        }).catch();
+        throw e;
+      }
+    }),
   // #endregion
 
   // #region [Image upload]
