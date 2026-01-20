@@ -142,7 +142,7 @@ const featureFlags = createFeatureFlags({
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
-  crucible: isDev ? ['mod', 'granted'] : [],
+  crucible: isDev ? ['public'] : ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

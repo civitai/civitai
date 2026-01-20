@@ -249,7 +249,7 @@ async function runFlow(flowName, options = {}) {
   // Launch browser
   const browser = await chromium.launch({ headless });
 
-  const contextOptions = { viewport: { width: 1280, height: 720 } };
+  const contextOptions = { viewport: { width: 1920, height: 969 } };
   const profilePath = profile ? resolve(profilesDir, `${profile}.json`) : null;
 
   if (profilePath && existsSync(profilePath)) {
@@ -563,7 +563,7 @@ class BrowserSession {
     // Launch browser
     this.browser = await chromium.launch({ headless });
 
-    const contextOptions = { viewport: { width: 1280, height: 720 } };
+    const contextOptions = { viewport: { width: 1920, height: 969 } };
     const profilePath = profile ? resolve(profilesDir, `${profile}.json`) : null;
 
     if (profilePath && existsSync(profilePath)) {
@@ -1686,7 +1686,7 @@ async function main() {
           });
         }
 
-        // Generate the flow script
+        // Generate the flow script - wrap each chunk in IIFE to prevent variable conflicts
         const flowCode = selectedChunks.map(c => {
           let code = c.code;
           // Replace hardcoded values with params references if params exist
@@ -1698,7 +1698,8 @@ async function main() {
               code = code.replace(new RegExp(`"${escapedValue}"`, 'g'), `params["${key}"]`);
             });
           }
-          return `// ${c.label}\n${code}`;
+          // Wrap in IIFE to isolate variable scope between chunks
+          return `// ${c.label}\nawait (async () => {\n${code}\n})();`;
         }).join('\n\n');
 
         // Build embedded metadata

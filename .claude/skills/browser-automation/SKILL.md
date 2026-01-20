@@ -31,6 +31,14 @@ curl -X POST http://localhost:9222/chunk \
 curl -X POST http://localhost:9222/exit
 ```
 
+## Project-Specific Guide
+
+**Before testing, read `.browser/PROJECT.md`** for:
+- Authentication setup (testing-login for quick user switching)
+- Test user accounts and their permissions
+- Feature flags and access requirements
+- Architecture notes (e.g., Redis vs PostgreSQL storage)
+
 ## Endpoints
 
 | Endpoint | Method | Description |
@@ -216,6 +224,34 @@ curl -X POST http://localhost:9222/save-flow \
 ```
 
 Flows are stored in `.browser/flows/*.js` as self-contained files with embedded `FLOW_META`.
+
+### After Saving a Flow
+
+**Always review saved flows** to ensure quality:
+
+1. **Read the flow file** to check for issues:
+   - Variable conflicts (same `const` declared in multiple chunks)
+   - Hardcoded values that should be parameters
+   - Missing error handling or waits
+
+2. **Add parameters** for flexibility:
+   - IDs, names, and other test-specific values
+   - Entry counts, prices, durations
+   - User IDs for multi-user testing
+
+3. **Fix any issues** before committing the flow
+
+Example review process:
+```bash
+# Save the flow
+curl -X POST http://localhost:9222/save-flow -d '{"name": "my-flow", "recording": "my-recording"}'
+
+# Read and review the file
+cat .browser/flows/my-flow.js
+
+# Edit to add params and fix issues, then test
+curl -X POST http://localhost:9222/flows/my-flow/run -d '{"profile": "member", "params": {...}}'
+```
 
 ## Inspect Output
 
