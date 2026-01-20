@@ -16,9 +16,9 @@ export default Page(
     return (
       <>
         <Meta
-          title="Civitai Gallery | AI-Generated Art Showcase"
-          description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
+          title="AI Art Gallery | Civitai"
+          description="Explore millions of AI-generated images created with Stable Diffusion, Flux, and other models. Discover prompts, techniques, and inspiration."
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/images`, rel: 'canonical' }]}
         />
         {/* <ToolBanner /> */}
         <MasonryContainer className="min-h-full">
