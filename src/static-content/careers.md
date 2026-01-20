@@ -6,7 +6,7 @@ description: "Apply for our open positions to join us at Civitai!"
 **Envisioning a future where AI seamlessly enhances everyday life, Civitai is actively on the lookout for visionary creators, technologists, and innovators to spearhead our mission - democratizing access to AI tools for everyone.**
 
 ### Open Positions
-- [Site Moderator (Remote)](/content/careers/moderator)
+There are currently no open positions at this time. Check back later for future opportunities!
 
 <details open>
   <summary><h2 style="display: inline-block">Who We Are</h2></summary>
