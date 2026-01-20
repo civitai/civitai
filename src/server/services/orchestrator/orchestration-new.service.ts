@@ -197,55 +197,55 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
 // Step Input Creators
 // =============================================================================
 
+/** Data required for comfy workflow step creation */
+type ComfyInputData = {
+  /** Comfy workflow key (e.g., 'img2img-upscale') */
+  key: string;
+  /** Number of images to generate */
+  quantity?: number;
+  /** Resources to apply (model, LoRAs, VAE) */
+  resources?: ResourceData[];
+  /** Workflow-specific parameters (prompt, seed, dimensions, etc.) */
+  params: Record<string, unknown>;
+};
+
 /**
- * Creates comfy step input from generation graph output.
- * Only returns $type and input - wrapping handled at router level.
+ * Creates comfy step input.
  *
  * Handles:
  * - sampler → comfy sampler/scheduler conversion
  * - Resource application (checkpoint, LoRA, etc.)
  */
-async function createComfyInput(args: {
-  /** Comfy workflow key (e.g., 'img2img-upscale') */
-  key: string;
-  /** Full generation graph output */
-  graphData: GenerationGraphOutput;
-  /** Data to populate the comfy workflow template */
-  workflowData: Record<string, unknown>;
-  /** Resources to apply to the workflow (model, LoRAs, VAE, etc.) */
-  resources?: ResourceData[];
-}): Promise<StepInput> {
-  const { key, graphData, workflowData, resources = [] } = args;
-  const quantity = 'quantity' in graphData ? (graphData.quantity as number) : 1;
+async function createComfyInput(data: ComfyInputData): Promise<StepInput> {
+  const { key, quantity = 1, resources = [], params } = data;
 
-  // Convert sampler to comfy sampler/scheduler if present in workflowData
-  let finalWorkflowData = workflowData;
-  if ('sampler' in workflowData && workflowData.sampler) {
+  // Convert sampler to comfy sampler/scheduler if present
+  let workflowData: Record<string, unknown> = { ...params };
+  if ('sampler' in params && params.sampler) {
     const comfySampler =
       samplersToComfySamplers[
-        (workflowData.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
+        (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
       ];
-    finalWorkflowData = {
+    workflowData = {
       ...workflowData,
       sampler: comfySampler.sampler,
       scheduler: comfySampler.scheduler,
     };
   }
 
-  const comfyWorkflow = await populateWorkflowDefinition(key, finalWorkflowData);
+  const comfyWorkflow = await populateWorkflowDefinition(key, workflowData);
 
   // Apply resources (checkpoint, LoRAs, VAE, etc.) to the workflow
   if (resources.length > 0) {
-    applyResources(
-      comfyWorkflow,
-      resources.map((resource) => ({
-        air: resourceToAir(resource),
-        strength: resource.strength,
-      }))
-    );
+    const resourcesToApply = resources.map((resource) => ({
+      air: resourceToAir(resource),
+      strength: resource.strength,
+    }));
+    workflowData = { ...workflowData, resources: resourcesToApply };
+    applyResources(comfyWorkflow, resourcesToApply);
   }
 
-  const imageMetadata = JSON.stringify(removeEmpty(finalWorkflowData));
+  const imageMetadata = JSON.stringify(removeEmpty(workflowData));
 
   return {
     $type: 'comfy',
@@ -310,22 +310,18 @@ function createVideoUpscaleInput(
 async function createImageUpscaleInput(
   data: Extract<GenerationGraphOutput, { workflow: 'img2img:upscale' }>
 ): Promise<StepInput> {
-  const { images, scaleFactor } = data;
-
-  if (!images?.length || !images[0]?.url) {
+  const sourceImage = data.images?.[0];
+  if (!sourceImage?.url) {
     throw new Error('Image URL is required for image upscaling');
   }
 
-  const sourceImage = images[0];
-
   return createComfyInput({
     key: 'img2img-upscale',
-    graphData: data,
-    workflowData: {
+    params: {
       image: sourceImage.url,
       width: sourceImage.width,
       height: sourceImage.height,
-      upscale: scaleFactor,
+      upscale: data.scaleFactor,
     },
   });
 }
@@ -336,18 +332,14 @@ async function createImageUpscaleInput(
 async function createImageRemoveBackgroundInput(
   data: Extract<GenerationGraphOutput, { workflow: 'img2img:remove-background' }>
 ): Promise<StepInput> {
-  const { images } = data;
-
-  if (!images?.length || !images[0]?.url) {
+  const sourceImage = data.images?.[0];
+  if (!sourceImage?.url) {
     throw new Error('Image URL is required for background removal');
   }
 
-  const sourceImage = images[0];
-
   return createComfyInput({
     key: 'img2img-background-removal',
-    graphData: data,
-    workflowData: {
+    params: {
       image: sourceImage.url,
       width: sourceImage.width,
       height: sourceImage.height,
@@ -450,8 +442,8 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
 
     return createComfyInput({
       key: comfyKey,
-      graphData: data,
-      workflowData,
+      quantity: data.quantity,
+      params: workflowData,
       resources: [data.model, ...finalResources, ...(data.vae ? [data.vae] : [])],
     });
   }
