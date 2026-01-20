@@ -2,7 +2,7 @@ import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 
 import { CacheTTL, constants } from '~/server/common/constants';
-import { ArticleSort } from '~/server/common/enums';
+import { ArticleSort, NsfwLevel } from '~/server/common/enums';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
@@ -85,7 +85,7 @@ export const upsertArticleInput = z.object({
   }, 'Cannot be empty'),
   coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
-  userNsfwLevel: z.number().default(0),
+  userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
