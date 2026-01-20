@@ -10,6 +10,7 @@ import { LoadingOverlay } from '@mantine/core';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useGenerationStore } from '~/store/generation.store';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 
 import { GenerationForm } from './GenerationForm';
 import { GenerationFormProvider } from './GenerationFormProvider';
@@ -78,14 +79,20 @@ export function GenerationFormV2({
   if (!isClient) return null;
 
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden">
-      <LoadingOverlay visible={loading} />
-      <ScrollArea scrollRestore={{ key: 'generation-form-v2' }} pt={0} className="flex flex-col gap-2">
-        <GenerationFormProvider externalContext={externalContext} debug={debug}>
-          <GenerationForm />
-        </GenerationFormProvider>
-      </ScrollArea>
-    </div>
+    <GenerationProvider>
+      <div className="relative flex flex-1 flex-col overflow-hidden">
+        <LoadingOverlay visible={loading} />
+        <ScrollArea
+          scrollRestore={{ key: 'generation-form-v2' }}
+          pt={0}
+          className="flex flex-col gap-2"
+        >
+          <GenerationFormProvider externalContext={externalContext} debug={debug}>
+            <GenerationForm />
+          </GenerationFormProvider>
+        </ScrollArea>
+      </div>
+    </GenerationProvider>
   );
 }
 

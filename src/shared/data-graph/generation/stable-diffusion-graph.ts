@@ -88,9 +88,9 @@ export const stableDiffusionGraph = new DataGraph<
     'aspectRatio',
     (ctx) => {
       const options = ctx.baseModel === 'SD1' ? sd1AspectRatios : sdAspectRatios;
-      return aspectRatioNode({ options });
+      return { ...aspectRatioNode({ options }), when: ctx.input === 'text' };
     },
-    ['baseModel']
+    ['baseModel', 'input']
   )
   .node('negativePrompt', negativePromptNode())
   .node('sampler', samplerNode())
