@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1371",
+  "version": "5.0.1376",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -8,6 +8,7 @@
     "dev": "next dev",
     "dev-debug": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",
     "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",
+    "dev:daemon": "node .claude/skills/dev-server/console.mjs",
     "prod": "cross-env NODE_ENV=production next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
@@ -294,7 +295,8 @@
     "ts-node": "^10.9.1",
     "tsx": "^4.19.2",
     "typed-scss-modules": "^8.1.1",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "ws": "^8.19.0"
   },
   "ct3aMetadata": {
     "initVersion": "6.2.1"

@@ -7,7 +7,6 @@ import {
   Card,
   ActionIcon,
   Loader,
-  Tooltip,
 } from '@mantine/core';
 import type { Dispatch, DragEvent, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -36,6 +35,7 @@ import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
 import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -463,6 +463,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
     annotations,
   } = useContext();
   const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
+  const isMobile = isMobileDevice();
 
   // Check if this image is a composite (has been annotated)
   const annotation = annotations?.find((a) => a.compositeUrl === previewItem.url);
@@ -527,7 +528,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
       <Card.Section p={0} m={0} withBorder>
         <div
           className={clsx(
-            'relative flex items-center justify-center',
+            'group relative flex items-center justify-center',
             aspect === 'square' ? 'aspect-square' : 'aspect-video'
           )}
         >
@@ -546,18 +547,30 @@ SourceImageUploadMultiple.Image = function ImagePreview({
               <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/50 px-2 text-white">
                 {previewItem.width} x {previewItem.height}
               </div>
-              {enableDrawing && (
-                <Tooltip label="Sketch Edit" withArrow>
+              {enableDrawing &&
+                (isMobile ? (
+                  // Mobile: Large prominent button bottom-left
                   <ActionIcon
-                    variant="filled"
-                    size="sm"
-                    className="absolute left-0 top-0 m-1 rounded-md"
+                    variant="white"
+                    color="dark"
+                    size="lg"
+                    className="absolute bottom-1 left-1 m-0 rounded-md shadow-lg"
                     onClick={handleOpenDrawingEditor}
                   >
-                    <IconPalette size={16} />
+                    <IconPalette size={24} />
                   </ActionIcon>
-                </Tooltip>
-              )}
+                ) : (
+                  // Desktop: Full hover overlay
+                  <div
+                    className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
+                    onClick={handleOpenDrawingEditor}
+                  >
+                    <div className="flex items-center gap-2 rounded-md bg-white/90 px-3 py-2 text-dark-9">
+                      <IconPalette size={20} />
+                      <span className="text-sm font-medium">Sketch Edit</span>
+                    </div>
+                  </div>
+                ))}
             </>
           )}
           {previewItem.status === 'error' && (

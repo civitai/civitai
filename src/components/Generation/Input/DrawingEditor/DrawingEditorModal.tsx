@@ -3,7 +3,7 @@ import { useHotkeys } from '@mantine/hooks';
 import { useRef, useState, useMemo, useCallback } from 'react';
 import type Konva from 'konva';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { isMobileDevice } from '~/hooks/useIsMobile';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { DrawingCanvas } from './DrawingCanvas';
 import { DrawingToolbar } from './DrawingToolbar';
 import type {
@@ -27,6 +27,11 @@ const MAX_CANVAS_WIDTH = 700;
 const MAX_CANVAS_HEIGHT = 500;
 const DEFAULT_FONT_SIZE = 16;
 
+// Mobile layout constants
+const MOBILE_HEADER_HEIGHT = 52;
+const MOBILE_TOOLBAR_HEIGHT = 60;
+const MOBILE_PADDING = 16;
+
 export function DrawingEditorModal({
   sourceImage,
   onConfirm,
@@ -35,6 +40,7 @@ export function DrawingEditorModal({
 }: DrawingEditorModalProps) {
   const dialog = useDialogContext();
   const stageRef = useRef<Konva.Stage | null>(null);
+  const isMobile = useIsMobile({ type: 'media', breakpoint: 'md' });
 
   // Normalize initial lines to elements format
   const normalizedInitialElements = useMemo(() => normalizeElements(initialLines), [initialLines]);
@@ -144,15 +150,32 @@ export function DrawingEditorModal({
     ['INPUT', 'TEXTAREA'] // Ignore hotkeys when focus is in input/textarea elements (allows native undo/redo in text fields)
   );
 
-  // Calculate canvas dimensions based on source image
+  // Calculate canvas dimensions based on source image and device
   const canvasDimensions = useMemo(() => {
+    // On mobile, use viewport dimensions to prevent overflow
+    if (isMobile && typeof window !== 'undefined') {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      // Calculate available space accounting for UI elements, padding, and safe areas
+      // Be conservative to ensure no horizontal scroll
+      const maxWidth = Math.floor(viewportWidth - MOBILE_PADDING * 2 - 16); // Extra 16px buffer for safe area/scrollbar
+      const maxHeight = Math.floor(
+        viewportHeight - MOBILE_HEADER_HEIGHT - MOBILE_TOOLBAR_HEIGHT - MOBILE_PADDING * 2
+      );
+
+      // Use the standard calculation which handles aspect ratio properly
+      return calculateCanvasDimensions(sourceImage.width, sourceImage.height, maxWidth, maxHeight);
+    }
+
+    // Desktop: use fixed max dimensions
     return calculateCanvasDimensions(
       sourceImage.width,
       sourceImage.height,
       MAX_CANVAS_WIDTH,
       MAX_CANVAS_HEIGHT
     );
-  }, [sourceImage.width, sourceImage.height]);
+  }, [sourceImage.width, sourceImage.height, isMobile]);
 
   // Callback to capture the stage instance when it's ready
   const handleStageReady = useCallback((stage: Konva.Stage) => {
@@ -283,7 +306,6 @@ export function DrawingEditorModal({
   }
 
   const canUndo = historyState.index > 0;
-  const isMobile = isMobileDevice();
 
   return (
     <Modal
@@ -298,7 +320,7 @@ export function DrawingEditorModal({
       radius="md"
       className={styles.modal}
     >
-      <div className="flex flex-col">
+      <div className={isMobile ? styles.mobileLayout : 'flex flex-col'}>
         {/* Header */}
         <div className={styles.header}>
           <div className="flex items-center gap-2">
@@ -409,6 +431,7 @@ export function DrawingEditorModal({
             onUndo={handleUndo}
             canUndo={canUndo}
             onDownload={handleDownload}
+            isMobile={isMobile}
           />
         </div>
       </div>

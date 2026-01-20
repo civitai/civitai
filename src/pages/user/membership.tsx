@@ -66,7 +66,9 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!session.user.subscriptionId)
+    // Allow users with subscriptionId OR users in memberInBadState to access the page
+    // Users in bad state need to be able to manage/cancel their subscription
+    if (!session.user.subscriptionId && !session.user.memberInBadState)
       return {
         redirect: {
           destination: '/pricing',
@@ -291,29 +293,40 @@ export default function UserMembership() {
                   iconSize="lg"
                   py={11}
                 >
-                  <Stack gap={0}>
-                    <Text lh={1.2}>
-                      Uh oh! It looks like there was an issue with your membership. You can update
-                      your payment method or renew your membership now by clicking{' '}
+                  <Stack gap="xs">
+                    <Text lh={1.2} fw={600}>
+                      Payment failed - your membership is on hold
+                    </Text>
+                    <Text lh={1.2} size="sm">
+                      Your recent payment didn&apos;t go through. Your membership benefits are
+                      currently paused until this is resolved.
+                    </Text>
+                    <Group gap="xs" mt={4}>
                       {isStripe ? (
                         <SubscribeButton
                           priceId={subscription.price.id}
                           disabled={features.disablePayments}
                         >
-                          <Anchor component="button" type="button">
-                            here
-                          </Anchor>
+                          <Button size="xs" color="red">
+                            Update Payment Method
+                          </Button>
                         </SubscribeButton>
                       ) : (
-                        <Anchor
+                        <Button
+                          size="xs"
+                          color="red"
+                          component="a"
                           href={managementUrls?.updatePaymentMethod as string}
                           target="_blank"
                         >
-                          here
-                        </Anchor>
+                          Update Payment Method
+                        </Button>
                       )}
-                      .
-                    </Text>
+                      <CancelMembershipAction
+                        variant="button"
+                        buttonProps={{ size: 'xs', color: 'gray', variant: 'outline' }}
+                      />
+                    </Group>
                   </Stack>
                 </AlertWithIcon>
               )}
@@ -378,16 +391,26 @@ export default function UserMembership() {
                             )}
                           </>
                         )}
-                        {canUpgrade && (
+                        {canUpgrade && !subscription.isBadState && (
                           <Button component={Link} href="/pricing" radius="xl">
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && !isCivitaiProvider && (
+                        {!subscription.cancelAt && !isCivitaiProvider && !subscription.isBadState && (
                           <CancelMembershipAction
                             variant="button"
                             buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
                           />
+                        )}
+                        {subscription.isBadState && isStripe && (
+                          <SubscribeButton
+                            priceId={subscription.price.id}
+                            disabled={features.disablePayments}
+                          >
+                            <Button radius="xl" color="red">
+                              Update Payment
+                            </Button>
+                          </SubscribeButton>
                         )}
                       </Group>
                       {!subscription.cancelAt &&

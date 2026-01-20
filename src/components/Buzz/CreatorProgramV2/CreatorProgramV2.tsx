@@ -866,13 +866,30 @@ const WithdrawCashCard = () => {
         )}
 
         {canWithdraw && !userPaymentConfiguration?.tipaltiPaymentsEnabled && (
-          <Button
-            leftSection={<IconBuildingBank />}
-            color="lime.7"
-            onClick={handleSetupWithdrawals}
-          >
-            Setup Withdrawals
-          </Button>
+          <>
+            {userPaymentConfiguration ? (
+              <Button
+                leftSection={<IconBuildingBank />}
+                color="lime.7"
+                onClick={handleSetupWithdrawals}
+              >
+                Setup Withdrawals
+              </Button>
+            ) : (
+              <Alert color="blue" className="p-2">
+                <div className="flex items-center gap-2">
+                  <IconBuildingBank size={24} className="shrink-0" />
+                  <div className="flex flex-1 flex-col">
+                    <p className="text-sm font-bold leading-tight">Withdrawal setup coming soon</p>
+                    <p className="text-sm leading-tight">
+                      You&apos;ll receive an email invitation to set up your withdrawal method at
+                      the end of the month.
+                    </p>
+                  </div>
+                </div>
+              </Alert>
+            )}
+          </>
         )}
 
         {canWithdraw && userPaymentConfiguration?.tipaltiPaymentsEnabled && (

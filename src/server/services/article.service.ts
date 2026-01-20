@@ -331,7 +331,7 @@ export const getArticles = async ({
     }
 
     if (cursor) {
-      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+      const cursorOperator = cursorDirection === 'DESC' ? '<=' : '>=';
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
     }
 

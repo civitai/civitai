@@ -133,3 +133,96 @@ export function extractCommentText(commentArray) {
   }
   return '';
 }
+
+// Format doc for display
+export function formatDoc(doc) {
+  const lines = [];
+
+  lines.push(`Doc: ${doc.name}`);
+  lines.push(`ID: ${doc.id}`);
+  if (doc.date_created) {
+    lines.push(`Created: ${formatDateTime(doc.date_created)}`);
+  }
+  if (doc.date_updated) {
+    lines.push(`Updated: ${formatDateTime(doc.date_updated)}`);
+  }
+  if (doc.creator) {
+    lines.push(`Creator: ${doc.creator.username || doc.creator.email || doc.creator.id}`);
+  }
+  if (doc.workspace_id) {
+    lines.push(`Workspace: ${doc.workspace_id}`);
+  }
+
+  return lines.join('\n');
+}
+
+// Format doc list for display
+export function formatDocList(docs) {
+  if (docs.length === 0) {
+    return 'No docs found.';
+  }
+
+  const lines = [];
+  for (const doc of docs) {
+    const updated = doc.date_updated ? formatDate(doc.date_updated) : '';
+    lines.push(`${doc.name}`);
+    lines.push(`  ID: ${doc.id}${updated ? ` | Updated: ${updated}` : ''}`);
+    lines.push('');
+  }
+
+  lines.push(`Total: ${docs.length} doc(s)`);
+  return lines.join('\n');
+}
+
+// Format page for display
+export function formatPage(page) {
+  const lines = [];
+
+  lines.push(`Page: ${page.name}`);
+  lines.push(`ID: ${page.id}`);
+  if (page.sub_title) {
+    lines.push(`Subtitle: ${page.sub_title}`);
+  }
+  if (page.date_created) {
+    lines.push(`Created: ${formatDateTime(page.date_created)}`);
+  }
+  if (page.date_updated) {
+    lines.push(`Updated: ${formatDateTime(page.date_updated)}`);
+  }
+
+  if (page.content) {
+    lines.push('');
+    lines.push('Content:');
+    lines.push('---');
+    lines.push(page.content);
+    lines.push('---');
+  }
+
+  return lines.join('\n');
+}
+
+// Format page list for display
+export function formatPageList(pages, indent = 0) {
+  if (pages.length === 0) {
+    return 'No pages found.';
+  }
+
+  const lines = [];
+  const prefix = '  '.repeat(indent);
+
+  for (const page of pages) {
+    lines.push(`${prefix}${page.name}`);
+    lines.push(`${prefix}  ID: ${page.id}`);
+
+    // Handle nested pages
+    if (page.pages?.length > 0) {
+      lines.push(formatPageList(page.pages, indent + 1));
+    }
+    lines.push('');
+  }
+
+  if (indent === 0) {
+    lines.push(`Total: ${pages.length} page(s)`);
+  }
+  return lines.join('\n');
+}
