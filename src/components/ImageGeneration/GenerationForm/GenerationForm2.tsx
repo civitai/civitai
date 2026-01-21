@@ -117,6 +117,7 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   flux2KleinModelVariantOptions,
+  getFlux2KleinBaseModel,
   getFlux2KleinDefaults,
   getIsFlux2Klein,
   getIsFlux2Klein9b,
@@ -1151,8 +1152,14 @@ export function GenerationFormContent() {
                         data={activeModelMode.options}
                         onChange={(value) => {
                           const modelVersionId = Number(value);
-                          if (model.id !== modelVersionId)
+                          if (model.id !== modelVersionId) {
                             form.setValue('model', { ...model, id: modelVersionId });
+                            // Update baseModel for Flux2Klein since each variant has its own group
+                            const kleinBaseModel = getFlux2KleinBaseModel(modelVersionId);
+                            if (kleinBaseModel) {
+                              form.setValue('baseModel', kleinBaseModel as any);
+                            }
+                          }
                         }}
                       />
                     </div>

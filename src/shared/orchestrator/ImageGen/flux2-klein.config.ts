@@ -4,7 +4,6 @@ import type {
   SdCppSampleMethod,
   SdCppSchedule,
 } from '@civitai/client';
-import { startCase } from 'lodash-es';
 import * as z from 'zod';
 import type { Sampler } from '~/server/common/constants';
 import {
@@ -39,10 +38,18 @@ export function getIsFlux2KleinFromEngine(value?: string) {
   return value === engine;
 }
 
+// Explicit labels to avoid startCase issues (e.g., '4b-base' -> '4 B Base')
+const flux2KleinVariantLabels: Record<Flux2KleinModelVariant, string> = {
+  '4b': '4B',
+  '4b-base': '4B Base',
+  '9b': '9B',
+  '9b-base': '9B Base',
+};
+
 export const flux2KleinModelVariantOptions = Array.from(
   flux2KleinModelVersionToVariantMap.entries()
 ).map(([key, value]) => ({
-  label: startCase(value),
+  label: flux2KleinVariantLabels[value],
   value: key.toString(),
 }));
 
@@ -68,6 +75,20 @@ export function getIsFlux2Klein9b(modelVersionId?: number) {
   if (!modelVersionId) return false;
   const variant = flux2KleinModelVersionToVariantMap.get(modelVersionId);
   return variant === '9b';
+}
+
+// Map variant to baseModel name
+const flux2KleinVariantToBaseModel: Record<Flux2KleinModelVariant, string> = {
+  '9b': 'Flux.2 Klein 9B',
+  '9b-base': 'Flux.2 Klein 9B-base',
+  '4b': 'Flux.2 Klein 4B',
+  '4b-base': 'Flux.2 Klein 4B-base',
+};
+
+export function getFlux2KleinBaseModel(modelVersionId?: number): string | undefined {
+  if (!modelVersionId) return undefined;
+  const variant = flux2KleinModelVersionToVariantMap.get(modelVersionId);
+  return variant ? flux2KleinVariantToBaseModel[variant] : undefined;
 }
 
 const sdCppSampleMethods = [
