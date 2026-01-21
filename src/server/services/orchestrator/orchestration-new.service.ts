@@ -19,6 +19,7 @@
  */
 
 import type { ImageJobNetworkParams, Scheduler, WorkflowStepTemplate } from '@civitai/client';
+import { TimeSpan } from '@civitai/client';
 import {
   generationGraph,
   type GenerationGraphTypes,
@@ -29,11 +30,22 @@ import {
   applyResources,
   populateWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
+import {
+  getResourceData,
+  type GenerationResource,
+} from '~/server/services/generation/generation.service';
+import { getGenerationStatus } from '~/server/services/orchestrator/common';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import {
   samplersToSchedulers,
   samplersToComfySamplers,
 } from '~/shared/constants/generation.constants';
+import { includesPoi } from '~/utils/metadata/audit';
+import { maxRandomSeed } from '~/server/common/constants';
+import { getRandomInt } from '~/utils/number-helpers';
 
 // =============================================================================
 // Types
@@ -48,6 +60,14 @@ export type GenerationContext = {
   userId: number;
   experimental?: boolean;
   allowMatureContent?: boolean;
+  isGreen?: boolean;
+  currencies?: string[];
+  isModerator?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  track?: any; // Tracker class from createContext
+  civitaiTip?: number;
+  creatorTip?: number;
+  tags?: string[];
 };
 
 /** Options for submitting a generation */
@@ -61,6 +81,10 @@ export type WhatIfOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   userId?: number;
+  token?: string;
+  experimental?: boolean;
+  allowMatureContent?: boolean;
+  currencies?: string[];
 };
 
 /**
@@ -129,6 +153,101 @@ function resourceToAir(resource: ResourceData): string {
 }
 
 /**
+ * Collects all resource version IDs from generation graph output.
+ * Returns IDs from model, resources, and vae fields where present.
+ */
+function collectResourceIds(data: GenerationGraphOutput): number[] {
+  const ids: number[] = [];
+
+  if ('model' in data && data.model?.id) {
+    ids.push(data.model.id);
+  }
+  if ('resources' in data && data.resources) {
+    ids.push(...data.resources.map((r) => r.id));
+  }
+  if ('vae' in data && data.vae?.id) {
+    ids.push(data.vae.id);
+  }
+
+  return ids;
+}
+
+/** Enriched resource with air string */
+type EnrichedResource = GenerationResource & { air: string };
+
+/** Result of resource validation */
+type ResourceValidationResult = {
+  enrichedResources: EnrichedResource[];
+  isPrivateGeneration: boolean;
+  hasPoiResource: boolean;
+};
+
+/**
+ * Validates and enriches resources from generation graph output.
+ *
+ * Performs:
+ * - Subscription validation for private/epoch resources
+ * - Expired epoch check
+ * - canGenerate validation
+ * - POI resource detection
+ * - Private generation detection
+ */
+async function validateAndEnrichResources(
+  resourceIds: number[],
+  user?: { id?: number; isModerator?: boolean }
+): Promise<ResourceValidationResult> {
+  if (resourceIds.length === 0) {
+    return {
+      enrichedResources: [],
+      isPrivateGeneration: false,
+      hasPoiResource: false,
+    };
+  }
+
+  const resources = await getResourceData(resourceIds, user);
+
+  // Check for private/epoch resources requiring subscription
+  const hasPrivateOrEpoch = resources.some(
+    (r) => r.availability === Availability.Private || !!r.epochDetails
+  );
+
+  if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
+    const subscription = await getHighestTierSubscription(user.id);
+    if (!subscription) {
+      throw throwBadRequestError('Using Private resources require an active subscription.');
+    }
+  }
+
+  // Check for expired epochs
+  const expiredEpoch = resources.find((r) => r.epochDetails?.isExpired);
+  if (expiredEpoch) {
+    throw throwBadRequestError(
+      'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
+    );
+  }
+
+  // Check canGenerate
+  const unavailable = resources.filter((r) => !r.canGenerate);
+  if (unavailable.length > 0) {
+    throw throwBadRequestError(
+      `Some of your resources are not available for generation: ${unavailable.map((r) => r.name).join(', ')}`
+    );
+  }
+
+  // Build enriched resources with AIR strings
+  const enrichedResources: EnrichedResource[] = resources.map((r) => ({
+    ...r,
+    air: `urn:air:${r.baseModel.toLowerCase()}:${r.model.type.toLowerCase()}:civitai:${r.model.id}@${r.id}`,
+  }));
+
+  return {
+    enrichedResources,
+    isPrivateGeneration: hasPrivateOrEpoch,
+    hasPoiResource: resources.some((r) => r.model.poi),
+  };
+}
+
+/**
  * Creates a textToImage step input.
  * Converts ResourceData to AIRs for the orchestrator.
  */
@@ -142,10 +261,12 @@ function createTextToImageInput(args: {
   steps: number;
   cfgScale: number;
   clipSkip?: number;
-  seed?: number;
+  seed: number;
   width: number;
   height: number;
-  quantity?: number;
+  quantity: number;
+  batchSize: number;
+  outputFormat?: string;
 }): StepInput {
   const { model, resources = [], vae, ...rest } = args;
 
@@ -268,17 +389,15 @@ async function createComfyInput(data: ComfyInputData): Promise<StepInput> {
 function createVideoInterpolationInput(
   data: Extract<GenerationGraphOutput, { workflow: 'vid2vid:interpolate' }>
 ): StepInput {
-  const { video, interpolationFactor } = data;
-
-  if (!video?.url) {
+  if (!data.video?.url) {
     throw new Error('Video URL is required for video interpolation');
   }
 
   return {
     $type: 'videoInterpolation',
     input: {
-      video: video.url,
-      interpolationFactor: interpolationFactor as 2 | 3 | 4,
+      video: data.video.url,
+      interpolationFactor: data.interpolationFactor as 2 | 3 | 4,
     },
   };
 }
@@ -322,6 +441,7 @@ async function createImageUpscaleInput(
       width: sourceImage.width,
       height: sourceImage.height,
       upscale: data.scaleFactor,
+      outputFormat: data.outputFormat,
     },
   });
 }
@@ -393,6 +513,11 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
   let steps = data.steps ?? 25;
   let cfgScale = data.cfgScale ?? 7;
 
+  // Quantity and batch size for draft optimization
+  const requestedQuantity = data.quantity ?? 1;
+  let quantity = requestedQuantity;
+  let batchSize = 1;
+
   if (isDraft) {
     finalResources.push(
       isSD1
@@ -402,7 +527,13 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
     steps = isSD1 ? 6 : 8;
     cfgScale = 1;
     sampler = isSD1 ? 'LCM' : 'Euler';
+    // Draft mode batch optimization: generate 4 images per batch
+    quantity = Math.ceil(requestedQuantity / 4);
+    batchSize = 4;
   }
+
+  // Auto-generate seed if not provided
+  const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
 
   const scheduler = samplersToSchedulers[sampler as keyof typeof samplersToSchedulers] as Scheduler;
 
@@ -415,7 +546,7 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
     const workflowData: Record<string, unknown> = {
       prompt: data.prompt,
       negativePrompt: data.negativePrompt,
-      seed: data.seed,
+      seed,
       steps,
       cfgScale,
       sampler,
@@ -429,6 +560,8 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
       }
       workflowData.image = sourceImage.url;
       workflowData.denoise = data.denoise;
+      workflowData.width = sourceImage.width;
+      workflowData.height = sourceImage.height;
     } else {
       workflowData.width = data.aspectRatio.width;
       workflowData.height = data.aspectRatio.height;
@@ -436,13 +569,13 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
     }
 
     if (isHires) {
-      workflowData.upscaleWidth = Math.round(data.aspectRatio.width * 1.5);
-      workflowData.upscaleHeight = Math.round(data.aspectRatio.height * 1.5);
+      workflowData.upscaleWidth = Math.round((workflowData.width as number) * 1.5);
+      workflowData.upscaleHeight = Math.round((workflowData.height as number) * 1.5);
     }
 
     return createComfyInput({
       key: comfyKey,
-      quantity: data.quantity,
+      quantity,
       params: workflowData,
       resources: [data.model, ...finalResources, ...(data.vae ? [data.vae] : [])],
     });
@@ -458,10 +591,12 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
     steps,
     cfgScale,
     clipSkip: data.clipSkip,
-    seed: data.seed,
+    seed,
     width: data.aspectRatio.width,
     height: data.aspectRatio.height,
-    quantity: data.quantity,
+    quantity,
+    batchSize,
+    outputFormat: data.outputFormat,
   });
 }
 
@@ -578,20 +713,49 @@ async function createStepInput(data: GenerationGraphOutput): Promise<StepInput> 
 /**
  * Creates a complete workflow step from validated generation-graph data.
  * Wraps step input with priority, timeout, and metadata.
+ *
+ * Performs:
+ * - Resource validation (subscription, expired epochs, canGenerate, POI)
+ * - POI prompt detection
+ * - Private generation detection
+ * - Timeout calculation (base 20 min + 1 min per additional resource)
  */
 export async function createWorkflowStepFromGraph(
   data: GenerationGraphOutput,
-  isWhatIf: boolean = false
+  isWhatIf: boolean = false,
+  user?: { id?: number; isModerator?: boolean }
 ): Promise<WorkflowStepTemplate> {
+  // Validate and enrich resources
+  const resourceIds = collectResourceIds(data);
+  const { enrichedResources, isPrivateGeneration, hasPoiResource } =
+    await validateAndEnrichResources(resourceIds, user);
+
+  // Check for POI in prompt
+  const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
+  const hasPoi = (prompt && includesPoi(prompt)) || hasPoiResource;
+  if (hasPoi && 'disablePoi' in data && data.disablePoi) {
+    throw throwBadRequestError(
+      'Your request contains or attempts to use the likeness of a real person. Generating these type of content while viewing X-XXX ratings is not allowed.'
+    );
+  }
+
   const stepInput = await createStepInput(data);
 
-  // TODO: Derive priority from data.priority when available
-  // TODO: Derive timeout based on step type and resources
-  // TODO: Build metadata from data when not whatIf
+  // Calculate timeout: base 20 minutes + 1 minute per additional resource
+  const timeSpan = new TimeSpan(0, 20, 0);
+  timeSpan.addMinutes(Math.max(0, enrichedResources.length - 1));
+  const timeout = timeSpan.toString(['hours', 'minutes', 'seconds']);
 
   return {
     ...stepInput,
-    // priority, timeout, metadata will be set here
+    priority: data.priority,
+    timeout,
+    metadata: isWhatIf
+      ? undefined
+      : {
+          isPrivateGeneration,
+          ...data
+        },
   } as WorkflowStepTemplate;
 }
 
@@ -600,11 +764,29 @@ export async function createWorkflowStepFromGraph(
 // =============================================================================
 
 /**
- * Submits a generation workflow using generation-graph input
+ * Submits a generation workflow using generation-graph input.
+ *
+ * Validates:
+ * - Generation status (blocks if disabled and user not moderator)
+ * - Graph input validation
+ * - Resource validation (subscription, epochs, canGenerate, POI)
+ * - Prompt POI detection
  */
-export async function generateFromGraph({ input, externalCtx, token, userId }: GenerateOptions) {
+export async function generateFromGraph({
+  input,
+  externalCtx,
+  token,
+  userId,
+  isModerator,
+}: GenerateOptions) {
+  // Check generation status
+  const status = await getGenerationStatus();
+  if (!status.available && !isModerator) {
+    throw throwBadRequestError('Generation is currently disabled');
+  }
+
   const data = validateInput(input, externalCtx);
-  const step = await createWorkflowStepFromGraph(data, false);
+  const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator });
 
   // TODO: Submit workflow to orchestrator
   // TODO: Add prompt auditing
@@ -615,11 +797,13 @@ export async function generateFromGraph({ input, externalCtx, token, userId }: G
 }
 
 /**
- * Submits a what-if request using generation-graph input
+ * Submits a what-if request using generation-graph input.
+ *
+ * Note: What-if requests skip generation status check as they are cost estimates only.
  */
 export async function whatIfFromGraph({ input, externalCtx, userId }: WhatIfOptions) {
   const data = validateInput(input, externalCtx);
-  const step = await createWorkflowStepFromGraph(data, true);
+  const step = await createWorkflowStepFromGraph(data, true, userId ? { id: userId } : undefined);
 
   // TODO: Submit what-if request to orchestrator
 

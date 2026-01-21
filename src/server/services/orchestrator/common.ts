@@ -275,15 +275,15 @@ export async function parseGenerateImageInput({
     delete originalParams.clipSkip;
   }
 
-  const isSD3 = getIsSD3(originalParams.baseModel);
-  if (isSD3) {
-    originalParams.sampler = 'undefined';
-    originalParams.draft = false;
-    if (originalResources.find((x) => x.id === 983611)) {
-      originalParams.steps = 4;
-      originalParams.cfgScale = 1;
-    }
-  }
+  // const isSD3 = getIsSD3(originalParams.baseModel);
+  // if (isSD3) {
+  //   originalParams.sampler = 'undefined';
+  //   originalParams.draft = false;
+  //   if (originalResources.find((x) => x.id === 983611)) {
+  //     originalParams.steps = 4;
+  //     originalParams.cfgScale = 1;
+  //   }
+  // }
 
   const status = await getGenerationStatus();
   if (!status.available && !user.isModerator)

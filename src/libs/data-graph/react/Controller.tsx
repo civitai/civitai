@@ -1,5 +1,6 @@
-import { useCallback, useSyncExternalStore, type ReactElement } from 'react';
+import { useCallback, type ReactElement } from 'react';
 import type { DataGraph, NodeError } from '../data-graph';
+import { useGraphSubscription, useGraphSubscriptions } from './DataGraphProvider';
 
 // ============================================================================
 // Types
@@ -29,14 +30,14 @@ export interface ControllerRenderProps<Value, Meta> {
 type SafeValueLookup<CtxValues, K extends string> = K extends keyof CtxValues
   ? CtxValues[K]
   : CtxValues extends Record<string, infer V>
-  ? V
-  : unknown;
+    ? V
+    : unknown;
 
 type SafeMetaLookup<CtxMeta, K extends string> = K extends keyof CtxMeta
   ? CtxMeta[K]
   : CtxMeta extends Record<string, infer V>
-  ? V
-  : unknown;
+    ? V
+    : unknown;
 
 /**
  * Props for the Controller component.
@@ -124,22 +125,8 @@ export function Controller<
   ValueOverride,
   MetaOverride
 >): ReactElement | null {
-  // Subscribe to this specific node
-  const subscribe = useCallback(
-    (cb: () => void) => graph.subscribe(name as string, cb),
-    [graph, name]
-  );
-
-  const getSnapshot = useCallback(() => {
-    // Check if node exists in current context
-    const hasNode = graph.hasNode(name);
-    if (!hasNode) {
-      return null;
-    }
-    return graph.getSnapshot(name as string);
-  }, [graph, name]);
-
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  // Subscribe to this specific node using the shared hook
+  const snapshot = useGraphSubscription(graph, name);
 
   // Create onChange handler - must be called before any early returns to maintain hook order
   const onChange = useCallback(
@@ -199,18 +186,8 @@ export function LooseController<
   name: string;
   render: (props: ControllerRenderProps<unknown, unknown>) => ReactElement | null;
 }): ReactElement | null {
-  // Subscribe to this specific node
-  const subscribe = useCallback((cb: () => void) => graph.subscribe(name, cb), [graph, name]);
-
-  const getSnapshot = useCallback(() => {
-    const hasNode = graph.hasNode(name);
-    if (!hasNode) {
-      return null;
-    }
-    return graph.getSnapshot(name);
-  }, [graph, name]);
-
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  // Subscribe to this specific node using the shared hook
+  const snapshot = useGraphSubscription(graph, name);
 
   const onChange = useCallback(
     (newValue: unknown) => {
@@ -231,4 +208,65 @@ export function LooseController<
     onChange,
     isComputed: snapshot.isComputed,
   });
+}
+
+// ============================================================================
+// MultiController Component
+// ============================================================================
+
+/**
+ * Type helper to extract values for multiple keys from CtxValues.
+ */
+type MultiValues<CtxValues extends Record<string, unknown>, Keys extends readonly string[]> = {
+  [K in Keys[number]]: K extends keyof CtxValues ? CtxValues[K] : unknown;
+};
+
+/**
+ * Props for the MultiController render function.
+ */
+export interface MultiControllerRenderProps<Values extends Record<string, unknown>> {
+  /** Object containing values for each subscribed key */
+  values: Values;
+}
+
+/**
+ * MultiController component for subscribing to multiple graph nodes at once.
+ *
+ * Use this when you need to read multiple values but don't need onChange handlers.
+ * Re-renders when any of the subscribed keys change.
+ *
+ * @example
+ * ```tsx
+ * <MultiController
+ *   graph={graph}
+ *   names={['model', 'resources', 'vae'] as const}
+ *   render={({ values }) => (
+ *     <ResourceAlerts
+ *       model={values.model}
+ *       resources={values.resources}
+ *       vae={values.vae}
+ *     />
+ *   )}
+ * />
+ * ```
+ */
+export function MultiController<
+  Ctx extends Record<string, unknown>,
+  ExternalCtx extends Record<string, unknown>,
+  CtxMeta extends Record<string, unknown>,
+  CtxValues extends Record<string, unknown>,
+  Keys extends readonly string[]
+>({
+  graph,
+  names,
+  render,
+}: {
+  graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>;
+  names: Keys;
+  render: (props: MultiControllerRenderProps<MultiValues<CtxValues, Keys>>) => ReactElement | null;
+}): ReactElement | null {
+  // Subscribe to all specified keys using the shared hook
+  const values = useGraphSubscriptions(graph, names);
+
+  return render({ values: values as MultiValues<CtxValues, Keys> });
 }

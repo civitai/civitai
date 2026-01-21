@@ -106,6 +106,7 @@ export type BaseModelRecord = {
   hidden?: boolean;
   disabled?: boolean; // Disables ALL support types (generation, training, auction, etc.)
   licenseId?: number;
+  experimental?: boolean; // If true, show experimental warning in generation UI
 };
 
 // =============================================================================
@@ -1790,6 +1791,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Qwen,
     licenseId: 13,
+    experimental: true,
   },
 
   // Stable Cascade
@@ -1891,6 +1893,7 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.SD3,
     hidden: true,
     disabled: true,
+    experimental: true,
     licenseId: 9,
   },
   {
@@ -1901,6 +1904,7 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.SD3,
     hidden: true,
     disabled: true,
+    experimental: true,
     licenseId: 9,
   },
   {
@@ -1911,6 +1915,7 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.SD3,
     hidden: true,
     disabled: true,
+    experimental: true,
     licenseId: 9,
   },
   {
@@ -1921,6 +1926,7 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.SD3,
     hidden: true,
     disabled: true,
+    experimental: true,
     licenseId: 9,
   },
   {
@@ -1931,6 +1937,7 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.SD35M,
     hidden: true,
     disabled: true,
+    experimental: true,
     licenseId: 9,
   },
 
@@ -2181,6 +2188,19 @@ export const baseModels: BaseModelRecord[] = [
 
 export const baseModelById = new Map(baseModels.map((m) => [m.id, m]));
 export const baseModelByName = new Map(baseModels.map((m) => [m.name, m]));
+
+/**
+ * Check if any base model in an ecosystem is marked as experimental
+ * @param ecosystemKey - The ecosystem key (e.g., 'SD3', 'Qwen')
+ * @returns true if any base model in the ecosystem is experimental
+ */
+export function isEcosystemExperimental(ecosystemKey: string): boolean {
+  const ecosystem = ecosystemByKey.get(ecosystemKey);
+  if (!ecosystem) return false;
+
+  // Check if any base model in this ecosystem is experimental
+  return baseModels.some((m) => m.ecosystemId === ecosystem.id && m.experimental);
+}
 
 // =============================================================================
 // Derivation Functions

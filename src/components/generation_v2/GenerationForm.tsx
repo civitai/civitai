@@ -8,13 +8,14 @@
 import { Checkbox, Group, Input, Radio, SegmentedControl, Stack } from '@mantine/core';
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 
-import { Controller, useGraph } from '~/libs/data-graph/react';
+import { Controller, MultiController, useGraph } from '~/libs/data-graph/react';
 import { type GenerationGraphTypes, type VideoValue } from '~/shared/data-graph/generation';
 
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal, type PendingChange } from './CompatibilityConfirmModal';
 import { FormFooter } from './FormFooter';
+import { ResourceAlerts, ExperimentalModelAlert } from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -243,6 +244,26 @@ export function GenerationForm() {
                 limit={meta.limit}
               />
             )}
+          />
+
+          {/* Resource Alerts - Unstable, Content Restricted */}
+          <MultiController
+            graph={graph}
+            names={['model', 'resources', 'vae'] as const}
+            render={({ values }) => (
+              <ResourceAlerts
+                model={values.model}
+                resources={values.resources}
+                vae={values.vae}
+              />
+            )}
+          />
+
+          {/* Experimental Ecosystem Alert */}
+          <Controller
+            graph={graph}
+            name="baseModel"
+            render={({ value }) => <ExperimentalModelAlert ecosystem={value} />}
           />
 
           {/* Source images (img2img only) */}

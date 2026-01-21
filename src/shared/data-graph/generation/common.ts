@@ -155,7 +155,7 @@ export function samplerNode({
   presets?: Array<{ label: string; value: string }>;
 } = {}) {
   return {
-    output: z.string(),
+    output: z.enum(options),
     defaultValue,
     meta: {
       options: options.map((s) => ({ label: s, value: s })),

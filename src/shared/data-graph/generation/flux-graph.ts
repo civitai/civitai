@@ -99,7 +99,7 @@ const fluxGuidancePresets = [
 // =============================================================================
 
 /** Type for model value from parent context */
-type ModelValue = { id: number; baseModel: string; model: { type: string } } | undefined;
+type ModelValue = { id: number; baseModel: string; model: { id: number; type: string } } | undefined;
 
 /** Context shape passed to flux mode subgraphs */
 type FluxModeCtx = { baseModel: string; workflow: string; model: ModelValue; fluxMode: FluxMode };

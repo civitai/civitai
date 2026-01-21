@@ -209,13 +209,12 @@ export function useGraph<T extends DefaultGraphTypes = DefaultGraphTypes>(): Dat
  */
 export function useGraphValue<T extends DefaultGraphTypes, K extends keyof T['Ctx'] & string>(
   key: K
-): NodeSnapshot<T['Ctx'][K], K extends keyof T['Meta'] ? T['Meta'][K] : unknown> {
+): NodeSnapshot<T['Ctx'][K], K extends keyof T['Meta'] ? T['Meta'][K] : unknown> | null {
   const graph = useGraph<T>();
-
-  const subscribe = useCallback((cb: () => void) => graph.subscribe(key, cb), [graph, key]);
-  const getSnapshot = useCallback(() => graph.getSnapshot(key), [graph, key]);
-
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useGraphSubscription(graph, key) as NodeSnapshot<
+    T['Ctx'][K],
+    K extends keyof T['Meta'] ? T['Meta'][K] : unknown
+  > | null;
 }
 
 /**
@@ -234,6 +233,145 @@ export function useGraphValues<T extends DefaultGraphTypes>(): T['Ctx'] {
 
   const subscribe = useCallback((cb: () => void) => graph.subscribe(cb), [graph]);
   const getSnapshot = useCallback(() => graph.getSnapshot(), [graph]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+// ============================================================================
+// Graph-accepting Subscription Hooks
+// ============================================================================
+
+/**
+ * Type helper for safe value lookup from CtxValues.
+ */
+type SafeValueLookup<CtxValues, K extends string> = K extends keyof CtxValues
+  ? CtxValues[K]
+  : CtxValues extends Record<string, infer V>
+    ? V
+    : unknown;
+
+/**
+ * Type helper for safe meta lookup from CtxMeta.
+ */
+type SafeMetaLookup<CtxMeta, K extends string> = K extends keyof CtxMeta
+  ? CtxMeta[K]
+  : CtxMeta extends Record<string, infer V>
+    ? V
+    : unknown;
+
+/**
+ * Subscribe to a single node's value using an explicit graph instance.
+ * Re-renders only when this node changes.
+ *
+ * Use this when you have a graph instance and want strongly-typed subscriptions.
+ *
+ * @example
+ * ```tsx
+ * const graph = useGraph<GenerationGraphTypes>();
+ * const snapshot = useGraphSubscription(graph, 'steps');
+ * // snapshot.value and snapshot.meta are typed from the graph
+ * ```
+ */
+export function useGraphSubscription<
+  Ctx extends Record<string, unknown>,
+  ExternalCtx extends Record<string, unknown>,
+  CtxMeta extends Record<string, unknown>,
+  CtxValues extends Record<string, unknown>,
+  K extends string
+>(
+  graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>,
+  key: K
+): NodeSnapshot<SafeValueLookup<CtxValues, K>, SafeMetaLookup<CtxMeta, K>> | null {
+  const subscribe = useCallback((cb: () => void) => graph.subscribe(key, cb), [graph, key]);
+
+  const getSnapshot = useCallback(() => {
+    const hasNode = graph.hasNode(key);
+    if (!hasNode) {
+      return null;
+    }
+    return graph.getSnapshot(key) as NodeSnapshot<
+      SafeValueLookup<CtxValues, K>,
+      SafeMetaLookup<CtxMeta, K>
+    >;
+  }, [graph, key]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * Type helper to extract values for multiple keys from CtxValues.
+ */
+type MultiValues<CtxValues extends Record<string, unknown>, Keys extends readonly string[]> = {
+  [K in Keys[number]]: K extends keyof CtxValues ? CtxValues[K] : unknown;
+};
+
+/**
+ * Subscribe to multiple nodes' values using an explicit graph instance.
+ * Re-renders when any of the subscribed nodes change.
+ *
+ * Use this when you need to read multiple values from a graph.
+ *
+ * @example
+ * ```tsx
+ * const graph = useGraph<GenerationGraphTypes>();
+ * const values = useGraphSubscriptions(graph, ['model', 'resources', 'vae'] as const);
+ * // values.model, values.resources, values.vae are typed from the graph
+ * ```
+ */
+export function useGraphSubscriptions<
+  Ctx extends Record<string, unknown>,
+  ExternalCtx extends Record<string, unknown>,
+  CtxMeta extends Record<string, unknown>,
+  CtxValues extends Record<string, unknown>,
+  Keys extends readonly string[]
+>(
+  graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>,
+  keys: Keys
+): MultiValues<CtxValues, Keys> {
+  // Cache the previous snapshot to avoid creating new objects on every call
+  const cacheRef = useRef<MultiValues<CtxValues, Keys> | null>(null);
+
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      const unsubs = keys.map((key) => graph.subscribe(key, cb));
+      return () => unsubs.forEach((unsub) => unsub());
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [graph]
+  );
+
+  const getSnapshot = useCallback(() => {
+    const result: Record<string, unknown> = {};
+    for (const key of keys) {
+      const hasNode = graph.hasNode(key);
+      if (hasNode) {
+        const snapshot = graph.getSnapshot(key);
+        result[key] = snapshot.value;
+      } else {
+        result[key] = undefined;
+      }
+    }
+
+    // Compare with cached value - return same reference if values unchanged
+    const cached = cacheRef.current;
+    if (cached !== null) {
+      let unchanged = true;
+      for (const key of keys) {
+        if (cached[key as keyof typeof cached] !== result[key]) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) {
+        return cached;
+      }
+    }
+
+    // Cache and return new result
+    cacheRef.current = result as MultiValues<CtxValues, Keys>;
+    return cacheRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
