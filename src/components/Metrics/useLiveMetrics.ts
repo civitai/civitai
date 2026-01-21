@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
 import type { MetricEntityType, MetricType } from '~/components/Signals/metric-signals.types';
+import { useLiveMetricsEnabled } from './MetricSubscriptionProvider';
 
 type MetricsInput = Partial<Record<MetricType, number | undefined>>;
 
@@ -26,9 +27,11 @@ export function useLiveMetrics<T extends MetricsInput>(
   entityId: number | undefined,
   baseMetrics: T
 ): T {
-  // Get all relevant deltas from store
+  const featureEnabled = useLiveMetricsEnabled();
+
+  // Get all relevant deltas from store (only when feature is enabled)
   const deltas = useMetricSignalsStore((state) => {
-    if (!entityId) return {} as Partial<Record<MetricType, number>>;
+    if (!featureEnabled || !entityId) return {} as Partial<Record<MetricType, number>>;
     const result: Partial<Record<MetricType, number>> = {};
     for (const metricType of Object.keys(baseMetrics) as MetricType[]) {
       result[metricType] = state.getDelta(entityType, entityId, metricType);
@@ -38,7 +41,7 @@ export function useLiveMetrics<T extends MetricsInput>(
 
   // Apply deltas to base metrics
   return useMemo(() => {
-    if (!entityId) return baseMetrics;
+    if (!featureEnabled || !entityId) return baseMetrics;
 
     const result = { ...baseMetrics } as T;
     for (const key of Object.keys(baseMetrics) as MetricType[]) {
@@ -47,7 +50,7 @@ export function useLiveMetrics<T extends MetricsInput>(
       (result as MetricsInput)[key] = baseValue + delta;
     }
     return result;
-  }, [entityId, baseMetrics, deltas]);
+  }, [featureEnabled, entityId, baseMetrics, deltas]);
 }
 
 /**
@@ -64,8 +67,9 @@ export function useLiveMetric(
   metricType: MetricType,
   baseValue = 0
 ): number {
+  const featureEnabled = useLiveMetricsEnabled();
   const delta = useMetricSignalsStore((state) =>
-    entityId ? state.getDelta(entityType, entityId, metricType) : 0
+    featureEnabled && entityId ? state.getDelta(entityType, entityId, metricType) : 0
   );
   return baseValue + delta;
 }

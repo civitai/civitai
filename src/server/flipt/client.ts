@@ -7,6 +7,7 @@ export enum FLIPT_FEATURE_FLAGS {
   ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
+  LIVE_METRICS = 'live-metrics',
 }
 
 class FliptSingleton {
