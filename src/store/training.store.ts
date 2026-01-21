@@ -291,6 +291,11 @@ type TrainingImageStore = {
     datasetId: number,
     data: UpdateImageDataType
   ) => void;
+  setDatasets: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasets: DatasetType[]
+  ) => void;
 };
 
 export const defaultBase = 'sdxl';
@@ -710,6 +715,13 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         });
       });
     },
+    setDatasets: (modelId, mediaType, datasets) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        state[modelId]!.datasets = datasets;
+        state[modelId]!.activeDatasetIndex = 0;
+      });
+    },
   }))
 );
 
@@ -744,4 +756,5 @@ export const trainingStore = {
   updateDatasetTriggerWord: store.updateDatasetTriggerWord,
   updateDatasetLabelType: store.updateDatasetLabelType,
   updateDatasetImage: store.updateDatasetImage,
+  setDatasets: store.setDatasets,
 };

@@ -243,6 +243,20 @@ export const getFileForModelVersion = async ({
     const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
     if (type) fileWhere.type = type;
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
+
+    // Debug logging for training data downloads
+    if (type === 'Training Data') {
+      console.log('[getFileForModelVersion] Training data query:', {
+        modelVersionId,
+        type,
+        isOwner,
+        isMod,
+        userId,
+        modelOwnerId: modelVersion.model.userId,
+        fileWhere,
+      });
+    }
+
     const files = await dbRead.modelFile.findMany({
       where: fileWhere,
       select: {
@@ -252,9 +266,20 @@ export const getFileForModelVersion = async ({
         overrideName: true,
         type: true,
         metadata: true,
+        visibility: true,
         hashes: { select: { hash: true }, where: { type: 'SHA256' } },
       },
     });
+
+    // Debug logging for training data downloads
+    if (type === 'Training Data') {
+      console.log('[getFileForModelVersion] Training data files found:', {
+        modelVersionId,
+        filesCount: files.length,
+        files: files.map((f) => ({ id: f.id, type: f.type, visibility: f.visibility, url: f.url?.substring(0, 50) })),
+      });
+    }
+
     const metadata: FileMetadata = {
       ...user?.filePreferences,
       ...removeEmpty({ format, size, fp }),
@@ -283,6 +308,14 @@ export const getFileForModelVersion = async ({
       isDownloadable,
     };
   } catch (error) {
+    console.error('[getFileForModelVersion] Error getting download URL:', {
+      modelVersionId,
+      fileId: file.id,
+      fileUrl: file.url,
+      filename,
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return { status: 'error' };
   }
 };

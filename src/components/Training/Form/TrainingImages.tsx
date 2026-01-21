@@ -88,6 +88,7 @@ import {
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
+  createDefaultDataset,
   defaultTrainingState,
   defaultTrainingStateVideo,
   getShortNameFromUrl,
@@ -272,6 +273,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     updateDatasetImages,
     updateDatasetLabelType,
     updateDatasetImage,
+    setDatasets,
   } = trainingStore;
 
   const {
@@ -525,11 +527,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (showNotif) setLoadingZip(true);
 
     const parsedFiles: ImageDataType[] = [];
+    // For Image Edit: group files by folder (target/, control_1/, etc.)
+    const datasetFiles: Map<string, ImageDataType[]> = new Map();
 
     const zipReader = await getJSZip();
     const zData = await zipReader.loadAsync(f);
 
     const zipEntries = Object.entries(zData.files);
+
+    // Detect if this is an Image Edit zip (has target/ folder)
+    const hasTargetFolder = zipEntries.some(([zname]) => zname.startsWith('target/'));
+    const isImageEditZip = hasTargetFolder;
+
     const imageEntries = zipEntries.filter(([zname, zf]) => {
       if (zf.dir) return false;
       if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return false;
@@ -538,7 +547,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     });
 
     console.log(
-      `[ZipProcessing] Starting to process ${imageEntries.length} images from zip (total entries: ${zipEntries.length})`
+      `[ZipProcessing] Starting to process ${imageEntries.length} images from zip (total entries: ${zipEntries.length})${isImageEditZip ? ' [Image Edit format]' : ''}`
     );
     let completedCount = 0;
     const totalImages = imageEntries.length;
@@ -567,14 +576,31 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 labelStr = await czFile.async('string');
                 hasLabelFiles = true;
               }
-              parsedFiles.push({
-                name: zname,
+
+              const imgData: ImageDataType = {
+                name: zname.includes('/') ? zname.split('/').pop()! : zname,
                 type: mediaExts[fileExt],
                 url: scaledUrl,
                 label: labelStr,
                 invalidLabel: false,
                 source: source ?? null,
+              };
+
+              // For Image Edit zip, group by folder
+              if (isImageEditZip && zname.includes('/')) {
+                const folder = zname.split('/')[0];
+                if (!datasetFiles.has(folder)) {
+                  datasetFiles.set(folder, []);
+                }
+                datasetFiles.get(folder)!.push(imgData);
+              }
+
+              // Also add to flat list for backward compatibility
+              parsedFiles.push({
+                ...imgData,
+                name: zname, // Keep full path for flat list
               });
+
               completedCount++;
               // Log progress every 10 images to reduce console spam
               if (completedCount % 10 === 0 || completedCount === totalImages) {
@@ -613,7 +639,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setLoadingZip(false);
     }
 
-    return { parsedFiles, hasAnyLabelFiles };
+    return { parsedFiles, hasAnyLabelFiles, isImageEditZip, datasetFiles };
   };
 
   const handleDrop = async (
@@ -979,18 +1005,59 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setTriggerWord(model.id, thisMediaType, thisTrainedWord);
       setInitialTriggerWord(model.id, thisMediaType, thisTrainedWord);
 
-      if (imageList.length === 0) {
+      // For Image Edit, check datasets; for standard, check imageList
+      const hasExistingData = isImageEdit
+        ? datasets.some((d) => d.imageList.length > 0)
+        : imageList.length > 0;
+
+      if (!hasExistingData) {
         setLoadingZip(true);
         parseExistingAndHandle(thisModelVersion.id)
           .then((files) => {
             if (files) {
-              const flatFiles = files.parsedFiles.flat();
-              setImageList(model.id, thisMediaType, flatFiles);
-              setInitialImageList(
-                model.id,
-                thisMediaType,
-                flatFiles.map((d) => ({ ...d }))
-              );
+              // Check if this is an Image Edit zip with folder structure
+              if (files.isImageEditZip && files.datasetFiles.size > 0) {
+                // Convert folder-based data to datasets
+                const restoredDatasets: ReturnType<typeof createDefaultDataset>[] = [];
+
+                // Get sorted folder names (target first, then control_1, control_2, etc.)
+                const folderNames = Array.from(files.datasetFiles.keys()).sort((a, b) => {
+                  if (a === 'target') return -1;
+                  if (b === 'target') return 1;
+                  return a.localeCompare(b);
+                });
+
+                folderNames.forEach((folder, idx) => {
+                  const images = files.datasetFiles.get(folder) || [];
+                  const dataset = createDefaultDataset(idx, fileLabelType);
+
+                  // Set label based on folder name
+                  if (folder === 'target') {
+                    dataset.label = 'Target';
+                  } else {
+                    // control_1 -> Control 1, etc.
+                    const controlNum = folder.replace('control_', '');
+                    dataset.label = `Control ${controlNum}`;
+                  }
+
+                  dataset.imageList = images;
+                  dataset.initialImageList = images.map((d) => ({ ...d }));
+                  restoredDatasets.push(dataset);
+                });
+
+                if (restoredDatasets.length > 0) {
+                  setDatasets(model.id, thisMediaType, restoredDatasets);
+                }
+              } else {
+                // Standard training: flat file structure
+                const flatFiles = files.parsedFiles.flat();
+                setImageList(model.id, thisMediaType, flatFiles);
+                setInitialImageList(
+                  model.id,
+                  thisMediaType,
+                  flatFiles.map((d) => ({ ...d }))
+                );
+              }
             }
           })
           .catch((e) => {
@@ -1059,38 +1126,57 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     const zip = await getJSZip();
 
-    await Promise.all(
-      imageList.map(async (imgData, idx) => {
-        const filenameBase = String(idx).padStart(3, '0');
+    // For Image Edit mode, create folder structure for each dataset
+    if (isImageEdit) {
+      await Promise.all(
+        datasets.map(async (dataset, datasetIdx) => {
+          const folderName = datasetIdx === 0 ? 'target' : `control_${datasetIdx}`;
 
-        let label = imgData.label;
+          await Promise.all(
+            dataset.imageList.map(async (imgData) => {
+              const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+              // Use original filename to preserve pairing
+              const filename = imgData.name || `${String(datasetIdx).padStart(3, '0')}.${imgData.type.split('/').pop() ?? 'jpeg'}`;
+              zip.file(`${folderName}/${filename}`, imgBlob);
+            })
+          );
+        })
+      );
+    } else {
+      // Standard training: flat file structure with labels
+      await Promise.all(
+        imageList.map(async (imgData, idx) => {
+          const filenameBase = String(idx).padStart(3, '0');
 
-        if (triggerWord.length) {
-          const separator = labelType === 'caption' ? '' : ',';
-          const regMatch =
-            labelType === 'caption'
-              ? new RegExp(`^${triggerWord}( |$)`)
-              : new RegExp(`^${triggerWord}(${separator}|$)`);
+          let label = imgData.label;
 
-          if (!regMatch.test(label)) {
-            label =
-              label.length > 0
-                ? labelType === 'caption'
-                  ? [triggerWord, label].join(' ')
-                  : [triggerWord, label].join(`${separator} `)
-                : triggerWord;
+          if (triggerWord.length) {
+            const separator = labelType === 'caption' ? '' : ',';
+            const regMatch =
+              labelType === 'caption'
+                ? new RegExp(`^${triggerWord}( |$)`)
+                : new RegExp(`^${triggerWord}(${separator}|$)`);
+
+            if (!regMatch.test(label)) {
+              label =
+                label.length > 0
+                  ? labelType === 'caption'
+                    ? [triggerWord, label].join(' ')
+                    : [triggerWord, label].join(`${separator} `)
+                  : triggerWord;
+            }
           }
-        }
 
-        label.length > 0 && zip.file(`${filenameBase}.txt`, label);
+          label.length > 0 && zip.file(`${filenameBase}.txt`, label);
 
-        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
 
-        // TODO [bw] unregister here
+          // TODO [bw] unregister here
 
-        zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
-      })
-    );
+          zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
+        })
+      );
+    }
     // TODO [bw] handle error
     zip.generateAsync({ type: 'blob' }).then(async (content) => {
       const fileName = `${thisModelVersion.id}_training_data.zip`;
@@ -1101,6 +1187,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      // Calculate total images for notification (datasets for Image Edit, imageList otherwise)
+      const totalImages = isImageEdit
+        ? datasets.reduce((sum, d) => sum + d.imageList.length, 0)
+        : imageList.length;
+
       hideNotification(notificationId);
       showNotification({
         id: notificationId,
@@ -1108,7 +1199,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         autoClose: false,
         withCloseButton: false,
         title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
+        message: `Packaging ${totalImages} file${totalImages !== 1 ? 's' : ''}...`,
       });
 
       try {
@@ -1147,8 +1238,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               labelType,
               ownRights,
               shareDataset,
-              numImages: imageList.length,
-              numCaptions: imageList.filter((i) => i.label.length > 0).length,
+              numImages: totalImages,
+              numCaptions: isImageEdit ? 0 : imageList.filter((i) => i.label.length > 0).length,
             },
           },
           async ({ meta, size, ...result }) => {
@@ -1212,6 +1303,40 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
     setAttest(model.id, thisMediaType, { ...attested, error: '' });
+
+    // For Image Edit mode, check datasets instead of global imageList
+    if (isImageEdit) {
+      // Validate datasets have images
+      const totalDatasetImages = datasets.reduce((sum, d) => sum + d.imageList.length, 0);
+      if (totalDatasetImages === 0) {
+        showNotification({
+          icon: <IconX size={18} />,
+          color: 'red',
+          title: 'No files provided',
+          message: 'Each dataset must have at least 1 file.',
+        });
+        return;
+      }
+
+      // Validate all datasets have the same number of images
+      const imageCounts = datasets.map((d) => d.imageList.length);
+      const allCountsMatch = imageCounts.every((c) => c === imageCounts[0] && c > 0);
+      if (!allCountsMatch) {
+        showNotification({
+          icon: <IconX size={18} />,
+          color: 'red',
+          title: 'Image count mismatch',
+          message:
+            'All datasets must have the same number of images for proper pairing. Current counts: ' +
+            datasets.map((d, i) => `${d.label || (i === 0 ? 'Target' : `Control ${i}`)}: ${d.imageList.length}`).join(', '),
+        });
+        return;
+      }
+
+      // For Image Edit, proceed to next step (datasets will be zipped separately)
+      await handleNextAfterCheck();
+      return;
+    }
 
     if (
       isEqual(imageList, initialImageList) &&

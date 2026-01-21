@@ -100,6 +100,17 @@ export default PublicEndpoint(
       user: session?.user,
     });
 
+    // Log for debugging file download issues
+    if (fileResult.status !== 'success') {
+      console.log('[downloadModel] File result:', {
+        modelVersionId,
+        type: input.type,
+        status: fileResult.status,
+        userId: session?.user?.id,
+        isModerator: session?.user?.isModerator,
+      });
+    }
+
     if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
     if (fileResult.status === 'archived')
       return errorResponse(410, 'Model archived, not available for download');
@@ -129,6 +140,11 @@ export default PublicEndpoint(
         error: 'Unauthorized',
         message: 'The creator of this asset has disabled downloads on this file',
       });
+
+    if (fileResult.status === 'error') {
+      console.error('[downloadModel] Error status returned for modelVersionId:', modelVersionId);
+      return errorResponse(500, 'Error getting file download URL');
+    }
 
     if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
 
