@@ -208,14 +208,24 @@ export const ModelSelect = ({
   modelId,
   mediaType,
   numImages,
+  trainingType,
+  restrictedModels,
 }: {
   selectedRun: TrainingRun;
   modelId: number;
   mediaType: TrainingDetailsObj['mediaType'];
   numImages: number | undefined;
+  trainingType?: TrainingDetailsObj['type'];
+  restrictedModels?: TrainingBaseModelType[];
 }) => {
   const status = useTrainingServiceStatus();
   const features = useFeatureFlags();
+
+  // Check if a model type is allowed based on restrictedModels
+  const isModelTypeAllowed = (baseType: TrainingBaseModelType) => {
+    if (!restrictedModels || restrictedModels.length === 0) return true;
+    return restrictedModels.includes(baseType);
+  };
 
   // Fetch moderator-editable announcement
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
@@ -372,22 +382,26 @@ export const ModelSelect = ({
               )}
               {mediaType === 'image' && (
                 <>
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="violet"
-                    name="SD 1.5"
-                    value={baseModel15}
-                    baseType="sd15"
-                    makeDefaultParams={makeDefaultParams}
-                  />
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="grape"
-                    name="SDXL"
-                    value={baseModelXL}
-                    baseType="sdxl"
-                    makeDefaultParams={makeDefaultParams}
-                  />
+                  {isModelTypeAllowed('sd15') && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="violet"
+                      name="SD 1.5"
+                      value={baseModel15}
+                      baseType="sd15"
+                      makeDefaultParams={makeDefaultParams}
+                    />
+                  )}
+                  {isModelTypeAllowed('sdxl') && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="grape"
+                      name="SDXL"
+                      value={baseModelXL}
+                      baseType="sdxl"
+                      makeDefaultParams={makeDefaultParams}
+                    />
+                  )}
                   {/*<ModelSelector
                     selectedRun={selectedRun}
                     color="pink"
@@ -397,16 +411,18 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-11-10')}
                   />*/}
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="red"
-                    name="Flux.1"
-                    value={baseModelFlux}
-                    baseType="flux"
-                    makeDefaultParams={makeDefaultParams}
-                    isNew={new Date() < new Date('2024-09-01')}
-                  />
-                  {features.flux2Training && (
+                  {isModelTypeAllowed('flux') && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="red"
+                      name="Flux.1"
+                      value={baseModelFlux}
+                      baseType="flux"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2024-09-01')}
+                    />
+                  )}
+                  {isModelTypeAllowed('flux2') && features.flux2Training && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="orange"
@@ -417,16 +433,18 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="teal"
-                    name="Chroma"
-                    value={baseModelChroma}
-                    baseType="chroma"
-                    makeDefaultParams={makeDefaultParams}
-                    isNew={new Date() < new Date('2025-10-01')}
-                  />
-                  {features.qwenTraining && (
+                  {isModelTypeAllowed('chroma') && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="teal"
+                      name="Chroma"
+                      value={baseModelChroma}
+                      baseType="chroma"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2025-10-01')}
+                    />
+                  )}
+                  {isModelTypeAllowed('qwen') && features.qwenTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="orange"
@@ -437,7 +455,7 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.zimageturboTraining && (
+                  {isModelTypeAllowed('zimageturbo') && features.zimageturboTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="yellow"
@@ -474,7 +492,7 @@ export const ModelSelect = ({
                   />
                 </>
               )}
-              {mediaType === 'image' && (
+              {mediaType === 'image' && !restrictedModels?.length && (
                 <>
                   <ModelSelector
                     selectedRun={selectedRun}

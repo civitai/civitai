@@ -105,7 +105,14 @@ export function useGetTextToImageRequests(
     if (filters.processType) baseTags.push(filters.processType);
 
     return baseTags;
-  }, [markerTags, filters.tags, filters.baseModel, filters.processType, options?.includeTags, input?.tags]);
+  }, [
+    markerTags,
+    filters.tags,
+    filters.baseModel,
+    filters.processType,
+    options?.includeTags,
+    input?.tags,
+  ]);
 
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
     {
@@ -127,7 +134,8 @@ export function useGetTextToImageRequests(
       data?.pages.flatMap((x) =>
         (x.items ?? [])
           .filter((workflow) => {
-            if (!!markerTags.length && workflow.tags.every((tag) => !markerTags.includes(tag))) return false;
+            if (!!markerTags.length && workflow.tags.every((tag) => !markerTags.includes(tag)))
+              return false;
             return true;
           })
           .map((workflow) => {
@@ -151,7 +159,10 @@ export function useGetTextToImageRequests(
   );
 
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(() => steps.flatMap((step) => imageFilter({ step, tags: markerTags })), [steps, markerTags]);
+  const images = useMemo(
+    () => steps.flatMap((step) => imageFilter({ step, tags: markerTags })),
+    [steps, markerTags]
+  );
 
   return { data: flatData, steps, images, ...rest };
 }

@@ -111,6 +111,7 @@ import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { TrainingDatasetsView, DatasetConfig } from '~/components/Training/Form/TrainingDatasets';
 
 const TrainingImagesCaptions = dynamic(
   () =>
@@ -245,9 +246,10 @@ const LabelSelectModal = ({
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
-  const thisMediaType =
-    (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
+  const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
   const isVideo = thisMediaType === 'video';
+  const isImageEdit = thisTrainingDetails?.type === 'Image Edit';
   const thisDefaultTrainingState = isVideo ? defaultTrainingStateVideo : defaultTrainingState;
   const domainColor = useDomainColor();
   const isGreen = domainColor === 'green';
@@ -267,6 +269,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setInitialOwnRights,
     setInitialShareDataset,
     setAutoLabeling,
+    updateDatasetImages,
+    updateDatasetLabelType,
+    updateDatasetImage,
   } = trainingStore;
 
   const {
@@ -284,6 +289,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialShareDataset,
     autoLabeling,
     autoCaptioning,
+    datasets,
   } = useTrainingImageStore((state) => state[model.id] ?? { ...thisDefaultTrainingState });
 
   const [page, setPage] = useState(1);
@@ -612,7 +618,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleDrop = async (
     fileList: FileWithPath[],
-    data?: { [p: string]: Pick<ImageDataType, 'label' | 'source'> }
+    data?: { [p: string]: Pick<ImageDataType, 'label' | 'source'> },
+    datasetId?: number
   ) => {
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
@@ -651,15 +658,28 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       .map((nf) => nf.parsedFiles)
       .flat()
       .filter(isDefined);
-    if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
+
+    // Determine target list for max file check
+    const targetList =
+      datasetId !== undefined
+        ? datasets.find((d) => d.id === datasetId)?.imageList ?? []
+        : imageList;
+
+    if (filteredFiles.length > MAX_FILES_ALLOWED - targetList.length) {
       showErrorNotification({
         title: 'Too many files',
         error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
         autoClose: false,
       });
-      filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
+      filteredFiles.splice(MAX_FILES_ALLOWED - targetList.length);
     }
-    setImageList(model.id, thisMediaType, imageList.concat(filteredFiles));
+
+    // Add images to specific dataset or global imageList
+    if (datasetId !== undefined) {
+      updateDatasetImages(model.id, thisMediaType, datasetId, targetList.concat(filteredFiles));
+    } else {
+      setImageList(model.id, thisMediaType, imageList.concat(filteredFiles));
+    }
 
     const labelsPresent = newFiles.map((nf) => nf.hasAnyLabelFiles).some((hl) => hl);
     if (labelsPresent) {
@@ -674,7 +694,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const handleImport = async (assets: SelectedImage[], source: ImageSelectSource) => {
+  const handleImport = async (
+    assets: SelectedImage[],
+    source: ImageSelectSource,
+    datasetId?: number
+  ) => {
     const importNotifId = `${thisModelVersion.id}-importing-asset-${new Date().toISOString()}`;
     showNotification({
       id: importNotifId,
@@ -749,7 +773,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             [f.file.name]: { label: f.label, source: { type: source, url: f.url } },
           }),
           {} as Record<string, Pick<ImageDataType, 'label' | 'source'>>
-        )
+        ),
+        datasetId
       );
     }
 
@@ -1324,6 +1349,240 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       !isEqual(triggerWord, initialTriggerWord),
     // message: ``,
   });
+
+  // Image Edit training uses multi-dataset view
+  if (isImageEdit) {
+    return (
+      <>
+        <Stack>
+          <Paper mb="md" radius="md" p="xl" withBorder>
+            <div className="flex flex-col gap-4">
+              <Title order={4}>Acknowledgement</Title>
+              {attested.status ? (
+                <ContentClamp maxHeight={28}>
+                  <AttestDiv />
+                </ContentClamp>
+              ) : (
+                <div>
+                  <AttestDiv />
+                </div>
+              )}
+              <Checkbox
+                label="By agreeing to this attestation, I acknowledge that I have complied with these conditions and accept full responsibility for any legal or ethical implications that arise from the use of this content."
+                checked={attested.status}
+                error={attested.error}
+                onChange={(event) =>
+                  setAttest(model.id, thisMediaType, {
+                    status: event.currentTarget.checked,
+                    error: '',
+                  })
+                }
+              />
+            </div>
+          </Paper>
+
+          {attested.status && (
+            <TrainingDatasetsView model={model}>
+              {(dataset) => {
+                const datasetImportedUrls = dataset.imageList
+                  .filter((i) => isDefined(i.source?.url))
+                  .map((i) => i.source!.url!);
+
+                return (
+                  <Stack>
+                    {/* Import buttons */}
+                    <Paper p="md" withBorder radius="sm">
+                      <Stack>
+                        <Text size="sm">
+                          Add images to this dataset from various sources, or drag and drop files
+                          below.
+                        </Text>
+                        <Group mt="xs" justify="center" grow>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Media',
+                                selectSource: 'generation',
+                                onSelect: async (media) => {
+                                  await handleImport(media, 'generation', dataset.id);
+                                },
+                                importedUrls: datasetImportedUrls,
+                                videoAllowed: false,
+                              });
+                            }}
+                          >
+                            Import from Generator
+                          </Button>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Media',
+                                selectSource: 'uploaded',
+                                onSelect: async (media) => {
+                                  await handleImport(media, 'uploaded', dataset.id);
+                                },
+                                importedUrls: datasetImportedUrls,
+                                videoAllowed: false,
+                              });
+                            }}
+                          >
+                            Add from Profile
+                          </Button>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Datasets',
+                                selectSource: 'training',
+                                onSelect: async (datasets) => {
+                                  await handleImport(datasets, 'training', dataset.id);
+                                },
+                                importedUrls: datasetImportedUrls,
+                                videoAllowed: false,
+                              });
+                            }}
+                          >
+                            Re-use a Dataset
+                          </Button>
+                        </Group>
+
+                        <Divider label="OR" labelPosition="center" />
+
+                        <ImageDropzone
+                          onDrop={async (files) => {
+                            await handleDrop(files, undefined, dataset.id);
+                          }}
+                          label="Drag images or zips here (or click to select files)"
+                          description={
+                            <Text mt="xs" fz="sm" c={theme.colors.red[5]}>
+                              Changes made here are not permanently saved until you hit
+                              &quot;Next&quot;
+                            </Text>
+                          }
+                          max={MAX_FILES_ALLOWED}
+                          count={dataset.imageList.length}
+                          accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+                          onExceedMax={() =>
+                            showErrorNotification({
+                              title: 'Too many files',
+                              error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                              autoClose: false,
+                            })
+                          }
+                        />
+                      </Stack>
+                    </Paper>
+
+                    {/* Images section (simplified - no labeling for Image Edit) */}
+                    {dataset.imageList.length > 0 && (
+                      <Paper p="md" withBorder radius="sm">
+                        <Stack>
+                          <Group justify="space-between">
+                            <Text fw={500}>Images ({dataset.imageList.length})</Text>
+                            <Button
+                              size="compact-xs"
+                              color="red"
+                              variant="subtle"
+                              leftSection={<IconTrash size={14} />}
+                              onClick={() => {
+                                openConfirmModal({
+                                  title: 'Clear all images?',
+                                  children: `This will remove all ${dataset.imageList.length} images from this dataset.`,
+                                  labels: { cancel: 'Cancel', confirm: 'Clear All' },
+                                  confirmProps: { color: 'red' },
+                                  centered: true,
+                                  onConfirm: () =>
+                                    updateDatasetImages(model.id, thisMediaType, dataset.id, []),
+                                });
+                              }}
+                            >
+                              Clear All
+                            </Button>
+                          </Group>
+
+                          {/* Image grid - shows filename for pairing reference */}
+                          <SimpleGrid cols={{ base: 2, sm: 4, md: 6 }}>
+                            {dataset.imageList.map((imgData, index) => (
+                              <Card
+                                key={`${imgData.url}-${index}`}
+                                shadow="sm"
+                                radius="sm"
+                                withBorder
+                                className="p-0"
+                              >
+                                <div className={styles.imgOverlay}>
+                                  <Group gap={4} className={clsx(styles.trash)}>
+                                    <Tooltip label="Remove file">
+                                      <LegacyActionIcon
+                                        color="red"
+                                        variant="filled"
+                                        size="sm"
+                                        onClick={() => {
+                                          const newList = dataset.imageList.filter(
+                                            (i) => i.url !== imgData.url
+                                          );
+                                          updateDatasetImages(
+                                            model.id,
+                                            thisMediaType,
+                                            dataset.id,
+                                            newList
+                                          );
+                                        }}
+                                      >
+                                        <IconTrash size={14} />
+                                      </LegacyActionIcon>
+                                    </Tooltip>
+                                  </Group>
+                                  <MImage
+                                    alt={imgData.name}
+                                    src={imgData.url}
+                                    style={{
+                                      height: '100px',
+                                      width: '100%',
+                                      objectFit: 'cover',
+                                    }}
+                                  />
+                                </div>
+                                {/* Show filename for pairing reference */}
+                                <Text
+                                  size="xs"
+                                  c="dimmed"
+                                  ta="center"
+                                  p={4}
+                                  className="truncate"
+                                  title={imgData.name}
+                                >
+                                  {imgData.name}
+                                </Text>
+                              </Card>
+                            ))}
+                          </SimpleGrid>
+                        </Stack>
+                      </Paper>
+                    )}
+                  </Stack>
+                );
+              }}
+            </TrainingDatasetsView>
+          )}
+        </Stack>
+        <Group justify="flex-end" mt="xl">
+          <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
+            Back
+          </Button>
+          <Button
+            onClick={handleNext}
+            disabled={autoLabeling.isRunning}
+            loading={zipping || uploading > 0}
+          >
+            Next
+          </Button>
+        </Group>
+      </>
+    );
+  }
 
   return (
     <>

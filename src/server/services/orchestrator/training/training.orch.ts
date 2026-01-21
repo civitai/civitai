@@ -287,6 +287,30 @@ export const createTrainingWorkflow = async ({
 
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 
+  // Multi-dataset support for Image Edit training (placeholder)
+  // When orchestrator API supports multiple datasets, this section will be expanded
+  const trainingType = modelVersion.trainingDetails.type;
+  const datasets = modelVersion.trainingDetails.datasets;
+  if (trainingType === 'Image Edit' && datasets && datasets.length > 0) {
+    // PLACEHOLDER: Future multi-dataset handling
+    // For now, Image Edit uses the primary training data file
+    // When orchestrator supports multiple files:
+    // - Each dataset will be uploaded as a separate zip
+    // - Their URLs will be passed to the training step
+    // const datasetUrls = await Promise.all(
+    //   datasets.map(async (d) => {
+    //     if (!d.fileId) return null;
+    //     const file = await dbWrite.modelFile.findFirst({ where: { id: d.fileId } });
+    //     if (!file) return null;
+    //     const { url } = await getGetUrl(file.url);
+    //     return { url, label: d.label, count: d.numImages };
+    //   })
+    // );
+    console.log(
+      `[Training] Image Edit training with ${datasets.length} dataset(s) - using primary file for now`
+    );
+  }
+
   if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
     if (!customCheck.ok) {

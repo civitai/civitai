@@ -36,6 +36,7 @@ import {
   goBack,
   minsToHours,
 } from '~/components/Training/Form/TrainingCommon';
+import { trainingModelTypesMap } from '~/components/Training/Form/TrainingBasicInfo';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
@@ -802,6 +803,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         modelId={model.id}
         mediaType={thisMediaType}
         numImages={thisNumImages}
+        trainingType={thisTrainingDetails?.type}
+        restrictedModels={
+          thisTrainingDetails?.type
+            ? trainingModelTypesMap[thisTrainingDetails.type]?.restrictedModels
+            : undefined
+        }
       />
 
       {prefersCaptions.includes(selectedRun.baseType) &&

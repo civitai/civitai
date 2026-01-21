@@ -172,6 +172,14 @@ export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
 ]);
 export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
 
+export const trainingDatasetObj = z.object({
+  id: z.number(),
+  fileId: z.number().optional(),
+  label: z.string().optional(),
+  numImages: z.number().optional(),
+});
+export type TrainingDatasetObj = z.infer<typeof trainingDatasetObj>;
+
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
 export const trainingDetailsObj = z.object({
   baseModel: z
@@ -186,6 +194,8 @@ export const trainingDetailsObj = z.object({
   negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
+  // Multi-dataset support for Image Edit training type
+  datasets: z.array(trainingDatasetObj).max(4).optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({

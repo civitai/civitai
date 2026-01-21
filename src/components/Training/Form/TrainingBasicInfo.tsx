@@ -7,6 +7,7 @@ import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
+import type { TrainingBaseModelType } from '~/utils/training';
 import type {
   ModelVersionUpsertInput,
   TrainingDetailsObj,
@@ -29,12 +30,14 @@ import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 type tmTypes = TrainingDetailsObj['type'];
 type tMediaTypes = TrainingDetailsObj['mediaType'];
 
-const trainingModelTypesMap: {
+export const trainingModelTypesMap: {
   [p in tmTypes]: {
     allowedTypes: ('image' | 'video')[];
     description: string;
     src: string;
     type: 'img' | 'vid';
+    isNew?: boolean;
+    restrictedModels?: TrainingBaseModelType[];
   };
 } = {
   Character: {
@@ -60,6 +63,14 @@ const trainingModelTypesMap: {
     description: 'Animations or video effects',
     src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/02e7cb76-2fec-43a9-ab0d-8369a785c4cb/ocean.mp4',
     type: 'vid',
+  },
+  'Image Edit': {
+    allowedTypes: ['image'],
+    description: 'Train image-to-image transformations using paired datasets (e.g., logo on shirt, background removal)',
+    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/84918ac0-e5de-4ee5-be94-1fc32ee9a7c4/width=1024/67085860.jpeg',
+    type: 'img',
+    isNew: true,
+    restrictedModels: ['flux2', 'qwen'], // Flux2 Klein/Dev, Qwen Image Edit, future: Flux Kontext, Z Image Omni/Edit
   },
 };
 
@@ -382,7 +393,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                   description={v.description}
                   src={v.src}
                   type={v.type}
-                  isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
+                  isNew={v.isNew}
                   key={k}
                 />
               ))}

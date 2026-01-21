@@ -51,15 +51,17 @@ const useSubmitImages = ({
   mediaType,
   handleClose,
   type,
+  datasetId,
 }: {
   modelId: number;
   mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
   type: LabelTypes;
+  datasetId?: number;
 }) => {
   const { upload } = useS3UploadStore();
   const [loading, setLoading] = useState(false);
-  const { autoTagging, autoCaptioning, imageList } = useTrainingImageStore(
+  const { autoTagging, autoCaptioning, imageList, datasets } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
@@ -67,7 +69,13 @@ const useSubmitImages = ({
   );
   const { setAutoLabeling } = trainingStore;
 
-  const filteredImages = imageList.filter((i) =>
+  // Use dataset images if datasetId is provided, otherwise use global imageList
+  const targetImageList =
+    datasetId !== undefined
+      ? datasets.find((d) => d.id === datasetId)?.imageList ?? []
+      : imageList;
+
+  const filteredImages = targetImageList.filter((i) =>
     (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
       ? i.label.length === 0
       : i
@@ -115,6 +123,7 @@ const useSubmitImages = ({
               total: filteredImages.length,
               successes: 0,
               fails: [],
+              datasetId, // Track which dataset is being auto-labeled
             });
             handleClose();
             setLoading(false);
@@ -138,10 +147,12 @@ const AutoTagSection = ({
   modelId,
   mediaType,
   handleClose,
+  datasetId,
 }: {
   modelId: number;
   mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
+  datasetId?: number;
 }) => {
   const { autoTagging } = useTrainingImageStore(
     (state) =>
@@ -155,6 +166,7 @@ const AutoTagSection = ({
     mediaType,
     handleClose,
     type: 'tag',
+    datasetId,
   });
 
   return (
@@ -287,10 +299,12 @@ const AutoCaptionSection = ({
   modelId,
   mediaType,
   handleClose,
+  datasetId,
 }: {
   modelId: number;
   mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
+  datasetId?: number;
 }) => {
   const { autoCaptioning } = useTrainingImageStore(
     (state) =>
@@ -304,6 +318,7 @@ const AutoCaptionSection = ({
     mediaType,
     handleClose,
     type: 'caption',
+    datasetId,
   });
 
   return (
@@ -426,29 +441,55 @@ const AutoCaptionSection = ({
 export const AutoLabelModal = ({
   modelId,
   mediaType,
+  datasetId,
 }: {
   modelId: number;
   mediaType: TrainingDetailsObj['mediaType'];
+  datasetId?: number;
 }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { labelType } = useTrainingImageStore(
+  const { labelType, datasets } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
       }
   );
 
+  // Use dataset's labelType if datasetId is provided
+  const effectiveLabelType =
+    datasetId !== undefined
+      ? datasets.find((d) => d.id === datasetId)?.labelType ?? labelType
+      : labelType;
+
   return (
     <Modal {...dialog} centered size="md" radius="md" title="Automatically label your files">
       <Stack>
         <Text>Label Type</Text>
-        <TrainingImagesLabelTypeSelect modelId={modelId} mediaType={mediaType} />
-        <Divider />
-        {labelType === 'caption' ? (
-          <AutoCaptionSection modelId={modelId} mediaType={mediaType} handleClose={handleClose} />
+        {datasetId !== undefined ? (
+          // For datasets, show the current label type (managed by parent component)
+          <Text size="sm" c="dimmed">
+            Using {effectiveLabelType === 'caption' ? 'Caption' : 'Tag'} mode (set in dataset
+            settings)
+          </Text>
         ) : (
-          <AutoTagSection modelId={modelId} mediaType={mediaType} handleClose={handleClose} />
+          <TrainingImagesLabelTypeSelect modelId={modelId} mediaType={mediaType} />
+        )}
+        <Divider />
+        {effectiveLabelType === 'caption' ? (
+          <AutoCaptionSection
+            modelId={modelId}
+            mediaType={mediaType}
+            handleClose={handleClose}
+            datasetId={datasetId}
+          />
+        ) : (
+          <AutoTagSection
+            modelId={modelId}
+            mediaType={mediaType}
+            handleClose={handleClose}
+            datasetId={datasetId}
+          />
         )}
       </Stack>
     </Modal>
