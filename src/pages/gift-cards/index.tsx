@@ -28,13 +28,14 @@ import { Meta } from '~/components/Meta/Meta';
 import { PromoNotification } from '~/components/PromoNotification/PromoNotification';
 import { KinguinCheckout } from '~/components/KinguinCheckout';
 import { useKinguinSDK } from '~/hooks/useKinguinSDK';
-import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift-cards/vendors';
-import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
+import type { Vendor } from '~/utils/gift-cards/vendors';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getVendorDiscount } from '~/utils/gift-cards/discount-utils';
 import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
 import { trpc } from '~/utils/trpc';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getEnabledVendorsServer } from '~/server/services/gift-card-vendors.service';
 import classes from './index.module.scss';
 
 // Kinguin utility moved to KinguinCheckout component
@@ -167,10 +168,26 @@ const GiftCardItem = ({
   );
 };
 
-export default function GiftCardsPage() {
+interface GiftCardsPageProps {
+  enabledVendors: Vendor[];
+}
+
+export const getServerSideProps = createServerSideProps<GiftCardsPageProps>({
+  useSession: true,
+  resolver: async ({ session }) => {
+    const enabledVendors = await getEnabledVendorsServer(session?.user?.id);
+
+    return {
+      props: {
+        enabledVendors,
+      },
+    };
+  },
+});
+
+export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
   const router = useRouter();
   const [selectedVendor, setSelectedVendor] = useState<Vendor | undefined>();
-  const enabledVendors = getEnabledVendors();
   const { data: kinguinPaymentWarning } = trpc.system.getDbKV.useQuery({
     key: 'kinguinPaymentWarning',
   });
@@ -188,20 +205,20 @@ export default function GiftCardsPage() {
   useEffect(() => {
     const vendorParam = router.query.vendor as string | undefined;
     if (vendorParam) {
-      const vendor = getVendorById(vendorParam);
-      if (vendor && vendor.enabled) {
+      const vendor = enabledVendors.find((v) => v.id === vendorParam);
+      if (vendor) {
         setSelectedVendor(vendor);
         return;
       }
     }
     // Set default vendor if no valid vendor in URL
-    setSelectedVendor(getDefaultVendor());
-  }, [router.query.vendor]);
+    setSelectedVendor(enabledVendors[0]);
+  }, [router.query.vendor, enabledVendors]);
 
   // Update URL when vendor changes
   const handleVendorChange = (vendorId: string) => {
-    const vendor = getVendorById(vendorId);
-    if (vendor && vendor.enabled) {
+    const vendor = enabledVendors.find((v) => v.id === vendorId);
+    if (vendor) {
       // Close Kinguin checkout if switching vendors
       if (showKinguinCheckout) {
         closeKinguinCheckout();
