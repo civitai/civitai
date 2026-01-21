@@ -1,5 +1,13 @@
 import type { Icon } from '@tabler/icons-react';
-import { IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
+import {
+  IconCategory,
+  IconEyeOff,
+  IconFileText,
+  IconLayoutList,
+  IconLock,
+  IconPhoto,
+  IconWorld,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import * as z from 'zod';
@@ -206,6 +214,40 @@ export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, Pr
     value: CollectionWriteConfiguration.Review,
     description:
       'Anyone can add content to this collection, but content needs to be reviewed before it is visible.',
+  },
+};
+
+export type TypeData = {
+  icon: Icon;
+  label: string;
+  value: string;
+  color?: string;
+};
+
+export const collectionTypeData: Record<CollectionType, TypeData> = {
+  [CollectionType.Model]: {
+    icon: IconCategory,
+    label: 'Model',
+    value: CollectionType.Model,
+    color: 'blue',
+  },
+  [CollectionType.Image]: {
+    icon: IconPhoto,
+    label: 'Image',
+    value: CollectionType.Image,
+    color: 'violet',
+  },
+  [CollectionType.Post]: {
+    icon: IconLayoutList,
+    label: 'Post',
+    value: CollectionType.Post,
+    color: 'green',
+  },
+  [CollectionType.Article]: {
+    icon: IconFileText,
+    label: 'Article',
+    value: CollectionType.Article,
+    color: 'orange',
   },
 };
 
