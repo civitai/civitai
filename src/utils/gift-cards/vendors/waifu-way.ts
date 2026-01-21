@@ -4,7 +4,7 @@ export const waifuWayVendor: Vendor = {
   id: 'waifu-way',
   name: 'WaifuWay',
   displayName: 'WaifuWay',
-  enabled: false,
+  enabled: true,
   badge: 'New!',
   promo: {
     message: 'WaifuWay is a new partner offering Civitai Buzz gift cards and memberships!',

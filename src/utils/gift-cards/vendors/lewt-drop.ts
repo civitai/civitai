@@ -4,7 +4,7 @@ export const lewtDropVendor: Vendor = {
   id: 'lewt-drop',
   name: 'LewtDrop',
   displayName: 'LewtDrop',
-  enabled: false,
+  enabled: true,
   badge: 'New!',
   promo: {
     message: 'LewtDrop is a new partner offering Civitai Buzz gift cards and memberships!',
