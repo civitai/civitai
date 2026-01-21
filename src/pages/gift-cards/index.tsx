@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Button,
   Card,
   Container,
@@ -304,7 +305,7 @@ export default function GiftCardsPage() {
 
               <Stack gap="sm" align="flex-end">
                 {/* Controls Row */}
-                <Group gap="xl" wrap="nowrap">
+                <Group gap="md" wrap="wrap">
                   {/* Type Selector */}
                   <Stack gap="xs">
                     <Text size="xs" c="dimmed" fw={700}>
@@ -323,7 +324,7 @@ export default function GiftCardsPage() {
                   </Stack>
 
                   {/* Vendor Selector */}
-                  <Stack gap="xs" align="center">
+                  <Stack gap="xs">
                     <Text size="xs" c="dimmed" fw={700}>
                       Vendor
                     </Text>
@@ -332,7 +333,14 @@ export default function GiftCardsPage() {
                         value={selectedVendor.id}
                         onChange={handleVendorChange}
                         data={enabledVendors.map((v) => ({
-                          label: v.displayName,
+                          label: v.badge ? (
+                            <Group gap={6} wrap="nowrap" align="center">
+                              <span>{v.displayName}</span>
+                              <Box className={classes.newVendorDot} />
+                            </Group>
+                          ) : (
+                            v.displayName
+                          ),
                           value: v.id,
                         }))}
                         size="sm"
@@ -342,7 +350,7 @@ export default function GiftCardsPage() {
                         value={selectedVendor.id}
                         onChange={(value) => value && handleVendorChange(value)}
                         data={enabledVendors.map((v) => ({
-                          label: v.displayName,
+                          label: v.badge ? `${v.displayName} •` : v.displayName,
                           value: v.id,
                         }))}
                         size="sm"
@@ -599,6 +607,13 @@ const WholesaleCallout = () => {
       mt="xl"
       className={classes.wholesaleCallout}
     >
+      {/* New Plans Badge */}
+      <div className={classes.newPlansBadge}>
+        <Text size="xs" fw={700} c="white">
+          New Plans Available
+        </Text>
+      </div>
+
       <Grid align="center">
         <Grid.Col span={{ base: 12, md: 8 }}>
           <Stack gap="md">
@@ -615,23 +630,23 @@ const WholesaleCallout = () => {
                 </Text>
               </Stack>
             </Group>
-            <Group gap="xl" ml={60}>
+            <Group gap="xl" ml={60} wrap="wrap">
               <Group gap="xs">
                 <IconBolt size={20} className={classes.wholesaleHighlight} />
                 <Text size="sm" fw={500}>
-                  Up to 15% discount
+                  Starting at just $1k/month
+                </Text>
+              </Group>
+              <Group gap="xs">
+                <IconBolt size={20} className={classes.wholesaleHighlight} />
+                <Text size="sm" fw={500}>
+                  Up to 10% discount
                 </Text>
               </Group>
               <Group gap="xs">
                 <IconCheck size={20} className={classes.wholesaleHighlight} />
                 <Text size="sm" fw={500}>
                   Featured on gift cards page
-                </Text>
-              </Group>
-              <Group gap="xs">
-                <IconCheck size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Marketing support
                 </Text>
               </Group>
             </Group>
