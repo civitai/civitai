@@ -196,7 +196,7 @@ export const ltx2GenerationConfig = VideoGenerationConfig2({
       height,
       model,
       guidanceScale: isDistilled ? 1 : cfgScale,
-      numInferenceSteps: isDistilled ? 8 : steps,
+      steps: isDistilled ? 8 : steps,
       images: images?.map((img) => img.url),
       loras: loras && Object.keys(loras).length > 0 ? loras : undefined,
     };

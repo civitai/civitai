@@ -39,7 +39,12 @@ export function Ltx2FormInput() {
       </div>
       <InputResourceSelectMultipleStandalone
         name="resources"
-        options={{ resources: getGenerationBaseModelResourceOptions('LTXV2'), canGenerate: true }}
+        options={{
+          resources: getGenerationBaseModelResourceOptions('LTXV2').filter(
+            (x) => x.type !== 'Checkpoint'
+          ),
+          canGenerate: true,
+        }}
         buttonLabel="Add LoRA"
       />
       <InputVideoProcess name="process" />
