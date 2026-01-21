@@ -26,6 +26,7 @@ import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -39,6 +40,14 @@ import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ModelCard({ data }: Props) {
+  return (
+    <MetricSubscriptionProvider entityType="Model" entityId={data.id}>
+      <ModelCardContent data={data} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ModelCardContent({ data }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const image = data.images[0];
@@ -70,8 +79,18 @@ export function ModelCard({ data }: Props) {
   const isNSFW = data.nsfw;
   const isPrivate = data.availability === Availability.Private;
 
-  const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
-  const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
+  // Live metrics for model stats
+  const liveMetrics = useLiveMetrics('Model', data.id, {
+    downloadCount: data.rank?.downloadCount ?? 0,
+    collectedCount: data.rank?.collectedCount ?? 0,
+    commentCount: data.rank?.commentCount ?? 0,
+    tippedAmountCount: data.rank?.tippedAmountCount ?? 0,
+    thumbsUpCount: data.rank?.thumbsUpCount ?? 0,
+    thumbsDownCount: data.rank?.thumbsDownCount ?? 0,
+  });
+
+  const thumbsUpCount = liveMetrics.thumbsUpCount;
+  const thumbsDownCount = liveMetrics.thumbsDownCount;
   const totalCount = thumbsUpCount + thumbsDownCount;
   const positiveRating = totalCount > 0 ? thumbsUpCount / totalCount : 0;
 
@@ -203,9 +222,9 @@ export function ModelCard({ data }: Props) {
           </Text>
           {data.rank && (
             <div className="flex flex-wrap items-center justify-between gap-1">
-              {(!!data.rank.downloadCount ||
-                !!data.rank.collectedCount ||
-                !!data.rank.tippedAmountCount) && (
+              {(!!liveMetrics.downloadCount ||
+                !!liveMetrics.collectedCount ||
+                !!liveMetrics.tippedAmountCount) && (
                 <Badge
                   className={clsx(cardClasses.statChip, cardClasses.chip)}
                   classNames={{ label: 'flex flex-nowrap gap-2' }}
@@ -215,19 +234,19 @@ export function ModelCard({ data }: Props) {
                   <Group gap={2}>
                     <IconDownload size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
-                      {abbreviateNumber(data.rank.downloadCount)}
+                      {abbreviateNumber(liveMetrics.downloadCount)}
                     </Text>
                   </Group>
                   <Group gap={2}>
                     <IconBookmark size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
-                      {abbreviateNumber(data.rank.collectedCount)}
+                      {abbreviateNumber(liveMetrics.collectedCount)}
                     </Text>
                   </Group>
                   <Group gap={2}>
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
-                      {abbreviateNumber(data.rank.commentCount)}
+                      {abbreviateNumber(liveMetrics.commentCount)}
                     </Text>
                   </Group>
                   {!isPOI && (
@@ -239,14 +258,14 @@ export function ModelCard({ data }: Props) {
                       <Group gap={2}>
                         <IconBolt size={14} strokeWidth={2.5} />
                         <Text size="xs" lh={1} fw="bold" tt="uppercase">
-                          {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                          {abbreviateNumber(liveMetrics.tippedAmountCount + tippedAmount)}
                         </Text>
                       </Group>
                     </InteractiveTipBuzzButton>
                   )}
                 </Badge>
               )}
-              {!data.locked && !!data.rank.thumbsUpCount && (
+              {!data.locked && !!thumbsUpCount && (
                 <Badge
                   className={clsx(cardClasses.statChip, cardClasses.chip)}
                   pl={6}
@@ -260,7 +279,7 @@ export function ModelCard({ data }: Props) {
                     <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
                   </Text>
                   <Text fz={16} fw={500} lh={1} span>
-                    {abbreviateNumber(data.rank.thumbsUpCount)}
+                    {abbreviateNumber(thumbsUpCount)}
                   </Text>
                 </Badge>
               )}
