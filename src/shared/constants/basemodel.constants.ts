@@ -2190,6 +2190,20 @@ export const baseModelById = new Map(baseModels.map((m) => [m.id, m]));
 export const baseModelByName = new Map(baseModels.map((m) => [m.name, m]));
 
 /**
+ * Gets the ecosystem name (lowercase) for a base model display name.
+ * Used for constructing AIR strings.
+ * @param baseModel - The base model display name (e.g., 'SD 1.5', 'SDXL 1.0')
+ * @returns The ecosystem name (e.g., 'sd1', 'sdxl') or lowercase input as fallback
+ */
+export function getEcosystemName(baseModel: string): string {
+  const model = baseModelByName.get(baseModel);
+  if (!model) return baseModel.toLowerCase();
+
+  const ecosystem = ecosystemById.get(model.ecosystemId);
+  return ecosystem?.name ?? baseModel.toLowerCase();
+}
+
+/**
  * Check if any base model in an ecosystem is marked as experimental
  * @param ecosystemKey - The ecosystem key (e.g., 'SD3', 'Qwen')
  * @returns true if any base model in the ecosystem is experimental

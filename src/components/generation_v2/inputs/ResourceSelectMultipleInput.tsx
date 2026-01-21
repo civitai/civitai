@@ -180,7 +180,8 @@ function ResourceItem({
           <Text size="sm" lineClamp={1} fw={590} className="truncate">
             {displayResource.model.name}
           </Text>
-          {displayResource.model.name.toLowerCase() !== displayResource.name.toLowerCase() && (
+          {displayResource.name &&
+            displayResource.model.name.toLowerCase() !== displayResource.name.toLowerCase() && (
             <Text size="xs" c="dimmed" className="shrink-0">
               ({displayResource.name})
             </Text>

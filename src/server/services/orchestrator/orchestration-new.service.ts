@@ -34,18 +34,28 @@ import {
   getResourceData,
   type GenerationResource,
 } from '~/server/services/generation/generation.service';
-import { getGenerationStatus } from '~/server/services/orchestrator/common';
+import {
+  formatGenerationResponse,
+  getGenerationStatus,
+} from '~/server/services/orchestrator/common';
+import type { TextToImageResponse } from '~/server/services/orchestrator/types';
+import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 import {
+  WORKFLOW_TAGS,
   samplersToSchedulers,
   samplersToComfySamplers,
 } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { maxRandomSeed } from '~/server/common/constants';
 import { getRandomInt } from '~/utils/number-helpers';
+import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 
 // =============================================================================
 // Types
@@ -61,7 +71,7 @@ export type GenerationContext = {
   experimental?: boolean;
   allowMatureContent?: boolean;
   isGreen?: boolean;
-  currencies?: string[];
+  currencies?: BuzzSpendType[];
   isModerator?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   track?: any; // Tracker class from createContext
@@ -81,10 +91,8 @@ export type WhatIfOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   userId?: number;
-  token?: string;
-  experimental?: boolean;
-  allowMatureContent?: boolean;
-  currencies?: string[];
+  token: string;
+  currencies?: BuzzSpendType[];
 };
 
 /**
@@ -147,7 +155,7 @@ const SDXL_DRAFT_RESOURCE_ID = 391999;
  * AIR format: urn:air:{ecosystem}:{type}:{source}:{modelId}@{versionId}
  */
 function resourceToAir(resource: ResourceData): string {
-  const ecosystem = resource.baseModel.toLowerCase();
+  const ecosystem = getEcosystemName(resource.baseModel);
   const type = resource.model.type.toLowerCase();
   return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
 }
@@ -237,7 +245,7 @@ async function validateAndEnrichResources(
   // Build enriched resources with AIR strings
   const enrichedResources: EnrichedResource[] = resources.map((r) => ({
     ...r,
-    air: `urn:air:${r.baseModel.toLowerCase()}:${r.model.type.toLowerCase()}:civitai:${r.model.id}@${r.id}`,
+    air: `urn:air:${getEcosystemName(r.baseModel)}:${r.model.type.toLowerCase()}:civitai:${r.model.id}@${r.id}`,
   }));
 
   return {
@@ -778,6 +786,12 @@ export async function generateFromGraph({
   token,
   userId,
   isModerator,
+  experimental,
+  allowMatureContent,
+  currencies,
+  civitaiTip,
+  creatorTip,
+  tags: customTags = [],
 }: GenerateOptions) {
   // Check generation status
   const status = await getGenerationStatus();
@@ -788,24 +802,94 @@ export async function generateFromGraph({
   const data = validateInput(input, externalCtx);
   const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator });
 
-  // TODO: Submit workflow to orchestrator
-  // TODO: Add prompt auditing
-  // TODO: Add workflow tags
-  // TODO: Handle tips, callbacks, etc.
+  // Determine workflow tags
+  const baseModel = 'baseModel' in data ? data.baseModel : undefined;
+  const [process] = data.workflow.split(':')[0]
 
-  return { step, data };
+  const tags = [
+    WORKFLOW_TAGS.GENERATION,
+    data.output,
+    process,
+    data.workflow,
+    baseModel,
+    ...customTags,
+  ].filter(isDefined);
+
+  // Build tips object if provided
+  const tips = civitaiTip || creatorTip
+    ? { civitai: civitaiTip ?? 0, creators: creatorTip ?? 0 }
+    : undefined;
+
+  // Check if private generation (from step metadata)
+  const isPrivateGeneration = !!(step.metadata as { isPrivateGeneration?: boolean })?.isPrivateGeneration;
+
+  // Submit workflow to orchestrator
+  const workflow = (await submitWorkflow({
+    token,
+    body: {
+      tags,
+      steps: [step],
+      tips,
+      experimental,
+      callbacks: getOrchestratorCallbacks(userId),
+      // Private generation restrictions
+      nsfwLevel: isPrivateGeneration ? 'pg13' : undefined,
+      allowMatureContent: isPrivateGeneration ? false : allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported
+      currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+    },
+  })) as TextToImageResponse;
+
+  // Format and return response
+  const [formatted] = await formatGenerationResponse([workflow], { id: userId } as any);
+  return formatted;
 }
 
 /**
  * Submits a what-if request using generation-graph input.
+ * Returns cost estimation without actually running the generation.
  *
  * Note: What-if requests skip generation status check as they are cost estimates only.
  */
-export async function whatIfFromGraph({ input, externalCtx, userId }: WhatIfOptions) {
+export async function whatIfFromGraph({
+  input,
+  externalCtx,
+  userId,
+  token,
+  currencies,
+}: WhatIfOptions) {
   const data = validateInput(input, externalCtx);
   const step = await createWorkflowStepFromGraph(data, true, userId ? { id: userId } : undefined);
 
-  // TODO: Submit what-if request to orchestrator
+  // Submit what-if request to orchestrator
+  const workflow = await submitWorkflow({
+    token,
+    body: {
+      steps: [step],
+      // @ts-ignore - BuzzSpendType is properly supported
+      currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+    },
+    query: {
+      whatif: true,
+    },
+  });
 
-  return { step, data };
+  // Check if all jobs are ready (have available support)
+  let ready = true;
+  for (const workflowStep of workflow.steps ?? []) {
+    for (const job of workflowStep.jobs ?? []) {
+      const { queuePosition } = job;
+      if (!queuePosition) continue;
+
+      const { support } = queuePosition;
+      if (support !== 'available' && ready) ready = false;
+    }
+  }
+
+  return {
+    allowMatureContent: workflow.allowMatureContent,
+    transactions: workflow.transactions?.list,
+    cost: workflow.cost,
+    ready,
+  };
 }
