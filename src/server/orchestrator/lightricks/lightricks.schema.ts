@@ -108,7 +108,7 @@ const ltx2Schema = baseVideoGenerationSchema.extend({
   aspectRatio: z.enum(ltx2AspectRatios).default('16:9').catch('16:9'),
   duration: numberEnum(ltx2Duration).default(5).catch(5),
   cfgScale: z.number().min(1).max(10).default(3).catch(3),
-  steps: z.number().min(20).max(50).default(30).catch(30),
+  steps: z.number().min(20).max(50).default(20).catch(20),
   generateAudio: z.boolean().default(false).catch(false),
   seed: seedSchema,
   resources: resourceSchema.array().nullish(),

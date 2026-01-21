@@ -120,7 +120,7 @@ export function Ltx2FormInput() {
                 </InfoPopover>
               </div>
             }
-            min={20}
+            min={1}
             max={50}
             reverse
           />
