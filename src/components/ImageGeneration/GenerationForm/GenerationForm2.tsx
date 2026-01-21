@@ -116,6 +116,12 @@ import {
   getIsFlux2Dev,
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
+  flux2KleinModelVariantOptions,
+  getFlux2KleinDefaults,
+  getIsFlux2Klein,
+  getIsFlux2Klein9b,
+} from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import {
   getModelVersionUsesImageGen,
   imageGenModelVersionMap,
 } from '~/shared/orchestrator/ImageGen/imageGen.config';
@@ -473,10 +479,14 @@ export function GenerationFormContent() {
   const isImagen4 = getIsImagen4(model.id);
   const isFluxKontext = getIsFluxKontext(model.id);
   const isFlux2 = getIsFlux2(model.id);
+  const isFlux2Klein = getIsFlux2Klein(model.id);
+  const isFlux2Klein9b = getIsFlux2Klein9b(model.id);
+  const flux2KleinDefaults = getFlux2KleinDefaults(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
   const isQwenImageEdit = getIsQwenImageEditModel(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || isQwenImageEdit;
+  const showImg2ImgMultiple =
+    isNanoBanana || isSeedream || isFlux2 || isFlux2Klein || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = false;
@@ -486,10 +496,11 @@ export function GenerationFormContent() {
     () => [
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
+      { isActive: isFlux2Klein, options: flux2KleinModelVariantOptions },
       // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
-    [isFluxKontext, isFlux2]
+    [isFluxKontext, isFlux2, isFlux2Klein]
   );
 
   const activeModelMode = modelModeConfig.find((config) => config.isActive);
@@ -523,6 +534,7 @@ export function GenerationFormContent() {
                 !isChroma &&
                 !isZImageTurbo &&
                 !isFlux2 &&
+                !isFlux2Klein &&
                 !isPonyV7;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
@@ -535,7 +547,7 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
+            if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isFlux2Klein || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
@@ -548,7 +560,16 @@ export function GenerationFormContent() {
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
             let cfgScaleStep = 0.5;
-            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
+            if (
+              isFlux ||
+              isSD3 ||
+              isFluxKontext ||
+              isQwen ||
+              isChroma ||
+              isFlux2 ||
+              isFlux2Klein ||
+              isPonyV7
+            ) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -572,10 +593,11 @@ export function GenerationFormContent() {
               isSeedream ||
               isFlux2NotDev;
             const disableAdvanced =
-              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana || isFlux2Klein9b;
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
+              isFlux2Klein ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
@@ -593,6 +615,7 @@ export function GenerationFormContent() {
               isChroma ||
               isZImageTurbo ||
               isFlux2 ||
+              isFlux2Klein ||
               isSeedream ||
               isPonyV7;
             const disableDraft =
@@ -608,6 +631,7 @@ export function GenerationFormContent() {
               isChroma ||
               isZImageTurbo ||
               isFlux2 ||
+              isFlux2Klein ||
               isSeedream ||
               isPonyV7;
             const enableImageInput =
@@ -632,6 +656,7 @@ export function GenerationFormContent() {
               isChroma ||
               isZImageTurbo ||
               isFlux2 ||
+              isFlux2Klein ||
               isPonyV7 ||
               isSeedream;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
@@ -644,11 +669,13 @@ export function GenerationFormContent() {
               isChroma ||
               isZImageTurbo ||
               isFlux2 ||
+              isFlux2Klein ||
               isPonyV7 ||
               isSeedream;
             const disableVae =
               isFlux ||
               isFlux2 ||
+              isFlux2Klein ||
               isQwen ||
               isSD3 ||
               isFluxKontext ||
@@ -662,6 +689,7 @@ export function GenerationFormContent() {
               !isSeedream &&
               !isNanoBananaPro &&
               !isFlux2 &&
+              !isFlux2Klein &&
               !isQwen &&
               !isOpenAI;
 
@@ -780,8 +808,10 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={isFluxStandard || isFlux2 || isHiDream || isImageGen}
-                            isPreview={isZImageTurbo || isFlux2}
+                            hideVersion={
+                              isFluxStandard || isFlux2 || isFlux2Klein || isHiDream || isImageGen
+                            }
+                            isPreview={isZImageTurbo || isFlux2 || isFlux2Klein}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -947,6 +977,7 @@ export function GenerationFormContent() {
                             !isChroma &&
                             !isZImageTurbo &&
                             !isFlux2 &&
+                            !isFlux2Klein &&
                             !isPonyV7 && <ReadySection />}
                         </Card>
                       );
@@ -965,6 +996,16 @@ export function GenerationFormContent() {
                       }}
                     />
                   )}
+
+                  {/* {isFlux2Klein && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={flux2KleinModelVariantOptions}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )} */}
 
                   {isNanoBanana && (
                     <SegmentedControl
@@ -1027,7 +1068,7 @@ export function GenerationFormContent() {
                       <InputSourceImageUploadMultiple
                         name="images"
                         aspect="video"
-                        max={isQwen ? 1 : 7}
+                        max={isQwen || isFlux2Klein ? 1 : 7}
                         warnOnMissingAiMetadata
                         enableDrawing
                         annotations={imageAnnotations}
@@ -1573,6 +1614,7 @@ export function GenerationFormContent() {
                                       isChroma ||
                                       isZImageTurbo ||
                                       isFlux2 ||
+                                      isFlux2Klein ||
                                       isPonyV7
                                         ? undefined
                                         : [
@@ -1643,6 +1685,7 @@ export function GenerationFormContent() {
                                             isChroma ||
                                             isZImageTurbo ||
                                             isFlux2 ||
+                                            isFlux2Klein ||
                                             isPonyV7
                                               ? undefined
                                               : [
@@ -1932,6 +1975,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const [baseModel, model, resources, vae] = form.watch(['baseModel', 'model', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isFlux2 = getIsFlux2(model.id);
+  const isFlux2Klein = getIsFlux2Klein(model.id);
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(model.id);
   const isOpenAI = baseModel === 'OpenAI';
@@ -1940,7 +1984,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isFlux2 && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
+    (!isFlux && !isFlux2 && !isFlux2Klein && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
