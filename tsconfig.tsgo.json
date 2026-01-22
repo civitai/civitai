@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": null,
+    "paths": {
+      "~/*": ["./src/*"]
+    }
+  },
+  "watchOptions": {
+    "watchFile": "fixedPollingInterval",
+    "watchDirectory": "fixedPollingInterval",
+    "fallbackPolling": "fixedInterval",
+    "synchronousWatchDirectory": true,
+    "excludeDirectories": ["**/node_modules", "**/.git"]
+  }
+}

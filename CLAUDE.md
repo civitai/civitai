@@ -46,8 +46,9 @@ npm run build            # Production build
 ```
 
 ### Code Quality
+**Always use the `/typecheck` skill** for type checking. It uses tsgo (TypeScript 7 native) which is ~10x faster than tsc.
+
 ```bash
-npm run typecheck        # Run TypeScript type checking
 npm run lint             # Run ESLint
 npm run prettier:check   # Check Prettier formatting
 npm run prettier:write   # Auto-fix Prettier formatting
@@ -173,7 +174,7 @@ const currentUser = useCurrentUser();
 - Follow authentication best practices
 
 ### Before Committing
-1. Run type checking: `npm run typecheck`
+1. Run type checking: Use the `/typecheck` skill
 2. Run linting: `npm run lint`
 3. Format code: `npm run prettier:write`
 4. Test changes locally
