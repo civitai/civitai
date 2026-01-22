@@ -193,78 +193,78 @@ export const removeUserContentFromSearchIndex = async (userId: number) => {
     USERS_SEARCH_INDEX,
   ];
 
-  const results = {
-    processed: [] as string[],
-    skipped: [] as string[],
-    deleted: 0,
-  };
+  // Process all indexes in parallel
+  const indexResults = await Promise.all(
+    allIndexes.map(async (indexName) => {
+      try {
+        const index = await getOrCreateIndex(indexName, undefined, searchClient);
 
-  for (const indexName of allIndexes) {
-    try {
-      const index = await getOrCreateIndex(indexName, undefined, searchClient);
+        if (!index) {
+          return { indexName, status: 'skipped' as const, deleted: 0 };
+        }
 
-      if (!index) {
-        results.skipped.push(indexName);
-        continue;
-      }
+        // Get filterable attributes for this index
+        const settings = await index.getSettings();
+        const filterableAttributes = settings.filterableAttributes || [];
 
-      // Get filterable attributes for this index
-      const settings = await index.getSettings();
-      const filterableAttributes = settings.filterableAttributes || [];
+        // Determine which filter to use based on available attributes
+        let filter: string | undefined;
+        if (filterableAttributes.includes('user.id')) {
+          filter = `user.id = ${userId}`;
+        } else if (filterableAttributes.includes('userId')) {
+          filter = `userId = ${userId}`;
+        } else if (filterableAttributes.includes('id') && indexName === USERS_SEARCH_INDEX) {
+          // For users index, filter by id directly
+          filter = `id = ${userId}`;
+        } else {
+          // Skip indexes that don't have a userId-related filterable attribute
+          console.log(
+            `removeUserContentFromSearchIndex :: Skipping ${indexName} - no userId filterable attribute`
+          );
+          return { indexName, status: 'skipped' as const, deleted: 0 };
+        }
 
-      // Determine which filter to use based on available attributes
-      let filter: string | undefined;
-      if (filterableAttributes.includes('user.id')) {
-        filter = `user.id = ${userId}`;
-      } else if (filterableAttributes.includes('userId')) {
-        filter = `userId = ${userId}`;
-      } else if (filterableAttributes.includes('id') && indexName === USERS_SEARCH_INDEX) {
-        // For users index, filter by id directly
-        filter = `id = ${userId}`;
-      } else {
-        // Skip indexes that don't have a userId-related filterable attribute
+        // Search for documents matching the userId
+        const data = await index.search('', {
+          filter,
+          limit: 10000, // Increase limit to handle users with many documents
+        });
+
+        if (data.hits.length === 0) {
+          console.log(`removeUserContentFromSearchIndex :: No documents found in ${indexName}`);
+          return { indexName, status: 'processed' as const, deleted: 0 };
+        }
+
+        const documentIds = data.hits.map((hit) => (hit as Record<string, unknown>).id) as number[];
+
         console.log(
-          `removeUserContentFromSearchIndex :: Skipping ${indexName} - no userId filterable attribute`
+          `removeUserContentFromSearchIndex :: Deleting ${documentIds.length} documents from ${indexName}`
         );
-        results.skipped.push(indexName);
-        continue;
+
+        // Log to Axiom for tracking user content deletions
+        await logToAxiom({
+          name: 'remove-user-search-index-content',
+          type: 'info',
+          userId,
+          indexName,
+          documentCount: documentIds.length,
+        }).catch();
+
+        await index.deleteDocuments(documentIds);
+        return { indexName, status: 'processed' as const, deleted: documentIds.length };
+      } catch (error) {
+        console.error(`removeUserContentFromSearchIndex :: Error processing ${indexName}:`, error);
+        return { indexName, status: 'skipped' as const, deleted: 0 };
       }
+    })
+  );
 
-      // Search for documents matching the userId
-      const data = await index.search('', {
-        filter,
-        limit: 10000, // Increase limit to handle users with many documents
-      });
-
-      if (data.hits.length === 0) {
-        console.log(`removeUserContentFromSearchIndex :: No documents found in ${indexName}`);
-        results.processed.push(indexName);
-        continue;
-      }
-
-      const documentIds = data.hits.map((hit) => (hit as Record<string, unknown>).id) as number[];
-
-      console.log(
-        `removeUserContentFromSearchIndex :: Deleting ${documentIds.length} documents from ${indexName}`
-      );
-
-      // Log to Axiom for tracking user content deletions
-      await logToAxiom({
-        name: 'remove-user-search-index-content',
-        type: 'info',
-        userId,
-        indexName,
-        documentCount: documentIds.length,
-      }).catch();
-
-      await index.deleteDocuments(documentIds);
-      results.deleted += documentIds.length;
-      results.processed.push(indexName);
-    } catch (error) {
-      console.error(`removeUserContentFromSearchIndex :: Error processing ${indexName}:`, error);
-      results.skipped.push(indexName);
-    }
-  }
+  // Aggregate results
+  const results = {
+    processed: indexResults.filter((r) => r.status === 'processed').map((r) => r.indexName),
+    skipped: indexResults.filter((r) => r.status === 'skipped').map((r) => r.indexName),
+    deleted: indexResults.reduce((sum, r) => sum + r.deleted, 0),
+  };
 
   console.log(
     `removeUserContentFromSearchIndex :: Complete - Processed: ${results.processed.join(

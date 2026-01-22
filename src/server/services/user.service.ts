@@ -60,8 +60,9 @@ import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.s
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
-import { deleteImageById } from '~/server/services/image.service';
-import { unpublishModelById } from '~/server/services/model.service';
+import { deleteImageById, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { userModelCountCache } from '~/server/redis/caches';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 import { createNotification } from '~/server/services/notification.service';
 import {
   cancelAllPaddleSubscriptions,
@@ -1072,6 +1073,139 @@ export const updateLeaderboardRank = async ({
   ]);
 };
 
+/**
+ * Bulk unpublish all models for a banned user using efficient SQL operations.
+ * This replaces individual unpublishModelById calls with bulk operations.
+ */
+async function bulkUnpublishModelsForBannedUser({
+  odRef,
+  odRefuserId,
+}: {
+  odRef: number;
+  odRefuserId: number;
+}) {
+  const unpublishedAt = new Date().toISOString();
+  const unpublishedMeta = JSON.stringify({
+    unpublishedReason: 'other',
+    customMessage: 'User banned',
+    unpublishedAt,
+    unpublishedBy: odRefuserId,
+  });
+
+  // Get all models and their versions that need to be unpublished
+  const modelsToUnpublish = await dbRead.model.findMany({
+    where: {
+      userId: odRef,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+    },
+    select: {
+      id: true,
+      modelVersions: {
+        where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
+        select: { id: true },
+      },
+    },
+  });
+
+  if (modelsToUnpublish.length === 0) {
+    return { modelsUnpublished: 0, versionsUnpublished: 0, imagesRemoved: 0 };
+  }
+
+  const modelIds = modelsToUnpublish.map((m) => m.id);
+  const versionIds = modelsToUnpublish.flatMap((m) => m.modelVersions.map((v) => v.id));
+
+  // Bulk update models and versions in a transaction
+  await dbWrite.$transaction(
+    async (tx) => {
+      // Update all models to Unpublished status
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET
+          status = ${ModelStatus.UnpublishedViolation}::"ModelStatus",
+          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+        WHERE id IN (${Prisma.join(modelIds)})
+      `;
+
+      // Update all model versions to Unpublished status
+      if (versionIds.length > 0) {
+        await tx.$executeRaw`
+          UPDATE "ModelVersion"
+          SET
+            status = ${ModelStatus.Unpublished}::"ModelStatus",
+            meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+          WHERE id IN (${Prisma.join(versionIds)})
+        `;
+
+        // Update posts to unpublish them
+        await tx.$executeRaw`
+          UPDATE "Post"
+          SET
+            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+              'unpublishedAt', ${unpublishedAt},
+              'unpublishedBy', ${odRefuserId},
+              'prevPublishedAt', "publishedAt"
+            ),
+            "publishedAt" = NULL
+          WHERE
+            "publishedAt" IS NOT NULL
+            AND "userId" = ${odRef}
+            AND "modelVersionId" IN (${Prisma.join(versionIds)})
+        `;
+      }
+    },
+    { timeout: 60000 }
+  );
+
+  // Bust user model count cache
+  await userModelCountCache.bust(odRef);
+
+  // Get all affected images for search index removal
+  const images = await dbRead.image.findMany({
+    where: {
+      post: {
+        userId: odRef,
+        modelVersionId: { in: versionIds },
+      },
+    },
+    select: { id: true },
+  });
+  const imageIds = images.map((i) => i.id);
+
+  // Queue search index updates in bulk
+  await modelsSearchIndex.queueUpdate(
+    modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+
+  if (imageIds.length > 0) {
+    await queueImageSearchIndexUpdate({
+      ids: imageIds,
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  }
+
+  // Delete bids for models with concurrency limiting to avoid overwhelming the database
+  await Limiter({ limit: 3, batchSize: 10 }).process(modelIds, async (batchModelIds) => {
+    await Promise.all(
+      batchModelIds.map((modelId) =>
+        deleteBidsForModel({ modelId }).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-delete-bids',
+            message: error.message,
+            modelId,
+          });
+        })
+      )
+    );
+  });
+
+  return {
+    modelsUnpublished: modelIds.length,
+    versionsUnpublished: versionIds.length,
+    imagesRemoved: imageIds.length,
+  };
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -1110,43 +1244,33 @@ export const toggleBan = async ({
   await invalidateSession(id);
 
   if (!bannedAt) {
-    // Unpublish their models
-    const models = await dbRead.model.findMany({
-      where: { userId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-    });
-
-    if (models.length) {
-      for (const model of models) {
-        await unpublishModelById({
-          id: model.id,
-          reason: 'other',
-          customMessage: 'User banned',
-          userId,
-          isModerator,
-        }).catch((error) => {
-          logToAxiom({
-            type: 'error',
-            name: 'ban-user-unpublish-model',
-            message: error.message,
-            error,
-          });
+    // Run all cleanup operations in parallel
+    await Promise.all([
+      // Bulk unpublish all models efficiently
+      bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-bulk-unpublish',
+          message: error.message,
+          error,
         });
-      }
-    }
+      }),
 
-    // Cancel their subscription
-    await cancelSubscriptionPlan({ userId: id }).catch((error) =>
-      logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-    );
+      // Cancel their subscription
+      cancelSubscriptionPlan({ userId: id }).catch((error) =>
+        logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+      ),
 
-    await removeUserContentFromSearchIndex(id).catch((error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'ban-user-remove-content-search-index',
-        message: error.message,
-        error,
-      })
-    );
+      // Remove from search indexes
+      removeUserContentFromSearchIndex(id).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-remove-content-search-index',
+          message: error.message,
+          error,
+        })
+      ),
+    ]);
   }
 
   return updatedUser;
