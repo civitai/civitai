@@ -138,9 +138,9 @@ export const ltx2GenerationConfig = VideoGenerationConfig2({
       delete data.images;
     }
 
-    if (data.images?.[0]) {
-      data.aspectRatio = findClosestAspectRatio(data.images[0], [...ltx2AspectRatios]);
-    }
+    // if (data.images?.[0]) {
+    //   data.aspectRatio = findClosestAspectRatio(data.images[0], [...ltx2AspectRatios]);
+    // }
     return {
       ...data,
       baseModel: 'LTXV2',
@@ -189,6 +189,7 @@ export const ltx2GenerationConfig = VideoGenerationConfig2({
     const [width, height] = ltx2Resolutions[aspectRatio];
     const model = ltx2ModelVersionMap[modelVersionId] ?? '19b-dev';
     const isDistilled = model === '19b-distilled';
+    console.log({ width, height });
     return {
       ...args,
       operation: 'createVideo',
