@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules
 /.pnp
 .pnp.js
 
@@ -48,6 +48,10 @@ yarn-error.log*
 /postgres*
 /redis
 /minio
+
+# browser automation (local session/profile data)
+.browser/sessions/
+.browser/profiles/
 /clickhouse*
 /undefined
 /.docker
@@ -98,3 +102,7 @@ nul
 
 scripts/local-dev/
 .direnv
+
+# Claude agent temp directories
+tmpclaude-*-cwd
+.claude/skills/flipt/.env

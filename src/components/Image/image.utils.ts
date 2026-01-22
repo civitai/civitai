@@ -123,7 +123,22 @@ export const useQueryImages = (
     }
   );
 
-  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  // Deduplicate items to prevent duplicates from offset pagination drift
+  const flatData = useMemo(() => {
+    const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
+
+    // Track IDs within this render to filter duplicates that appear across pages
+    const seenIds = new Set<number>();
+    const dedupedItems: typeof allItems = [];
+    for (const item of allItems) {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        dedupedItems.push(item);
+      }
+    }
+
+    return dedupedItems;
+  }, [data]);
   const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
     type: 'images',
     data: flatData,

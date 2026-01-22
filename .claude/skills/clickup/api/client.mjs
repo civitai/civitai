@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ENV_PATH = resolve(__dirname, '..', '.env');
 export const API_BASE = 'https://api.clickup.com/api/v2';
+export const API_BASE_V3 = 'https://api.clickup.com/api/v3';
 
 // Load .env from skill directory
 export function loadEnv() {
@@ -80,6 +81,41 @@ export async function apiRequest(endpoint, options = {}) {
   }
 
   // Handle empty responses (e.g., DELETE returns empty body)
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+  return JSON.parse(text);
+}
+
+// Make API v3 request (used for Docs API)
+export async function apiRequestV3(endpoint, options = {}) {
+  const token = process.env.CLICKUP_API_TOKEN;
+  if (!token) {
+    console.error('Error: CLICKUP_API_TOKEN not configured');
+    console.error('');
+    console.error('Setup:');
+    console.error('  1. Copy .env-example to .env in the skill directory');
+    console.error('  2. Add your ClickUp Personal API Token');
+    console.error('  3. Generate at: ClickUp Settings > Apps > API Token');
+    process.exit(1);
+  }
+
+  const url = `${API_BASE_V3}${endpoint}`;
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      'Authorization': token,
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`ClickUp API error: ${response.status} - ${text}`);
+  }
+
   const text = await response.text();
   if (!text) {
     return {};

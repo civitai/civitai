@@ -168,9 +168,20 @@ export function DrawingCanvas({
     // Use requestAnimationFrame to ensure shape refs are populated after render
     const frameId = requestAnimationFrame(() => {
       if (selectedId && tool === 'select') {
+        const selectedElement = elements.find((el) => el.id === selectedId);
         const selectedNode = shapeRefs.current.get(selectedId);
-        if (selectedNode && transformerRef.current) {
+        // Only attach transformer if element is transformable (not lines)
+        // Lines can be selected and moved but don't show resize/rotate handles
+        if (
+          selectedNode &&
+          selectedElement &&
+          isTransformableElement(selectedElement) &&
+          transformerRef.current
+        ) {
           transformerRef.current.nodes([selectedNode]);
+          transformerRef.current.getLayer()?.batchDraw();
+        } else if (transformerRef.current) {
+          transformerRef.current.nodes([]);
           transformerRef.current.getLayer()?.batchDraw();
         }
       } else if (transformerRef.current) {
@@ -239,6 +250,12 @@ export function DrawingCanvas({
               ],
             };
           }
+          case 'line': {
+            // For lines, newX/newY are the drag offset (node starts at 0,0)
+            // Apply the offset to all points in the points array
+            const newPoints = el.points.map((val, i) => (i % 2 === 0 ? val + newX : val + newY));
+            return { ...el, points: newPoints };
+          }
           case 'text':
             return { ...el, x: newX, y: newY };
           default:
@@ -248,8 +265,8 @@ export function DrawingCanvas({
 
       onElementsChange(updatedElements);
 
-      // Reset node position for arrows (they use points, not x/y)
-      if (element.type === 'arrow') {
+      // Reset node position for arrows and lines (they use points, not x/y)
+      if (element.type === 'arrow' || element.type === 'line') {
         node.x(0);
         node.y(0);
       }
@@ -725,6 +742,7 @@ export function DrawingCanvas({
                 return (
                   <Line
                     key={element.id}
+                    ref={canTransform ? (node) => setShapeRef(element.id, node) : undefined}
                     points={getDrawablePoints(element.points)}
                     stroke={element.color}
                     strokeWidth={element.strokeWidth}
@@ -734,7 +752,11 @@ export function DrawingCanvas({
                     globalCompositeOperation={
                       element.tool === 'eraser' ? 'destination-out' : 'source-over'
                     }
-                    listening={false}
+                    listening={isDraggable}
+                    draggable={isDraggable}
+                    onClick={isDraggable ? (e) => handleShapeClick(e, element) : undefined}
+                    onTap={isDraggable ? (e) => handleShapeClick(e, element) : undefined}
+                    onDragEnd={isDraggable ? (e) => handleDragEnd(e, element) : undefined}
                   />
                 );
               case 'rectangle':

@@ -225,7 +225,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     if (data.process === 'txt2vid') delete data.images;
     else if (data.process === 'img2vid') delete data.aspectRatio;
     if (data.version !== 'v2.1') {
-      delete data.duration;
+      // delete data.duration;
       delete data.priority;
     }
     switch (data.version) {

@@ -41,3 +41,41 @@ export function parseListId(input) {
 
   return null; // Not a valid list ID or URL
 }
+
+// Extract doc ID from URL or return as-is
+// Doc URLs: https://app.clickup.com/{team_id}/v/dc/{doc_id}
+// Or: https://app.clickup.com/{team_id}/docs/{doc_id}
+export function parseDocId(input) {
+  if (!input) return null;
+
+  // Already a doc ID (alphanumeric, typically starts with numbers)
+  if (/^[a-zA-Z0-9_-]+$/.test(input) && !input.includes('/')) {
+    return input;
+  }
+
+  // URL format: https://app.clickup.com/{team_id}/v/dc/{doc_id}
+  const dcMatch = input.match(/\/dc\/([a-zA-Z0-9_-]+)/);
+  if (dcMatch) return dcMatch[1];
+
+  // URL format: https://app.clickup.com/{team_id}/docs/{doc_id}
+  const docsMatch = input.match(/\/docs\/([a-zA-Z0-9_-]+)/);
+  if (docsMatch) return docsMatch[1];
+
+  return input; // Return as-is, let API handle validation
+}
+
+// Extract page ID from URL or return as-is
+export function parsePageId(input) {
+  if (!input) return null;
+
+  // Already a page ID (alphanumeric)
+  if (/^[a-zA-Z0-9_-]+$/.test(input) && !input.includes('/')) {
+    return input;
+  }
+
+  // URL format with page parameter: ...?page={page_id} or ...&page={page_id}
+  const pageMatch = input.match(/[?&]page=([a-zA-Z0-9_-]+)/);
+  if (pageMatch) return pageMatch[1];
+
+  return input; // Return as-is, let API handle validation
+}

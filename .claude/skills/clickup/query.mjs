@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * ClickUp - Task interaction skill
+ * ClickUp - Task and Document interaction skill
  *
- * Commands:
+ * Task Commands:
  *   get <url|id>                  Get task details
  *   comments <url|id>             List task comments
  *   comment <url|id> "msg"        Post a comment
@@ -25,10 +25,19 @@
  *   tag <task> "tag_name"         Add a tag to task
  *   description <task> "text"     Update task description (markdown supported)
  *
+ * Document Commands:
+ *   docs ["query"]                Search/list docs in workspace
+ *   doc <doc_id>                  Get doc details and page listing
+ *   create-doc "title"            Create a new doc
+ *   page <doc_id> <page_id>       Get page content
+ *   create-page <doc_id> "title"  Create a new page in a doc
+ *   edit-page <doc_id> <page_id>  Edit a page's content
+ *
  * Options:
  *   --json       Output raw JSON
  *   --subtasks   Include subtasks (for get command)
  *   --me         Filter to tasks assigned to me (for tasks command)
+ *   --content    Page content for create-page/edit-page
  */
 
 // API imports
@@ -55,10 +64,27 @@ import {
 import { getComments, postComment, deleteComment } from './api/comments.mjs';
 import { addChecklistItemToTask, getChecklists } from './api/checklists.mjs';
 import { addExternalLink } from './api/links.mjs';
+import {
+  searchDocs,
+  getDoc,
+  createDoc,
+  getDocPageListing,
+  getPage,
+  createPage,
+  editPage,
+} from './api/docs.mjs';
 
 // Lib imports
-import { parseTaskId, parseListId } from './lib/parse.mjs';
-import { formatTask, formatTaskList, formatComments } from './lib/format.mjs';
+import { parseTaskId, parseListId, parseDocId, parsePageId } from './lib/parse.mjs';
+import {
+  formatTask,
+  formatTaskList,
+  formatComments,
+  formatDoc,
+  formatDocList,
+  formatPage,
+  formatPageList,
+} from './lib/format.mjs';
 
 // Parse arguments
 const args = process.argv.slice(2);
@@ -72,6 +98,8 @@ let filterMe = false;
 let assigneeArg = null;
 let dueArg = null;
 let descriptionArg = null;
+let contentArg = null;
+let nameArg = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -87,6 +115,10 @@ for (let i = 0; i < args.length; i++) {
     dueArg = args[++i];
   } else if (arg === '--description' || arg === '--desc') {
     descriptionArg = args[++i];
+  } else if (arg === '--content' || arg === '-c') {
+    contentArg = args[++i];
+  } else if (arg === '--name' || arg === '-n') {
+    nameArg = args[++i];
   } else if (!command) {
     command = arg;
   } else if (!targetInput) {
@@ -105,7 +137,7 @@ const commentText = arg2;
 function showUsage() {
   console.error(`Usage: node query.mjs <command> [options]
 
-Commands:
+Task Commands:
   get <url|id>                  Get task details
   comments <url|id>             List task comments
   comment <url|id> "msg"        Post a comment
@@ -127,10 +159,20 @@ Commands:
   tag <task> "tag_name"         Add a tag to task
   description <task> "text"     Update task description (markdown supported)
 
+Document Commands:
+  docs ["query"]                Search/list docs in workspace
+  doc <doc_id>                  Get doc details and page listing
+  create-doc "title"            Create a new doc (--content for initial content)
+  page <doc_id> <page_id>       Get page content
+  create-page <doc_id> "title"  Add a new page to a doc (--content for body)
+  edit-page <doc_id> <page_id>  Edit a page's content (--content and/or --name)
+
 Options:
   --json       Output raw JSON
   --subtasks   Include subtasks (for get command)
   --me         Filter to tasks assigned to me (for tasks command)
+  --content    Page content for create-page/edit-page (markdown)
+  --name       New name for edit-page
 
 Examples:
   node query.mjs get 86a1b2c3d --subtasks
@@ -151,7 +193,17 @@ Examples:
   node query.mjs delete-comment 90110200841741
   node query.mjs watch 86a1b2c3d koen
   node query.mjs tag 86a1b2c3d "DevOps"
-  node query.mjs description 86a1b2c3d "## Summary\\nThis is **bold** text"`);
+  node query.mjs description 86a1b2c3d "## Summary\\nThis is **bold** text"
+
+Document Examples:
+  node query.mjs docs                                     # List all docs
+  node query.mjs docs "API"                               # Search docs
+  node query.mjs doc abc123                               # Get doc details
+  node query.mjs create-doc "Project Notes"               # Create empty doc
+  node query.mjs create-doc "Guide" --content "# Guide\\nContent here"  # Doc with content
+  node query.mjs page abc123 page456                      # Get page content
+  node query.mjs create-page abc123 "New Section"         # Add additional page
+  node query.mjs edit-page abc123 page456 --content "Updated content" --name "Renamed"`);
   process.exit(1);
 }
 
@@ -221,6 +273,57 @@ async function main() {
           console.log(`No tasks found matching "${targetInput}"`);
         } else {
           console.log(formatTaskList(tasks));
+        }
+      }
+    } catch (err) {
+      console.error('Error:', err.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Document commands that may not require a target
+  if (command === 'docs') {
+    try {
+      const workspaceId = await getTeamId();
+      const options = targetInput ? { query: targetInput } : {};
+      const docs = await searchDocs(workspaceId, options);
+      if (jsonOutput) {
+        console.log(JSON.stringify(docs, null, 2));
+      } else {
+        if (docs.length === 0) {
+          console.log(targetInput ? `No docs found matching "${targetInput}"` : 'No docs found.');
+        } else {
+          console.log(formatDocList(docs));
+        }
+      }
+    } catch (err) {
+      console.error('Error:', err.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === 'create-doc') {
+    if (!targetInput) {
+      console.error('Error: Doc title required');
+      console.error('Usage: node query.mjs create-doc "Doc Title" [--content "content"]');
+      process.exit(1);
+    }
+    try {
+      const workspaceId = await getTeamId();
+      const options = {};
+      if (contentArg) {
+        options.content = contentArg;
+      }
+      const doc = await createDoc(workspaceId, targetInput, options);
+      if (jsonOutput) {
+        console.log(JSON.stringify(doc, null, 2));
+      } else {
+        console.log(`Doc created: ${doc.name}`);
+        console.log(`ID: ${doc.id}`);
+        if (doc.firstPageId) {
+          console.log(`First page populated with content`);
         }
       }
     } catch (err) {
@@ -644,6 +747,112 @@ async function main() {
         } else {
           console.log('Task description updated');
           console.log(`URL: ${task.url}`);
+        }
+        break;
+      }
+
+      // Document commands
+      case 'doc': {
+        const docId = parseDocId(targetInput);
+        if (!docId) {
+          console.error('Error: Could not parse doc ID from input');
+          process.exit(1);
+        }
+        const workspaceId = await getTeamId();
+        const doc = await getDoc(workspaceId, docId);
+        const pages = await getDocPageListing(workspaceId, docId);
+        if (jsonOutput) {
+          console.log(JSON.stringify({ doc, pages }, null, 2));
+        } else {
+          console.log(formatDoc(doc));
+          console.log('');
+          console.log('Pages:');
+          console.log(formatPageList(pages));
+        }
+        break;
+      }
+
+      case 'page': {
+        const docId = parseDocId(targetInput);
+        if (!docId) {
+          console.error('Error: Could not parse doc ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Page ID required');
+          console.error('Usage: node query.mjs page <doc_id> <page_id>');
+          process.exit(1);
+        }
+        const pageId = parsePageId(arg2);
+        const workspaceId = await getTeamId();
+        const page = await getPage(workspaceId, docId, pageId);
+        if (jsonOutput) {
+          console.log(JSON.stringify(page, null, 2));
+        } else {
+          console.log(formatPage(page));
+        }
+        break;
+      }
+
+      case 'create-page': {
+        const docId = parseDocId(targetInput);
+        if (!docId) {
+          console.error('Error: Could not parse doc ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Page title required');
+          console.error('Usage: node query.mjs create-page <doc_id> "Page Title" [--content "content"]');
+          process.exit(1);
+        }
+        const workspaceId = await getTeamId();
+        const options = {};
+        if (contentArg) {
+          options.content = contentArg;
+        }
+        const page = await createPage(workspaceId, docId, arg2, options);
+        if (jsonOutput) {
+          console.log(JSON.stringify(page, null, 2));
+        } else {
+          console.log(`Page created: ${page.name}`);
+          console.log(`ID: ${page.id}`);
+        }
+        break;
+      }
+
+      case 'edit-page': {
+        const docId = parseDocId(targetInput);
+        if (!docId) {
+          console.error('Error: Could not parse doc ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Page ID required');
+          console.error('Usage: node query.mjs edit-page <doc_id> <page_id> [--content "content"] [--name "name"]');
+          process.exit(1);
+        }
+        if (!contentArg && !nameArg) {
+          console.error('Error: At least --content or --name is required');
+          console.error('Usage: node query.mjs edit-page <doc_id> <page_id> [--content "content"] [--name "name"]');
+          process.exit(1);
+        }
+        const pageId = parsePageId(arg2);
+        const workspaceId = await getTeamId();
+        const updates = {};
+        if (contentArg) {
+          updates.content = contentArg;
+        }
+        if (nameArg) {
+          updates.name = nameArg;
+        }
+        const page = await editPage(workspaceId, docId, pageId, updates);
+        if (jsonOutput) {
+          console.log(JSON.stringify(page, null, 2));
+        } else {
+          console.log('Page updated successfully');
+          if (page.id) {
+            console.log(`ID: ${page.id}`);
+          }
         }
         break;
       }

@@ -30,20 +30,32 @@ export const getVideoData = async <T = HTMLVideoElement>(
 ) =>
   new Promise<T>((resolve, reject) => {
     const video = document.createElement('video');
-    video.onloadedmetadata = function () {
-      let timedOut = false;
-      setTimeout(() => (timedOut = true), 3000);
-      function check() {
-        if (timedOut) reject(errorMessage);
-        else if (video.videoWidth > 0 && video.videoHeight > 0)
-          resolve(cb?.(video) ?? (video as T));
-        else requestAnimationFrame(check);
+    video.crossOrigin = 'anonymous';
+    video.preload = 'metadata';
+
+    let resolved = false;
+    const tryResolve = () => {
+      if (resolved) return;
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        resolved = true;
+        resolve(cb?.(video) ?? (video as T));
       }
-      check();
     };
+
+    // loadeddata fires when the first frame is available, guaranteeing dimensions
+    video.onloadeddata = tryResolve;
+    // Also try on loadedmetadata as a faster path when dimensions are ready early
+    video.onloadedmetadata = tryResolve;
+
     video.onerror = () => {
-      reject(errorMessage);
+      if (!resolved) reject(errorMessage);
     };
+
+    // Timeout fallback for edge cases
+    setTimeout(() => {
+      if (!resolved) reject(errorMessage);
+    }, 10000);
+
     video.src = src;
   });
 

@@ -538,6 +538,7 @@ function GeneratedImageWorkflowMenuItems({
   const { copied, copy } = useClipboard();
 
   const isVideo = step.$type === 'videoGen';
+  const isVeo3 = isVideo && step.params.engine === 'veo3';
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
   const baseModel = 'baseModel' in step.params ? step.params.baseModel : undefined;
   const isOpenAI = !isVideo && step.params.engine === 'openai';
@@ -808,12 +809,14 @@ function GeneratedImageWorkflowMenuItems({
       {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
-          <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
-            Upscale{' '}
-            <Badge color="yellow" className="ml-1">
-              Preview
-            </Badge>
-          </Menu.Item>
+          {!isVeo3 && (
+            <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
+              Upscale{' '}
+              <Badge color="yellow" className="ml-1">
+                Preview
+              </Badge>
+            </Menu.Item>
+          )}
           <Menu.Item onClick={handleVideoInterpolation} className="flex items-center gap-1">
             Interpolation{' '}
             <Badge color="yellow" className="ml-1">

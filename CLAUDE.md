@@ -38,10 +38,7 @@ Occasionally, we comment back and forth as we make plans. Comments from us, are 
 ## Build Commands
 
 ### Development
-```bash
-npm run dev               # Start development server
-npm run prod             # Run in production mode locally
-```
+**Always use the `/dev-server` skill** to manage dev servers. Never use `npm run dev` directly.
 
 ### Build & Deploy
 ```bash
@@ -160,8 +157,7 @@ const currentUser = useCurrentUser();
 ### Local Development
 1. Install dependencies: `npm install`
 2. Generate Prisma client: `npm run db:generate`
-3. Run migrations: `npm run db:migrate`
-4. Start dev server: `npm run dev`
+3. Start dev server: Use `/dev-server` skill
 
 ## Important Notes
 
@@ -205,6 +201,20 @@ Use the S3 upload hooks and providers in the codebase.
 
 ### Image Handling
 Use EdgeImage component for optimized image loading with CDN support.
+
+## Feature Documentation
+
+Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
+
+### Core Systems Reference
+| System | Documentation |
+|--------|--------------|
+| Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
+| NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
+| Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
+| Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
+| Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
+| Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 
 ## Troubleshooting
 

@@ -72,7 +72,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     key: 'careers',
     href: '/content/careers',
     children: 'Careers',
-    indicator: true,
   },
   {
     key: '2257',

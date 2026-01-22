@@ -78,6 +78,10 @@ const baseModelConfig = [
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
+  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein' },
+  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein' },
+  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein' },
+  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
@@ -191,6 +195,11 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'Flux.2',
     family: 'Flux',
     description: 'Next-generation Flux with enhanced capabilities',
+  },
+  Flux2Klein: {
+    name: 'Flux.2 Klein',
+    family: 'Flux',
+    description: 'Distilled Flux.2 models for faster and more efficient generation',
   },
   HiDream: {
     name: 'HiDream',
