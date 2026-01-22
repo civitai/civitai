@@ -2,7 +2,9 @@
   "name": "model-share",
   "version": "5.0.1380",
   "private": true,
+  "packageManager": "pnpm@10.28.1",
   "scripts": {
+    "preinstall": "npx only-allow pnpm",
     "start": "next start",
     "start-debug": "NODE_OPTIONS='--inspect' next start",
     "dev": "next dev",
@@ -12,17 +14,17 @@
     "prod": "cross-env NODE_ENV=production next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
-    "release:major": "git pull && npm version major && git push --follow-tags && npm run release:base",
-    "release:minor": "git pull && npm version minor && git push --follow-tags && npm run release:base",
-    "release:patch": "git pull && npm version patch && git push --follow-tags && npm run release:base",
-    "release": "npm run release:patch",
-    "yolo": "npm run release",
+    "release:major": "git pull && npm version major && git push --follow-tags && pnpm run release:base",
+    "release:minor": "git pull && npm version minor && git push --follow-tags && pnpm run release:base",
+    "release:patch": "git pull && npm version patch && git push --follow-tags && pnpm run release:base",
+    "release": "pnpm run release:patch",
+    "yolo": "pnpm run release",
     "build": "next build",
     "build:dev": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" next build",
     "build:analyze": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" ANALYZE=true next build",
     "postbuild": "next-sitemap",
-    "deploy": "npm run build && npm run db:deploy",
-    "postinstall": "npm run db:generate",
+    "deploy": "pnpm run build && pnpm run db:deploy",
+    "postinstall": "pnpm run db:generate",
     "typecheck": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc --noEmit",
     "lint": "next lint",
     "eslint": "cross-env TIMING=1 eslint src/ --quiet --cache --cache-strategy metadata",
@@ -305,5 +307,23 @@
     "openai": {
       "zod": "$zod"
     }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "@prisma/client",
+      "@prisma/engines",
+      "bigint-buffer",
+      "bufferutil",
+      "core-js",
+      "esbuild",
+      "exifreader",
+      "msgpackr-extract",
+      "prisma",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver",
+      "utf-8-validate"
+    ]
   }
 }
