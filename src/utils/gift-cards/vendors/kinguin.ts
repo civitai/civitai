@@ -8,6 +8,7 @@ export const kinguinVendor: Vendor = {
   promo: {
     code: 'HEIST',
     discount: '6% off',
+    message: 'Use code HEIST for 6% off!',
     startDate: new Date('2025-08-25T22:00:00Z'),
     endDate: new Date('2025-09-01T21:59:00Z'),
   },

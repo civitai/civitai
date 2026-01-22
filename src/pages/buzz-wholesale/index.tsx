@@ -98,7 +98,7 @@ const HeroSection = () => {
                     Expand Your Product Offerings
                   </Title>
                   <Text c="white" size="lg">
-                    Sell Buzz gift cards at wholesale rates with discounts up to 15%. Get featured
+                    Sell Buzz gift cards at wholesale rates with discounts up to 10%. Get featured
                     on Civitai&apos;s gift cards page and tap into a thriving community of millions
                     of users.
                   </Text>
@@ -313,10 +313,6 @@ const TierCard = ({ tier }: { tier: WholesaleTier }) => {
         >
           {tier.ctaText}
         </Button>
-
-        <Text size="xs" c="dimmed" ta="center">
-          {tier.contractMonths}-month minimum contract
-        </Text>
       </Stack>
     </Card>
   );
@@ -340,18 +336,6 @@ const TiersSection = () => {
           </Grid.Col>
         ))}
       </Grid>
-      <Paper withBorder className={classes.card} mt="md">
-        <Group gap="md">
-          <IconBolt size={32} className={classes.highlightColor} />
-          <Stack gap={4} style={{ flex: 1 }}>
-            <Text fw={600}>All tiers require a 6-month minimum contract</Text>
-            <Text size="sm" c="dimmed">
-              Auto-renewal unless terminated with 30 days&apos; notice. Discounts scale with your
-              monthly volume commitments.
-            </Text>
-          </Stack>
-        </Group>
-      </Paper>
     </Stack>
   );
 };
@@ -378,7 +362,7 @@ const benefits = [
   {
     icon: <IconChartLine size={sizing.icons} />,
     label: 'Competitive Margins',
-    value: 'Up to 15%',
+    value: 'Up to 10%',
     description: 'Earn healthy margins on every gift card sold',
   },
 ];
@@ -502,7 +486,7 @@ const faqs = [
   },
   {
     q: 'Can I change tiers?',
-    a: 'Yes! You can upgrade to a higher tier at any time if you meet the volume requirements. Downgrades can be requested but must align with contract renewal periods (typically at the 6-month mark).',
+    a: 'Yes! You can upgrade to a higher tier at any time if you meet the volume requirements. Downgrades can also be requested and will be reviewed on a case-by-case basis.',
   },
   {
     q: 'How quickly can I get approved?',

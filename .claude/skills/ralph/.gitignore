@@ -4,3 +4,10 @@ projects/
 # Legacy root-level files (if anyone runs without --prd)
 prd.json
 progress.txt
+
+# Daemon runtime files
+daemon/daemon.pid
+daemon/data/
+
+# Temp directories created by agent sessions
+tmpclaude-*-cwd

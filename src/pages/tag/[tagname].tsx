@@ -34,9 +34,9 @@ export default function TagPage({
   return (
     <>
       <Meta
-        title={`${tag?.name} Stable Diffusion & Flux AI Models | Civitai`}
-        description={`Browse ${tag?.name} Stable Diffusion & Flux models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tag/${tagname}`, rel: 'canonical' }]}
+        title={`${tag?.name} AI Models | Civitai`}
+        description={`Browse ${tag?.name} Stable Diffusion & Flux models, LoRAs, checkpoints, embeddings, and more for AI image generation.`}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/tag/${tagname}`, rel: 'canonical' }]}
         deIndex={tag?.unfeatured ?? false}
       />
       {tag && (
