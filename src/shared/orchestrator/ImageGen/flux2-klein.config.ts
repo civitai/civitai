@@ -59,7 +59,7 @@ export const flux2KleinVariantDefaults: Record<
   Flux2KleinModelVariant,
   { steps: number; cfgScale: number; hideAdvanced: boolean }
 > = {
-  '4b': { steps: 20, cfgScale: 2.5, hideAdvanced: false },
+  '4b': { steps: 4, cfgScale: 1, hideAdvanced: true },
   '4b-base': { steps: 20, cfgScale: 2.5, hideAdvanced: false },
   '9b': { steps: 4, cfgScale: 1, hideAdvanced: true },
   '9b-base': { steps: 20, cfgScale: 2.5, hideAdvanced: false },
@@ -79,10 +79,10 @@ export function getIsFlux2Klein9b(modelVersionId?: number) {
 
 // Map variant to baseModel name
 const flux2KleinVariantToBaseModel: Record<Flux2KleinModelVariant, string> = {
-  '9b': 'Flux.2 Klein 9B',
-  '9b-base': 'Flux.2 Klein 9B-base',
-  '4b': 'Flux.2 Klein 4B',
-  '4b-base': 'Flux.2 Klein 4B-base',
+  '9b': 'Flux2Klein_9B',
+  '9b-base': 'Flux2Klein_9B_base',
+  '4b': 'Flux2Klein_4B',
+  '4b-base': 'Flux2Klein_4B_base',
 };
 
 export function getFlux2KleinBaseModel(modelVersionId?: number): string | undefined {
@@ -181,10 +181,18 @@ export const flux2KleinConfig = ImageGenConfig({
     // Convert UI sampler to SdCpp sampleMethod and schedule
     const { sampleMethod, schedule } = samplerToSdCpp(params.sampler as Sampler | undefined);
 
+    // For distilled variants (9b, 4b), enforce default steps and cfgScale
+    const variantDefaults = flux2KleinVariantDefaults[modelVersion];
+    const isDistilled = variantDefaults.hideAdvanced;
+    const steps = isDistilled ? variantDefaults.steps : params.steps;
+    const cfgScale = isDistilled ? variantDefaults.cfgScale : params.cfgScale;
+
     return schema.parse({
       ...params,
       operation: params.images?.length ? 'editImage' : 'createImage',
       modelVersion,
+      steps,
+      cfgScale,
       sampleMethod,
       schedule,
       loras,
