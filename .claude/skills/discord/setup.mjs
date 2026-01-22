@@ -6,7 +6,7 @@
  * and saves the resulting token to .env
  *
  * Usage: node setup.mjs <proxy-url>
- * Example: node setup.mjs https://discord-proxy.your-server.com
+ * Example: node setup.mjs https://discord-proxy.civitai.com
  */
 
 import { exec } from 'child_process';
@@ -93,7 +93,7 @@ async function main() {
     log('Usage: node setup.mjs <proxy-url>', 'cyan');
     log('');
     log('Example:', 'dim');
-    log('  node setup.mjs https://discord-proxy.your-server.com', 'cyan');
+    log('  node setup.mjs https://discord-proxy.civitai.com', 'cyan');
     log('');
     log('This will:', 'dim');
     log('  1. Open your browser to authenticate with Discord');

@@ -14,7 +14,7 @@ Post messages and announcements to Discord channels via the REST API. Navigate c
 If your team has a Discord Team Proxy server deployed, use the setup script:
 
 ```bash
-node .claude/skills/discord/setup.mjs https://discord-proxy.your-server.com
+node .claude/skills/discord/setup.mjs https://discord-proxy.civitai.com
 ```
 
 This will:
