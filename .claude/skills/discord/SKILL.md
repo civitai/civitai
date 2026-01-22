@@ -9,8 +9,25 @@ Post messages and announcements to Discord channels via the REST API. Navigate c
 
 ## Setup
 
+### Option 1: Team Proxy (Recommended)
+
+If your team has a Discord Team Proxy server deployed, use the setup script:
+
+```bash
+node .claude/skills/discord/setup.mjs https://your-discord-proxy.example.com
+```
+
+This will:
+1. Open your browser for Discord authentication
+2. Verify you're in the team server
+3. Save your personal API token to `.env`
+
+### Option 2: Direct Bot Token (Admin Only)
+
+If you manage the bot directly:
+
 1. Copy `env.example` to `.env` in this skill directory
-2. Add your Discord Bot Token and other settings
+2. Add your Discord Bot Token
 3. Ensure the bot is invited to your server with appropriate permissions
 
 ```bash
