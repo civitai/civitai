@@ -8,7 +8,20 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ENV_PATH = resolve(__dirname, '..', '.env');
-export const API_BASE = 'https://discord.com/api/v10';
+export const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+// Get the API base URL - uses proxy if configured
+export function getApiBase() {
+  const proxyUrl = process.env.DISCORD_PROXY_URL;
+  if (proxyUrl) {
+    // Proxy URL should point to the /api endpoint
+    return proxyUrl.replace(/\/$/, '') + '/api';
+  }
+  return DISCORD_API_BASE;
+}
+
+// For backward compatibility
+export const API_BASE = DISCORD_API_BASE;
 
 // Load .env from skill directory
 export function loadEnv() {
@@ -51,20 +64,55 @@ export function appendToEnv(key, value, comment = null) {
   }
 }
 
-// Make API request
+// Make API request - supports both direct Discord API and proxy
 export async function apiRequest(endpoint, options = {}) {
+  const proxyUrl = process.env.DISCORD_PROXY_URL;
+  const proxyToken = process.env.DISCORD_PROXY_TOKEN;
+
+  // Use proxy if configured
+  if (proxyUrl && proxyToken) {
+    const apiBase = proxyUrl.replace(/\/$/, '') + '/api';
+    const url = `${apiBase}${endpoint}`;
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${proxyToken}`,
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Discord API error: ${response.status} - ${text}`);
+    }
+
+    const text = await response.text();
+    if (!text) {
+      return {};
+    }
+    return JSON.parse(text);
+  }
+
+  // Fall back to direct Discord API with bot token
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
-    console.error('Error: DISCORD_BOT_TOKEN not configured');
+    console.error('Error: Discord API credentials not configured');
     console.error('');
-    console.error('Setup:');
-    console.error('  1. Copy .env-example to .env in the skill directory');
+    console.error('Option 1 - Use Team Proxy (recommended):');
+    console.error('  1. Get a token from your team\'s Discord Proxy');
+    console.error('  2. Add to .env: DISCORD_PROXY_URL=https://your-proxy-url');
+    console.error('  3. Add to .env: DISCORD_PROXY_TOKEN=your_token');
+    console.error('');
+    console.error('Option 2 - Use Bot Token directly:');
+    console.error('  1. Copy env.example to .env in the skill directory');
     console.error('  2. Add your Discord Bot Token');
     console.error('  3. Create a bot at: https://discord.com/developers/applications');
     process.exit(1);
   }
 
-  const url = `${API_BASE}${endpoint}`;
+  const url = `${DISCORD_API_BASE}${endpoint}`;
   const response = await fetch(url, {
     ...options,
     headers: {
