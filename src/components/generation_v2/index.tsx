@@ -34,15 +34,12 @@ export interface GenerationFormV2Props {
 const defaultExternalContext: GenerationCtx = {
   limits: {
     maxQuantity: 12,
-    maxSteps: 50,
-    maxResolution: 1280,
     maxResources: 12,
   },
   user: {
     isMember: true,
-    tier: 'pro',
+    tier: 'gold',
   },
-  resources: [],
 };
 
 // =============================================================================

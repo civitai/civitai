@@ -7,6 +7,7 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import {
+  buildGenerationContext,
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -369,15 +370,14 @@ export const orchestratorRouter = router({
   // #region [Generation Graph V2 endpoints]
   /**
    * Generate from graph - unified endpoint for all generation types
-   * Accepts { input, ctx } where:
-   * - input: form data from the generation graph
-   * - ctx: GenerationCtx with limits, user info, and resources
    */
   generateFromGraph: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(async ({ ctx, input }) => {
-      const { input: formInput, ctx: externalCtx, civitaiTip, creatorTip, tags: inputTags } = input;
+      const { input: formInput, civitaiTip, creatorTip, tags: inputTags } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
+      const userTier = ctx.user.tier ?? 'free';
+      const externalCtx = await buildGenerationContext(userTier);
 
       return generateFromGraph({
         input: formInput,
@@ -398,22 +398,19 @@ export const orchestratorRouter = router({
 
   /**
    * What-if from graph - cost estimation for generation-graph inputs
-   * Accepts { input, ctx } where:
-   * - input: form data from the generation graph
-   * - ctx: GenerationCtx with limits, user info, and resources
    */
   whatIfFromGraph: orchestratorGuardedProcedure
     .input(z.any())
     .query(async ({ ctx, input }) => {
-      const { input: formInput, ctx: externalCtx } = input;
+      const userTier = ctx.user.tier ?? 'free';
+      const externalCtx = await buildGenerationContext(userTier);
+
       try {
         return await whatIfFromGraph({
-          input: formInput,
+          input,
           externalCtx,
           userId: ctx.user.id,
           token: ctx.token,
-          experimental: ctx.experimental,
-          allowMatureContent: ctx.allowMatureContent,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       } catch (e) {

@@ -147,6 +147,35 @@ const SD1_DRAFT_RESOURCE_ID = 424706;
 const SDXL_DRAFT_RESOURCE_ID = 391999;
 
 // =============================================================================
+// External Context Builder
+// =============================================================================
+
+/**
+ * Builds the GenerationCtx from user tier information.
+ * Fetches generation status to get tier-based limits.
+ *
+ * @param userTier - The user's subscription tier
+ * @returns GenerationCtx with limits and user info
+ */
+export async function buildGenerationContext(
+  userTier: GenerationCtx['user']['tier'] = 'free'
+): Promise<GenerationCtx> {
+  const status = await getGenerationStatus();
+  const limits = status.limits[userTier];
+
+  return {
+    limits: {
+      maxQuantity: limits.quantity,
+      maxResources: limits.resources,
+    },
+    user: {
+      isMember: userTier !== 'free',
+      tier: userTier,
+    },
+  };
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

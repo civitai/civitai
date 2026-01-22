@@ -143,7 +143,7 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
+        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2, // Fal provider has 2 max resources
       }),
     ['baseModel']
@@ -190,7 +190,7 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
+        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2,
       }),
     ['baseModel']
@@ -232,7 +232,7 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
+        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2,
       }),
     ['baseModel']
@@ -268,7 +268,7 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
+        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2,
       }),
     ['baseModel']

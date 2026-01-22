@@ -533,11 +533,11 @@ export class DataGraph<
    * Validate current graph state against output schemas.
    *
    * This method validates the current internal state of an initialized graph.
-   * It updates `nodeErrors`, notifies watchers of error changes, and returns
-   * a ValidationResult.
+   * It updates `nodeErrors` and returns a ValidationResult.
    *
    * For non-mutating validation of arbitrary data, use `safeParse()` instead.
    *
+   * @param options.notifyWatchers - Whether to notify watchers of changes (default: true)
    * @returns ValidationResult with either validated data or errors
    *
    * @example
@@ -545,15 +545,24 @@ export class DataGraph<
    * // Validate current state (for React forms)
    * const result = graph.validate();
    *
+   * // Validate without notifying watchers (useful for client-side cost estimation)
+   * const result = graph.validate({ notifyWatchers: false });
+   *
    * // Non-mutating validation of arbitrary data (use safeParse)
    * const result = templateGraph.safeParse(userInput, { session });
    * ```
    */
-  validate(): ValidationResult<Ctx> {
+  validate(options: { notifyWatchers?: boolean } = {}): ValidationResult<Ctx> {
+    const { notifyWatchers = true } = options;
     const root = this.rootGraph;
 
+    // When notifyWatchers is false, use a clone to avoid mutating the current graph state
+    if (!notifyWatchers) {
+      return this.safeParse(root._ctx, root._ext);
+    }
+
     // Evaluate with validateOnly mode - this populates nodeErrors and notifies watchers
-    this._evaluate(root._ctx, true);
+    this._evaluate(root._ctx, { validateOnly: true, notifyWatchers: true });
 
     return this._buildValidationResult(root);
   }
@@ -611,7 +620,7 @@ export class DataGraph<
   ): ValidationResult<Ctx> {
     const clone = this.clone();
     clone._setup(externalCtx);
-    clone._evaluate(input, true);
+    clone._evaluate(input, { validateOnly: true, notifyWatchers: false });
 
     return clone._buildValidationResult(clone);
   }
@@ -642,7 +651,7 @@ export class DataGraph<
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private updateMeta(key: string, newMeta: any | undefined) {
+  private updateMeta(key: string, newMeta: any | undefined, notify = true) {
     const root = this.rootGraph;
     const oldMeta = root.nodeMeta.get(key);
     if (!isEqual(oldMeta, newMeta)) {
@@ -653,7 +662,7 @@ export class DataGraph<
         root.nodeMeta.set(key, newMeta);
         root.nodeMetaKeys.set(key, Date.now());
       }
-      root.notifyNodeWatchers(key);
+      if (notify) root.notifyNodeWatchers(key);
     }
   }
 
@@ -1337,7 +1346,11 @@ export class DataGraph<
   // Evaluation Loop
   // ===========================================================================
 
-  private _evaluate(inputValues: Partial<Ctx> = {}, validateOnly = false): Ctx {
+  private _evaluate(
+    inputValues: Partial<Ctx> = {},
+    options: { validateOnly?: boolean; notifyWatchers?: boolean } = {}
+  ): Ctx {
+    const { validateOnly = false, notifyWatchers = true } = options;
     const log = this._debug ? console.log.bind(console) : () => {};
 
     const changed = new Set<string>(Object.keys(inputValues));
@@ -1370,7 +1383,7 @@ export class DataGraph<
       if (!isEqual((this._ctx as Record<string, unknown>)[key], next)) {
         (this._ctx as Record<string, unknown>)[key] = next;
         changed.add(key);
-        this.notifyNodeWatchers(key);
+        if (notifyWatchers) this.notifyNodeWatchers(key);
 
         // Rewind to the node if it's earlier in the list
         const nodeIndex = keyToIndex.get(key);
@@ -1420,7 +1433,7 @@ export class DataGraph<
             this.nodeMeta.delete(entry.key);
             this.nodeDefs.delete(entry.key);
             changed.add(entry.key);
-            this.notifyNodeWatchers(entry.key);
+            if (notifyWatchers) this.notifyNodeWatchers(entry.key);
           }
           currentIndex++;
           continue;
@@ -1477,7 +1490,7 @@ export class DataGraph<
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (this._ctx as any)[entry.key] = next;
           changed.add(entry.key);
-          if (valueChanged) {
+          if (valueChanged && notifyWatchers) {
             this.notifyNodeWatchers(entry.key);
           }
         }
@@ -1493,13 +1506,13 @@ export class DataGraph<
               code: firstError?.code ?? 'unknown',
             });
             // Notify if error is new
-            if (!hadError) {
+            if (!hadError && notifyWatchers) {
               this.notifyNodeWatchers(entry.key);
             }
           } else {
             // Use Zod-parsed data to strip extra fields not in schema
             (this._ctx as Record<string, unknown>)[entry.key] = result.data;
-            if (hadError) {
+            if (hadError && notifyWatchers) {
               // Error cleared
               this.nodeErrors.delete(entry.key);
               this.notifyNodeWatchers(entry.key);
@@ -1509,7 +1522,7 @@ export class DataGraph<
 
         const metaValue =
           typeof def.meta === 'function' ? def.meta(this._ctx, this._ext) : def.meta ?? {};
-        this.updateMeta(entry.key, metaValue);
+        this.updateMeta(entry.key, metaValue, notifyWatchers);
       } else if (entry.kind === 'computed') {
         // Check if this node was just activated from a branch switch
         const isFromBranchActivation = changed.has(entry.key);
@@ -1529,7 +1542,7 @@ export class DataGraph<
         if (!keyExists || valueChanged) {
           (this._ctx as Record<string, unknown>)[entry.key] = next;
           changed.add(entry.key);
-          if (valueChanged) {
+          if (valueChanged && notifyWatchers) {
             this.notifyNodeWatchers(entry.key);
           }
         }
@@ -1624,7 +1637,9 @@ export class DataGraph<
       currentIndex++;
     }
 
-    for (const callback of this.globalWatchers) callback();
+    if (notifyWatchers) {
+      for (const callback of this.globalWatchers) callback();
+    }
     return this._ctx;
   }
 }

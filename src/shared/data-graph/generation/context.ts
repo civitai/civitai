@@ -1,15 +1,14 @@
 export type GenerationCtx = {
   /** User's generation limits based on their tier */
   limits: {
-    maxSteps: number;
     maxQuantity: number;
-    maxResolution: number;
     maxResources: number;
   };
   /** User information */
   user: {
     isMember: boolean;
-    tier: 'free' | 'basic' | 'pro' | 'enterprise';
+    tier: 'free' | 'founder' | 'bronze' | 'silver' | 'gold';
   };
-  resources: { id: number; baseModel: string; modelType: string }[];
+  /** Optional resource metadata for validation context */
+  resources?: { id: number; baseModel: string; modelType: string }[];
 };

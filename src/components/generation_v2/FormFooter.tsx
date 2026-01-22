@@ -15,15 +15,66 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Controller, useGraph } from '~/libs/data-graph/react';
-import { type GenerationGraphTypes } from '~/shared/data-graph/generation';
+import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { hashify } from '~/utils/string-helpers';
+import { useWhatIfFromGraph } from './hooks/useWhatIfFromGraph';
+
+// =============================================================================
+// SubmitButton Component
+// =============================================================================
+
+interface SubmitButtonProps {
+  isLoading?: boolean;
+}
+
+function SubmitButton({ isLoading }: SubmitButtonProps) {
+  const features = useFeatureFlags();
+  const { running, helpers } = useTourContext();
+
+  // Get whatIf data for cost estimation (only fetches when graph is valid)
+  const { data, isError, isInitialLoading, isValid } = useWhatIfFromGraph({
+    enabled: features.creatorComp,
+  });
+
+  const generateButton = (
+    <GenerateButton
+      type="submit"
+      data-tour="gen:submit"
+      className="h-full flex-1 px-2"
+      loading={isInitialLoading || isLoading}
+      cost={data?.cost?.total ?? 0}
+      disabled={isError || !isValid}
+      onClick={() => {
+        if (running) helpers?.next();
+      }}
+      transactions={data?.transactions}
+      allowMatureContent={data?.allowMatureContent}
+    />
+  );
+
+  if (!features.creatorComp) return generateButton;
+
+  return (
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
+      {generateButton}
+      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} />
+    </div>
+  );
+}
+
+// =============================================================================
+// FormFooter Component
+// =============================================================================
 
 export function FormFooter() {
   const graph = useGraph<GenerationGraphTypes>();
@@ -229,9 +280,7 @@ export function FormFooter() {
                 </Card>
               )}
             />
-            <Button className="h-auto flex-1" onClick={handleSubmit} loading={isSubmitting}>
-              Submit
-            </Button>
+            <SubmitButton isLoading={isSubmitting} />
             <Button onClick={handleReset} variant="default" className="h-auto px-3">
               Reset
             </Button>

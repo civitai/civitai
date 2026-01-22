@@ -21,7 +21,7 @@ import {
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { quantityNode, imagesNode, promptNode, tipNode } from './common';
+import { quantityNode, imagesNode, promptNode } from './common';
 import { workflowConfigs, getImagesConfig } from './config';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
@@ -158,9 +158,6 @@ export const ecosystemGraph = new DataGraph<
     },
     ['workflow', 'baseModel', 'model', 'input']
   )
-  // Tip nodes - percentage-based tips for Civitai and creators
-  .node('civitaiTip', tipNode())
-  .node('creatorTip', tipNode())
 
   // Use groupedDiscriminator to reduce TypeScript type complexity:
   // - Multiple baseModel values that share the same graph are grouped into ONE type branch

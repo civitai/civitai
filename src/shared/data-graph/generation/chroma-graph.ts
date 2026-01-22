@@ -76,7 +76,7 @@ export const chromaGraph = new DataGraph<{ baseModel: string; workflow: string }
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
+        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']

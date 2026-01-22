@@ -656,7 +656,7 @@ export function createCheckpointGraph(options?: {
             options: {
               canGenerate: true,
               resources: getResourceSelectOptions(ctx.baseModel, ['Checkpoint']),
-              excludeIds: ext.resources.map((x) => x.id),
+              excludeIds: ext.resources?.map((x) => x.id) ?? [],
             },
             modelLocked,
             // Versions are always passed; showVersionSelector computed determines visibility
@@ -904,38 +904,6 @@ export function enhancedCompatibilityNode() {
     input: z.boolean().optional(),
     output: z.boolean(),
     defaultValue: false,
-  };
-}
-
-// =============================================================================
-// Tip Node Builder
-// =============================================================================
-
-/**
- * Creates a tip node for percentage-based tips.
- * Tip values are decimals from 0 to 1 representing percentages.
- * Meta contains: min, max, step (for UI slider rendering).
- */
-export function tipNode({
-  min = 0,
-  max = 1,
-  step = 0.5,
-  defaultValue = 0,
-}: {
-  min?: number;
-  max?: number;
-  step?: number;
-  defaultValue?: number;
-} = {}) {
-  return {
-    input: z.coerce.number().min(min).max(max).optional(),
-    output: z.number().min(min).max(max),
-    defaultValue,
-    meta: {
-      min,
-      max,
-      step,
-    },
   };
 }
 

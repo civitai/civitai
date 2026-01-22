@@ -103,7 +103,7 @@ export const hunyuanGraph = new DataGraph<HunyuanCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources.map((x) => x.id),
+        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']
