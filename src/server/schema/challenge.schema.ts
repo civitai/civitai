@@ -1,7 +1,21 @@
 import * as z from 'zod';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ChallengeSource, ChallengeStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
+import type { ProfileImage } from '~/server/selectors/image.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
+
+// Cover image type for challenges (compatible with ImageGuard2)
+export type ChallengeCoverImage = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  hash: string | null;
+  width: number | null;
+  height: number | null;
+  type: MediaType;
+};
 
 // Sort options for challenges
 export const ChallengeSort = {
@@ -24,7 +38,7 @@ export type ChallengeListItem = {
   id: number;
   title: string;
   theme: string | null;
-  coverUrl: string | null;
+  coverImage: ChallengeCoverImage | null;
   startsAt: Date;
   endsAt: Date;
   status: ChallengeStatus;
@@ -36,6 +50,9 @@ export type ChallengeListItem = {
     id: number;
     username: string | null;
     image: string | null;
+    profilePicture?: ProfileImage | null;
+    cosmetics?: UserWithCosmetics['cosmetics'] | null;
+    deletedAt: Date | null;
   };
 };
 
@@ -45,8 +62,7 @@ export type ChallengeDetail = {
   description: string | null;
   theme: string | null;
   invitation: string | null;
-  coverImageId: number | null;
-  coverUrl: string | null;
+  coverImage: ChallengeCoverImage | null;
   startsAt: Date;
   endsAt: Date;
   visibleAt: Date;
@@ -73,6 +89,7 @@ export type ChallengeDetail = {
     id: number;
     username: string | null;
     image: string | null;
+    deletedAt?: Date | null;
   };
   winners: Array<{
     place: number;
@@ -137,6 +154,12 @@ export const getInfiniteChallengesSchema = infiniteQuerySchema.merge(
 // Query schema for challenge winners
 export type GetChallengeWinnersInput = z.infer<typeof getChallengeWinnersSchema>;
 export const getChallengeWinnersSchema = z.object({
+  challengeId: z.number(),
+});
+
+// Query schema for user entry count
+export type GetUserEntryCountInput = z.infer<typeof getUserEntryCountSchema>;
+export const getUserEntryCountSchema = z.object({
   challengeId: z.number(),
 });
 

@@ -1,10 +1,11 @@
-import { Button, Divider, Group, Paper, SimpleGrid, Stack, Title } from '@mantine/core';
+import { Button, Divider, Group, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
 import {
@@ -18,6 +19,7 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
@@ -27,6 +29,7 @@ import { upsertChallengeSchema, type Prize } from '~/server/schema/challenge.sch
 // Wrapped custom components for form integration
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
+const InputNumberWrapper = withController(NumberInputWrapper);
 
 // Form schema - extends server schema with flattened prize fields for UI
 const schema = upsertChallengeSchema.omit({ prizes: true, entryPrize: true }).extend({
@@ -252,6 +255,14 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When submissions close"
               />
             </SimpleGrid>
+
+            <Text size="sm" c="dimmed">
+              All times are in{' '}
+              <Text fw="bold" c="red.5" span>
+                UTC
+              </Text>
+              . Make sure to convert from your local timezone when setting dates.
+            </Text>
           </Stack>
         </Paper>
 
@@ -264,17 +275,40 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             </Group>
 
             <SimpleGrid cols={{ base: 1, xs: 3 }}>
-              <InputNumber name="prize1Buzz" label="1st Place (Buzz)" min={0} step={100} />
-              <InputNumber name="prize2Buzz" label="2nd Place (Buzz)" min={0} step={100} />
-              <InputNumber name="prize3Buzz" label="3rd Place (Buzz)" min={0} step={100} />
+              <InputNumberWrapper
+                name="prize1Buzz"
+                label="1st Place"
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={100}
+              />
+              <InputNumberWrapper
+                name="prize2Buzz"
+                label="2nd Place"
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={100}
+              />
+              <InputNumberWrapper
+                name="prize3Buzz"
+                label="3rd Place"
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={100}
+              />
             </SimpleGrid>
 
             <Divider />
 
-            <InputNumber
+            <InputNumberWrapper
               name="entryPrizeBuzz"
-              label="Participation Prize (Buzz per valid entry)"
+              label="Participation Prize (per valid entry)"
               description="Optional buzz reward for all valid entries"
+              leftSection={<CurrencyIcon currency="BUZZ" type="blue" size={16} />}
+              currency={Currency.BUZZ}
               min={0}
               step={10}
             />
@@ -326,10 +360,11 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 max={100}
               />
 
-              <InputNumber
+              <InputNumberWrapper
                 name="operationBudget"
-                label="Operation Budget (Buzz)"
+                label="Operation Budget"
                 description="Budget for AI review costs"
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                 min={0}
                 step={100}
               />

@@ -28,14 +28,13 @@ export function ChallengeCard({ data }: Props) {
     id,
     title,
     theme,
-    coverUrl,
+    coverImage,
     startsAt,
     endsAt,
     status,
     source,
     prizePool,
     entryCount,
-    modelName,
     createdBy,
   } = data;
 
@@ -45,15 +44,16 @@ export function ChallengeCard({ data }: Props) {
   const isScheduled = status === ChallengeStatus.Scheduled;
   const hasEnded = endsAt < now;
 
-  // Create a simple image object for AspectRatioImageCard
-  const image = coverUrl
+  // Use coverImage data for AspectRatioImageCard
+  const image = coverImage
     ? {
-        id: id,
-        url: coverUrl,
-        type: MediaType.image,
-        width: 512,
-        height: 512,
-        nsfwLevel: 1,
+        id: coverImage.id,
+        url: coverImage.url,
+        type: coverImage.type,
+        width: coverImage.width ?? 512,
+        height: coverImage.height ?? 512,
+        nsfwLevel: coverImage.nsfwLevel,
+        hash: coverImage.hash,
         metadata: null,
       }
     : undefined;
@@ -162,10 +162,16 @@ export function ChallengeCard({ data }: Props) {
       footerGradient
       footer={
         <div className="flex w-full flex-col gap-2">
-          <UserAvatarSimple id={createdBy.id} username={createdBy.username} />
+          <UserAvatarSimple
+            id={createdBy.id}
+            username={createdBy.username}
+            profilePicture={createdBy.profilePicture}
+            cosmetics={createdBy.cosmetics}
+            deletedAt={createdBy.deletedAt}
+          />
           <div className="flex flex-col gap-1">
             {theme && (
-              <Text size="sm" c="dimmed" lineClamp={1}>
+              <Text size="sm" c="white" lineClamp={1} className="drop-shadow-sm">
                 Theme: {theme}
               </Text>
             )}
@@ -187,34 +193,23 @@ export function ChallengeCard({ data }: Props) {
               }}
             />
             {/* Stats */}
-            <Badge
+            <IconBadge
+              icon={<IconPhoto size={14} />}
+              color="gray.0"
+              p={0}
+              px={8}
+              size="lg"
+              variant="transparent"
               className={cardClasses.chip}
               style={{
                 backgroundColor: 'rgba(0, 0, 0, 0.31)',
               }}
               radius="xl"
-              px={8}
-              variant="filled"
             >
-              <div className="flex items-center gap-2">
-                <IconBadge
-                  icon={<IconPhoto size={14} />}
-                  color="gray.0"
-                  p={0}
-                  size="lg"
-                  variant="transparent"
-                >
-                  <Text fw="bold" size="xs">
-                    {abbreviateNumber(entryCount)}
-                  </Text>
-                </IconBadge>
-                {modelName && (
-                  <Text size="xs" c="dimmed" lineClamp={1} maw={80}>
-                    {modelName}
-                  </Text>
-                )}
-              </div>
-            </Badge>
+              <Text fw="bold" size="xs">
+                {abbreviateNumber(entryCount)}
+              </Text>
+            </IconBadge>
           </div>
         </div>
       }

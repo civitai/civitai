@@ -21,6 +21,9 @@ export type ChallengeDetails = {
   invitation: string | null;
   coverImageId: number | null;
   coverUrl: string | null;
+  coverImageHash: string | null;
+  coverImageWidth: number | null;
+  coverImageHeight: number | null;
   nsfwLevel: number;
   allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
   modelVersionIds: number[]; // Array of allowed model version IDs
@@ -43,11 +46,21 @@ export type ChallengeDetails = {
 
 type ChallengeDbRow = Omit<
   ChallengeDetails,
-  'modelVersionIds' | 'coverImageId' | 'coverUrl' | 'prizes' | 'entryPrize'
+  | 'modelVersionIds'
+  | 'coverImageId'
+  | 'coverUrl'
+  | 'coverImageHash'
+  | 'coverImageWidth'
+  | 'coverImageHeight'
+  | 'prizes'
+  | 'entryPrize'
 > & {
   modelVersionIds: number[] | null; // Can be null from DB
   coverImageId: number | null;
   coverUrl: string | null;
+  coverImageHash: string | null;
+  coverImageWidth: number | null;
+  coverImageHeight: number | null;
   prizes: Prize[] | string; // JSON comes as string or parsed
   entryPrize: Prize | string | null;
 };
@@ -66,6 +79,9 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c.invitation,
       c."coverImageId",
       (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
+      (SELECT hash FROM "Image" WHERE id = c."coverImageId") as "coverImageHash",
+      (SELECT width FROM "Image" WHERE id = c."coverImageId") as "coverImageWidth",
+      (SELECT height FROM "Image" WHERE id = c."coverImageId") as "coverImageHeight",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",

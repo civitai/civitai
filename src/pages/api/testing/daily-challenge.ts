@@ -13,17 +13,33 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
-import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  getCoverOfModel,
+  getJudgedEntries,
+  pickWinners,
+  reviewEntries,
+} from '~/server/jobs/daily-challenge-processing';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
   .object({
-    action: z.enum(['article', 'collection', 'review', 'winners']),
+    action: z.enum([
+      'article',
+      'collection',
+      'review',
+      'winners',
+      'complete-review',
+      'complete-challenge',
+    ]),
     modelId: z.coerce.number().optional(),
     type: z.string().optional(),
     imageId: z.coerce.number().optional(),
     theme: z.string().optional(),
     challengeId: z.coerce.number().optional(),
+    dryRun: z
+      .string()
+      .optional()
+      .transform((v) => v === 'true'),
   })
   .superRefine((data, ctx) => {
     if (data.action === 'review' && !data.imageId) {
@@ -144,6 +160,31 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       config: challengeTypeConfig,
     });
     return res.status(200).json(result);
+  }
+
+  if (action === 'complete-review') {
+    if (payload.dryRun) {
+      return res.status(200).json({
+        action: 'complete-review',
+        dryRun: true,
+        message: 'Would execute reviewEntries() to process and review challenge entries',
+      });
+    }
+    await reviewEntries();
+    return res.status(200).json({ success: true, action: 'complete-review' });
+  }
+
+  if (action === 'complete-challenge') {
+    if (payload.dryRun) {
+      return res.status(200).json({
+        action: 'complete-challenge',
+        dryRun: true,
+        message:
+          'Would execute pickWinners() to close challenge, pick winners, send prizes, and start next challenge',
+      });
+    }
+    await pickWinners();
+    return res.status(200).json({ success: true, action: 'complete-challenge' });
   }
 
   return res.status(200).json({ how: 'did i get here?' });

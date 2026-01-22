@@ -25,7 +25,9 @@ import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { constants } from '~/server/common/constants';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -53,10 +55,20 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { env } from '~/env/client';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationFormStore, generationPanel } from '~/store/generation.store';
+import { trpc } from '~/utils/trpc';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants as appConstants } from '~/server/common/constants';
+import { ImageSort } from '~/server/common/enums';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -104,68 +116,66 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         ]}
       />
       <SensitiveShield contentNsfwLevel={challenge.nsfwLevel}>
-        {/* TODO: Add Challenge to TrackView entity types */}
         <Container size="xl" mb={{ base: 'md', sm: 32 }}>
           <Stack gap="xs" mb="xl">
-            {/* Header Section - stacks on mobile */}
-            <Stack gap="xs">
+            {/* Row 1: Title + Prize (right-aligned) */}
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Title fw="bold" lineClamp={2} order={1} fz={{ base: 'h2', sm: 'h1' }}>
                 {challenge.title}
               </Title>
-              <Group gap={8} wrap="wrap">
-                <CurrencyBadge
-                  size="lg"
-                  radius="sm"
-                  currency={Currency.BUZZ}
-                  unitAmount={challenge.prizePool}
-                  variant="light"
-                />
-                {isCompleted ? (
-                  <IconBadge
-                    size="lg"
-                    radius="sm"
-                    color="yellow.7"
-                    icon={<IconTrophy size={16} fill="currentColor" />}
-                  >
-                    Completed
-                  </IconBadge>
-                ) : isActive ? (
-                  <IconBadge size="lg" radius="sm" color="green" icon={<IconSparkles size={16} />}>
-                    Live
-                  </IconBadge>
-                ) : isScheduled ? (
-                  <Badge size="lg" radius="sm" color="blue">
-                    Upcoming
-                  </Badge>
-                ) : null}
-                {isActive && (
-                  <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
-                    <DaysFromNow date={challenge.endsAt} withoutSuffix />
-                  </IconBadge>
-                )}
-                <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
-                  {abbreviateNumber(challenge.entryCount)} entries
-                </IconBadge>
-              </Group>
-            </Stack>
+              <CurrencyBadge
+                size="lg"
+                radius="sm"
+                currency={Currency.BUZZ}
+                unitAmount={challenge.prizePool}
+                variant="light"
+                style={{ flexShrink: 0 }}
+              />
+            </Group>
 
-            {/* Subheader with theme and dates */}
+            {/* Row 2: Theme + Status + Stats (inline with dividers) */}
             <Group gap={8} wrap="wrap">
               {challenge.theme && (
                 <>
-                  <Text c="dimmed" size="sm">
-                    Theme:{' '}
-                    <Text component="span" fw={600}>
-                      {challenge.theme}
-                    </Text>
+                  <Text c="blue" fw={600} size="lg">
+                    Theme: {challenge.theme}
                   </Text>
-                  <Divider orientation="vertical" visibleFrom="xs" />
+                  <Divider orientation="vertical" />
                 </>
               )}
-              <Text c="dimmed" size="sm">
-                {formatDate(challenge.startsAt, undefined, true)} -{' '}
-                {formatDate(challenge.endsAt, undefined, true)}
-              </Text>
+
+              {/* Status badge */}
+              {isCompleted ? (
+                <IconBadge
+                  size="lg"
+                  radius="sm"
+                  color="yellow.7"
+                  icon={<IconTrophy size={16} fill="currentColor" />}
+                >
+                  Completed
+                </IconBadge>
+              ) : isActive ? (
+                <IconBadge size="lg" radius="sm" color="green" icon={<IconSparkles size={16} />}>
+                  Live
+                </IconBadge>
+              ) : isScheduled ? (
+                <Badge size="lg" radius="sm" color="blue">
+                  Upcoming
+                </Badge>
+              ) : null}
+
+              {/* Countdown (active only) */}
+              {isActive && (
+                <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
+                  <DaysFromNow date={challenge.endsAt} withoutSuffix />
+                </IconBadge>
+              )}
+
+              {/* Entry count */}
+              <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
+                {abbreviateNumber(challenge.entryCount)}{' '}
+                {challenge.entryCount === 1 ? 'entry' : 'entries'}
+              </IconBadge>
             </Group>
           </Stack>
 
@@ -173,23 +183,26 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
             <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
               <Stack gap="md">
                 {/* Cover Image */}
-                {challenge.coverUrl && (
-                  <div className="overflow-hidden rounded-lg">
-                    <EdgeMedia2
-                      src={challenge.coverUrl}
-                      type={MediaType.image}
-                      width={800}
-                      className="w-full"
-                    />
-                  </div>
-                )}
-
-                {/* Invitation/Description */}
-                {challenge.invitation && (
-                  <div className="rounded-lg bg-blue-500/10 p-4">
-                    <Text size="lg" fw={500} className="italic">
-                      &ldquo;{challenge.invitation}&rdquo;
-                    </Text>
+                {challenge.coverImage && (
+                  <div className="relative overflow-hidden rounded-lg">
+                    <ImageGuard2 image={challenge.coverImage}>
+                      {(safe) => (
+                        <>
+                          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                          {safe ? (
+                            <EdgeMedia2
+                              src={challenge.coverImage!.url}
+                              type={challenge.coverImage!.type}
+                              className="w-full"
+                            />
+                          ) : (
+                            <div className="relative aspect-video w-full overflow-hidden">
+                              <MediaHash {...challenge.coverImage} />
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </ImageGuard2>
                   </div>
                 )}
 
@@ -236,6 +249,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
 
   const isActive = challenge.status === ChallengeStatus.Active;
 
+  // Get user's entry count for this challenge
+  const { data: userEntryData } = trpc.challenge.getUserEntryCount.useQuery(
+    { challengeId: challenge.id },
+    { enabled: !!currentUser && isActive }
+  );
+  const userEntryCount = userEntryData?.count ?? 0;
+
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
@@ -249,6 +269,26 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       label: 'Max Entries',
       value: <Text size="sm">{challenge.maxEntriesPerUser} per user</Text>,
     },
+    ...(currentUser && isActive
+      ? [
+          {
+            label: 'Your Entries',
+            value: (
+              <Text size="sm" fw={500} c={userEntryCount > 0 ? 'green' : undefined}>
+                {userEntryCount} / {challenge.maxEntriesPerUser}
+              </Text>
+            ),
+          },
+        ]
+      : []),
+    ...(challenge.entryPrize && challenge.entryPrizeRequirement > 0
+      ? [
+          {
+            label: 'Entry Prize Requirement',
+            value: <Text size="sm">Min {challenge.entryPrizeRequirement} entries to qualify</Text>,
+          },
+        ]
+      : []),
     {
       label: 'Featured Model',
       value: challenge.model ? (
@@ -416,10 +456,16 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           <Accordion.Control>
             <Group justify="space-between">Created By</Group>
           </Accordion.Control>
-          <Accordion.Panel>
-            <div className="p-3">
-              <UserAvatar user={challenge.createdBy} withUsername linkToProfile />
-            </div>
+          <Accordion.Panel p={0}>
+            <CreatorCardSimple
+              user={
+                challenge.source === ChallengeSource.System
+                  ? { id: constants.system.user.id, username: constants.system.user.username }
+                  : challenge.createdBy
+              }
+              statDisplayOverwrite={[]}
+              style={{ border: 'none', borderRadius: 0 }}
+            />
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
@@ -514,6 +560,15 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
 
+  const handleOpenSubmitModal = () => {
+    if (challenge.collectionId) {
+      dialogStore.trigger({
+        component: AddUserContentModal,
+        props: { collectionId: challenge.collectionId },
+      });
+    }
+  };
+
   return (
     <Container
       fluid
@@ -524,22 +579,24 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
     >
       <Container size="xl">
         <Stack gap="md" py={32}>
-          <Group wrap="wrap">
-            <Title order={2}>Entries</Title>
+          <Group wrap="wrap" justify="space-between">
+            <Group wrap="wrap">
+              <Title order={2}>Entries</Title>
+              <Text c="dimmed" size="sm">
+                {challenge.entryCount.toLocaleString()} total{' '}
+                {challenge.entryCount === 1 ? 'entry' : 'entries'}
+              </Text>
+            </Group>
             {displaySubmitAction && (
               <Button
-                size="xs"
-                variant="outline"
-                component={Link}
-                href={`/posts/create?collectionId=${challenge.collectionId}`}
-                leftSection={<IconSparkles size={14} />}
+                size="sm"
+                variant="filled"
+                onClick={handleOpenSubmitModal}
+                leftSection={<IconSparkles size={16} />}
               >
                 Submit Entry
               </Button>
             )}
-            <Text c="dimmed" size="sm">
-              {challenge.entryCount.toLocaleString()} total entries
-            </Text>
           </Group>
 
           {challenge.entryCount === 0 || !hasCollection ? (
@@ -551,17 +608,22 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
               }
             />
           ) : (
-            <Stack gap="md">
-              <Text c="dimmed">View all entries in the challenge collection.</Text>
-              <Button
-                component={Link}
-                href={`/collections/${challenge.collectionId}`}
-                variant="light"
-                leftSection={<IconPhoto size={16} />}
-              >
-                View {challenge.entryCount.toLocaleString()} Entries
-              </Button>
-            </Stack>
+            <MasonryProvider
+              columnWidth={appConstants.cardSizes.image}
+              maxColumnCount={4}
+              maxSingleColumnWidth={450}
+            >
+              <MasonryContainer m={0} p={0} px={0}>
+                <ImagesInfinite
+                  filters={{
+                    collectionId: challenge.collectionId ?? undefined,
+                    period: 'AllTime',
+                    sort: ImageSort.Newest,
+                  }}
+                  disableStoreFilters
+                />
+              </MasonryContainer>
+            </MasonryProvider>
           )}
         </Stack>
       </Container>

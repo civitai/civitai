@@ -207,118 +207,126 @@ export default function ModeratorChallengesPage() {
             <NoContent message="No challenges found" />
           ) : (
             <Stack gap="md">
-              {challenges.map((challenge) => (
-                <Card key={challenge.id} withBorder>
-                  <Flex gap="md" align="flex-start" justify="space-between">
-                    <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
-                      <Group justify="space-between" wrap="nowrap">
-                        <Group gap="xs" style={{ flex: 1, minWidth: 0 }}>
-                          <Link href={`/challenges/${challenge.id}`} passHref legacyBehavior>
-                            <Text
-                              fw={600}
-                              size="md"
-                              style={{ cursor: 'pointer' }}
-                              lineClamp={1}
-                              component="a"
+              {challenges.map((challenge) => {
+                const isVisible = new Date() >= challenge.visibleAt;
+
+                return (
+                  <Card key={challenge.id} withBorder>
+                    <Flex gap="md" align="flex-start" justify="space-between">
+                      <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
+                        <Group justify="space-between" wrap="nowrap">
+                          <Group gap="xs" style={{ flex: 1, minWidth: 0 }}>
+                            <Link href={`/challenges/${challenge.id}`} passHref legacyBehavior>
+                              <Text
+                                fw={600}
+                                size="md"
+                                style={{ cursor: 'pointer' }}
+                                lineClamp={1}
+                                component="a"
+                              >
+                                {challenge.title}
+                              </Text>
+                            </Link>
+                            <Badge size="sm" color={isVisible ? 'green' : 'gray'} variant="light">
+                              {isVisible ? 'Visible' : 'Hidden'}
+                            </Badge>
+                            <Badge
+                              color={statusColors[challenge.status]}
+                              variant="filled"
+                              size="sm"
                             >
-                              {challenge.title}
-                            </Text>
-                          </Link>
-                          <Badge color={statusColors[challenge.status]} variant="filled" size="sm">
-                            {challenge.status}
-                          </Badge>
-                          <Badge
-                            color={
-                              challenge.source === ChallengeSource.System
-                                ? 'gray'
-                                : challenge.source === ChallengeSource.Mod
-                                ? 'cyan'
-                                : 'grape'
-                            }
-                            variant="light"
-                            size="sm"
-                          >
-                            {challenge.source}
-                          </Badge>
+                              {challenge.status}
+                            </Badge>
+                            <Badge
+                              color={
+                                challenge.source === ChallengeSource.System
+                                  ? 'gray'
+                                  : challenge.source === ChallengeSource.Mod
+                                  ? 'cyan'
+                                  : 'grape'
+                              }
+                              variant="light"
+                              size="sm"
+                            >
+                              {challenge.source}
+                            </Badge>
+                          </Group>
+
+                          {/* Actions Menu */}
+                          <Menu position="bottom-end" withinPortal>
+                            <Menu.Target>
+                              <ActionIcon variant="subtle">
+                                <IconDots size={16} />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              <Menu.Label>Actions</Menu.Label>
+                              <Menu.Item
+                                leftSection={<IconPencil size={14} />}
+                                component={Link}
+                                href={`/moderator/challenges/${challenge.id}/edit`}
+                              >
+                                Edit
+                              </Menu.Item>
+                              <Menu.Divider />
+                              <Menu.Label>Change Status</Menu.Label>
+                              {Object.values(ChallengeStatus).map((s) => (
+                                <Menu.Item
+                                  key={s}
+                                  leftSection={
+                                    challenge.status === s ? <IconCheck size={14} /> : null
+                                  }
+                                  onClick={() => handleStatusChange(challenge.id, s)}
+                                  disabled={challenge.status === s}
+                                >
+                                  {s}
+                                </Menu.Item>
+                              ))}
+                              <Menu.Divider />
+                              <Menu.Item
+                                leftSection={<IconTrash size={14} />}
+                                color="red"
+                                onClick={() => handleDelete(challenge.id)}
+                              >
+                                Delete
+                              </Menu.Item>
+                            </Menu.Dropdown>
+                          </Menu>
+                        </Group>
+                        <Group gap="md" wrap="wrap">
+                          <Text size="xs" c="dimmed">
+                            Starts: {formatDate(challenge.startsAt)}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            Ends: {formatDate(challenge.endsAt)}
+                          </Text>
                         </Group>
 
-                        {/* Actions Menu */}
-                        <Menu position="bottom-end" withinPortal>
-                          <Menu.Target>
-                            <ActionIcon variant="subtle">
-                              <IconDots size={16} />
-                            </ActionIcon>
-                          </Menu.Target>
-                          <Menu.Dropdown>
-                            <Menu.Label>Actions</Menu.Label>
-                            <Menu.Item
-                              leftSection={<IconPencil size={14} />}
-                              component={Link}
-                              href={`/moderator/challenges/${challenge.id}/edit`}
-                            >
-                              Edit
-                            </Menu.Item>
-                            <Menu.Divider />
-                            <Menu.Label>Change Status</Menu.Label>
-                            {Object.values(ChallengeStatus).map((s) => (
-                              <Menu.Item
-                                key={s}
-                                leftSection={
-                                  challenge.status === s ? <IconCheck size={14} /> : null
-                                }
-                                onClick={() => handleStatusChange(challenge.id, s)}
-                                disabled={challenge.status === s}
-                              >
-                                {s}
-                              </Menu.Item>
-                            ))}
-                            <Menu.Divider />
-                            <Menu.Item
-                              leftSection={<IconTrash size={14} />}
-                              color="red"
-                              onClick={() => handleDelete(challenge.id)}
-                            >
-                              Delete
-                            </Menu.Item>
-                          </Menu.Dropdown>
-                        </Menu>
-                      </Group>
+                        {challenge.theme && (
+                          <Text size="sm" c="dimmed">
+                            Theme: {challenge.theme}
+                          </Text>
+                        )}
 
-                      {challenge.theme && (
-                        <Text size="sm" c="dimmed">
-                          Theme: {challenge.theme}
-                        </Text>
-                      )}
-
-                      <Group gap="md" wrap="wrap">
-                        <Text size="xs" c="dimmed">
-                          Visible: {formatDate(challenge.visibleAt)}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          Starts: {formatDate(challenge.startsAt)}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          Ends: {formatDate(challenge.endsAt)}
-                        </Text>
-                      </Group>
-
-                      <Group gap="md">
-                        <CurrencyBadge
-                          currency={Currency.BUZZ}
-                          unitAmount={challenge.prizePool}
-                          size="sm"
-                        />
-                        <Text size="sm" c="dimmed">
-                          {challenge.entryCount} entries
-                        </Text>
-                        <Text size="sm" c="dimmed">
-                          by {challenge.creatorUsername}
-                        </Text>
-                      </Group>
-                    </Stack>
-                  </Flex>
-                </Card>
-              ))}
+                        <Group gap="md">
+                          <CurrencyBadge
+                            currency={Currency.BUZZ}
+                            unitAmount={challenge.prizePool}
+                            size="sm"
+                          />
+                          <Text size="sm" c="dimmed">
+                            {challenge.entryCount}{' '}
+                            {challenge.entryCount === 1 ? 'entry' : 'entries'}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            by {challenge.creatorUsername}
+                          </Text>
+                        </Group>
+                      </Stack>
+                    </Flex>
+                  </Card>
+                );
+              })}
 
               {hasNextPage && (
                 <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>

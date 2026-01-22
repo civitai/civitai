@@ -8,7 +8,7 @@ import { useEffect } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ChallengeIndicator() {
-  const { challenges } = useGetActiveChallenges();
+  const { challenges, loading } = useGetActiveChallenges();
 
   const handleOpen = () => {
     dialogStore.trigger({
@@ -33,6 +33,11 @@ export function ChallengeIndicator() {
       localStorage.removeItem(arr[i]);
     }
   }, []);
+
+  // Hide the indicator if there are no active challenges
+  if (!loading && challenges.length === 0) {
+    return null;
+  }
 
   const futureChallenge = !!challenges?.find((x) => !x.endsToday && !x.dismissed);
   const hasUnseen = !!challenges.filter((x) => !x.dismissed).length;

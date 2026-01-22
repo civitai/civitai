@@ -120,7 +120,7 @@ export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps 
                       onChange={(e) => handleLevelToggle(level, e.currentTarget.checked)}
                       disabled={level === NsfwLevel.PG} // PG is always required
                     />
-                    <Badge color={color} variant="light" size="sm" w={50}>
+                    <Badge color={color} variant="light" size="sm" w={55}>
                       {label}
                     </Badge>
                     <Tooltip label={description} multiline w={300}>

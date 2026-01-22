@@ -330,7 +330,7 @@ export async function createUpcomingChallenge() {
   return challenge;
 }
 
-async function reviewEntries() {
+export async function reviewEntries() {
   try {
     // Get current challenge
     const currentChallenge = await getCurrentChallenge();
@@ -651,7 +651,7 @@ async function reviewEntries() {
   }
 }
 
-async function pickWinners() {
+export async function pickWinners() {
   // Get current challenge
   const config = await getChallengeConfig();
   const currentChallenge = await getCurrentChallenge();

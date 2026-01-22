@@ -4,11 +4,12 @@ import {
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
+  getUserEntryCountSchema,
   updateChallengeStatusSchema,
   upsertChallengeSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
   deleteChallenge,
   getChallengeDetail,
@@ -16,6 +17,7 @@ import {
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
+  getUserEntryCount,
   updateChallengeStatus,
   upsertChallenge,
 } from '~/server/services/challenge.service';
@@ -39,6 +41,11 @@ export const challengeRouter = router({
   getWinners: publicProcedure
     .input(getChallengeWinnersSchema)
     .query(({ input }) => getChallengeWinners(input.challengeId)),
+
+  // Get current user's entry count for a challenge
+  getUserEntryCount: protectedProcedure
+    .input(getUserEntryCountSchema)
+    .query(({ input, ctx }) => getUserEntryCount(input.challengeId, ctx.user.id)),
 
   // Moderator: Get all challenges (including drafts)
   getModeratorList: moderatorProcedure

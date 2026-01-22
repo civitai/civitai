@@ -25,8 +25,10 @@ import {
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
 import { createImage } from '~/server/services/image.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 // Service functions
 export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
@@ -103,7 +105,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       id: number;
       title: string;
       theme: string | null;
-      coverUrl: string | null;
+      coverImageId: number | null;
       startsAt: Date;
       endsAt: Date;
       status: ChallengeStatus;
@@ -114,13 +116,14 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       createdById: number;
       creatorUsername: string | null;
       creatorImage: string | null;
+      creatorDeletedAt: Date | null;
     }>
   >`
     SELECT
       c.id,
       c.title,
       c.theme,
-      (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
+      c."coverImageId",
       c."startsAt",
       c."endsAt",
       c.status,
@@ -130,7 +133,8 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage"
+      u.image as "creatorImage",
+      u."deletedAt" as "creatorDeletedAt"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
     ${whereClause}
@@ -145,25 +149,58 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     nextCursor = nextItem?.id;
   }
 
+  // Fetch profile pictures for all creators
+  const creatorIds = [...new Set(items.map((item) => item.createdById))];
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers(creatorIds),
+    getCosmeticsForUsers(creatorIds),
+  ]);
+
+  // Fetch cover images
+  const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
+  const coverImages = await dbRead.image.findMany({
+    where: { id: { in: coverImageIds } },
+    select: imageSelect,
+  });
+
   // Transform results
-  const challenges: ChallengeListItem[] = items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    theme: item.theme,
-    coverUrl: item.coverUrl,
-    startsAt: item.startsAt,
-    endsAt: item.endsAt,
-    status: item.status,
-    source: item.source,
-    prizePool: item.prizePool,
-    entryCount: Number(item.entryCount),
-    modelName: item.modelName,
-    createdBy: {
-      id: item.createdById,
-      username: item.creatorUsername,
-      image: item.creatorImage,
-    },
-  }));
+  const challenges: ChallengeListItem[] = items.map((item) => {
+    const coverImage = item.coverImageId
+      ? coverImages.find((img) => img.id === item.coverImageId)
+      : null;
+
+    return {
+      id: item.id,
+      title: item.title,
+      theme: item.theme,
+      coverImage: coverImage
+        ? {
+            id: coverImage.id,
+            url: coverImage.url,
+            nsfwLevel: coverImage.nsfwLevel,
+            hash: coverImage.hash,
+            width: coverImage.width,
+            height: coverImage.height,
+            type: coverImage.type,
+          }
+        : null,
+      startsAt: item.startsAt,
+      endsAt: item.endsAt,
+      status: item.status,
+      source: item.source,
+      prizePool: item.prizePool,
+      entryCount: Number(item.entryCount),
+      modelName: item.modelName,
+      createdBy: {
+        id: item.createdById,
+        username: item.creatorUsername,
+        image: item.creatorImage,
+        profilePicture: profilePictures[item.createdById] ?? null,
+        cosmetics: cosmetics[item.createdById] ?? null,
+        deletedAt: item.creatorDeletedAt,
+      },
+    };
+  });
 
   return {
     items: challenges,
@@ -207,9 +244,9 @@ export async function getChallengeDetail(
 
   // Get creator info
   const [creator] = await dbRead.$queryRaw<
-    [{ id: number; username: string | null; image: string | null }]
+    [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
   >`
-    SELECT id, username, image
+    SELECT id, username, image, "deletedAt"
     FROM "User"
     WHERE id = ${challenge.createdById}
   `;
@@ -226,6 +263,14 @@ export async function getChallengeDetail(
     model = modelResult || null;
   }
 
+  // Fetch cover image
+  const coverImage = challenge.coverImageId
+    ? await dbRead.image.findUnique({
+        where: { id: challenge.coverImageId },
+        select: imageSelect,
+      })
+    : null;
+
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
   if (challenge.status === ChallengeStatus.Completed) {
@@ -238,8 +283,17 @@ export async function getChallengeDetail(
     description: challenge.description,
     theme: challenge.theme,
     invitation: challenge.invitation,
-    coverImageId: challenge.coverImageId,
-    coverUrl: challenge.coverUrl,
+    coverImage: coverImage
+      ? {
+          id: coverImage.id,
+          url: coverImage.url,
+          nsfwLevel: coverImage.nsfwLevel,
+          hash: coverImage.hash,
+          width: coverImage.width,
+          height: coverImage.height,
+          type: coverImage.type,
+        }
+      : null,
     startsAt: challenge.startsAt,
     endsAt: challenge.endsAt,
     visibleAt: challenge.visibleAt,
@@ -533,4 +587,26 @@ export async function deleteChallenge(id: number) {
   });
 
   return { success: true };
+}
+
+export async function getUserEntryCount(challengeId: number, userId: number) {
+  // Get the challenge's collection
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { collectionId: true },
+  });
+
+  if (!challenge?.collectionId) {
+    return { count: 0 };
+  }
+
+  // Count user's entries in the collection
+  const count = await dbRead.collectionItem.count({
+    where: {
+      collectionId: challenge.collectionId,
+      addedById: userId,
+    },
+  });
+
+  return { count };
 }

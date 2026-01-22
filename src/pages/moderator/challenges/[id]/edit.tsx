@@ -43,10 +43,9 @@ export default function EditChallengePage() {
     description: challenge.description,
     theme: challenge.theme,
     invitation: challenge.invitation,
-    coverImage:
-      challenge.coverImageId && challenge.coverUrl
-        ? { id: challenge.coverImageId, url: challenge.coverUrl }
-        : null,
+    coverImage: challenge.coverImage
+      ? { id: challenge.coverImage.id, url: challenge.coverImage.url }
+      : null,
     modelVersionIds: challenge.modelVersionIds ?? [],
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel ?? 1,

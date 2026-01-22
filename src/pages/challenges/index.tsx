@@ -1,5 +1,6 @@
-import { SegmentedControl, Stack, Title, Group, Text, Button, ThemeIcon } from '@mantine/core';
-import { IconPlus, IconTrophy } from '@tabler/icons-react';
+import { Stack, Title, Group, Text, Button, ThemeIcon, ActionIcon, Modal } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
+import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
@@ -12,23 +13,10 @@ import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-const sortOptions = [
-  { value: ChallengeSort.Newest, label: 'Newest' },
-  { value: ChallengeSort.EndingSoon, label: 'Ending Soon' },
-  { value: ChallengeSort.HighestPrize, label: 'Highest Prize' },
-  { value: ChallengeSort.MostEntries, label: 'Most Entries' },
-];
-
-const statusFilters = [
-  { value: 'active', label: 'Active' },
-  { value: 'upcoming', label: 'Upcoming' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'all', label: 'All' },
-];
-
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const [infoOpened, { open: openInfo, close: closeInfo }] = useDisclosure(false);
 
   // Parse query params
   const sort = (router.query.sort as ChallengeSort) || ChallengeSort.Newest;
@@ -50,22 +38,6 @@ function ChallengesPage() {
     }
   };
 
-  const handleSortChange = (value: string) => {
-    router.replace(
-      { pathname: '/challenges', query: { ...router.query, sort: value } },
-      undefined,
-      { shallow: true }
-    );
-  };
-
-  const handleStatusChange = (value: string) => {
-    router.replace(
-      { pathname: '/challenges', query: { ...router.query, status: value } },
-      undefined,
-      { shallow: true }
-    );
-  };
-
   return (
     <>
       <Meta
@@ -73,6 +45,60 @@ function ChallengesPage() {
         description="Participate in AI art challenges, compete for prizes, and showcase your creative skills with the Civitai community"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/challenges`, rel: 'canonical' }]}
       />
+
+      {/* Info Modal */}
+      <Modal
+        opened={infoOpened}
+        onClose={closeInfo}
+        title={<Title order={3}>How Challenges Work</Title>}
+        size="lg"
+        centered
+      >
+        <Stack gap="md">
+          <div>
+            <Title order={4} mb="xs">
+              🎨 How It Works
+            </Title>
+            <Text size="sm">
+              Every day, we select a new challenge featuring a specific AI model. Create images
+              using the featured model and submit your best work to compete for prizes!
+            </Text>
+          </div>
+          <div>
+            <Title order={4} mb="xs">
+              🏆 Winning & Rewards
+            </Title>
+            <Text size="sm">
+              The top 3 entries are reviewed and selected by our AI judging system. Winners receive
+              Buzz prizes and challenge points! Even if you don&apos;t win, you can earn
+              participation rewards for submitting quality entries.
+            </Text>
+          </div>
+          <div>
+            <Title order={4} mb="xs">
+              ⭐ Challenge Points
+            </Title>
+            <Text size="sm">
+              Earn points by participating in challenges. Top winners get the most points, but
+              everyone who participates earns something. Climb the leaderboard and show off your
+              skills!
+            </Text>
+          </div>
+          <div>
+            <Title order={4} mb="xs">
+              📝 Tips for Success
+            </Title>
+            <Text size="sm">
+              • Use the featured model specified in the challenge
+              <br />
+              • Follow the theme or prompt provided
+              <br />
+              • Submit your best work - quality over quantity
+              <br />• Check back daily for new challenges
+            </Text>
+          </div>
+        </Stack>
+      </Modal>
 
       <MasonryContainer>
         <Stack gap="md">
@@ -83,7 +109,12 @@ function ChallengesPage() {
                 <IconTrophy size={24} />
               </ThemeIcon>
               <div>
-                <Title order={1}>Challenges</Title>
+                <Group gap={4}>
+                  <Title order={1}>Challenges</Title>
+                  <ActionIcon variant="subtle" color="gray" onClick={openInfo}>
+                    <IconInfoCircle size={20} />
+                  </ActionIcon>
+                </Group>
                 <Text c="dimmed" size="sm">
                   Compete in AI art challenges and win prizes
                 </Text>
@@ -94,28 +125,12 @@ function ChallengesPage() {
               <Button
                 component={Link}
                 href="/moderator/challenges"
-                leftSection={<IconPlus size={16} />}
+                leftSection={<IconSettings size={16} />}
                 variant="light"
               >
                 Manage
               </Button>
             )}
-          </Group>
-
-          {/* Filters */}
-          <Group justify="space-between" wrap="wrap" gap="md">
-            <SegmentedControl
-              value={statusFilter}
-              onChange={handleStatusChange}
-              data={statusFilters}
-              radius="xl"
-            />
-            <SegmentedControl
-              value={sort}
-              onChange={handleSortChange}
-              data={sortOptions}
-              radius="xl"
-            />
           </Group>
 
           {/* Challenge Feed */}
