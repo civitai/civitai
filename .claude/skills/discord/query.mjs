@@ -35,6 +35,10 @@ import {
   parseMessageLink,
   sendDM,
   getDMMessages,
+  isUsingProxy,
+  formatWithAttribution,
+  getAuthenticatedUser,
+  getAuthenticatedUserAvatarUrl,
 } from './api/client.mjs';
 
 // Load environment
@@ -248,7 +252,9 @@ async function main() {
           process.exit(1);
         }
 
-        const result = await sendMessage(channel.id, message);
+        // Add user attribution if using proxy
+        const messageContent = isUsingProxy() ? formatWithAttribution(message) : message;
+        const result = await sendMessage(channel.id, messageContent);
         if (jsonOutput) {
           console.log(JSON.stringify(result, null, 2));
         } else {
@@ -290,6 +296,18 @@ async function main() {
         }
         if (embedUrl) {
           embed.url = embedUrl;
+        }
+
+        // Add author info if using proxy
+        if (isUsingProxy()) {
+          const user = getAuthenticatedUser();
+          const avatarUrl = getAuthenticatedUserAvatarUrl();
+          if (user) {
+            embed.author = {
+              name: user.username,
+              ...(avatarUrl && { icon_url: avatarUrl }),
+            };
+          }
         }
 
         const result = await sendEmbed(channel.id, { embed });
@@ -567,6 +585,19 @@ async function main() {
           process.exit(1);
         }
 
+        // Build author info if using proxy
+        let embedAuthor = undefined;
+        if (isUsingProxy()) {
+          const user = getAuthenticatedUser();
+          const avatarUrl = getAuthenticatedUserAvatarUrl();
+          if (user) {
+            embedAuthor = {
+              name: user.username,
+              ...(avatarUrl && { icon_url: avatarUrl }),
+            };
+          }
+        }
+
         const result = await sendRichEmbed(channel.id, {
           content: message || undefined,
           title: embedTitle,
@@ -577,6 +608,7 @@ async function main() {
           url: embedUrl,
           thumbnail: embedThumbnail,
           image: embedImage,
+          author: embedAuthor,
         });
 
         if (jsonOutput) {
@@ -827,7 +859,9 @@ async function main() {
           userId = member.user.id;
         }
 
-        const result = await sendDM(userId, message);
+        // Add user attribution if using proxy
+        const dmContent = isUsingProxy() ? formatWithAttribution(message) : message;
+        const result = await sendDM(userId, dmContent);
         if (jsonOutput) {
           console.log(JSON.stringify(result, null, 2));
         } else {

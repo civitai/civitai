@@ -23,6 +23,35 @@ export function getApiBase() {
 // For backward compatibility
 export const API_BASE = DISCORD_API_BASE;
 
+// Cached authenticated user info (from proxy headers)
+let authenticatedUser = null;
+
+// Get the authenticated user (only available when using proxy)
+export function getAuthenticatedUser() {
+  return authenticatedUser;
+}
+
+// Check if we're using the proxy
+export function isUsingProxy() {
+  return !!(process.env.DISCORD_PROXY_URL && process.env.DISCORD_PROXY_TOKEN);
+}
+
+// Format message with user attribution (for proxy users)
+export function formatWithAttribution(content) {
+  if (authenticatedUser && authenticatedUser.username) {
+    return `**@${authenticatedUser.username}:** ${content}`;
+  }
+  return content;
+}
+
+// Get avatar URL for authenticated user
+export function getAuthenticatedUserAvatarUrl() {
+  if (authenticatedUser && authenticatedUser.userId && authenticatedUser.avatar) {
+    return `https://cdn.discordapp.com/avatars/${authenticatedUser.userId}/${authenticatedUser.avatar}.png`;
+  }
+  return null;
+}
+
 // Load .env from skill directory
 export function loadEnv() {
   if (!existsSync(ENV_PATH)) {
@@ -82,6 +111,14 @@ export async function apiRequest(endpoint, options = {}) {
         ...options.headers,
       },
     });
+
+    // Capture user info from proxy headers
+    const userId = response.headers.get('X-Discord-User-Id');
+    const username = response.headers.get('X-Discord-Username');
+    const avatar = response.headers.get('X-Discord-Avatar');
+    if (userId && username) {
+      authenticatedUser = { userId, username, avatar };
+    }
 
     if (!response.ok) {
       const text = await response.text();
@@ -360,7 +397,7 @@ export async function replyToMessageEmbed(channelId, messageId, { content, embed
 }
 
 // Send message with rich embed fields
-export async function sendRichEmbed(channelId, { content, title, description, color, fields, footer, url, thumbnail, image }) {
+export async function sendRichEmbed(channelId, { content, title, description, color, fields, footer, url, thumbnail, image, author }) {
   const embed = {};
   if (title) embed.title = title;
   if (description) embed.description = description;
@@ -370,6 +407,7 @@ export async function sendRichEmbed(channelId, { content, title, description, co
   if (url) embed.url = url;
   if (thumbnail) embed.thumbnail = { url: thumbnail };
   if (image) embed.image = { url: image };
+  if (author) embed.author = author;
   embed.timestamp = new Date().toISOString();
 
   const body = { embeds: [embed] };
