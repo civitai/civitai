@@ -23,7 +23,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, Currency } from '~/shared/utils/prisma/enums';
 import { upsertChallengeSchema, type Prize } from '~/server/schema/challenge.schema';
 
 // Wrapped custom components for form integration
@@ -58,7 +58,6 @@ type ChallengeForEdit = {
   startsAt: Date;
   endsAt: Date;
   visibleAt: Date;
-  status: ChallengeStatus;
   source: ChallengeSource;
   prizes: Prize[];
   entryPrize: Prize | null;
@@ -102,7 +101,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       startsAt: challenge?.startsAt ?? defaultStartsAt,
       endsAt: challenge?.endsAt ?? defaultEndsAt,
       visibleAt: challenge?.visibleAt ?? defaultVisibleAt,
-      status: challenge?.status ?? ChallengeStatus.Draft,
       source: challenge?.source ?? ChallengeSource.Mod,
       prize1Buzz: existingPrizes[0]?.buzz ?? 5000,
       prize2Buzz: existingPrizes[1]?.buzz ?? 2500,
@@ -157,7 +155,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       startsAt: data.startsAt,
       endsAt: data.endsAt,
       visibleAt: data.visibleAt,
-      status: data.status,
       source: data.source,
       prizes,
       entryPrize,
@@ -379,35 +376,20 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Stack>
         </Paper>
 
-        {/* Status */}
+        {/* Source */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
-            <Title order={4}>Status</Title>
+            <Title order={4}>Source</Title>
 
-            <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              <InputSelect
-                name="status"
-                label="Challenge Status"
-                data={[
-                  { value: ChallengeStatus.Draft, label: 'Draft' },
-                  { value: ChallengeStatus.Scheduled, label: 'Scheduled' },
-                  { value: ChallengeStatus.Active, label: 'Active' },
-                  { value: ChallengeStatus.Judging, label: 'Judging' },
-                  { value: ChallengeStatus.Completed, label: 'Completed' },
-                  { value: ChallengeStatus.Cancelled, label: 'Cancelled' },
-                ]}
-              />
-
-              <InputSelect
-                name="source"
-                label="Challenge Source"
-                data={[
-                  { value: ChallengeSource.System, label: 'System (Auto-generated)' },
-                  { value: ChallengeSource.Mod, label: 'Moderator' },
-                  { value: ChallengeSource.User, label: 'User' },
-                ]}
-              />
-            </SimpleGrid>
+            <InputSelect
+              name="source"
+              label="Challenge Source"
+              data={[
+                { value: ChallengeSource.System, label: 'System (Auto-generated)' },
+                { value: ChallengeSource.Mod, label: 'Moderator' },
+                { value: ChallengeSource.User, label: 'User' },
+              ]}
+            />
           </Stack>
         </Paper>
 

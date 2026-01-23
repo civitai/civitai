@@ -16,7 +16,6 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
-  IconCheck,
   IconDots,
   IconFilter,
   IconPencil,
@@ -26,6 +25,8 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -40,10 +41,8 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 
 const statusOptions = [
   { value: 'all', label: 'All Statuses' },
-  { value: ChallengeStatus.Draft, label: 'Draft' },
   { value: ChallengeStatus.Scheduled, label: 'Scheduled' },
   { value: ChallengeStatus.Active, label: 'Active' },
-  { value: ChallengeStatus.Judging, label: 'Judging' },
   { value: ChallengeStatus.Completed, label: 'Completed' },
   { value: ChallengeStatus.Cancelled, label: 'Cancelled' },
 ];
@@ -56,10 +55,8 @@ const sourceOptions = [
 ];
 
 const statusColors: Record<ChallengeStatus, string> = {
-  [ChallengeStatus.Draft]: 'gray',
   [ChallengeStatus.Scheduled]: 'blue',
   [ChallengeStatus.Active]: 'green',
-  [ChallengeStatus.Judging]: 'yellow',
   [ChallengeStatus.Completed]: 'teal',
   [ChallengeStatus.Cancelled]: 'red',
 };
@@ -85,10 +82,23 @@ export default function ModeratorChallengesPage() {
       }
     );
 
-  const updateStatusMutation = trpc.challenge.updateStatus.useMutation({
+  // Quick action mutations
+  const endAndPickWinnersMutation = trpc.challenge.endAndPickWinners.useMutation({
+    onSuccess: (data) => {
+      queryUtils.challenge.getModeratorList.invalidate();
+      showSuccessNotification({
+        message: `Challenge ended. ${data.winnersCount} winner(s) selected.`,
+      });
+    },
+    onError: (error) => {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+
+  const voidChallengeMutation = trpc.challenge.voidChallenge.useMutation({
     onSuccess: () => {
       queryUtils.challenge.getModeratorList.invalidate();
-      showSuccessNotification({ message: 'Challenge status updated' });
+      showSuccessNotification({ message: 'Challenge cancelled' });
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message) });
@@ -113,14 +123,62 @@ export default function ModeratorChallengesPage() {
     setSource('all');
   };
 
-  const handleStatusChange = (challengeId: number, newStatus: ChallengeStatus) => {
-    updateStatusMutation.mutate({ id: challengeId, status: newStatus });
+  const handleEndAndPickWinners = (challengeId: number, title: string) => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'End & Pick Winners',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Are you sure you want to end <strong>&ldquo;{title}&rdquo;</strong> and pick winners
+              now?
+            </Text>
+            <Text size="sm" c="dimmed">
+              This will close the collection, run the winner selection process, and award prizes.
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
+        onConfirm: () => endAndPickWinnersMutation.mutate({ id: challengeId }),
+      },
+    });
+  };
+
+  const handleVoidChallenge = (challengeId: number, title: string) => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Void Challenge',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Are you sure you want to void <strong>&ldquo;{title}&rdquo;</strong>?
+            </Text>
+            <Text size="sm" c="dimmed">
+              This will cancel the challenge without picking winners. Users will keep their entry
+              prizes (if any were awarded).
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => voidChallengeMutation.mutate({ id: challengeId }),
+      },
+    });
   };
 
   const handleDelete = (challengeId: number) => {
-    if (confirm('Are you sure you want to delete this challenge?')) {
-      deleteMutation.mutate({ id: challengeId });
-    }
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Delete Challenge',
+        message: <Text>Are you sure you want to delete this challenge?</Text>,
+        labels: { cancel: 'Cancel', confirm: 'Delete' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => deleteMutation.mutate({ id: challengeId }),
+      },
+    });
   };
 
   if (!currentUser?.isModerator) {
@@ -268,20 +326,48 @@ export default function ModeratorChallengesPage() {
                               >
                                 Edit
                               </Menu.Item>
-                              <Menu.Divider />
-                              <Menu.Label>Change Status</Menu.Label>
-                              {Object.values(ChallengeStatus).map((s) => (
-                                <Menu.Item
-                                  key={s}
-                                  leftSection={
-                                    challenge.status === s ? <IconCheck size={14} /> : null
-                                  }
-                                  onClick={() => handleStatusChange(challenge.id, s)}
-                                  disabled={challenge.status === s}
-                                >
-                                  {s}
-                                </Menu.Item>
-                              ))}
+
+                              {/* Quick Actions based on status */}
+                              {challenge.status === ChallengeStatus.Active && (
+                                <>
+                                  <Menu.Divider />
+                                  <Menu.Label>Quick Actions</Menu.Label>
+                                  <Menu.Item
+                                    leftSection={<IconTrophy size={14} />}
+                                    onClick={() =>
+                                      handleEndAndPickWinners(challenge.id, challenge.title)
+                                    }
+                                  >
+                                    End & Pick Winners
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    leftSection={<IconX size={14} />}
+                                    color="red"
+                                    onClick={() =>
+                                      handleVoidChallenge(challenge.id, challenge.title)
+                                    }
+                                  >
+                                    Void Challenge
+                                  </Menu.Item>
+                                </>
+                              )}
+
+                              {challenge.status === ChallengeStatus.Scheduled && (
+                                <>
+                                  <Menu.Divider />
+                                  <Menu.Label>Quick Actions</Menu.Label>
+                                  <Menu.Item
+                                    leftSection={<IconX size={14} />}
+                                    color="red"
+                                    onClick={() =>
+                                      handleVoidChallenge(challenge.id, challenge.title)
+                                    }
+                                  >
+                                    Cancel Challenge
+                                  </Menu.Item>
+                                </>
+                              )}
+
                               <Menu.Divider />
                               <Menu.Item
                                 leftSection={<IconTrash size={14} />}

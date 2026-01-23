@@ -73,7 +73,7 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
     } else if (article.publishedAt) {
       status = ChallengeStatus.Completed; // Old published challenges are complete
     } else {
-      status = ChallengeStatus.Draft;
+      status = ChallengeStatus.Scheduled;
     }
 
     // Calculate dates

@@ -419,7 +419,7 @@ model Challenge {
   source          ChallengeSource @default(System)
 
   // Lifecycle
-  status          ChallengeStatus @default(Draft)
+  status          ChallengeStatus @default(Scheduled)
 
   // Metadata
   metadata        Json?     // Flexible field for challenge-type-specific data
@@ -442,13 +442,18 @@ enum ChallengeSource {
 }
 
 enum ChallengeStatus {
-  Draft       // Being created, not visible
   Scheduled   // Funded and waiting for startsAt
   Active      // Currently accepting submissions
-  Judging     // Submissions closed, picking winners
   Completed   // Winners announced
   Cancelled   // Cancelled before completion
 }
+
+// Note: Draft and Judging statuses were removed as they are not needed.
+// Status transitions are controlled by dates and jobs, not manual input:
+// - Challenges are created directly as Scheduled
+// - Jobs automatically transition Scheduled → Active when startsAt is reached
+// - Jobs automatically transition Active → Completed when endsAt is reached
+// - Moderators can use quick actions to end challenges early or void them
 
 model ChallengeEntry {
   id            Int       @id @default(autoincrement())
@@ -573,3 +578,73 @@ For challenges specifically, we could:
 - Let user-created challenges specify model preference (within budget)
 
 I'll add this as a Phase 1 task since it affects the foundation.
+
+---
+
+## Implementation Status
+
+> **Last Updated:** January 2026
+
+### Phase 1: Core Challenge System ✅
+
+The core challenge system has been implemented with the following components:
+
+#### Database Schema
+- `Challenge` table with timing, content, prizes, and lifecycle fields
+- `ChallengeWinner` table for recording winners
+- Challenge entries are stored as `CollectionItem` records in the challenge's collection
+
+#### Challenge Lifecycle
+Status transitions are **automatic and date-driven**, not manually controlled:
+
+```
+Scheduled → Active → Completed
+    ↓          ↓
+Cancelled  Cancelled
+```
+
+**Final ChallengeStatus enum:**
+- `Scheduled` - Challenge is funded and waiting for `startsAt`
+- `Active` - Currently accepting submissions (between `startsAt` and `endsAt`)
+- `Completed` - Challenge ended, winners announced
+- `Cancelled` - Challenge was voided before completion
+
+**Removed statuses:**
+- `Draft` - Not needed since challenges are created directly as Scheduled
+- `Judging` - Not needed since winner picking happens immediately at challenge end
+
+#### Moderator Quick Actions
+Instead of manual status changes, moderators have contextual quick actions:
+
+| Status | Available Actions |
+|--------|-------------------|
+| Scheduled | Cancel Challenge |
+| Active | End & Pick Winners, Void Challenge |
+| Completed | (none - terminal state) |
+| Cancelled | (none - terminal state) |
+
+**End & Pick Winners:**
+- Closes the collection
+- Runs LLM-based winner selection
+- Awards prizes to winners
+- Sends notifications
+- Sets status to `Completed`
+
+**Void Challenge:**
+- Closes the collection
+- Does NOT pick winners or award prizes
+- Sets status to `Cancelled`
+
+#### Key Files
+- Schema: `prisma/schema.full.prisma` (Challenge, ChallengeWinner models)
+- Service: `src/server/services/challenge.service.ts`
+- Router: `src/server/routers/challenge.router.ts`
+- Moderator UI: `src/pages/moderator/challenges.tsx`
+- Create/Edit Form: `src/components/Challenge/ChallengeUpsertForm.tsx`
+- Daily Job: `src/server/jobs/daily-challenge-processing.ts`
+
+### Phase 2-4: Future Work
+- [ ] User-created challenges
+- [ ] Prompt Lab for custom judging criteria
+- [ ] UserChallengeStats and leaderboards
+- [ ] Streak tracking and badges

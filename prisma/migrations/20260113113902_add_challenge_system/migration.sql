@@ -2,7 +2,7 @@
 CREATE TYPE "ChallengeSource" AS ENUM ('System', 'Mod', 'User');
 
 -- CreateEnum
-CREATE TYPE "ChallengeStatus" AS ENUM ('Draft', 'Scheduled', 'Active', 'Judging', 'Completed', 'Cancelled');
+CREATE TYPE "ChallengeStatus" AS ENUM ('Scheduled', 'Active', 'Completed', 'Cancelled');
 
 -- CreateTable
 CREATE TABLE "Challenge" (
@@ -31,7 +31,7 @@ CREATE TABLE "Challenge" (
     "operationSpent" INTEGER NOT NULL DEFAULT 0,
     "createdById" INTEGER NOT NULL,
     "source" "ChallengeSource" NOT NULL DEFAULT 'System',
-    "status" "ChallengeStatus" NOT NULL DEFAULT 'Draft',
+    "status" "ChallengeStatus" NOT NULL DEFAULT 'Scheduled',
     "metadata" JSONB,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,

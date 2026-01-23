@@ -826,10 +826,8 @@ export const ChallengeSource = {
 export type ChallengeSource = (typeof ChallengeSource)[keyof typeof ChallengeSource];
 
 export const ChallengeStatus = {
-  Draft: 'Draft',
   Scheduled: 'Scheduled',
   Active: 'Active',
-  Judging: 'Judging',
   Completed: 'Completed',
   Cancelled: 'Cancelled',
 } as const;

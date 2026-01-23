@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  closeChallengeCollection,
+  createChallengeWinner,
   getChallengeById,
   getChallengeWinners,
 } from '~/server/games/daily-challenge/challenge-helpers';
@@ -29,6 +32,19 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
+import {
+  getChallengeConfig,
+  getChallengeTypeConfig,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
+import { generateWinners } from '~/server/games/daily-challenge/generative-content';
+import { getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import { NotificationCategory } from '~/server/common/enums';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { createNotification } from '~/server/services/notification.service';
+import { withRetries } from '~/utils/errorHandling';
+import { createLogger } from '~/utils/logging';
+import { isDefined } from '~/utils/type-guards';
 
 // Service functions
 export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
@@ -222,11 +238,8 @@ export async function getChallengeDetail(
     if (challenge.visibleAt > now) {
       return null; // Not yet visible
     }
-    // Hide drafts and cancelled challenges from public
-    if (
-      challenge.status === ChallengeStatus.Draft ||
-      challenge.status === ChallengeStatus.Cancelled
-    ) {
+    // Hide cancelled challenges from public
+    if (challenge.status === ChallengeStatus.Cancelled) {
       return null;
     }
   }
@@ -609,4 +622,180 @@ export async function getUserEntryCount(challengeId: number, userId: number) {
   });
 
   return { count };
+}
+
+const log = createLogger('challenge-service', 'blue');
+
+/**
+ * End an active challenge early and pick winners.
+ * This closes the collection and runs the full winner-picking flow.
+ */
+export async function endChallengeAndPickWinners(challengeId: number) {
+  // Get the challenge
+  const challenge = await getChallengeById(challengeId);
+  if (!challenge) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+
+  // Validate status
+  if (challenge.status !== ChallengeStatus.Active) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `Cannot end challenge with status "${challenge.status}". Challenge must be Active.`,
+    });
+  }
+
+  // Get challenge config for judging
+  const config = await getChallengeConfig();
+  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+
+  log('Ending challenge and picking winners:', challengeId);
+
+  // Close the collection
+  await closeChallengeCollection(challenge);
+  log('Collection closed');
+
+  // Get judged entries
+  if (!challenge.collectionId) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Challenge has no collection for entries.',
+    });
+  }
+
+  const judgedEntries = await getJudgedEntries(challenge.collectionId, config);
+  if (!judgedEntries.length) {
+    // No judged entries, just mark as completed
+    await dbWrite.challenge.update({
+      where: { id: challengeId },
+      data: { status: ChallengeStatus.Completed },
+    });
+    log('No judged entries, challenge marked as completed without winners');
+    return { success: true, winnersCount: 0 };
+  }
+
+  // Run LLM winner picking
+  log('Sending entries for final judgment');
+  const { winners, process, outcome } = await generateWinners({
+    theme: challenge.theme || 'Creative Challenge',
+    entries: judgedEntries.map((entry) => ({
+      creator: entry.username,
+      creatorId: entry.userId,
+      summary: entry.summary,
+      score: entry.score,
+    })),
+    config: challengeTypeConfig,
+  });
+
+  // Map winners to entries
+  const winningEntries = winners
+    .map((winner, i) => {
+      const entry = judgedEntries.find(
+        (e) =>
+          e.username.toLowerCase() === winner.creator.toLowerCase() || e.userId === winner.creatorId
+      );
+      if (!entry) return null;
+      return {
+        ...entry,
+        position: i + 1,
+        prize: challenge.prizes[i]?.buzz ?? 0,
+        reason: winner.reason,
+      };
+    })
+    .filter(isDefined);
+
+  // Create ChallengeWinner records
+  for (const entry of winningEntries) {
+    await createChallengeWinner({
+      challengeId,
+      userId: entry.userId,
+      imageId: entry.imageId,
+      place: entry.position,
+      buzzAwarded: entry.prize,
+      pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
+      reason: entry.reason,
+    });
+  }
+  log('ChallengeWinner records created');
+
+  // Send prizes to winners
+  const dateStr = dayjs().format('YYYY-MM-DD-HHmm');
+  await withRetries(() =>
+    createBuzzTransactionMany(
+      winningEntries.map((entry, i) => ({
+        type: TransactionType.Reward,
+        toAccountId: entry.userId,
+        fromAccountId: 0, // central bank
+        amount: entry.prize,
+        description: `Challenge Winner Prize ${i + 1}: ${challenge.title}`,
+        externalTransactionId: `challenge-winner-prize-${challengeId}-${dateStr}-${i + 1}`,
+        toAccountType: 'yellow',
+      }))
+    )
+  );
+  log('Prizes sent');
+
+  // Notify winners
+  for (const entry of winningEntries) {
+    await createNotification({
+      type: 'challenge-winner',
+      category: NotificationCategory.System,
+      key: `challenge-winner:${challengeId}:${entry.position}`,
+      userId: entry.userId,
+      details: {
+        challengeId,
+        challengeName: challenge.title,
+        position: entry.position,
+        prize: entry.prize,
+      },
+    });
+  }
+  log('Winners notified');
+
+  // Update challenge status to Completed
+  await dbWrite.challenge.update({
+    where: { id: challengeId },
+    data: { status: ChallengeStatus.Completed },
+  });
+  log('Challenge status updated to Completed');
+
+  return { success: true, winnersCount: winningEntries.length };
+}
+
+/**
+ * Void/cancel a challenge without picking winners.
+ * Closes the collection and marks the challenge as Cancelled.
+ */
+export async function voidChallenge(challengeId: number) {
+  // Get the challenge
+  const challenge = await getChallengeById(challengeId);
+  if (!challenge) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+
+  // Validate status
+  if (
+    challenge.status !== ChallengeStatus.Active &&
+    challenge.status !== ChallengeStatus.Scheduled
+  ) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `Cannot void challenge with status "${challenge.status}". Challenge must be Active or Scheduled.`,
+    });
+  }
+
+  log('Voiding challenge:', challengeId);
+
+  // Close the collection if exists
+  await closeChallengeCollection(challenge);
+  log('Collection closed');
+
+  // Update challenge status to Cancelled
+  await dbWrite.challenge.update({
+    where: { id: challengeId },
+    data: { status: ChallengeStatus.Cancelled },
+  });
+  log('Challenge status updated to Cancelled');
+
+  return { success: true };
 }

@@ -1,25 +1,26 @@
 import {
+  challengeQuickActionSchema,
   deleteChallengeSchema,
   getChallengeWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
-  updateChallengeStatusSchema,
   upsertChallengeSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
   deleteChallenge,
+  endChallengeAndPickWinners,
   getChallengeDetail,
   getChallengeWinners,
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
   getUserEntryCount,
-  updateChallengeStatus,
   upsertChallenge,
+  voidChallenge,
 } from '~/server/services/challenge.service';
 
 // Router definition
@@ -57,10 +58,15 @@ export const challengeRouter = router({
     .input(upsertChallengeSchema)
     .mutation(({ input, ctx }) => upsertChallenge({ ...input, userId: ctx.user.id })),
 
-  // Moderator: Update challenge status
-  updateStatus: moderatorProcedure
-    .input(updateChallengeStatusSchema)
-    .mutation(({ input }) => updateChallengeStatus(input.id, input.status)),
+  // Moderator: End challenge early and pick winners
+  endAndPickWinners: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .mutation(({ input }) => endChallengeAndPickWinners(input.id)),
+
+  // Moderator: Void/cancel a challenge without picking winners
+  voidChallenge: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .mutation(({ input }) => voidChallenge(input.id)),
 
   // Moderator: Delete a challenge
   delete: moderatorProcedure

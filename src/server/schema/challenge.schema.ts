@@ -198,20 +198,19 @@ export const upsertChallengeSchema = z.object({
   startsAt: z.date(),
   endsAt: z.date(),
   visibleAt: z.date(),
-  status: z.enum(ChallengeStatus).default(ChallengeStatus.Draft),
+  status: z.enum(ChallengeStatus).default(ChallengeStatus.Scheduled),
   source: z.enum(ChallengeSource).default(ChallengeSource.System),
-});
-
-// Moderator: Update challenge status
-export type UpdateChallengeStatusInput = z.infer<typeof updateChallengeStatusSchema>;
-export const updateChallengeStatusSchema = z.object({
-  id: z.number(),
-  status: z.enum(ChallengeStatus),
 });
 
 // Moderator: Delete challenge
 export type DeleteChallengeInput = z.infer<typeof deleteChallengeSchema>;
 export const deleteChallengeSchema = z.object({
+  id: z.number(),
+});
+
+// Moderator: Quick actions
+export type ChallengeQuickActionInput = z.infer<typeof challengeQuickActionSchema>;
+export const challengeQuickActionSchema = z.object({
   id: z.number(),
 });
 

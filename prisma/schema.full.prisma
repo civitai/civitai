@@ -3722,10 +3722,8 @@ enum ChallengeSource {
 }
 
 enum ChallengeStatus {
-  Draft     // Being created, not visible
   Scheduled // Funded and waiting for startsAt
   Active    // Currently accepting submissions
-  Judging   // Submissions closed, picking winners
   Completed // Winners announced
   Cancelled // Cancelled before completion
 }
@@ -3777,7 +3775,7 @@ model Challenge {
   source      ChallengeSource @default(System)
 
   // Lifecycle
-  status ChallengeStatus @default(Draft)
+  status ChallengeStatus @default(Scheduled)
 
   // Metadata
   metadata  Json?

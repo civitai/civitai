@@ -144,7 +144,7 @@ export async function getUpcomingChallengesFromDb(limit = 30): Promise<Challenge
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id
     FROM "Challenge"
-    WHERE status IN (${ChallengeStatus.Draft}::"ChallengeStatus", ${ChallengeStatus.Scheduled}::"ChallengeStatus")
+    WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND "startsAt" > now()
     ORDER BY "startsAt" ASC
     LIMIT ${limit}
@@ -238,7 +238,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       operationBudget: input.operationBudget ?? 0,
       createdById: input.createdById,
       source: input.source ?? ChallengeSource.System,
-      status: input.status ?? ChallengeStatus.Draft,
+      status: input.status ?? ChallengeStatus.Scheduled,
       metadata: input.metadata as Prisma.InputJsonValue,
     },
     select: { id: true },
