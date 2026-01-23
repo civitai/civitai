@@ -17,6 +17,7 @@ import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 import { completeClubMembershipCharge } from '~/server/services/clubMembership.service';
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -56,9 +57,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const buf = await buffer(req);
+    const rawPayload = buf.toString('utf8');
     const sig = req.headers['stripe-signature'];
     const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
     let event: Stripe.Event;
+
+    // Track to ClickHouse (fire and forget, never throws)
+    trackWebhookEvent('stripe', rawPayload).catch(() => {});
 
     try {
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
