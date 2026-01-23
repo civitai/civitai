@@ -210,7 +210,7 @@ async function isLocked(name: string, noCheck?: boolean) {
 
 const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
 const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
-const lockIntervals: Record<string, NodeJS.Timer> = {};
+const lockIntervals: Record<string, ReturnType<typeof setInterval>> = {};
 async function lock(name: string, lockExpiration: number, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
   logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();

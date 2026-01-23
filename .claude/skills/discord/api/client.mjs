@@ -10,6 +10,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ENV_PATH = resolve(__dirname, '..', '.env');
 export const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
+// Placeholder that proxy replaces with configured guild ID
+export const PROXY_GUILD_PLACEHOLDER = '{{guildId}}';
+
 // Get the API base URL - uses proxy if configured
 export function getApiBase() {
   const proxyUrl = process.env.DISCORD_PROXY_URL;
@@ -249,9 +252,15 @@ export async function findChannel(guildId, nameOrId) {
 
 // Get or cache default guild ID
 export async function getDefaultGuildId() {
-  // Check if already cached
+  // Check if explicitly configured (takes precedence)
   if (process.env.DISCORD_GUILD_ID) {
     return process.env.DISCORD_GUILD_ID;
+  }
+
+  // When using proxy without explicit guild ID, use placeholder
+  // Proxy will replace with its configured guild
+  if (isUsingProxy()) {
+    return PROXY_GUILD_PLACEHOLDER;
   }
 
   // Check if guild name is configured

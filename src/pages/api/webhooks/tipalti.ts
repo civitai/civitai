@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import type { Tipalti } from '~/server/http/tipalti/tipalti.schema';
@@ -46,6 +47,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
     let event: TipaltiWebhookEventData;
     const buf = await buffer(req);
+    const rawPayload = buf.toString('utf8');
+
+    // Track to ClickHouse (fire and forget, never throws)
+    trackWebhookEvent('tipalti', rawPayload).catch(() => {});
 
     try {
       if (!sig || !webhookSecret) {
@@ -56,9 +61,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      const buffAsString = buf.toString('utf8');
       const client = await tipaltiCaller();
-      const { isValid, ...data } = client.validateWebhookEvent(sig as string, buffAsString);
+      const { isValid, ...data } = client.validateWebhookEvent(sig as string, rawPayload);
       const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
         sig as string,
         req.body as string
@@ -72,7 +76,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      event = JSON.parse(buffAsString) as TipaltiWebhookEventData;
+      event = JSON.parse(rawPayload) as TipaltiWebhookEventData;
 
       switch (event.type) {
         case 'payeeDetailsChanged':
