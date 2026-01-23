@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type client from 'prom-client';
-import { commandOptions } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -43,7 +42,6 @@ const checkFns: Record<string, CancellableCheckFn> = {
         return tx.$queryRawUnsafe(`SELECT 1`);
       })
       .catch((e) => {
-        if (signal.aborted) return false;
         logError({ error: e, name: 'dbWrite', details: null });
         return false;
       }));
@@ -57,7 +55,6 @@ const checkFns: Record<string, CancellableCheckFn> = {
         return tx.$queryRawUnsafe(`SELECT 1`);
       })
       .catch((e) => {
-        if (signal.aborted) return false;
         logError({ error: e, name: 'dbRead', details: null });
         return false;
       }));
@@ -72,10 +69,8 @@ const checkFns: Record<string, CancellableCheckFn> = {
       const result = await pgDbWrite.query(
         `SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`
       );
-      if (signal.aborted) return false;
       return result.rowCount !== null && result.rowCount > 0;
     } catch (e) {
-      if (signal.aborted) return false;
       logError({ error: e as Error, name: 'pgWrite', details: null });
       return false;
     }
@@ -87,10 +82,8 @@ const checkFns: Record<string, CancellableCheckFn> = {
       const result = await pgDbRead.query(
         `SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`
       );
-      if (signal.aborted) return false;
       return result.rowCount !== null && result.rowCount > 0;
     } catch (e) {
-      if (signal.aborted) return false;
       logError({ error: e as Error, name: 'pgRead', details: null });
       return false;
     }
@@ -100,13 +93,12 @@ const checkFns: Record<string, CancellableCheckFn> = {
     if (signal.aborted) return false;
     if (metricsSearchClient === null) return true;
     return await metricsSearchClient.isHealthy().catch((e) => {
-      if (signal.aborted) return false;
       logError({ error: e, name: 'metricsSearch', details: null });
       return false;
     });
   },
 
-  // Redis checks - use AbortSignal with commandOptions
+  // Redis checks - use simple ping (redis v5 doesn't support AbortSignal via commandOptions)
   async redis(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
@@ -115,8 +107,7 @@ const checkFns: Record<string, CancellableCheckFn> = {
       if (baseClient.isReady === false) {
         return false;
       }
-      // Use commandOptions with signal for cancellation
-      const res = await (redis as any).ping(commandOptions({ signal }));
+      const res = await (redis as any).ping();
       return res === 'PONG';
     } catch (e) {
       if (signal.aborted || (e as Error).name === 'AbortError') return false;
@@ -128,8 +119,7 @@ const checkFns: Record<string, CancellableCheckFn> = {
   async sysRedis(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
-      // Use commandOptions with signal for cancellation
-      const res = await (sysRedis as any).ping(commandOptions({ signal }));
+      const res = await (sysRedis as any).ping();
       return res === 'PONG';
     } catch (e) {
       if (signal.aborted || (e as Error).name === 'AbortError') return false;
@@ -138,12 +128,12 @@ const checkFns: Record<string, CancellableCheckFn> = {
     }
   },
 
-  // ClickHouse - use abort_signal for HTTP-level cancellation
+  // ClickHouse - ping doesn't support abort_signal, cancellation handled at caller level
   async clickhouse(signal: AbortSignal) {
     if (signal.aborted) return false;
     if (!clickhouse) return true;
     try {
-      const { success } = await clickhouse.ping({ abort_signal: signal });
+      const { success } = await clickhouse.ping();
       return success;
     } catch (e) {
       if (signal.aborted || (e as Error).name === 'AbortError') return false;
