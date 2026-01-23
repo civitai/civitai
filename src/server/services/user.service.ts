@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
@@ -23,6 +24,7 @@ import {
   userMetrics,
 } from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
+import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
   cosmeticCache,
@@ -60,10 +62,12 @@ import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.s
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
-import { deleteImageById, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { deleteImageById } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
-import { Limiter } from '~/server/utils/concurrency-helpers';
 import { createNotification } from '~/server/services/notification.service';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
   cancelSubscriptionPlan,
@@ -1076,6 +1080,7 @@ export const updateLeaderboardRank = async ({
 /**
  * Bulk unpublish all models for a banned user using efficient SQL operations.
  * This replaces individual unpublishModelById calls with bulk operations.
+ * Also handles bulk bid deletion and refunds in minimal queries.
  */
 async function bulkUnpublishModelsForBannedUser({
   odRef,
@@ -1084,7 +1089,8 @@ async function bulkUnpublishModelsForBannedUser({
   odRef: number;
   odRefuserId: number;
 }) {
-  const unpublishedAt = new Date().toISOString();
+  const now = new Date();
+  const unpublishedAt = now.toISOString();
   const unpublishedMeta = JSON.stringify({
     unpublishedReason: 'other',
     customMessage: 'User banned',
@@ -1108,7 +1114,7 @@ async function bulkUnpublishModelsForBannedUser({
   });
 
   if (modelsToUnpublish.length === 0) {
-    return { modelsUnpublished: 0, versionsUnpublished: 0, imagesRemoved: 0 };
+    return { modelsUnpublished: 0, versionsUnpublished: 0, bidsRefunded: 0 };
   }
 
   const modelIds = modelsToUnpublish.map((m) => m.id);
@@ -1159,50 +1165,116 @@ async function bulkUnpublishModelsForBannedUser({
   // Bust user model count cache
   await userModelCountCache.bust(odRef);
 
-  // Get all affected images for search index removal
-  const images = await dbRead.image.findMany({
-    where: {
-      post: {
-        userId: odRef,
-        modelVersionId: { in: versionIds },
-      },
-    },
-    select: { id: true },
-  });
-  const imageIds = images.map((i) => i.id);
+  // === Bulk bid deletion and refund ===
+  let bidsRefunded = 0;
 
-  // Queue search index updates in bulk
-  await modelsSearchIndex.queueUpdate(
-    modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-
-  if (imageIds.length > 0) {
-    await queueImageSearchIndexUpdate({
-      ids: imageIds,
-      action: SearchIndexUpdateQueueAction.Delete,
+  if (versionIds.length > 0) {
+    // Get active auctions
+    const activeAuctions = await dbRead.auction.findMany({
+      where: { startAt: { lte: now }, endAt: { gt: now } },
+      select: { id: true },
     });
-  }
+    const auctionIds = activeAuctions.map((a) => a.id);
 
-  // Delete bids for models with concurrency limiting to avoid overwhelming the database
-  await Limiter({ limit: 3, batchSize: 10 }).process(modelIds, async (batchModelIds) => {
-    await Promise.all(
-      batchModelIds.map((modelId) =>
-        deleteBidsForModel({ modelId }).catch((error) => {
-          logToAxiom({
-            type: 'error',
-            name: 'ban-user-delete-bids',
-            message: error.message,
-            modelId,
-          });
-        })
-      )
-    );
-  });
+    if (auctionIds.length > 0) {
+      // Get all bids to refund (not already refunded)
+      const bidsToRefund = await dbRead.bid.findMany({
+        where: {
+          auctionId: { in: auctionIds },
+          entityId: { in: versionIds },
+          isRefunded: false,
+          deleted: false,
+        },
+        select: { id: true, userId: true, amount: true },
+      });
+
+      if (bidsToRefund.length > 0) {
+        // Bulk refund all bids - chunk to avoid payload size limits
+        const REFUND_BATCH_SIZE = 500;
+        const refundTransactions = bidsToRefund.map((bid) => ({
+          fromAccountId: 0, // Central bank
+          toAccountId: bid.userId,
+          amount: bid.amount,
+          type: TransactionType.Refund,
+          description: 'Bid refund - user banned',
+          externalTransactionId: `bid-refund-ban-${odRef}-${bid.id}`,
+        }));
+
+        // Process refunds in batches
+        for (let i = 0; i < refundTransactions.length; i += REFUND_BATCH_SIZE) {
+          const batch = refundTransactions.slice(i, i + REFUND_BATCH_SIZE);
+          try {
+            await createBuzzTransactionMany(batch);
+          } catch (error) {
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-bulk-refund',
+              message: error instanceof Error ? error.message : String(error),
+              userId: odRef,
+              bidCount: batch.length,
+              batchIndex: i / REFUND_BATCH_SIZE,
+            });
+          }
+        }
+
+        // Mark all bids as deleted and refunded
+        await dbWrite.bid.updateMany({
+          where: { id: { in: bidsToRefund.map((b) => b.id) } },
+          data: { deleted: true, isRefunded: true },
+        });
+
+        // Send ONE notification to all affected users
+        const affectedUserIds = uniq(bidsToRefund.map((b) => b.userId));
+        const bidDetails: DetailsCanceledBid = {
+          name: null, // Multiple models affected
+          reason: 'User banned',
+          recurring: false,
+        };
+        await createNotification({
+          userIds: affectedUserIds,
+          category: NotificationCategory.System,
+          type: 'canceled-bid-auction',
+          key: `canceled-bid-auction:ban:${odRef}:${formatDate(now, 'YYYY-MM-DD')}`,
+          details: bidDetails,
+        });
+
+        bidsRefunded = bidsToRefund.length;
+      }
+    }
+
+    // Handle recurring bids - get users first for notification
+    const recurringBids = await dbRead.bidRecurring.findMany({
+      where: { entityId: { in: versionIds } },
+      select: { id: true, userId: true },
+    });
+
+    if (recurringBids.length > 0) {
+      // Delete all recurring bids
+      await dbWrite.bidRecurring.deleteMany({
+        where: { id: { in: recurringBids.map((r) => r.id) } },
+      });
+
+      // Send ONE notification for recurring bid cancellations
+      const recurringUserIds = uniq(recurringBids.map((r) => r.userId));
+      const recurringDetails: DetailsCanceledBid = {
+        name: null,
+        reason: 'User banned',
+        recurring: true,
+      };
+      await createNotification({
+        userIds: recurringUserIds,
+        category: NotificationCategory.System,
+        type: 'canceled-bid-auction',
+        key: `canceled-bid-auction:recurring:ban:${odRef}:${formatDate(now, 'YYYY-MM-DD')}`,
+        details: recurringDetails,
+      });
+    }
+  }
 
   return {
     modelsUnpublished: modelIds.length,
     versionsUnpublished: versionIds.length,
-    imagesRemoved: imageIds.length,
+    bidsRefunded,
   };
 }
 
@@ -1215,7 +1287,8 @@ export const toggleBan = async ({
   isModerator,
   force,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
-  const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
+  // Get user with username for search index deletion
+  const user = await getUserById({ id, select: { bannedAt: true, meta: true, username: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
@@ -1244,9 +1317,11 @@ export const toggleBan = async ({
   await invalidateSession(id);
 
   if (!bannedAt) {
-    // Run all cleanup operations in parallel
+    // Run cleanup operations in parallel groups
+    // Group A: DB-heavy operations (run together)
+    // Group B: External API operations (run together)
     await Promise.all([
-      // Bulk unpublish all models efficiently
+      // Group A: Bulk unpublish models and handle bids
       bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
         logToAxiom({
           type: 'error',
@@ -1256,20 +1331,24 @@ export const toggleBan = async ({
         });
       }),
 
-      // Cancel their subscription
-      cancelSubscriptionPlan({ userId: id }).catch((error) =>
-        logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-      ),
+      // Group B: External operations (subscription + search indexes)
+      Promise.all([
+        // Cancel their subscription
+        cancelSubscriptionPlan({ userId: id }).catch((error) =>
+          logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+        ),
 
-      // Remove from search indexes
-      removeUserContentFromSearchIndex(id).catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-remove-content-search-index',
-          message: error.message,
-          error,
-        })
-      ),
+        // Remove from search indexes (filter-based deletion, no DB queries)
+        removeUserContentFromSearchIndex({ userId: id, username: user.username ?? '' }).catch(
+          (error) =>
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-remove-content-search-index',
+              message: error.message,
+              error,
+            })
+        ),
+      ]),
     ]);
   }
 
