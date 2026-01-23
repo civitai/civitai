@@ -568,8 +568,8 @@ importers:
         specifier: ^4.0.7
         version: 4.3.2
       '@types/node':
-        specifier: 18.11.0
-        version: 18.11.0
+        specifier: 20.19.9
+        version: 20.19.9
       '@types/node-os-utils':
         specifier: ^1.3.1
         version: 1.3.4
@@ -659,7 +659,7 @@ importers:
         version: 4.2.5(eslint-config-prettier@8.10.2(eslint@8.22.0))(eslint@8.22.0)(prettier@2.8.8)
       eslint-plugin-tailwindcss:
         specifier: ^3.15.1
-        version: 3.18.2(tailwindcss@3.4.17(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2)))
+        version: 3.18.2(tailwindcss@3.4.17(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2)))
       husky:
         specifier: ^9.1.1
         version: 9.1.7
@@ -689,10 +689,10 @@ importers:
         version: 1.7.0
       tailwindcss:
         specifier: ^3.4.3
-        version: 3.4.17(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2))
+        version: 3.4.17(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2))
       ts-node:
         specifier: ^10.9.1
-        version: 10.9.2(@types/node@18.11.0)(typescript@5.9.2)
+        version: 10.9.2(@types/node@20.19.9)(typescript@5.9.2)
       tsx:
         specifier: ^4.19.2
         version: 4.20.3
@@ -2990,11 +2990,8 @@ packages:
   '@types/node@16.18.126':
     resolution: {integrity: sha512-OTcgaiwfGFBKacvfwuHzzn1KLxH/er8mluiy8/uM3sGXHaRe73RrSIj01jow9t4kJEW633Ov+cOexXeiApTyAw==}
 
-  '@types/node@18.11.0':
-    resolution: {integrity: sha512-IOXCvVRToe7e0ny7HpT/X9Rb2RYtElG1a+VshjwT00HxrM2dWBApHQoqsI6WiY7Q03vdf2bCrIGzVrkF/5t10w==}
-
-  '@types/node@18.19.121':
-    resolution: {integrity: sha512-bHOrbyztmyYIi4f1R0s17QsPs1uyyYnGcXeZoGEd227oZjry0q6XQBQxd82X1I57zEfwO8h9Xo+Kl5gX1d9MwQ==}
+  '@types/node@18.19.130':
+    resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
 
   '@types/node@20.19.9':
     resolution: {integrity: sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw==}
@@ -11022,7 +11019,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/cookie@0.4.1': {}
 
@@ -11071,11 +11068,11 @@ snapshots:
   '@types/jsonwebtoken@9.0.10':
     dependencies:
       '@types/ms': 2.1.0
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/linkify-it@5.0.0': {}
 
@@ -11106,7 +11103,7 @@ snapshots:
 
   '@types/node-fetch@2.6.13':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
       form-data: 4.0.4
 
   '@types/node-os-utils@1.3.4': {}
@@ -11115,9 +11112,7 @@ snapshots:
 
   '@types/node@16.18.126': {}
 
-  '@types/node@18.11.0': {}
-
-  '@types/node@18.19.121':
+  '@types/node@18.19.130':
     dependencies:
       undici-types: 5.26.5
 
@@ -11127,7 +11122,7 @@ snapshots:
 
   '@types/nodemailer@6.4.17':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/normalize-package-data@2.4.4': {}
 
@@ -11139,7 +11134,7 @@ snapshots:
 
   '@types/pg@8.15.5':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
       pg-protocol: 1.10.3
       pg-types: 2.2.0
 
@@ -11167,22 +11162,22 @@ snapshots:
 
   '@types/readdir-glob@1.1.5':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/request-ip@0.0.37':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/request@2.48.13':
     dependencies:
       '@types/caseless': 0.12.5
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
       '@types/tough-cookie': 4.0.5
       form-data: 2.5.5
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/sanitize-html@2.16.0':
     dependencies:
@@ -11194,11 +11189,11 @@ snapshots:
 
   '@types/sharp@0.31.1':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/stream-to-blob@2.0.0':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/tough-cookie@4.0.5': {}
 
@@ -11220,15 +11215,15 @@ snapshots:
 
   '@types/ws@7.4.7':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/xml2js@0.4.14':
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
 
   '@types/youtube-player@5.5.11': {}
 
@@ -12887,11 +12882,11 @@ snapshots:
       string.prototype.matchall: 4.0.12
       string.prototype.repeat: 1.0.0
 
-  eslint-plugin-tailwindcss@3.18.2(tailwindcss@3.4.17(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2))):
+  eslint-plugin-tailwindcss@3.18.2(tailwindcss@3.4.17(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2))):
     dependencies:
       fast-glob: 3.3.3
       postcss: 8.5.6
-      tailwindcss: 3.4.17(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2))
+      tailwindcss: 3.4.17(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2))
 
   eslint-scope@5.1.1:
     dependencies:
@@ -13967,7 +13962,7 @@ snapshots:
 
   jest-worker@27.5.1:
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
       merge-stream: 2.0.0
       supports-color: 8.1.1
 
@@ -14952,7 +14947,7 @@ snapshots:
 
   openai@4.104.0(ws@8.19.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(zod@4.0.17):
     dependencies:
-      '@types/node': 18.19.121
+      '@types/node': 18.19.130
       '@types/node-fetch': 2.6.13
       abort-controller: 3.0.0
       agentkeepalive: 4.6.0
@@ -15235,13 +15230,13 @@ snapshots:
       camelcase-css: 2.0.1
       postcss: 8.5.6
 
-  postcss-load-config@4.0.2(postcss@8.5.6)(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2)):
+  postcss-load-config@4.0.2(postcss@8.5.6)(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2)):
     dependencies:
       lilconfig: 3.1.3
       yaml: 2.8.1
     optionalDependencies:
       postcss: 8.5.6
-      ts-node: 10.9.2(@types/node@18.11.0)(typescript@5.9.2)
+      ts-node: 10.9.2(@types/node@20.19.9)(typescript@5.9.2)
 
   postcss-merge-longhand@7.0.5(postcss@8.5.6):
     dependencies:
@@ -15638,7 +15633,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
       long: 5.3.2
 
   proxy-from-env@1.1.0: {}
@@ -16579,7 +16574,7 @@ snapshots:
 
   stripe@11.18.0:
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 18.19.130
       qs: 6.14.0
 
   strnum@2.1.1: {}
@@ -16657,7 +16652,7 @@ snapshots:
 
   tabbable@6.2.0: {}
 
-  tailwindcss@3.4.17(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2)):
+  tailwindcss@3.4.17(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2)):
     dependencies:
       '@alloc/quick-lru': 5.2.0
       arg: 5.0.2
@@ -16676,7 +16671,7 @@ snapshots:
       postcss: 8.5.6
       postcss-import: 15.1.0(postcss@8.5.6)
       postcss-js: 4.0.1(postcss@8.5.6)
-      postcss-load-config: 4.0.2(postcss@8.5.6)(ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2))
+      postcss-load-config: 4.0.2(postcss@8.5.6)(ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2))
       postcss-nested: 6.2.0(postcss@8.5.6)
       postcss-selector-parser: 6.1.2
       resolve: 1.22.10
@@ -16830,14 +16825,14 @@ snapshots:
 
   ts-mixer@6.0.4: {}
 
-  ts-node@10.9.2(@types/node@18.11.0)(typescript@5.9.2):
+  ts-node@10.9.2(@types/node@20.19.9)(typescript@5.9.2):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       '@tsconfig/node10': 1.0.11
       '@tsconfig/node12': 1.0.11
       '@tsconfig/node14': 1.0.3
       '@tsconfig/node16': 1.0.4
-      '@types/node': 18.11.0
+      '@types/node': 20.19.9
       acorn: 8.15.0
       acorn-walk: 8.3.4
       arg: 4.1.3

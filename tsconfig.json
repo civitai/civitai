@@ -21,7 +21,7 @@
     "paths": {
       "~/*": ["./*"]
     },
-    "typeRoots": ["./types"],
+    "types": ["node"],
     "noErrorTruncation": true,
     "plugins": [
       {
@@ -44,8 +44,7 @@
     "node_modules",
     "./node_modules",
     "./node_modules/*",
-    "./node_modules/@types/node/index.d.ts",
     "src/pages/api/dev-local/*.ts",
-    "scripts/local-dev/*.ts",
+    "scripts/local-dev/*.ts"
   ]
 }
