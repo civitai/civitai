@@ -21,7 +21,6 @@
     "paths": {
       "~/*": ["./*"]
     },
-    "types": ["node"],
     "noErrorTruncation": true,
     "plugins": [
       {
