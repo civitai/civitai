@@ -21,8 +21,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       '@civitai/client':
-        specifier: ^0.2.0-beta.24
-        version: 0.2.0-beta.24
+        specifier: ^0.2.0-beta.28
+        version: 0.2.0-beta.28
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -1037,8 +1037,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@civitai/client@0.2.0-beta.24':
-    resolution: {integrity: sha512-pTqCTvhWCSni9poL3NL8YuirbiXVGNglDB9DIhgBJEQkgw1tB0RTs28hrJBCNhekPKZkXv9BcoUEP2SbidUhLA==}
+  '@civitai/client@0.2.0-beta.28':
+    resolution: {integrity: sha512-Qx5MWRJiGB974EDYq8/TFhKUIBSxHVoF5Im8PuxRS7QPOEpCCK7mzgnHE6FoK97hVno/DGEFXA289bg3embnDA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -9532,7 +9532,7 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@civitai/client@0.2.0-beta.24':
+  '@civitai/client@0.2.0-beta.28':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.1.2
@@ -10154,7 +10154,7 @@ snapshots:
   '@jridgewell/source-map@0.3.10':
     dependencies:
       '@jridgewell/gen-mapping': 0.3.12
-      '@jridgewell/trace-mapping': 0.3.31
+      '@jridgewell/trace-mapping': 0.3.29
 
   '@jridgewell/sourcemap-codec@1.5.4': {}
 
@@ -17625,7 +17625,7 @@ snapshots:
 
   terser-webpack-plugin@5.3.14(esbuild@0.25.8)(webpack@5.101.0(esbuild@0.25.8)):
     dependencies:
-      '@jridgewell/trace-mapping': 0.3.31
+      '@jridgewell/trace-mapping': 0.3.29
       jest-worker: 27.5.1
       schema-utils: 4.3.2
       serialize-javascript: 6.0.2
