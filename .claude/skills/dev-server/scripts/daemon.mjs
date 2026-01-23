@@ -102,6 +102,37 @@ function generateSessionId() {
   return randomBytes(4).toString('hex');
 }
 
+// Update URL-related env vars to use the correct port
+function updateEnvUrlsForPort(envVars, port) {
+  const defaultPort = 3000;
+  if (port === defaultPort) return envVars;
+
+  // List of env vars that contain localhost URLs that need port updates
+  const urlVars = [
+    'NEXTAUTH_URL',
+    'NEXTAUTH_URL_INTERNAL',
+    'NEXT_PUBLIC_BASE_URL',
+    'NEXT_PUBLIC_SERVER_DOMAIN_BLUE', // This one uses domain:port format
+  ];
+
+  for (const varName of urlVars) {
+    if (envVars[varName]) {
+      // Replace localhost:3000 with localhost:<port>
+      envVars[varName] = envVars[varName].replace(
+        /localhost:3000/g,
+        `localhost:${port}`
+      );
+    }
+  }
+
+  // Also ensure NEXT_PUBLIC_BASE_URL is set if NEXTAUTH_URL is set
+  if (!envVars.NEXT_PUBLIC_BASE_URL && envVars.NEXTAUTH_URL) {
+    envVars.NEXT_PUBLIC_BASE_URL = envVars.NEXTAUTH_URL;
+  }
+
+  return envVars;
+}
+
 // Load environment variables from .env file
 function loadEnvFile(envPath) {
   if (!existsSync(envPath)) return {};
@@ -222,7 +253,10 @@ class DevSession {
     this.branch = getGitBranch(this.worktree) || 'unknown';
 
     // Load environment variables
-    const envVars = loadEnvFile(this.envPath);
+    let envVars = loadEnvFile(this.envPath);
+
+    // Update URL-related env vars if using non-default port
+    envVars = updateEnvUrlsForPort(envVars, this.port);
 
     // Set PORT in environment
     envVars.PORT = String(this.port);
