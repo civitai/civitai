@@ -28,8 +28,9 @@ node .claude/skills/worktree/cli.mjs remove feature/my-feature
 When you create a worktree, the skill:
 
 1. **Creates the git worktree** at `../model-share-<branch-name>` (slashes in branch names are replaced with dashes)
-2. **Copies `.env`** from the main worktree to the new worktree
-3. **Runs `pnpm install`** to set up dependencies (leverages pnpm's content-addressable store for fast installs)
+2. **Initializes git submodules** (`git submodule update --init --recursive`) - required for `event-engine-common`
+3. **Copies `.env`** from the main worktree to the new worktree
+4. **Runs `pnpm install`** to set up dependencies (leverages pnpm's content-addressable store for fast installs)
 
 ## CLI Commands
 
