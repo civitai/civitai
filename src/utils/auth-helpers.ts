@@ -1,22 +1,39 @@
 import { signIn } from 'next-auth/react';
-import { env } from '~/env/client';
 
 /**
- * Handle sign-in through auth proxy if configured (for PR previews).
+ * Detect if we're running on a PR preview environment.
+ * PR previews use the pattern pr-{number}.civitaic.com
+ */
+function isPrPreview(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /^pr-\d+\.civitaic\.com$/.test(window.location.hostname);
+}
+
+/**
+ * Get the auth proxy URL for PR previews.
+ * Returns null if not a PR preview or if running server-side.
+ */
+function getAuthProxyUrl(): string | null {
+  if (!isPrPreview()) return null;
+  return 'https://auth.civitaic.com';
+}
+
+/**
+ * Handle sign-in through auth proxy for PR previews.
  * This redirects OAuth flows through a shared auth endpoint that has registered OAuth callbacks.
  *
- * When NEXT_PUBLIC_AUTH_PROXY_URL is set:
- * - Redirects to auth proxy for OAuth flow
- * - After OAuth completes, user is redirected back to the original site
+ * On PR previews (pr-*.civitaic.com):
+ * - Redirects to auth.civitaic.com for OAuth flow
+ * - After OAuth completes, user is redirected back to the PR preview
  * - Session cookie works across subdomains due to NEXTAUTH_COOKIE_DOMAIN setting
  *
- * When not set:
+ * On other environments:
  * - Uses NextAuth's built-in signIn function
  */
 export function handleSignIn(providerId: string, callbackUrl: string) {
-  const authProxyUrl = env.NEXT_PUBLIC_AUTH_PROXY_URL;
+  const authProxyUrl = getAuthProxyUrl();
 
-  if (authProxyUrl && typeof window !== 'undefined') {
+  if (authProxyUrl) {
     // For PR previews: redirect to auth proxy with full return URL
     const fullCallbackUrl = callbackUrl.startsWith('http')
       ? callbackUrl
