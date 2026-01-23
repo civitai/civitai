@@ -22,27 +22,40 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// Load .env from project root
+// Load .env files (skill-specific first, then project root as fallback)
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const skillDir = __dirname;
 const projectRoot = resolve(__dirname, '../../..');
 
 function loadEnv() {
-  try {
-    const envPath = resolve(projectRoot, '.env');
-    const envContent = readFileSync(envPath, 'utf-8');
-    for (const line of envContent.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex === -1) continue;
-      const key = trimmed.slice(0, eqIndex);
-      const value = trimmed.slice(eqIndex + 1);
-      if (!process.env[key]) {
-        process.env[key] = value;
+  const envFiles = [
+    resolve(skillDir, '.env'),      // Skill-specific (priority)
+    resolve(projectRoot, '.env'),   // Project root (fallback)
+  ];
+
+  let loaded = false;
+  for (const envPath of envFiles) {
+    try {
+      const envContent = readFileSync(envPath, 'utf-8');
+      for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIndex = trimmed.indexOf('=');
+        if (eqIndex === -1) continue;
+        const key = trimmed.slice(0, eqIndex);
+        const value = trimmed.slice(eqIndex + 1);
+        if (!process.env[key]) {
+          process.env[key] = value;
+        }
       }
+      loaded = true;
+    } catch (e) {
+      // File not found, continue to next
     }
-  } catch (e) {
-    console.error('Warning: Could not load .env file');
+  }
+
+  if (!loaded) {
+    console.error('Warning: Could not load any .env file');
   }
 }
 

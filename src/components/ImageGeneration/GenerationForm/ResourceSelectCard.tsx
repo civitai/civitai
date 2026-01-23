@@ -181,13 +181,13 @@ function CheckpointInfo({
               {resource.name}
             </Text>
           )}
-          {selectSource === 'generation' && features.modelVersionPopularity && (
+          {/* {selectSource === 'generation' && features.modelVersionPopularity && (
             <ModelVersionPopularity
               versionId={resource.id}
               isCheckpoint={resource.model.type === ModelType.Checkpoint}
               listenForUpdates={true}
             />
-          )}
+          )} */}
         </Stack>
       </Group>
       {onRemove ? (

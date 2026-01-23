@@ -1,6 +1,6 @@
 import type { IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
 import { MeiliSearchTimeOutError } from 'meilisearch';
-import { searchClient } from '~/server/meilisearch/client';
+import { searchClient, metricsSearchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
@@ -11,6 +11,7 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
+  METRICS_IMAGES_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -174,102 +175,109 @@ const waitForTasksWithRetries = async (
 };
 
 /**
- * Remove all user content from search indexes
- * This function iterates through all available search indexes and removes documents
- * associated with the specified userId, if the index has userId as a filterable attribute.
+ * Remove all user content from search indexes using filter-based deletion.
+ * This function processes all search indexes (main and metrics) and removes documents
+ * associated with the specified user using Meilisearch's deleteDocuments with filter.
+ * No document count limit - filter-based deletion handles any number of documents.
  */
-export const removeUserContentFromSearchIndex = async (userId: number) => {
-  if (!searchClient) {
-    return;
-  }
+export const removeUserContentFromSearchIndex = async ({
+  userId,
+  username,
+}: {
+  userId: number;
+  username: string;
+}) => {
+  // Escape username for Meilisearch filter (escape quotes and backslashes)
+  const escapedUsername = username.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-  // Get all available indexes from constants
-  const allIndexes = [
-    IMAGES_SEARCH_INDEX,
-    MODELS_SEARCH_INDEX,
-    ARTICLES_SEARCH_INDEX,
-    COLLECTIONS_SEARCH_INDEX,
-    BOUNTIES_SEARCH_INDEX,
-    USERS_SEARCH_INDEX,
+  // Define index configurations with their filter strategies
+  // Some indexes have user.id filterable, others only have user.username
+  const mainIndexConfigs = [
+    { name: MODELS_SEARCH_INDEX, filter: `user.id = ${userId}` },
+    { name: IMAGES_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
+    { name: ARTICLES_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
+    { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
+    { name: BOUNTIES_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
+    { name: USERS_SEARCH_INDEX, filter: `id = ${userId}` },
   ];
 
-  const results = {
-    processed: [] as string[],
-    skipped: [] as string[],
-    deleted: 0,
-  };
+  const metricsIndexConfigs = [
+    { name: METRICS_IMAGES_SEARCH_INDEX, filter: `userId = ${userId}` },
+  ];
 
-  for (const indexName of allIndexes) {
+  const processIndex = async (
+    indexName: string,
+    filter: string,
+    client: MeiliSearch | null
+  ): Promise<{ indexName: string; status: 'processed' | 'skipped' }> => {
+    if (!client) {
+      return { indexName, status: 'skipped' };
+    }
+
     try {
-      const index = await getOrCreateIndex(indexName, undefined, searchClient);
-
+      const index = await getOrCreateIndex(indexName, undefined, client);
       if (!index) {
-        results.skipped.push(indexName);
-        continue;
+        return { indexName, status: 'skipped' };
       }
 
-      // Get filterable attributes for this index
-      const settings = await index.getSettings();
-      const filterableAttributes = settings.filterableAttributes || [];
+      console.log(`removeUserContentFromSearchIndex :: Deleting from ${indexName} with filter: ${filter}`);
 
-      // Determine which filter to use based on available attributes
-      let filter: string | undefined;
-      if (filterableAttributes.includes('user.id')) {
-        filter = `user.id = ${userId}`;
-      } else if (filterableAttributes.includes('userId')) {
-        filter = `userId = ${userId}`;
-      } else if (filterableAttributes.includes('id') && indexName === USERS_SEARCH_INDEX) {
-        // For users index, filter by id directly
-        filter = `id = ${userId}`;
-      } else {
-        // Skip indexes that don't have a userId-related filterable attribute
-        console.log(
-          `removeUserContentFromSearchIndex :: Skipping ${indexName} - no userId filterable attribute`
-        );
-        results.skipped.push(indexName);
-        continue;
-      }
+      // Use filter-based deletion - no limit on document count
+      await index.deleteDocuments({ filter });
 
-      // Search for documents matching the userId
-      const data = await index.search('', {
-        filter,
-        limit: 10000, // Increase limit to handle users with many documents
-      });
-
-      if (data.hits.length === 0) {
-        console.log(`removeUserContentFromSearchIndex :: No documents found in ${indexName}`);
-        results.processed.push(indexName);
-        continue;
-      }
-
-      const documentIds = data.hits.map((hit) => (hit as Record<string, unknown>).id) as number[];
-
-      console.log(
-        `removeUserContentFromSearchIndex :: Deleting ${documentIds.length} documents from ${indexName}`
-      );
-
-      // Log to Axiom for tracking user content deletions
+      // Log to Axiom for tracking
       await logToAxiom({
         name: 'remove-user-search-index-content',
         type: 'info',
         userId,
+        username,
         indexName,
-        documentCount: documentIds.length,
+        filter,
       }).catch();
 
-      await index.deleteDocuments(documentIds);
-      results.deleted += documentIds.length;
-      results.processed.push(indexName);
+      return { indexName, status: 'processed' };
     } catch (error) {
       console.error(`removeUserContentFromSearchIndex :: Error processing ${indexName}:`, error);
-      results.skipped.push(indexName);
+      await logToAxiom({
+        name: 'remove-user-search-index-content-error',
+        type: 'error',
+        userId,
+        username,
+        indexName,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch();
+      return { indexName, status: 'skipped' };
+    }
+  };
+
+  // Process all indexes in parallel using allSettled for resilience
+  // If one index fails, others should still complete
+  const results = await Promise.allSettled([
+    // Main search indexes
+    ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
+    // Metrics search indexes (separate Meilisearch instance)
+    ...metricsIndexConfigs.map(({ name, filter }) => processIndex(name, filter, metricsSearchClient)),
+  ]);
+
+  const processed: string[] = [];
+  const skipped: string[] = [];
+  const failed: string[] = [];
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      if (result.value.status === 'processed') {
+        processed.push(result.value.indexName);
+      } else {
+        skipped.push(result.value.indexName);
+      }
+    } else {
+      // Promise rejected - should be rare since processIndex catches errors
+      failed.push('unknown');
     }
   }
 
   console.log(
-    `removeUserContentFromSearchIndex :: Complete - Processed: ${results.processed.join(
-      ', '
-    )}, Skipped: ${results.skipped.join(', ')}, Total deleted: ${results.deleted}`
+    `removeUserContentFromSearchIndex :: Complete - Processed: ${processed.join(', ')}, Skipped: ${skipped.join(', ')}`
   );
 
   // Log summary to Axiom
@@ -277,12 +285,12 @@ export const removeUserContentFromSearchIndex = async (userId: number) => {
     name: 'remove-user-search-index-content-summary',
     type: 'info',
     userId,
-    processedIndexes: results.processed,
-    skippedIndexes: results.skipped,
-    totalDeleted: results.deleted,
+    username,
+    processedIndexes: processed,
+    skippedIndexes: skipped,
   }).catch();
 
-  return results;
+  return { processed, skipped };
 };
 
 export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };

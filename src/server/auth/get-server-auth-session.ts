@@ -5,7 +5,7 @@ import { env } from '~/env/server';
 import { createAuthOptions } from './next-auth-options';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
-import { SESSION_REFRESH_HEADER } from '~/shared/constants/auth.constants';
+import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -13,13 +13,18 @@ type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
 type AuthResponse = GetServerSidePropsContext['res'] | NextApiResponse;
 
 /**
- * Check if session has needsCookieRefresh flag and set response header if so.
+ * Check if session has needsCookieRefresh flag and set response header/cookie if so.
  * This signals to the client that it should refresh its session cookie.
  * The flag is deleted after use so it doesn't appear in the returned session.
  */
 function checkAndSetSessionHeaders(session: Session | null, res: AuthResponse): Session | null {
   if (session?.needsCookieRefresh) {
     res.setHeader(SESSION_REFRESH_HEADER, 'true');
+    // Also set a cookie that persists across page refreshes (5 min expiry)
+    res.setHeader(
+      'Set-Cookie',
+      `${SESSION_REFRESH_COOKIE}=true; Path=/; Max-Age=300; SameSite=Lax`
+    );
     delete session.needsCookieRefresh;
   }
   return session;

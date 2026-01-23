@@ -208,12 +208,12 @@ function SubmissionCountdown(props: BoxProps) {
   const endingSoon = timeRemaining < 30 * 1000;
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const timer = window.setInterval(() => {
       const newTimeRemaining = end - Date.now();
       setTimeRemaining(newTimeRemaining > 0 ? newTimeRemaining : 0);
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => window.clearInterval(timer);
   }, [end]);
 
   return (

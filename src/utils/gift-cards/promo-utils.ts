@@ -10,14 +10,19 @@ export function isPromoActive(promo: VendorPromo | undefined): boolean {
   return now >= startDate && now <= endDate;
 }
 
-function getPromoDismissalKey(vendorId: string, promoCode: string): string {
-  return `promo_dismissed_${vendorId}_${promoCode}`;
+function getPromoKey(promo: VendorPromo): string {
+  // Use code if available, otherwise use a hash of the message
+  return promo.code || promo.message.slice(0, 20).replace(/\s+/g, '_');
 }
 
-export function isPromoDismissed(vendorId: string, promoCode: string): boolean {
+function getPromoDismissalKey(vendorId: string, promo: VendorPromo): string {
+  return `promo_dismissed_${vendorId}_${getPromoKey(promo)}`;
+}
+
+export function isPromoDismissed(vendorId: string, promo: VendorPromo): boolean {
   if (typeof window === 'undefined') return false;
 
-  const key = getPromoDismissalKey(vendorId, promoCode);
+  const key = getPromoDismissalKey(vendorId, promo);
   const dismissedUntil = localStorage.getItem(key);
 
   if (!dismissedUntil) return false;
@@ -31,7 +36,7 @@ export function isPromoDismissed(vendorId: string, promoCode: string): boolean {
 export function dismissPromo(vendorId: string, promo: VendorPromo): void {
   if (typeof window === 'undefined') return;
 
-  const key = getPromoDismissalKey(vendorId, promo.code);
+  const key = getPromoDismissalKey(vendorId, promo);
   const endDate = new Date(promo.endDate);
 
   localStorage.setItem(key, endDate.toISOString());

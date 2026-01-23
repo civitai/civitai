@@ -596,7 +596,7 @@ export async function getResourceData(
   const featuredModels = await getFeaturedModels();
 
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
-    const isUnavailable = unavailableResources.includes(item.model.id);
+    const isUnavailable = unavailableResources.includes(item.id);
 
     const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
     const covered =
