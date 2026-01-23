@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
-import type { Prize, Score } from './daily-challenge.utils';
+import type { Prize } from './daily-challenge.utils';
 
 // =============================================================================
 // Challenge Table Helpers (New System)

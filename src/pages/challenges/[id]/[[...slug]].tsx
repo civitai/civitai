@@ -461,7 +461,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               user={
                 challenge.source === ChallengeSource.System
                   ? { id: constants.system.user.id, username: constants.system.user.username }
-                  : challenge.createdBy
+                  : {
+                      ...challenge.createdBy,
+                      // Convert null to undefined for CreatorCardSimple compatibility
+                      cosmetics: challenge.createdBy.cosmetics ?? undefined,
+                      profilePicture: challenge.createdBy.profilePicture ?? undefined,
+                    }
               }
               statDisplayOverwrite={[]}
               style={{ border: 'none', borderRadius: 0 }}

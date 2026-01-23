@@ -45,7 +45,9 @@ export type ChallengeListItem = {
   source: ChallengeSource;
   prizePool: number;
   entryCount: number;
-  modelName: string | null;
+  modelVersionIds: number[];
+  model: { id: number; name: string } | null;
+  collectionId: number | null;
   createdBy: {
     id: number;
     username: string | null;
@@ -89,6 +91,8 @@ export type ChallengeDetail = {
     id: number;
     username: string | null;
     image: string | null;
+    profilePicture?: ProfileImage | null;
+    cosmetics?: UserWithCosmetics['cosmetics'] | null;
     deletedAt?: Date | null;
   };
   winners: Array<{

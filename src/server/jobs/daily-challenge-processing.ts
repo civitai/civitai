@@ -19,7 +19,6 @@ import {
   getChallengeTypeConfig,
   getCurrentChallenge,
   getUpcomingChallenge,
-  setCurrentChallenge,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
@@ -1049,8 +1048,8 @@ export async function startNextChallenge(config: ChallengeConfig) {
     log('Resource owner notified');
   }
 
-  // Set as current challenge
-  await setCurrentChallenge(upcomingChallenge.articleId);
+  // Challenge is now tracked via Challenge table status (updated above)
+  // No need to set Redis cache as Challenge.status = 'Active' is the source of truth
 }
 
 // Types

@@ -128,7 +128,10 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
+      modelVersionIds: number[] | null;
+      modelId: number | null;
       modelName: string | null;
+      collectionId: number | null;
       createdById: number;
       creatorUsername: string | null;
       creatorImage: string | null;
@@ -146,7 +149,10 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.source,
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId") as "entryCount",
+      c."modelVersionIds",
+      (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
+      c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
       u.image as "creatorImage",
@@ -206,7 +212,9 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       source: item.source,
       prizePool: item.prizePool,
       entryCount: Number(item.entryCount),
-      modelName: item.modelName,
+      modelVersionIds: item.modelVersionIds ?? [],
+      model: item.modelId && item.modelName ? { id: item.modelId, name: item.modelName } : null,
+      collectionId: item.collectionId,
       createdBy: {
         id: item.createdById,
         username: item.creatorUsername,
@@ -255,7 +263,7 @@ export async function getChallengeDetail(
     entryCount = Number(countResult.count);
   }
 
-  // Get creator info
+  // Get creator info with profile picture and cosmetics
   const [creator] = await dbRead.$queryRaw<
     [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
   >`
@@ -263,6 +271,12 @@ export async function getChallengeDetail(
     FROM "User"
     WHERE id = ${challenge.createdById}
   `;
+
+  // Fetch profile picture and cosmetics for creator
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers([challenge.createdById]),
+    getCosmeticsForUsers([challenge.createdById]),
+  ]);
 
   // Get model info from first modelVersionId if present
   let model: { id: number; name: string } | null = null;
@@ -326,7 +340,11 @@ export async function getChallengeDetail(
     prizePool: challenge.prizePool,
     operationBudget: challenge.operationBudget,
     entryCount,
-    createdBy: creator,
+    createdBy: {
+      ...creator,
+      profilePicture: profilePictures[challenge.createdById] ?? null,
+      cosmetics: cosmetics[challenge.createdById] ?? null,
+    },
     winners,
   };
 }
