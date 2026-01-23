@@ -119,6 +119,9 @@ importers:
       '@okikio/sharedworker':
         specifier: ^1.1.0
         version: 1.1.0
+      '@openrouter/sdk':
+        specifier: ^0.3.12
+        version: 0.3.16
       '@paddle/paddle-js':
         specifier: ^1.2.1
         version: 1.4.2
@@ -2081,6 +2084,9 @@ packages:
 
   '@okikio/sharedworker@1.1.0':
     resolution: {integrity: sha512-Xj9TUWll9mhARsKu5DtlQCjRekfJfQ2E291ow6gmXIz+WuF6uJMH8ZmGhdRTx/ndOippHnm1j/vxXNjmR6JuXw==}
+
+  '@openrouter/sdk@0.3.16':
+    resolution: {integrity: sha512-WEBlrXdc5R8I7o2temkMV65tIRGkzg9ct4DMNZ/FHS/hiRscLRS5EpcuORnAgjzZAh9X2dSsBpgygM8T7KiNAw==}
 
   '@paddle/paddle-js@1.4.2':
     resolution: {integrity: sha512-pY9jYS+g3vk6ecc7GbCsVSuBEo1Yh+hxYE4i2XoY5/ZBAZLuCkQi/80hOmSBkFoaETohOpDmurILlQdgUHUcvw==}
@@ -10392,6 +10398,10 @@ snapshots:
       react-dom: 18.3.1(react@18.3.1)
 
   '@okikio/sharedworker@1.1.0': {}
+
+  '@openrouter/sdk@0.3.16':
+    dependencies:
+      zod: 4.0.17
 
   '@paddle/paddle-js@1.4.2': {}
 
