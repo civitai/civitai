@@ -17,7 +17,7 @@ import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertI
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
-import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
+import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
@@ -365,11 +365,7 @@ export function RichTextEditor({
 
             {addMedia && (
               <RTE.ControlsGroup>
-                {addVideo && addImages ? (
-                  <InsertImageControl accepts={accepts} />
-                ) : addImages ? (
-                  <InsertImageControlLegacy />
-                ) : null}
+                {addImages && <InsertImageControl accepts={accepts} />}
                 <InsertYoutubeVideoControl />
                 <InsertInstagramEmbedControl />
               </RTE.ControlsGroup>
