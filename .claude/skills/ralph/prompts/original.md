@@ -11,7 +11,7 @@ You are an autonomous coding agent working on a software project. Each iteration
 5. **If story has `mockupRef`**: Read the referenced mockup file from the PRD's `mockups` array
 6. **If story references design images**: Note them from `designReferences` in the PRD
 7. Implement that single user story (matching mockups if provided)
-8. Run quality checks: `npm run typecheck` (required), then tests if applicable
+8. Run quality checks: Use the `/typecheck` skill (required), then tests if applicable
 9. Update CLAUDE.md if you discover reusable patterns (see below)
 10. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
 11. Update the PRD to set `passes: true` for the completed story
@@ -81,7 +81,7 @@ Only update CLAUDE.md if you have **genuinely reusable knowledge** that would he
 
 ## Quality Requirements
 
-- ALL commits must pass typecheck: `npm run typecheck`
+- ALL commits must pass typecheck (use the `/typecheck` skill)
 - Do NOT commit broken code
 - Keep changes focused and minimal
 - Follow existing code patterns in the codebase
@@ -96,9 +96,9 @@ Only update CLAUDE.md if you have **genuinely reusable knowledge** that would he
 
 ## Project-Specific Commands
 
-Quality checks to run:
+Use the `/typecheck` skill for type checking (required before commit).
+
 ```bash
-npm run typecheck    # Required - must pass before commit
 npm run lint         # Run for style issues
 ```
 

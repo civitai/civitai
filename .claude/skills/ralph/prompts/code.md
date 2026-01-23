@@ -10,7 +10,7 @@ Before reading the PRD, ensure you're on the correct branch:
 
 ## Quality Requirements
 
-- ALL commits must pass typecheck: `npm run typecheck`
+- ALL commits must pass typecheck (use the `/typecheck` skill)
 - Do NOT commit broken code
 - Keep changes focused and minimal
 - Follow existing code patterns in the codebase
@@ -19,7 +19,7 @@ Before reading the PRD, ensure you're on the correct branch:
 ## After Completing Work (between base steps 6 and 7)
 
 After executing the acceptance criteria but before marking the story as passing:
-1. Run quality checks: `npm run typecheck` (required)
+1. Run quality checks: Use the `/typecheck` skill (required)
 2. Run linting if applicable: `npm run lint`
 3. Commit ALL changes with message: `feat: [Story ID] - [Story Title]`
 
@@ -57,8 +57,9 @@ Only update CLAUDE.md if you have **genuinely reusable knowledge** that would he
 
 ## Project Commands
 
+Use the `/typecheck` skill for type checking (required before commit).
+
 ```bash
-npm run typecheck    # Required - must pass before commit
 npm run lint         # Run for style issues
 ```
 
