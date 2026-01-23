@@ -55,6 +55,56 @@ node .claude/skills/worktree/cli.mjs create fix/login-issue
 node .claude/skills/worktree/cli.mjs remove fix/login-issue
 ```
 
+## Merging a Worktree to Main
+
+When the user asks to "merge the worktree" or "merge to main", follow this workflow:
+
+1. **Commit changes in the worktree:**
+   ```bash
+   cd /path/to/worktree
+   git add <files>
+   git commit -m "feat/fix: description"
+   ```
+
+2. **Update and merge to main:**
+   ```bash
+   cd /path/to/main-worktree
+   git fetch origin && git checkout main && git pull origin main
+   git merge <branch-name> --no-edit
+   git push origin main
+   ```
+
+3. **Clean up the worktree and branch:**
+   ```bash
+   # Remove the worktree directory (use --force if needed)
+   rm -rf /path/to/worktree
+
+   # Delete the local branch
+   git branch -d <branch-name>
+
+   # Optionally delete remote branch
+   git push origin --delete <branch-name>
+   ```
+
+### Example
+
+```bash
+# 1. Commit in worktree
+cd ../model-share-fix-my-bug
+git add src/file.ts
+git commit -m "fix: resolve the bug"
+
+# 2. Merge to main
+cd ../model-share
+git fetch origin && git checkout main && git pull origin main
+git merge fix/my-bug --no-edit
+git push origin main
+
+# 3. Clean up
+rm -rf ../model-share-fix-my-bug
+git branch -d fix/my-bug
+```
+
 ## Notes
 
 - Branch names with slashes are converted to dashes in the directory name
