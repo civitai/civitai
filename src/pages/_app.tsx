@@ -222,7 +222,7 @@ function MyApp(props: CustomAppProps) {
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 
-      {isDev && <ReactQueryDevtools />}
+      {isDev && <ReactQueryDevtools position="bottom-right" />}
     </AppProvider>
   );
 }

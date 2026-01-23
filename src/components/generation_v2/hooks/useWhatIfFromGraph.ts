@@ -43,10 +43,10 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // Debounce the values to avoid excessive API calls and validation runs
   const [debouncedValues] = useDebouncedValue(values, 150);
 
-  // Check if the graph data is valid using validate (doesn't notify watchers of errors)
+  // Check if the graph data is valid using validate (doesn't save error state)
   // Only run validation on debounced values to avoid running on every keystroke
   const validationResult = useMemo(
-    () => (debouncedValues ? graph.validate({ notifyWatchers: false }) : null),
+    () => (debouncedValues ? graph.validate({ saveState: false }) : null),
     [debouncedValues, graph]
   );
   const isValid = validationResult?.success ?? false;

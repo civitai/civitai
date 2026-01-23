@@ -267,14 +267,18 @@ async function validateAndEnrichResources(
   const unavailable = resources.filter((r) => !r.canGenerate);
   if (unavailable.length > 0) {
     throw throwBadRequestError(
-      `Some of your resources are not available for generation: ${unavailable.map((r) => r.name).join(', ')}`
+      `Some of your resources are not available for generation: ${unavailable
+        .map((r) => r.name)
+        .join(', ')}`
     );
   }
 
   // Build enriched resources with AIR strings
   const enrichedResources: EnrichedResource[] = resources.map((r) => ({
     ...r,
-    air: `urn:air:${getEcosystemName(r.baseModel)}:${r.model.type.toLowerCase()}:civitai:${r.model.id}@${r.id}`,
+    air: `urn:air:${getEcosystemName(r.baseModel)}:${r.model.type.toLowerCase()}:civitai:${
+      r.model.id
+    }@${r.id}`,
   }));
 
   return {
@@ -519,7 +523,7 @@ const SD_COMFY_WORKFLOWS = [
 
 /** Map generation-graph workflow keys to comfy workflow keys */
 const COMFY_WORKFLOW_KEY_MAP: Record<string, string> = {
-  'img2img': 'img2img',
+  img2img: 'img2img',
   'txt2img:face-fix': 'txt2img-facefix',
   'txt2img:hires-fix': 'txt2img-hires',
   'img2img:face-fix': 'img2img-facefix',
@@ -558,8 +562,18 @@ async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
   if (isDraft) {
     finalResources.push(
       isSD1
-        ? { id: SD1_DRAFT_RESOURCE_ID, strength: 1, baseModel: 'SD 1.5', model: { id: 424706, type: 'LORA' } }
-        : { id: SDXL_DRAFT_RESOURCE_ID, strength: 1, baseModel: 'SDXL 1.0', model: { id: 391999, type: 'LORA' } }
+        ? {
+            id: SD1_DRAFT_RESOURCE_ID,
+            strength: 1,
+            baseModel: 'SD 1.5',
+            model: { id: 424706, type: 'LORA' },
+          }
+        : {
+            id: SDXL_DRAFT_RESOURCE_ID,
+            strength: 1,
+            baseModel: 'SDXL 1.0',
+            model: { id: 391999, type: 'LORA' },
+          }
     );
     steps = isSD1 ? 6 : 8;
     cfgScale = 1;
@@ -711,7 +725,7 @@ async function createEcosystemWorkflowInput(data: EcosystemGraphOutput): Promise
       throw new Error(`${data.baseModel} not yet implemented`);
 
     default:
-      throw new Error(`Unknown ecosystem: ${(data as {baseModel: string}).baseModel}`);
+      throw new Error(`Unknown ecosystem: ${(data as { baseModel: string }).baseModel}`);
   }
 }
 
@@ -759,7 +773,7 @@ async function createStepInput(data: GenerationGraphOutput): Promise<StepInput> 
  */
 export async function createWorkflowStepFromGraph(
   data: GenerationGraphOutput,
-  isWhatIf: boolean = false,
+  isWhatIf = false,
   user?: { id?: number; isModerator?: boolean }
 ): Promise<WorkflowStepTemplate> {
   // Validate and enrich resources
@@ -791,7 +805,7 @@ export async function createWorkflowStepFromGraph(
       ? undefined
       : {
           isPrivateGeneration,
-          ...data
+          ...data,
         },
   } as WorkflowStepTemplate;
 }
@@ -833,7 +847,7 @@ export async function generateFromGraph({
 
   // Determine workflow tags
   const baseModel = 'baseModel' in data ? data.baseModel : undefined;
-  const [process] = data.workflow.split(':')[0]
+  const [process] = data.workflow.split(':')[0];
 
   const tags = [
     WORKFLOW_TAGS.GENERATION,
@@ -845,12 +859,12 @@ export async function generateFromGraph({
   ].filter(isDefined);
 
   // Build tips object if provided
-  const tips = civitaiTip || creatorTip
-    ? { civitai: civitaiTip ?? 0, creators: creatorTip ?? 0 }
-    : undefined;
+  const tips =
+    civitaiTip || creatorTip ? { civitai: civitaiTip ?? 0, creators: creatorTip ?? 0 } : undefined;
 
   // Check if private generation (from step metadata)
-  const isPrivateGeneration = !!(step.metadata as { isPrivateGeneration?: boolean })?.isPrivateGeneration;
+  const isPrivateGeneration = !!(step.metadata as { isPrivateGeneration?: boolean })
+    ?.isPrivateGeneration;
 
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({

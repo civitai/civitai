@@ -456,9 +456,12 @@ export class DataGraph<
   /** Storage adapter for persistence */
   private storageAdapter?: StorageAdapter<Ctx>;
 
-  /** Snapshot cache for getSnapshot() */
+  /** Snapshot cache for getSnapshot(key) */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private snapshotCache = new Map<string, NodeSnapshot<unknown, any>>();
+
+  /** Cached full context snapshot for getSnapshot() - invalidated on changes */
+  private _ctxSnapshot: Ctx | null = null;
 
   /** Meta keys for tracking meta changes */
   private nodeMetaKeys = new Map<string, number>();
@@ -545,38 +548,39 @@ export class DataGraph<
    * // Validate current state (for React forms)
    * const result = graph.validate();
    *
-   * // Validate without notifying watchers (useful for client-side cost estimation)
-   * const result = graph.validate({ notifyWatchers: false });
+   * // Validate without saving state (useful for client-side cost estimation)
+   * const result = graph.validate({ saveState: false });
    *
    * // Non-mutating validation of arbitrary data (use safeParse)
    * const result = templateGraph.safeParse(userInput, { session });
    * ```
    */
-  validate(options: { notifyWatchers?: boolean } = {}): ValidationResult<Ctx> {
-    const { notifyWatchers = true } = options;
+  validate(options: { saveState?: boolean } = {}): ValidationResult<Ctx> {
+    const { saveState = true } = options;
     const root = this.rootGraph;
 
-    // When notifyWatchers is false, use a clone to avoid mutating the current graph state
-    if (!notifyWatchers) {
-      return this.safeParse(root._ctx, root._ext);
+    const { errors, changed } = root._validate(saveState);
+
+    if (saveState) {
+      this._notifyChanges(changed);
+      return this._buildValidationResult();
     }
 
-    // Evaluate with validateOnly mode - this populates nodeErrors and notifies watchers
-    this._evaluate(root._ctx, { validateOnly: true, notifyWatchers: true });
-
-    return this._buildValidationResult(root);
+    return root._buildValidationResult(errors);
   }
 
-  /** Build a ValidationResult from the current graph state */
-  private _buildValidationResult(
-    graph: DataGraph<Ctx, ExternalCtx, CtxMeta, CtxValues>
-  ): ValidationResult<Ctx> {
+  /** Build a ValidationResult from an error map (defaults to nodeErrors) */
+  private _buildValidationResult(errorMap?: Map<string, NodeError>): ValidationResult<Ctx> {
+    const errors$ = errorMap ?? this.nodeErrors;
+
     const errors: Record<string, NodeError> = {};
     const nodes: Record<string, NodeEntry> = {};
 
-    for (const entry of graph.activeEntries) {
+    for (const entry of this.activeEntries) {
       if (entry.kind === 'node') {
-        const error = graph.nodeErrors.get(entry.key);
+        if (!(entry.key in this._ctx)) continue;
+
+        const error = errors$.get(entry.key);
         if (error) {
           errors[entry.key] = error;
         }
@@ -587,10 +591,70 @@ export class DataGraph<
     }
 
     if (Object.keys(errors).length === 0) {
-      return { success: true, data: graph._ctx as Ctx, nodes };
+      return { success: true, data: this._ctx, nodes };
     }
 
     return { success: false, errors };
+  }
+
+  /**
+   * Validate all nodes against output schemas.
+   * If saveState=true, updates nodeErrors and strips extra fields from ctx.
+   * Returns errors map and set of keys where error state changed.
+   */
+  private _validate(saveState = true): { errors: Map<string, NodeError>; changed: Set<string> } {
+    const errors = new Map<string, NodeError>();
+    const changed = new Set<string>();
+
+    for (const entry of this.activeEntries) {
+      if (entry.kind !== 'node') continue;
+      if (!(entry.key in this._ctx)) continue;
+
+      const def = this.nodeDefs.get(entry.key);
+      if (!def) continue;
+
+      const result = def.output.safeParse(this._ctx[entry.key as keyof Ctx]);
+      const hadError = this.nodeErrors.has(entry.key);
+
+      if (!result.success) {
+        const issue = result.error.issues[0];
+        const error = {
+          message: issue?.message ?? 'Validation failed',
+          code: issue?.code ?? 'unknown',
+        };
+        errors.set(entry.key, error);
+        if (saveState) {
+          this.nodeErrors.set(entry.key, error);
+          if (!hadError) changed.add(entry.key);
+        }
+      } else {
+        if (saveState) {
+          (this._ctx as Record<string, unknown>)[entry.key] = result.data;
+          if (hadError) {
+            this.nodeErrors.delete(entry.key);
+            changed.add(entry.key);
+          }
+        }
+      }
+    }
+
+    return { errors, changed };
+  }
+
+  /** Update meta for all active nodes and notify watchers. */
+  private _updateAllMeta(): void {
+    for (const entry of this.activeEntries) {
+      if (entry.kind !== 'node') continue;
+      // Skip nodes with when=false (not in ctx)
+      if (!(entry.key in this._ctx)) continue;
+
+      const def = this.nodeDefs.get(entry.key);
+      if (!def) continue;
+
+      const metaValue =
+        typeof def.meta === 'function' ? def.meta(this._ctx, this._ext) : def.meta ?? {};
+      this.updateMeta(entry.key, metaValue);
+    }
   }
 
   /**
@@ -620,9 +684,10 @@ export class DataGraph<
   ): ValidationResult<Ctx> {
     const clone = this.clone();
     clone._setup(externalCtx);
-    clone._evaluate(input, { validateOnly: true, notifyWatchers: false });
+    clone._evaluate(input);
 
-    return clone._buildValidationResult(clone);
+    const { errors } = clone._validate(false);
+    return clone._buildValidationResult(errors);
   }
 
   private watchNode(key: string, callback: NodeCallback): () => void {
@@ -651,7 +716,7 @@ export class DataGraph<
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private updateMeta(key: string, newMeta: any | undefined, notify = true) {
+  private updateMeta(key: string, newMeta: any | undefined) {
     const root = this.rootGraph;
     const oldMeta = root.nodeMeta.get(key);
     if (!isEqual(oldMeta, newMeta)) {
@@ -662,7 +727,7 @@ export class DataGraph<
         root.nodeMeta.set(key, newMeta);
         root.nodeMetaKeys.set(key, Date.now());
       }
-      if (notify) root.notifyNodeWatchers(key);
+      root.notifyNodeWatchers(key);
     }
   }
 
@@ -694,7 +759,12 @@ export class DataGraph<
   ): Ctx | NodeSnapshot<Ctx[K], K extends keyof CtxMeta ? CtxMeta[K] : unknown> {
     const root = this.rootGraph;
     if (key === undefined) {
-      return root._ctx as Ctx;
+      // Return cached snapshot, or create new one if invalidated
+      // This ensures stable references when nothing changed (framework-agnostic)
+      if (root._ctxSnapshot === null) {
+        root._ctxSnapshot = { ...root._ctx } as Ctx;
+      }
+      return root._ctxSnapshot;
     }
 
     const value = (root._ctx as Ctx)[key];
@@ -1124,30 +1194,37 @@ export class DataGraph<
       this.valueProvider = undefined;
     }
 
-    const result = this._evaluate(mergedInput);
+    const changed = this._evaluate(mergedInput);
+    this._updateAllMeta();
+    this._notifyChanges(changed);
 
     if (this.storageAdapter) {
       this.storageAdapter.onInit();
     }
 
-    return result;
+    return this._ctx;
   }
 
   set(values: Partial<Ctx>): Ctx {
     if (!this._initialized) throw new Error('Pipeline not initialized. Call init() first.');
 
-    const result = this._evaluate(values);
+    const changed = this._evaluate(values);
+    this._updateAllMeta();
+    this._notifyChanges(changed);
 
     if (this.storageAdapter) {
-      this.storageAdapter.onSet(values, result);
+      this.storageAdapter.onSet(values, this._ctx);
     }
-    return result;
+    return this._ctx;
   }
 
   setExt(values: Partial<ExternalCtx>): Ctx {
     if (!this._initialized) throw new Error('Pipeline not initialized. Call init() first.');
     Object.assign(this._ext, values);
-    return this._evaluate({});
+    const changed = this._evaluate({});
+    this._updateAllMeta();
+    this._notifyChanges(changed);
+    return this._ctx;
   }
 
   reset(options: { exclude?: ((keyof Ctx | keyof CtxMeta) & string)[] } = {}): Ctx {
@@ -1291,23 +1368,19 @@ export class DataGraph<
 
   /**
    * Remove entries that were added by a specific discriminator branch.
-   * Also removes nested discriminator entries recursively.
-   *
-   * @param discriminatorKey - The discriminator key (e.g., 'modelFamily')
-   * @param branchName - The branch being deactivated (e.g., 'flux2')
-   * @param parentSource - The parent discriminator's source for building hierarchical path
+   * Returns the keys that were removed (for change tracking).
    */
   private deactivateBranch(
     discriminatorKey: string,
     branchName: string,
     parentSource?: string
-  ): void {
-    // Build the source path matching how activateBranch builds it
+  ): Set<string> {
     const source =
       parentSource && parentSource !== 'root'
         ? `${parentSource}/${discriminatorKey}:${branchName}`
         : `${discriminatorKey}:${branchName}`;
     const sourcePrefix = `${source}/`;
+    const removedKeys = new Set<string>();
 
     // Find all entries to remove (direct and nested)
     const entriesToRemove: ActiveEntry[] = [];
@@ -1327,11 +1400,9 @@ export class DataGraph<
         if (entry.kind === 'computed') {
           this.computedNodes.delete(entry.key);
         }
-        // Notify watchers - batched during evaluation to prevent UI flicker
-        this.notifyNodeWatchers(entry.key);
+        removedKeys.add(entry.key);
       }
       if (entry.kind === 'discriminator') {
-        // Clean up nested discriminator tracking
         this.activeDiscriminators.delete(entry.discriminatorKey);
       }
     }
@@ -1340,17 +1411,16 @@ export class DataGraph<
     this.activeEntries = this.activeEntries.filter(
       (e) => e.source !== source && !e.source.startsWith(sourcePrefix)
     );
+
+    return removedKeys;
   }
 
   // ===========================================================================
   // Evaluation Loop
   // ===========================================================================
 
-  private _evaluate(
-    inputValues: Partial<Ctx> = {},
-    options: { validateOnly?: boolean; notifyWatchers?: boolean } = {}
-  ): Ctx {
-    const { validateOnly = false, notifyWatchers = true } = options;
+  /** Evaluate the graph and return the set of keys that changed. */
+  private _evaluate(inputValues: Partial<Ctx> = {}): Set<string> {
     const log = this._debug ? console.log.bind(console) : () => {};
 
     const changed = new Set<string>(Object.keys(inputValues));
@@ -1376,14 +1446,12 @@ export class DataGraph<
       const def = this.nodeDefs.get(key);
       if (!def) throw new Error(`Unknown node "${key}"`);
 
-      // Use input schema if available (allows partial values with transforms)
       const schema = def.input ?? def.output;
       const next = schema.parse(value);
 
       if (!isEqual((this._ctx as Record<string, unknown>)[key], next)) {
         (this._ctx as Record<string, unknown>)[key] = next;
         changed.add(key);
-        if (notifyWatchers) this.notifyNodeWatchers(key);
 
         // Rewind to the node if it's earlier in the list
         const nodeIndex = keyToIndex.get(key);
@@ -1433,7 +1501,6 @@ export class DataGraph<
             this.nodeMeta.delete(entry.key);
             this.nodeDefs.delete(entry.key);
             changed.add(entry.key);
-            if (notifyWatchers) this.notifyNodeWatchers(entry.key);
           }
           currentIndex++;
           continue;
@@ -1459,29 +1526,22 @@ export class DataGraph<
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let next: any;
 
-        if (validateOnly) {
-          // In validateOnly mode, skip parsing entirely - use raw value directly.
-          // validate() will check against output schema after evaluation completes.
-          // This ensures no transforms/coercion happen during pure validation.
-          next = raw;
-        } else {
-          // Normal mode: use input schema if available (allows transforms)
-          const schema = def.input ?? def.output;
-          try {
-            next = schema.parse(raw);
-            if (next === undefined && def.defaultValue !== undefined) {
-              next = def.defaultValue;
-            }
-          } catch {
-            next = def.defaultValue ?? def.output.parse(def.defaultValue);
+        // Use input schema if available (allows transforms)
+        const schema = def.input ?? def.output;
+        try {
+          next = schema.parse(raw);
+          if (next === undefined && def.defaultValue !== undefined) {
+            next = def.defaultValue;
           }
+        } catch {
+          next = def.defaultValue ?? def.output.parse(def.defaultValue);
+        }
 
-          // Apply transform when deps changed (not on direct input)
-          // Transform allows updating value based on context changes
-          const depsChanged = entry.deps.some((dep) => changed.has(dep));
-          if (def.transform && depsChanged && !isDirectUpdate) {
-            next = def.transform(next, this._ctx, this._ext);
-          }
+        // Apply transform when deps changed (not on direct input)
+        // Transform allows updating value based on context changes
+        const depsChanged = entry.deps.some((dep) => changed.has(dep));
+        if (def.transform && depsChanged && !isDirectUpdate) {
+          next = def.transform(next, this._ctx, this._ext);
         }
 
         const keyExists = entry.key in this._ctx;
@@ -1490,39 +1550,7 @@ export class DataGraph<
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (this._ctx as any)[entry.key] = next;
           changed.add(entry.key);
-          if (valueChanged && notifyWatchers) {
-            this.notifyNodeWatchers(entry.key);
-          }
         }
-
-        // In validateOnly mode, validate against output schema and populate nodeErrors
-        if (validateOnly) {
-          const hadError = this.nodeErrors.has(entry.key);
-          const result = def.output.safeParse(next);
-          if (!result.success) {
-            const firstError = result.error?.issues?.[0];
-            this.nodeErrors.set(entry.key, {
-              message: firstError?.message ?? 'Validation failed',
-              code: firstError?.code ?? 'unknown',
-            });
-            // Notify if error is new
-            if (!hadError && notifyWatchers) {
-              this.notifyNodeWatchers(entry.key);
-            }
-          } else {
-            // Use Zod-parsed data to strip extra fields not in schema
-            (this._ctx as Record<string, unknown>)[entry.key] = result.data;
-            if (hadError && notifyWatchers) {
-              // Error cleared
-              this.nodeErrors.delete(entry.key);
-              this.notifyNodeWatchers(entry.key);
-            }
-          }
-        }
-
-        const metaValue =
-          typeof def.meta === 'function' ? def.meta(this._ctx, this._ext) : def.meta ?? {};
-        this.updateMeta(entry.key, metaValue, notifyWatchers);
       } else if (entry.kind === 'computed') {
         // Check if this node was just activated from a branch switch
         const isFromBranchActivation = changed.has(entry.key);
@@ -1542,9 +1570,6 @@ export class DataGraph<
         if (!keyExists || valueChanged) {
           (this._ctx as Record<string, unknown>)[entry.key] = next;
           changed.add(entry.key);
-          if (valueChanged && notifyWatchers) {
-            this.notifyNodeWatchers(entry.key);
-          }
         }
       } else if (entry.kind === 'discriminator') {
         const current = this.activeDiscriminators.get(entry.discriminatorKey);
@@ -1564,8 +1589,12 @@ export class DataGraph<
         if (!branchDef) {
           if (current) {
             log(`  🔀 discriminator: no matching branch for "${targetBranch}", cleaning up`);
-            // Pass entry.source to build correct hierarchical path for nested discriminators
-            this.deactivateBranch(entry.discriminatorKey, current.branch, entry.source);
+            const removedKeys = this.deactivateBranch(
+              entry.discriminatorKey,
+              current.branch,
+              entry.source
+            );
+            for (const key of removedKeys) changed.add(key);
             this.activeDiscriminators.delete(entry.discriminatorKey);
             keyToIndex = rebuildKeyToIndex();
           }
@@ -1577,9 +1606,14 @@ export class DataGraph<
         if (needsSwitch) {
           log(`  🔀 discriminator: switching to branch "${targetBranch}"`);
 
-          // Deactivate old branch - pass entry.source for correct hierarchical path
+          // Deactivate old branch
           if (current) {
-            this.deactivateBranch(entry.discriminatorKey, current.branch, entry.source);
+            const removedKeys = this.deactivateBranch(
+              entry.discriminatorKey,
+              current.branch,
+              entry.source
+            );
+            for (const key of removedKeys) changed.add(key);
           }
 
           // Get or create branch graph
@@ -1637,10 +1671,21 @@ export class DataGraph<
       currentIndex++;
     }
 
-    if (notifyWatchers) {
-      for (const callback of this.globalWatchers) callback();
+    return changed;
+  }
+
+  /** Notify watchers for changed keys and global watchers. */
+  private _notifyChanges(changed: Set<string>): void {
+    if (changed.size > 0) {
+      // Invalidate full context snapshot cache
+      this._ctxSnapshot = null;
     }
-    return this._ctx;
+    for (const key of changed) {
+      this.notifyNodeWatchers(key);
+    }
+    for (const callback of this.globalWatchers) {
+      callback();
+    }
   }
 }
 
