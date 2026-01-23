@@ -35,7 +35,6 @@ function CollectionNavLink({
 }) {
   return (
     <NavLink
-      key={collection.id}
       radius="sm"
       onClick={onClick}
       active={isActive}

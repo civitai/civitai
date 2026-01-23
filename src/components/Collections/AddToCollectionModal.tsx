@@ -123,10 +123,9 @@ function CollectionCheckboxItem({
   );
 
   return (
-    <Stack key={collection.id} className={classes.contentWrap} gap={0}>
+    <Stack className={classes.contentWrap} gap={0}>
       <Checkbox
         classNames={classes}
-        key={selectedItem?.collectionId}
         checked={!!selectedItem}
         onChange={(e) => {
           e.preventDefault();

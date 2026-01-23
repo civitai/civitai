@@ -121,7 +121,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
             p={0}
             style={{
               overflow: 'hidden',
-              marginLeft: showSidebar ? 0 : -300 - 8,
+              marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
               maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
             }}
             withBorder
