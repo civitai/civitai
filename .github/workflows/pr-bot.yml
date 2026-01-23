@@ -21,7 +21,7 @@ jobs:
           SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.PR_BOT_WEBHOOK_SECRET }}" | awk '{print $2}')
 
           # Send webhook to PR Bot
-          curl -X POST "${{ secrets.PR_BOT_WEBHOOK_URL }}/webhook/github" \
+          curl -L --post301 -X POST "${{ secrets.PR_BOT_WEBHOOK_URL }}/webhook/github" \
             -H "Content-Type: application/json" \
             -H "X-GitHub-Event: pull_request" \
             -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
