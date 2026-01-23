@@ -1,7 +1,7 @@
 # Prepaid Membership Test Suite Plan
 
 **Status: ✅ IMPLEMENTED**
-**Tests: 38 passing**
+**Tests: All passing (see test output for count)**
 **Run: `pnpm run test:unit:run`**
 
 ## Overview
@@ -35,23 +35,23 @@ We've encountered issues with prepaid memberships including:
 
 #### 1.3 Code Redemption Tests - Same Tier Extension
 - [x] Extends currentPeriodEnd correctly
-- [x] Increments prepaids[tier] by unitValue - 1
-- [ ] Grants immediate buzz (future work)
-- [ ] Appends new externalTransactionId to buzzTransactionIds (future work)
+- [x] Increments prepaids[tier] by full unitValue (no immediate buzz granted)
+- [x] Does NOT grant immediate buzz (tokens saved for job delivery)
+- [x] Does NOT append to buzzTransactionIds (no transaction created)
 
 #### 1.4 Code Redemption Tests - Upgrade (Higher Tier)
-- [ ] Updates productId and priceId to new tier (future work)
+- [x] Updates productId and priceId to new tier
 - [ ] Calculates prorated days correctly from remaining lower tier (future work)
 - [ ] Sets new currentPeriodStart and currentPeriodEnd (future work)
 - [ ] Stores proratedDays for the old tier (future work)
-- [ ] Sets prepaids[newTier] to unitValue - 1 (future work)
-- [ ] Grants immediate buzz for new tier (future work)
+- [x] Sets prepaids[newTier] to unitValue - 1 (first month granted immediately)
+- [x] Grants immediate buzz for new tier
 
 #### 1.5 Code Redemption Tests - Downgrade (Lower Tier)
-- [ ] Does NOT change productId or priceId (future work)
-- [ ] Only updates metadata with prepaids for lower tier (future work)
-- [ ] Grants immediate buzz for lower tier (future work)
-- [ ] Does NOT extend currentPeriodEnd (future work)
+- [x] Does NOT change productId or priceId (user stays on current tier)
+- [x] Only updates metadata with prepaids for lower tier
+- [x] Does NOT grant immediate buzz (all tokens saved as prepaids)
+- [x] Does NOT extend currentPeriodEnd
 
 #### 1.6 Edge Cases
 - [x] Rejects already-redeemed codes (by different user)

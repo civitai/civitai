@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { SubscriptionMetadata, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
 const { mockDbWrite, mockCreateBuzzTransactionMany, mockDeliverMonthlyCosmetics, mockRefreshSession } = vi.hoisted(() => {
@@ -63,9 +63,17 @@ vi.mock('~/utils/errorHandling', () => ({
   withRetries: async (fn: () => Promise<any>, _retries?: number, _delay?: number) => fn(),
 }));
 
-// Mock the createJob to return the function directly for testing
+// Mock the createJob to return a Job-like object for testing
 vi.mock('~/server/jobs/job', () => ({
-  createJob: (_name: string, _cron: string, fn: any) => fn,
+  createJob: (_name: string, _cron: string, fn: any) => ({
+    name: _name,
+    cron: _cron,
+    options: { shouldWait: false, lockExpiration: 0 },
+    run: (opts?: { req?: any }) => ({
+      result: fn({ status: 'running', on: vi.fn(), checkIfCanceled: vi.fn(), req: opts?.req }),
+      cancel: vi.fn(),
+    }),
+  }),
 }));
 
 // Factory functions for creating test data
@@ -143,7 +151,7 @@ describe('prepaid-membership-jobs', () => {
       ]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -159,7 +167,7 @@ describe('prepaid-membership-jobs', () => {
 
       mockDbWrite.$queryRaw.mockResolvedValue([]);
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
     });
@@ -191,7 +199,7 @@ describe('prepaid-membership-jobs', () => {
       ]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 2 });
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith(
         expect.arrayContaining([
@@ -218,7 +226,7 @@ describe('prepaid-membership-jobs', () => {
       ]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
     });
@@ -240,7 +248,7 @@ describe('prepaid-membership-jobs', () => {
       ]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -266,7 +274,7 @@ describe('prepaid-membership-jobs', () => {
       ]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       expect(mockDeliverMonthlyCosmetics).toHaveBeenCalled();
     });
@@ -288,7 +296,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.$queryRaw.mockResolvedValue(users);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 100 });
 
-      await deliverPrepaidMembershipBuzz({ req: undefined });
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
 
       // Should have called createBuzzTransactionMany twice (100 + 50)
       expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(2);
@@ -302,7 +310,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.product.findMany.mockResolvedValue(createTierProducts());
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([]);
 
-      await processPrepaidMembershipTransitions();
+      await processPrepaidMembershipTransitions.run().result;
 
       expect(mockDbWrite.customerSubscription.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -342,7 +350,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([expiringMembership]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
 
-      await processPrepaidMembershipTransitions();
+      await processPrepaidMembershipTransitions.run().result;
 
       expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
     });
@@ -370,7 +378,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([expiringMembership]);
       mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
 
-      await processPrepaidMembershipTransitions();
+      await processPrepaidMembershipTransitions.run().result;
 
       expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
     });
@@ -381,7 +389,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.product.findMany.mockResolvedValue(createTierProducts());
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([]);
 
-      await processPrepaidMembershipTransitions();
+      await processPrepaidMembershipTransitions.run().result;
 
       expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     });
@@ -393,7 +401,7 @@ describe('prepaid-membership-jobs', () => {
 
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([]);
 
-      await cancelExpiredPrepaidMemberships();
+      await cancelExpiredPrepaidMemberships.run().result;
 
       expect(mockDbWrite.customerSubscription.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -419,7 +427,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([expiredMembership]);
       mockDbWrite.customerSubscription.updateManyAndReturn.mockResolvedValue([{ userId: 1 }]);
 
-      await cancelExpiredPrepaidMemberships();
+      await cancelExpiredPrepaidMemberships.run().result;
 
       expect(mockDbWrite.customerSubscription.updateManyAndReturn).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -444,7 +452,7 @@ describe('prepaid-membership-jobs', () => {
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([expiredMembership]);
       mockDbWrite.customerSubscription.updateManyAndReturn.mockResolvedValue([{ userId: 1 }]);
 
-      await cancelExpiredPrepaidMemberships();
+      await cancelExpiredPrepaidMemberships.run().result;
 
       expect(mockRefreshSession).toHaveBeenCalledWith(1);
     });
@@ -454,7 +462,7 @@ describe('prepaid-membership-jobs', () => {
 
       mockDbWrite.customerSubscription.findMany.mockResolvedValue([]);
 
-      await cancelExpiredPrepaidMemberships();
+      await cancelExpiredPrepaidMemberships.run().result;
 
       expect(mockDbWrite.customerSubscription.updateManyAndReturn).not.toHaveBeenCalled();
     });
@@ -475,7 +483,7 @@ describe('prepaid-membership-jobs', () => {
         { userId: 3 },
       ]);
 
-      await cancelExpiredPrepaidMemberships();
+      await cancelExpiredPrepaidMemberships.run().result;
 
       expect(mockDbWrite.customerSubscription.updateManyAndReturn).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -485,74 +493,5 @@ describe('prepaid-membership-jobs', () => {
         })
       );
     });
-  });
-});
-
-describe('Subscription Metadata Integrity', () => {
-  it('should maintain correct tier counts in prepaids object', () => {
-    const metadata = {
-      prepaids: { bronze: 2, silver: 1 },
-      buzzTransactionIds: ['tx1'],
-    };
-
-    const newPrepaids = {
-      ...metadata.prepaids,
-      gold: 3 - 1,
-    };
-
-    expect(newPrepaids).toEqual({
-      bronze: 2,
-      silver: 1,
-      gold: 2,
-    });
-  });
-
-  it('should accumulate proratedDays correctly across upgrades', () => {
-    const metadata = {
-      proratedDays: { bronze: 5 },
-    };
-
-    const newProratedDays = {
-      ...metadata.proratedDays,
-      silver: 10,
-    };
-
-    expect(newProratedDays).toEqual({
-      bronze: 5,
-      silver: 10,
-    });
-  });
-
-  it('should never duplicate buzzTransactionIds', () => {
-    const existingIds = ['tx1', 'tx2'];
-    const newId = 'tx3';
-
-    const updated = [...existingIds, newId];
-
-    expect(updated).toEqual(['tx1', 'tx2', 'tx3']);
-    expect(new Set(updated).size).toBe(updated.length);
-  });
-});
-
-describe('Buzz Transaction Integrity', () => {
-  it('should generate consistent externalTransactionId format for redemption', () => {
-    const date = '2024-01';
-    const userId = 123;
-    const productId = 'prod_gold';
-    const code = 'MB-TEST-1234';
-
-    const transactionId = `civitai-membership:${date}:${userId}:${productId}:${code}`;
-
-    expect(transactionId).toBe('civitai-membership:2024-01:123:prod_gold:MB-TEST-1234');
-  });
-
-  it('should generate consistent externalTransactionId format for daily delivery', () => {
-    const date = '2024-01';
-    const userId = 123;
-    const productId = 'prod_gold';
-
-    const transactionId = `civitai-membership:${date}:${userId}:${productId}:v3`;
-
-    expect(transactionId).toBe('civitai-membership:2024-01:123:prod_gold:v3');
   });
 });

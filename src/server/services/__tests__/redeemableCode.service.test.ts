@@ -310,6 +310,7 @@ describe('redeemableCode.service', () => {
     describe('New User - No Existing Membership', () => {
       it('should create new subscription with correct period end', async () => {
         const mockCode = createMockRedeemableCode({ unitValue: 3 });
+        let createdSubscription: any = null;
 
         mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
         mockDbWrite.$transaction.mockImplementation(async (callback: any) => {
@@ -319,7 +320,10 @@ describe('redeemableCode.service', () => {
             },
             customerSubscription: {
               findFirst: vi.fn().mockResolvedValue(null),
-              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+              create: vi.fn().mockImplementation((args: any) => {
+                createdSubscription = args.data;
+                return { id: 'sub_new' };
+              }),
             },
           };
           return callback(tx);
@@ -327,7 +331,11 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        expect(mockDbWrite.$transaction).toHaveBeenCalled();
+        // Verify period end is 3 months from currentPeriodStart (unitValue = 3, interval = month)
+        const periodStart = dayjs(createdSubscription.currentPeriodStart);
+        const periodEnd = dayjs(createdSubscription.currentPeriodEnd);
+        const monthsDiff = periodEnd.diff(periodStart, 'month');
+        expect(monthsDiff).toBe(3);
       });
 
       it('should set prepaids to unitValue - 1 (first month granted immediately)', async () => {
