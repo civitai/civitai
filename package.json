@@ -51,6 +51,9 @@
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
+    "test:unit": "vitest",
+    "test:unit:run": "vitest run",
+    "test:unit:coverage": "vitest run --coverage",
     "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",
     "tsscript": "NODE_ENV=development tsx",
     "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
@@ -276,6 +279,7 @@
     "@types/xml2js": "^0.4.14",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "autoprefixer": "^10.4.19",
     "cross-env": "^7.0.3",
     "cssnano": "^7.0.1",
@@ -305,6 +309,7 @@
     "tsx": "^4.19.2",
     "typed-scss-modules": "^8.1.1",
     "typescript": "^5.9.2",
+    "vitest": "^4.0.18",
     "ws": "^8.19.0"
   },
   "ct3aMetadata": {
