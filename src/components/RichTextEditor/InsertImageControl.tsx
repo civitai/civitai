@@ -67,9 +67,7 @@ export function InsertImageControlLegacy(props: Props) {
     });
 
     if (images.length > 0)
-      images.map((image) =>
-        editor?.commands.setImage({ src: getEdgeUrl(image.id, { width: 525 }) })
-      );
+      images.map((image) => editor?.commands.setImage({ src: getEdgeUrl(image.id) }));
   };
 
   return (

@@ -5,17 +5,22 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 
 import { constants } from '~/server/common/constants';
 import { useEffect, useRef } from 'react';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { Loader } from '@mantine/core';
-import { hideNotification, showNotification } from '@mantine/notifications';
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
 import { showWarningNotification } from '~/utils/notifications';
+import { formatBytes } from '~/utils/number-helpers';
+
+type UploadResult = { id: string };
 
 type NodeOptions = {
   accepts: MediaType[];
+  uploadImage: (file: File) => Promise<UploadResult>;
+  maxFileSize?: number;
+  onUploadStart?: () => void;
+  onUploadEnd?: () => void;
 };
 
 interface SetMediaOptions {
@@ -34,7 +39,14 @@ declare module '@tiptap/core' {
 
 export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
   addOptions() {
-    return { ...this.parent?.(), accepts: ['image'] };
+    return {
+      ...this.parent?.(),
+      accepts: ['image'] as MediaType[],
+      uploadImage: undefined as unknown as (file: File) => Promise<UploadResult>,
+      maxFileSize: constants.richTextEditor.maxFileSize,
+      onUploadStart: undefined,
+      onUploadEnd: undefined,
+    };
   },
   addNodeView() {
     return ReactNodeViewRenderer(EdgeMediaEditComponent);
@@ -42,27 +54,35 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
   addCommands() {
     return {
       addMedia:
-        // @ts-ignore
+        (file: File) =>
+        ({ commands }) => {
+          const type = MEDIA_TYPE[file.type];
 
+          // Validate media type
+          if (!this.options.accepts.includes(type)) {
+            showWarningNotification({
+              message: `Unsupported file type. Supported types: ${this.options.accepts.join(', ')}`,
+            });
+            return true;
+          }
 
-          (file) =>
-          // @ts-ignore
-          ({ commands }) => {
-            const type = MEDIA_TYPE[file.type];
-            if (!this.options.accepts.includes(type)) {
-              showWarningNotification({ message: `invalid file type: ${file.type}` });
-              return true;
-            } else {
-              return commands.insertContent({
-                type: this.name,
-                attrs: {
-                  url: URL.createObjectURL(file),
-                  type,
-                  filename: file.name,
-                },
-              });
-            }
-          },
+          // Validate file size
+          if (this.options.maxFileSize && file.size > this.options.maxFileSize) {
+            showWarningNotification({
+              message: `File is too big. Max file size is ${formatBytes(this.options.maxFileSize)}`,
+            });
+            return true;
+          }
+
+          return commands.insertContent({
+            type: this.name,
+            attrs: {
+              url: URL.createObjectURL(file),
+              type,
+              filename: file.name,
+            },
+          });
+        },
     };
   },
 
@@ -91,6 +111,7 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
             if (!files) return false;
 
             for (const file of files) {
+              if (!file.type.startsWith('image') && !file.type.startsWith('video')) continue;
               this.editor.commands.addMedia(file);
             }
             return true;
@@ -101,44 +122,43 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
   },
 });
 
-const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
-
 function EdgeMediaEditComponent({
   node,
-  selected,
   ref,
   updateAttributes,
-}: ReactNodeViewProps<HTMLDivElement>) {
+  extension,
+}: ReactNodeViewProps<HTMLDivElement> & { extension: { options: NodeOptions } }) {
   const { url, type, filename } = node.attrs as SetMediaOptions;
-  const { uploadToCF } = useCFImageUpload();
+  const { uploadImage, onUploadStart, onUploadEnd } = extension.options;
   const isObjectUrl = url?.startsWith('blob');
   const uploadingRef = useRef(false);
 
   useEffect(() => {
     if (isObjectUrl && !uploadingRef.current) {
       uploadingRef.current = true;
-      showNotification({
-        id: UPLOAD_NOTIFICATION_ID,
-        loading: true,
-        withCloseButton: false,
-        autoClose: false,
-        message: `Uploading ${type}...`,
-      });
+      onUploadStart?.();
+
       fetchBlobAsFile(url, filename).then((file) => {
-        if (!file) return;
-        uploadToCF(file)
-          .then((result) => {
+        if (!file) {
+          onUploadEnd?.();
+          return;
+        }
+        uploadImage(file)
+          .then((result: UploadResult) => {
             updateAttributes({
               url: result.id,
               type,
               filename,
             });
-            hideNotification(UPLOAD_NOTIFICATION_ID);
+            onUploadEnd?.();
           })
-          .catch(() => window.alert(`Failed to upload ${type}. Please try again`));
+          .catch(() => {
+            onUploadEnd?.();
+            window.alert(`Failed to upload ${type}. Please try again`);
+          });
       });
     }
-  }, [url, isObjectUrl]);
+  }, [url, isObjectUrl, filename, type, uploadImage, onUploadStart, onUploadEnd, updateAttributes]);
 
   if (!url) return null;
 
