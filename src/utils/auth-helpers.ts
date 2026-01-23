@@ -1,4 +1,7 @@
 import { signIn } from 'next-auth/react';
+// Keep env import for potential initialization side effects
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { env } from '~/env/client';
 
 /**
  * Detect if we're running on a PR preview environment.
