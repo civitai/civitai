@@ -14,6 +14,15 @@ export type RefreshTokenResult = {
   needsCookieRefresh: boolean;
 };
 
+/**
+ * Clear the refresh marker for a specific token.
+ * Call this after the JWT cookie has been successfully updated (i.e., in JWT callback with trigger='update')
+ */
+export async function clearTokenRefreshMarker(tokenId: string) {
+  await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
+  log(`Cleared refresh marker for token ${tokenId}`);
+}
+
 export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
   if (!token.user) return { token: null, needsCookieRefresh: false };
   const user = token.user as User;
@@ -67,11 +76,11 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
   }
 
   // Handle refresh marker - this means client's cookie is stale and needs updating
+  // Note: We DON'T delete the marker here. It persists until the client calls update()
+  // and the JWT callback runs with trigger='update', which actually updates the cookie.
   if (tokenState === 'refresh') {
     shouldRefresh = true;
     needsCookieRefresh = true; // Signal that client should refresh their session cookie
-    // Remove from hash after detecting it so it only refreshes once
-    await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
     log(`Token ${tokenId} marked for refresh for user ${user.id}`);
   }
 
