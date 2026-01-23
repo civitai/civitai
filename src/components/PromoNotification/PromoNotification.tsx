@@ -29,13 +29,13 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
       return;
     }
 
-    const checkExpiry = setInterval(() => {
+    const checkExpiry = window.setInterval(() => {
       if (isPromoActive(promo)) return;
       setIsVisible(false);
-      clearInterval(checkExpiry);
+      window.clearInterval(checkExpiry);
     }, 60000); // Check every minute if promo has expired
 
-    return () => clearInterval(checkExpiry);
+    return () => window.clearInterval(checkExpiry);
   }, [promo, vendorId]);
 
   if (!promo || !isVisible) {

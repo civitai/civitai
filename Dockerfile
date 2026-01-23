@@ -4,23 +4,21 @@ FROM node:20-alpine3.16 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
+# Enable corepack for pnpm
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+
 # Install Prisma Client - remove if not using Prisma
 
 COPY prisma ./prisma
 
-# Install dependencies based on the preferred package manager
+# Install dependencies
 
-COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml\* ./
+COPY package.json pnpm-lock.yaml ./
 
 # copy ./scripts directory to /app/scripts to run prisma enum generator
 COPY scripts ./scripts
 
-RUN \
-  if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
-  elif [ -f package-lock.json ]; then npm ci; \
-  elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && pnpm i; \
-  else echo "Lockfile not found." && exit 1; \
-  fi
+RUN pnpm install --frozen-lockfile
 
 ##### BUILDER
 
@@ -29,6 +27,10 @@ ARG NEXT_PUBLIC_IMAGE_LOCATION
 ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
 ARG NEXT_PUBLIC_MAINTENANCE_MODE
 WORKDIR /app
+
+# Enable corepack for pnpm
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Restore generated schema.prisma from deps (COPY . . overwrites it with source which doesn't have it)
@@ -36,12 +38,7 @@ COPY --from=deps /app/prisma/schema.prisma ./prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN \
-  if [ -f yarn.lock ]; then SKIP_ENV_VALIDATION=1 IS_BUILD=true yarn build; \
-  elif [ -f package-lock.json ]; then SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max-old-space-size=4096" npm run build; \
-  elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && SKIP_ENV_VALIDATION=1 IS_BUILD=true pnpm run build; \
-  else echo "Lockfile not found." && exit 1; \
-  fi
+RUN SKIP_ENV_VALIDATION=1 IS_BUILD=true pnpm run build
 
 ##### RUNNER
 
@@ -58,7 +55,6 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/next.config.mjs ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
 
