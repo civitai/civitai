@@ -80,7 +80,7 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   assistantPersonality: ['bronze', 'silver', 'gold'],
-  bounties: ['public'],
+  bounties: ['blue', 'red', 'public'],
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],

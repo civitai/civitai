@@ -230,6 +230,21 @@ export type TrackRequest = {
   fingerprint?: string;
 };
 
+/** Track a webhook event to ClickHouse (fire and forget) */
+export async function trackWebhookEvent(type: string, payload: string) {
+  if (!clickhouse) return;
+
+  try {
+    await clickhouse.insert({
+      table: 'webhook_events_buffer',
+      values: [{ type, payload }],
+      format: 'JSONEachRow',
+    });
+  } catch (error: any) {
+    console.error(`Failed to track ${type} webhook to ClickHouse:`, error.message);
+  }
+}
+
 export class Tracker {
   private actor: TrackRequest = {
     userId: 0,
