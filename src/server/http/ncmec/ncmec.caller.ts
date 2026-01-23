@@ -63,15 +63,17 @@ class NcmecCaller extends HttpCaller {
   async uploadFile({
     reportId,
     file,
+    fileName,
     fileDetails,
   }: {
     reportId: number;
     file: Blob;
+    fileName?: string;
     fileDetails?: Ncmec.FileDetails;
   }) {
     const form = new FormData();
     form.append('id', String(reportId));
-    form.append('file', file, file.name);
+    form.append('file', file, fileName ?? fileDetails?.originalFileName ?? 'file');
     const uploadResponse = await this.postRaw('/upload', {
       body: form,
     });
