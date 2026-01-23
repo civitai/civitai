@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useSession } from 'next-auth/react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { SESSION_REFRESH_HEADER } from '~/shared/constants/auth.constants';
+import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
 
 const UpdateRequiredModal = dynamic(
   () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal')
@@ -12,12 +12,34 @@ let warned = false;
 let originalFetch: typeof window.fetch | undefined;
 let sessionRefreshPending = false;
 
+/** Clear the session refresh cookie after successful refresh */
+function clearSessionRefreshCookie() {
+  document.cookie = `${SESSION_REFRESH_COOKIE}=; Path=/; Max-Age=0`;
+}
+
+/** Check if the session refresh cookie is present */
+function hasSessionRefreshCookie() {
+  return document.cookie.split(';').some((c) => c.trim().startsWith(`${SESSION_REFRESH_COOKIE}=`));
+}
+
 export function UpdateRequiredWatcher({ children }: { children: React.ReactElement }) {
   const { update } = useSession();
   const updateRef = useRef(update);
   updateRef.current = update;
 
-  // TODO - someday, this kind of logic should probably be stored in an error boundary
+  // Check for session refresh cookie on mount (handles page refresh case)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (hasSessionRefreshCookie() && !sessionRefreshPending) {
+      sessionRefreshPending = true;
+      updateRef.current?.().finally(() => {
+        sessionRefreshPending = false;
+        clearSessionRefreshCookie();
+      });
+    }
+  }, []);
+
+  // Intercept fetch to handle session refresh signals
   useEffect(() => {
     if (originalFetch || typeof window === 'undefined') return;
     originalFetch = window.fetch;
@@ -41,6 +63,7 @@ export function UpdateRequiredWatcher({ children }: { children: React.ReactEleme
         // This triggers the JWT callback which fetches fresh user data and updates the cookie
         updateRef.current?.().finally(() => {
           sessionRefreshPending = false;
+          clearSessionRefreshCookie();
         });
       }
 

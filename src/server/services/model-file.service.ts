@@ -11,8 +11,8 @@ import type {
 } from '~/server/schema/model-file.schema';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { ModelUploadType } from '~/shared/utils/prisma/enums';
+import { throwBadRequestError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
@@ -129,6 +129,34 @@ export async function deleteFile({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator?: boolean }) {
+  // Check if deleting a training file for a model still in draft/training state
+  const file = await dbWrite.modelFile.findFirst({
+    where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
+    select: {
+      type: true,
+      modelVersion: {
+        select: {
+          model: {
+            select: { status: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!file) throw throwNotFoundError();
+
+  const modelStatus = file.modelVersion.model.status;
+  const isTrainingFile = file.type === 'Training Data';
+  const isUnpublished = modelStatus === ModelStatus.Draft || modelStatus === ModelStatus.Training;
+
+  if (isTrainingFile && isUnpublished) {
+    throw throwBadRequestError(
+      'Cannot delete training data for a model that is still in draft or training. ' +
+        'This would prevent the model from being published.'
+    );
+  }
+
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m

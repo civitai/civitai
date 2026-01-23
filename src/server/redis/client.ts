@@ -182,7 +182,7 @@ declare global {
 const log = createLogger('redis', 'green');
 
 // Track topology refresh intervals for cleanup
-const clusterRefreshIntervals = new Map<string, NodeJS.Timeout>();
+const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 /**
  * Trigger topology rediscovery on a cluster client.
