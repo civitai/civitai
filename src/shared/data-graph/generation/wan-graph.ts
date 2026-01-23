@@ -314,13 +314,6 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
     })
   )
 
-  // Enable prompt expansion (common to all versions)
-  .node('enablePromptExpansion', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: false,
-  })
-
   // Version-specific controls via discriminator
   .discriminator('version', {
     'v2.1': wan21Graph,

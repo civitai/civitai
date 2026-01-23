@@ -648,7 +648,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.HyV1, supportType: 'generation', modelTypes: loraOnly },
 
   // WanVideo ecosystems
-  { ecosystemId: ECO.WanVideo, supportType: 'generation', modelTypes: loraOnly },
+  // { ecosystemId: ECO.WanVideo, supportType: 'generation', modelTypes: loraOnly }, // This shouldn't ever apply
   { ecosystemId: ECO.WanVideo14B_T2V, supportType: 'generation', modelTypes: checkpointAndLora },
   {
     ecosystemId: ECO.WanVideo14B_I2V_480p,

@@ -251,11 +251,7 @@ export function GenerationForm() {
             graph={graph}
             names={['model', 'resources', 'vae'] as const}
             render={({ values }) => (
-              <ResourceAlerts
-                model={values.model}
-                resources={values.resources}
-                vae={values.vae}
-              />
+              <ResourceAlerts model={values.model} resources={values.resources} vae={values.vae} />
             )}
           />
 
@@ -385,6 +381,44 @@ export function GenerationForm() {
                 </div>
               );
             }}
+          />
+
+          {/* Style (Vidu - General/Anime) */}
+          <Controller
+            graph={graph}
+            name="style"
+            render={({ value, meta, onChange }) => (
+              <Radio.Group
+                value={value}
+                onChange={(v) => onChange(v as typeof value)}
+                label="Style"
+              >
+                <Group mt="xs">
+                  {meta.options.map((o: { label: string; value: string }) => (
+                    <Radio key={o.value} value={o.value} label={o.label} />
+                  ))}
+                </Group>
+              </Radio.Group>
+            )}
+          />
+
+          {/* Resolution (Wan/Sora video quality) */}
+          <Controller
+            graph={graph}
+            name="resolution"
+            render={({ value, meta, onChange }) => (
+              <div className="flex flex-col gap-1">
+                <Input.Label>Resolution</Input.Label>
+                <SegmentedControl
+                  value={value}
+                  onChange={(v) => onChange(v as typeof value)}
+                  data={meta.options.map((o: { label: string; value: string }) => ({
+                    label: o.label,
+                    value: o.value,
+                  }))}
+                />
+              </div>
+            )}
           />
 
           {/* Generate audio toggle (video ecosystems) */}
@@ -583,6 +617,20 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Sora Pro mode toggle */}
+            <Controller
+              graph={graph}
+              name="usePro"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  checked={value}
+                  onChange={(e) => onChange(e.target.checked)}
+                  label="Pro Mode"
+                  description="Generate with higher quality (uses more credits)"
+                />
+              )}
+            />
+
             {/* Flux Ultra Raw mode toggle */}
             <Controller
               graph={graph}
@@ -636,6 +684,83 @@ export function GenerationForm() {
                   checked={value}
                   onChange={(e) => onChange(e.currentTarget.checked)}
                 />
+              )}
+            />
+
+            {/* Wan: Draft mode toggle (v2.2-5b) */}
+            <Controller
+              graph={graph}
+              name="draft"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  checked={value}
+                  onChange={(e) => onChange(e.target.checked)}
+                  label="Draft Mode"
+                  description="Generate faster at lower quality"
+                />
+              )}
+            />
+
+            {/* Wan: Shift parameter (v2.2, v2.2-5b) */}
+            <Controller
+              graph={graph}
+              name="shift"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  value={value}
+                  onChange={onChange}
+                  label="Shift"
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                />
+              )}
+            />
+
+            {/* Wan: Interpolator model selector (v2.2) */}
+            <Controller
+              graph={graph}
+              name="interpolatorModel"
+              render={({ value, meta, onChange }) => (
+                <SelectInput
+                  value={value}
+                  onChange={(v) => onChange(v as typeof value)}
+                  label="Interpolator"
+                  options={meta.options}
+                />
+              )}
+            />
+
+            {/* Wan: Turbo mode toggle (v2.2) */}
+            <Controller
+              graph={graph}
+              name="useTurbo"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  checked={value}
+                  onChange={(e) => onChange(e.target.checked)}
+                  label="Turbo Mode"
+                  description="Generate faster with optimized settings"
+                />
+              )}
+            />
+
+            {/* Kling: Generation mode (standard/professional) */}
+            <Controller
+              graph={graph}
+              name="mode"
+              render={({ value, meta, onChange }) => (
+                <Radio.Group
+                  value={value}
+                  onChange={(v) => onChange(v as typeof value)}
+                  label="Mode"
+                >
+                  <Group mt="xs">
+                    {meta.options.map((o: { label: string; value: string }) => (
+                      <Radio key={o.value} value={o.value} label={o.label} />
+                    ))}
+                  </Group>
+                </Radio.Group>
               )}
             />
           </AccordionLayout>

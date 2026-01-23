@@ -18,7 +18,7 @@
  *    - Routes to appropriate step type based on ecosystem
  */
 
-import type { ImageJobNetworkParams, Scheduler, WorkflowStepTemplate } from '@civitai/client';
+import type { WorkflowStepTemplate } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import {
   generationGraph,
@@ -47,15 +47,12 @@ import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants
 import { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import {
-  WORKFLOW_TAGS,
-  samplersToSchedulers,
-  samplersToComfySamplers,
-} from '~/shared/constants/generation.constants';
+import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
-import { maxRandomSeed } from '~/server/common/constants';
-import { getRandomInt } from '~/utils/number-helpers';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
+
+// Ecosystem handlers - unified router
+import { createEcosystemStepInput } from './ecosystems';
 
 // =============================================================================
 // Types
@@ -106,45 +103,6 @@ type StepInput = WorkflowStepTemplate & {
 
 /** Ecosystem workflows - GenerationGraphOutput where baseModel is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { baseModel: string }>;
-
-// =============================================================================
-// Ecosystem Family Context Types
-// =============================================================================
-
-/** SD family ecosystems context */
-type SDFamilyCtx = EcosystemGraphOutput & {
-  baseModel: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
-};
-
-/** Flux family ecosystems context */
-type FluxFamilyCtx = EcosystemGraphOutput & {
-  baseModel: 'Flux1' | 'FluxKrea';
-};
-
-/** Wan family ecosystems context */
-type WanFamilyCtx = EcosystemGraphOutput & {
-  baseModel:
-    | 'WanVideo'
-    | 'WanVideo1_3B_T2V'
-    | 'WanVideo14B_T2V'
-    | 'WanVideo14B_I2V_480p'
-    | 'WanVideo14B_I2V_720p'
-    | 'WanVideo22_TI2V_5B'
-    | 'WanVideo22_I2V_A14B'
-    | 'WanVideo22_T2V_A14B'
-    | 'WanVideo25_T2V'
-    | 'WanVideo25_I2V';
-};
-
-// =============================================================================
-// Draft Resource Constants
-// =============================================================================
-
-/** SD1 Draft LoRA resource version ID */
-const SD1_DRAFT_RESOURCE_ID = 424706;
-
-/** SDXL Draft LoRA resource version ID (also used for Pony, Illustrious, NoobAI) */
-const SDXL_DRAFT_RESOURCE_ID = 391999;
 
 // =============================================================================
 // External Context Builder
@@ -285,52 +243,6 @@ async function validateAndEnrichResources(
     enrichedResources,
     isPrivateGeneration: hasPrivateOrEpoch,
     hasPoiResource: resources.some((r) => r.model.poi),
-  };
-}
-
-/**
- * Creates a textToImage step input.
- * Converts ResourceData to AIRs for the orchestrator.
- */
-function createTextToImageInput(args: {
-  model: ResourceData;
-  resources?: ResourceData[];
-  vae?: ResourceData;
-  prompt: string;
-  negativePrompt?: string;
-  scheduler: Scheduler;
-  steps: number;
-  cfgScale: number;
-  clipSkip?: number;
-  seed: number;
-  width: number;
-  height: number;
-  quantity: number;
-  batchSize: number;
-  outputFormat?: string;
-}): StepInput {
-  const { model, resources = [], vae, ...rest } = args;
-
-  // Build additionalNetworks from resources + vae
-  const allResources = [...resources, ...(vae ? [vae] : [])];
-  const additionalNetworks = allResources.reduce<Record<string, ImageJobNetworkParams>>(
-    (acc, r) => ({
-      ...acc,
-      [resourceToAir(r)]: {
-        strength: r.strength,
-        type: r.model.type,
-      },
-    }),
-    {}
-  );
-
-  return {
-    $type: 'textToImage',
-    input: {
-      model: resourceToAir(model),
-      additionalNetworks,
-      ...rest,
-    },
   };
 }
 
@@ -509,227 +421,6 @@ async function createImageRemoveBackgroundInput(
 }
 
 // =============================================================================
-// Ecosystem Discriminator Handler (Level 2)
-// =============================================================================
-
-/** Workflows that use comfy instead of textToImage for SD family */
-const SD_COMFY_WORKFLOWS = [
-  'img2img',
-  'txt2img:face-fix',
-  'txt2img:hires-fix',
-  'img2img:face-fix',
-  'img2img:hires-fix',
-] as const;
-
-/** Map generation-graph workflow keys to comfy workflow keys */
-const COMFY_WORKFLOW_KEY_MAP: Record<string, string> = {
-  img2img: 'img2img',
-  'txt2img:face-fix': 'txt2img-facefix',
-  'txt2img:hires-fix': 'txt2img-hires',
-  'img2img:face-fix': 'img2img-facefix',
-  'img2img:hires-fix': 'img2img-hires',
-};
-
-/**
- * Handle SD family workflows (SD1, SD2, SDXL, Pony, Illustrious, NoobAI).
- *
- * Type-safe handler for SD family ecosystems. The input type is narrowed
- * by the switch statement in createEcosystemWorkflowInput.
- */
-async function createSDFamilyInput(data: SDFamilyCtx): Promise<StepInput> {
-  if (!data.model) throw new Error('Model is required for SD family workflows');
-  if (!data.aspectRatio) throw new Error('Aspect ratio is required for SD family workflows');
-
-  const isDraft = data.workflow === 'txt2img:draft';
-  const isSD1 = data.baseModel === 'SD1';
-  const useComfy = SD_COMFY_WORKFLOWS.includes(
-    data.workflow as (typeof SD_COMFY_WORKFLOWS)[number]
-  );
-
-  // Mutable copy of resources for adding draft LoRA
-  const finalResources = [...(data.resources ?? [])];
-
-  // Add draft LoRA and override settings for draft workflow
-  let sampler = data.sampler ?? 'Euler';
-  let steps = data.steps ?? 25;
-  let cfgScale = data.cfgScale ?? 7;
-
-  // Quantity and batch size for draft optimization
-  const requestedQuantity = data.quantity ?? 1;
-  let quantity = requestedQuantity;
-  let batchSize = 1;
-
-  if (isDraft) {
-    finalResources.push(
-      isSD1
-        ? {
-            id: SD1_DRAFT_RESOURCE_ID,
-            strength: 1,
-            baseModel: 'SD 1.5',
-            model: { id: 424706, type: 'LORA' },
-          }
-        : {
-            id: SDXL_DRAFT_RESOURCE_ID,
-            strength: 1,
-            baseModel: 'SDXL 1.0',
-            model: { id: 391999, type: 'LORA' },
-          }
-    );
-    steps = isSD1 ? 6 : 8;
-    cfgScale = 1;
-    sampler = isSD1 ? 'LCM' : 'Euler';
-    // Draft mode batch optimization: generate 4 images per batch
-    quantity = Math.ceil(requestedQuantity / 4);
-    batchSize = 4;
-  }
-
-  // Auto-generate seed if not provided
-  const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
-
-  const scheduler = samplersToSchedulers[sampler as keyof typeof samplersToSchedulers] as Scheduler;
-
-  // Use comfy for img2img, face-fix, and hires-fix workflows
-  if (useComfy) {
-    const comfyKey = COMFY_WORKFLOW_KEY_MAP[data.workflow] ?? data.workflow;
-    const isHires = data.workflow.includes('hires');
-    const isImg2Img = data.workflow.startsWith('img2img');
-
-    const workflowData: Record<string, unknown> = {
-      prompt: data.prompt,
-      negativePrompt: data.negativePrompt,
-      seed,
-      steps,
-      cfgScale,
-      sampler,
-      outputFormat: data.outputFormat ?? 'jpeg',
-    };
-
-    if (isImg2Img) {
-      const sourceImage = data.images?.[0];
-      if (!sourceImage?.url) {
-        throw new Error('Source image is required for img2img workflows');
-      }
-      workflowData.image = sourceImage.url;
-      workflowData.denoise = data.denoise;
-      workflowData.width = sourceImage.width;
-      workflowData.height = sourceImage.height;
-    } else {
-      workflowData.width = data.aspectRatio.width;
-      workflowData.height = data.aspectRatio.height;
-      workflowData.denoise = data.denoise;
-    }
-
-    if (isHires) {
-      workflowData.upscaleWidth = Math.round((workflowData.width as number) * 1.5);
-      workflowData.upscaleHeight = Math.round((workflowData.height as number) * 1.5);
-    }
-
-    return createComfyInput({
-      key: comfyKey,
-      quantity,
-      params: workflowData,
-      resources: [data.model, ...finalResources, ...(data.vae ? [data.vae] : [])],
-    });
-  }
-
-  return createTextToImageInput({
-    model: data.model,
-    resources: finalResources,
-    vae: data.vae,
-    prompt: data.prompt,
-    negativePrompt: data.negativePrompt,
-    scheduler,
-    steps,
-    cfgScale,
-    clipSkip: data.clipSkip,
-    seed,
-    width: data.aspectRatio.width,
-    height: data.aspectRatio.height,
-    quantity,
-    batchSize,
-    outputFormat: data.outputFormat,
-  });
-}
-
-/**
- * Handle ecosystem-dependent workflows.
- * Routes to the appropriate step creator based on the baseModel discriminator.
- *
- * Ecosystem groups match ecosystem-graph.ts groupedDiscriminator structure.
- */
-async function createEcosystemWorkflowInput(data: EcosystemGraphOutput): Promise<StepInput> {
-  switch (data.baseModel) {
-    // =========================================================================
-    // Image Ecosystems - SD Family
-    // =========================================================================
-    case 'SD1':
-    case 'SD2':
-    case 'SDXL':
-    case 'Pony':
-    case 'Illustrious':
-    case 'NoobAI':
-      return createSDFamilyInput(data);
-
-    // =========================================================================
-    // Image Ecosystems - Flux Family
-    // =========================================================================
-    case 'Flux1':
-    case 'FluxKrea':
-      // TODO: return createFluxFamilyInput(data);
-      throw new Error(`Flux family not yet implemented: ${data.baseModel}`);
-
-    // =========================================================================
-    // Video Ecosystems - Wan Family
-    // =========================================================================
-    case 'WanVideo':
-    case 'WanVideo1_3B_T2V':
-    case 'WanVideo14B_T2V':
-    case 'WanVideo14B_I2V_480p':
-    case 'WanVideo14B_I2V_720p':
-    case 'WanVideo22_TI2V_5B':
-    case 'WanVideo22_I2V_A14B':
-    case 'WanVideo22_T2V_A14B':
-    case 'WanVideo25_T2V':
-    case 'WanVideo25_I2V':
-      // TODO: return createWanFamilyInput(data);
-      throw new Error(`Wan family not yet implemented: ${data.baseModel}`);
-
-    // =========================================================================
-    // Image Ecosystems - Individual
-    // =========================================================================
-    case 'Qwen':
-    case 'NanoBanana':
-    case 'Seedream':
-    case 'Imagen4':
-    case 'Flux2':
-    case 'Flux1Kontext':
-    case 'ZImageTurbo':
-    case 'Chroma':
-    case 'HiDream':
-    case 'PonyV7':
-    case 'OpenAI':
-      throw new Error(`${data.baseModel} not yet implemented`);
-
-    // =========================================================================
-    // Video Ecosystems - Individual (API-based, videoGen step)
-    // =========================================================================
-    case 'Vidu':
-    case 'Kling':
-    case 'HyV1':
-    case 'MiniMax':
-    case 'Haiper':
-    case 'Mochi':
-    case 'Lightricks':
-    case 'Sora2':
-    case 'Veo3':
-      throw new Error(`${data.baseModel} not yet implemented`);
-
-    default:
-      throw new Error(`Unknown ecosystem: ${(data as { baseModel: string }).baseModel}`);
-  }
-}
-
-// =============================================================================
 // Main Router
 // =============================================================================
 
@@ -758,7 +449,7 @@ async function createStepInput(data: GenerationGraphOutput): Promise<StepInput> 
     throw new Error('baseModel is required for ecosystem workflows');
   }
 
-  return createEcosystemWorkflowInput(data as EcosystemGraphOutput);
+  return createEcosystemStepInput(data as EcosystemGraphOutput);
 }
 
 /**
@@ -790,7 +481,7 @@ export async function createWorkflowStepFromGraph(
     );
   }
 
-  const stepInput = await createStepInput(data);
+  const { $type, input } = await createStepInput(data);
 
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
   const timeSpan = new TimeSpan(0, 20, 0);
@@ -798,7 +489,8 @@ export async function createWorkflowStepFromGraph(
   const timeout = timeSpan.toString(['hours', 'minutes', 'seconds']);
 
   return {
-    ...stepInput,
+    $type,
+    input: { ...(input as object), outputFormat: data.outputFormat },
     priority: data.priority,
     timeout,
     metadata: isWhatIf

@@ -1,0 +1,100 @@
+/**
+ * Qwen Ecosystem Handler
+ *
+ * Handles Qwen workflows using imageGen step type.
+ * Supports txt2img (createImage) and img2img (editImage) operations.
+ */
+
+import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
+import { maxRandomSeed } from '~/server/common/constants';
+import { getEcosystemName } from '~/shared/constants/basemodel.constants';
+import { removeEmpty } from '~/utils/object-helpers';
+import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
+
+// Types derived from generation graph
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
+type QwenCtx = EcosystemGraphOutput & { baseModel: 'Qwen' };
+
+// Return type union
+type QwenInput = Qwen20bCreateImageGenInput | Qwen20bEditImageGenInput;
+
+// Model version mapping
+type Txt2ImgVersion = '2509' | '2512';
+type Img2ImgVersion = '2509' | '2511';
+const qwenModelVersionMap = new Map<
+  number,
+  { process: 'txt2img' | 'img2img'; version: Txt2ImgVersion | Img2ImgVersion }
+>([
+  [2110043, { process: 'txt2img', version: '2509' }],
+  [2552908, { process: 'txt2img', version: '2512' }],
+  [2133258, { process: 'img2img', version: '2509' }],
+  [2558804, { process: 'img2img', version: '2511' }],
+]);
+
+/**
+ * Converts a ResourceData object to an AIR string.
+ */
+function resourceToAir(resource: ResourceData): string {
+  const ecosystem = getEcosystemName(resource.baseModel);
+  const type = resource.model.type.toLowerCase();
+  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
+}
+
+/**
+ * Creates imageGen input for Qwen ecosystem.
+ * Handles both txt2img and img2img operations based on model version.
+ */
+export async function createQwenInput(data: QwenCtx): Promise<QwenInput> {
+  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
+  const quantity = data.quantity ?? 1;
+
+  // Determine process type and version from model
+  let process: 'txt2img' | 'img2img' = 'txt2img';
+  let version: Txt2ImgVersion | Img2ImgVersion = '2512';
+  if (data.model) {
+    const match = qwenModelVersionMap.get(data.model.id);
+    if (match) {
+      process = match.process;
+      version = match.version;
+    }
+  }
+
+  // Build loras from additional resources (excluding checkpoint)
+  const loras: Record<string, number> = {};
+  if ('resources' in data && Array.isArray(data.resources)) {
+    for (const resource of data.resources as ResourceData[]) {
+      const air = resourceToAir(resource);
+      loras[air] = resource.strength ?? 1;
+    }
+  }
+
+  const baseInput = {
+    engine: 'sdcpp',
+    ecosystem: 'qwen',
+    model: '20b' as const,
+    version,
+    prompt: data.prompt,
+    negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+    width: data.aspectRatio?.width,
+    height: data.aspectRatio?.height,
+    cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: 'steps' in data ? data.steps : undefined,
+    quantity,
+    seed,
+    loras: Object.keys(loras).length > 0 ? loras : undefined,
+  };
+
+  if (process === 'txt2img') {
+    return removeEmpty({
+      ...baseInput,
+      operation: 'createImage',
+    }) as Qwen20bCreateImageGenInput;
+  } else {
+    return removeEmpty({
+      ...baseInput,
+      operation: 'editImage',
+      images: data.images?.map((x) => x.url) ?? [],
+    }) as Qwen20bEditImageGenInput;
+  }
+}

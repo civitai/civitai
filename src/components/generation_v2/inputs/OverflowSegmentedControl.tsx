@@ -3,16 +3,16 @@
  *
  * A wrapper around Mantine's SegmentedControl that handles overflow gracefully.
  * When there are more options than can be displayed, it shows a "More" button
- * that opens a modal with all options.
+ * that opens a popover with all options.
  *
  * Features:
  * - Uses ResizeObserver to dynamically adjust visible items based on container width
  * - Shows options in priority order (via priorityOptions) or natural order
  * - When selected item is hidden, it replaces the last visible option
- * - Built-in modal for selecting from all options
+ * - Built-in popover for selecting from all options
  */
 
-import { Button, Group, Modal, SegmentedControl, Stack } from '@mantine/core';
+import { Popover, SegmentedControl } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -40,14 +40,12 @@ export interface OverflowSegmentedControlProps<T extends string = string> {
    */
   renderMoreButton?: () => ReactNode;
   /**
-   * Render an option in the modal grid.
+   * Render an option in the popover grid.
    * If not provided, uses a default card-style rendering with the option's label.
    * @param option - The option to render
    * @param selected - Whether this option is currently selected
    */
-  renderModalOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
-  /** Title for the modal. Defaults to "Select Option" */
-  modalTitle?: string;
+  renderOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
   className?: string;
 }
 
@@ -90,24 +88,24 @@ function DefaultModalOption({ label }: DefaultModalOptionProps) {
 }
 
 // =============================================================================
-// Modal Grid Component
+// Option Grid Component
 // =============================================================================
 
-interface ModalGridProps<T extends string> {
+interface OptionGridProps<T extends string> {
   options: OverflowSegmentedControlOption<T>[];
   value?: T;
   disabled?: boolean;
   onSelect: (value: T) => void;
-  renderModalOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
+  renderOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
 }
 
-function ModalGrid<T extends string>({
+function OptionGrid<T extends string>({
   options,
   value,
   disabled,
   onSelect,
-  renderModalOption,
-}: ModalGridProps<T>) {
+  renderOption,
+}: OptionGridProps<T>) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [columnCount, setColumnCount] = useState(1);
 
@@ -163,14 +161,14 @@ function ModalGrid<T extends string>({
             )}
             {/* Content with background - uses negative margin to cover adjacent separators */}
             <div
-              className={`relative z-10 -m-px transition-colors ${
+              className={`relative z-10 -m-px flex justify-center text-center transition-colors ${
                 selected
                   ? 'bg-white text-black shadow-sm dark:bg-dark-5 dark:text-white'
                   : 'text-gray-6 hover:bg-gray-3 hover:text-gray-7 dark:text-dark-1 dark:hover:bg-dark-4 dark:hover:text-dark-0'
               }`}
             >
-              {renderModalOption ? (
-                renderModalOption(option, selected)
+              {renderOption ? (
+                renderOption(option, selected)
               ) : (
                 <DefaultModalOption label={option.label} selected={selected} />
               )}
@@ -194,8 +192,7 @@ export function OverflowSegmentedControl<T extends string = string>({
   maxVisible: maxVisibleProp,
   priorityOptions,
   renderMoreButton,
-  renderModalOption,
-  modalTitle = 'Select Option',
+  renderOption,
   className,
 }: OverflowSegmentedControlProps<T>) {
   // Default maxVisible to the number of options
@@ -203,7 +200,7 @@ export function OverflowSegmentedControl<T extends string = string>({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(maxVisible);
-  const [modalOpened, setModalOpened] = useState(false);
+  const [popoverOpened, setPopoverOpened] = useState(false);
 
   // Calculate how many items can fit based on container width
   const calculateVisibleCount = useCallback(() => {
@@ -264,14 +261,13 @@ export function OverflowSegmentedControl<T extends string = string>({
     };
   }, [options, value, visibleCount, priorityOptions]);
 
-  // Build segmented control data
+  // Build segmented control data (includes "More" button if needed)
   const segmentedData = useMemo(() => {
     const data = visibleOptions.map((opt) => ({
       value: opt.value,
       label: opt.label,
     }));
 
-    // Add "More" option if needed
     if (showMoreButton) {
       data.push({
         value: MORE_VALUE as T,
@@ -282,58 +278,57 @@ export function OverflowSegmentedControl<T extends string = string>({
     return data;
   }, [visibleOptions, showMoreButton, renderMoreButton]);
 
-  // Use the actual value (not MORE_VALUE since selection is now in visible options)
   const controlValue = value ?? '';
 
   const handleChange = (newValue: string) => {
     if (newValue === MORE_VALUE) {
-      // Open the modal when More is clicked
-      setModalOpened(true);
+      setPopoverOpened((o) => !o);
     } else {
       onChange?.(newValue as T);
     }
   };
 
-  const handleModalSelect = (optionValue: T) => {
+  const handlePopoverSelect = (optionValue: T) => {
     onChange?.(optionValue);
-    setModalOpened(false);
+    setPopoverOpened(false);
   };
 
-  return (
-    <>
-      <div ref={containerRef} className={className}>
-        <SegmentedControl
-          value={controlValue}
-          onChange={handleChange}
-          data={segmentedData}
-          disabled={disabled}
-          fullWidth
-          classNames={{ label: 'relative', innerLabel: 'static' }}
-        />
-      </div>
+  // Create a key based on visible option values to force re-render when options change
+  const segmentedKey = useMemo(() => segmentedData.map((d) => d.value).join(','), [segmentedData]);
 
-      <Modal
-        opened={modalOpened}
-        onClose={() => setModalOpened(false)}
-        title={modalTitle}
-        size="md"
-      >
-        <Stack gap="md">
-          {/* Grid with inset separators that don't extend to edges */}
-          <ModalGrid
-            options={options}
-            value={value}
-            disabled={disabled}
-            onSelect={handleModalSelect}
-            renderModalOption={renderModalOption}
-          />
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={() => setModalOpened(false)}>
-              Cancel
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </>
+  return (
+    <div ref={containerRef} className={`relative ${className ?? ''}`}>
+      <SegmentedControl
+        key={segmentedKey}
+        value={controlValue}
+        onChange={handleChange}
+        data={segmentedData}
+        disabled={disabled}
+        fullWidth
+        classNames={{ label: 'relative', innerLabel: 'static' }}
+      />
+      {showMoreButton && (
+        <Popover
+          opened={popoverOpened}
+          onChange={setPopoverOpened}
+          position="bottom-end"
+          width={300}
+          shadow="md"
+        >
+          <Popover.Target>
+            <span className="absolute bottom-0 right-0 top-0 w-px" />
+          </Popover.Target>
+          <Popover.Dropdown p="xs">
+            <OptionGrid
+              options={options}
+              value={value}
+              disabled={disabled}
+              onSelect={handlePopoverSelect}
+              renderOption={renderOption}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      )}
+    </div>
   );
 }

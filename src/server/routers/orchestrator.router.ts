@@ -399,37 +399,35 @@ export const orchestratorRouter = router({
   /**
    * What-if from graph - cost estimation for generation-graph inputs
    */
-  whatIfFromGraph: orchestratorGuardedProcedure
-    .input(z.any())
-    .query(async ({ ctx, input }) => {
-      const userTier = ctx.user.tier ?? 'free';
-      const externalCtx = await buildGenerationContext(userTier);
+  whatIfFromGraph: orchestratorGuardedProcedure.input(z.any()).query(async ({ ctx, input }) => {
+    const userTier = ctx.user.tier ?? 'free';
+    const externalCtx = await buildGenerationContext(userTier);
 
-      try {
-        return await whatIfFromGraph({
-          input,
-          externalCtx,
-          userId: ctx.user.id,
-          token: ctx.token,
-          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-        });
-      } catch (e) {
-        logToAxiom({
-          name: 'what-if-from-graph',
-          type: 'error',
-          payload: input,
-          error:
-            e instanceof TRPCError
-              ? {
-                  code: e.code,
-                  name: e.name,
-                  message: e.message,
-                }
-              : e,
-        }).catch();
-        throw e;
-      }
-    }),
+    try {
+      return await whatIfFromGraph({
+        input,
+        externalCtx,
+        userId: ctx.user.id,
+        token: ctx.token,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      });
+    } catch (e) {
+      logToAxiom({
+        name: 'what-if-from-graph',
+        type: 'error',
+        payload: input,
+        error:
+          e instanceof TRPCError
+            ? {
+                code: e.code,
+                name: e.name,
+                message: e.message,
+              }
+            : e,
+      }).catch();
+      throw e;
+    }
+  }),
   // #endregion
 
   // #region [Image upload]

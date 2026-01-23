@@ -226,8 +226,7 @@ export function AspectRatioInput({
         maxVisible={maxVisible}
         priorityOptions={priorityOptions}
         renderMoreButton={renderMoreButton}
-        renderModalOption={renderModalOption}
-        modalTitle="Select Aspect Ratio"
+        renderOption={renderModalOption}
       />
     </Input.Wrapper>
   );
