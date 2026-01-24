@@ -952,3 +952,112 @@ export function videoNode() {
   };
 }
 
+// =============================================================================
+// Scale Factor Node Builder
+// =============================================================================
+
+/** Scale factor option type */
+export type ScaleFactorOption = {
+  value: number;
+  label: string;
+  disabled: boolean;
+  targetWidth: number;
+  targetHeight: number;
+};
+
+export interface ScaleFactorNodeConfig {
+  /** Available upscale multipliers (e.g., [2, 3, 4]) */
+  multipliers: readonly number[];
+  /** Maximum output resolution (longest side) */
+  maxOutputResolution: number;
+}
+
+/**
+ * Creates a scale factor node for upscaling workflows.
+ * Computes available options based on source dimensions and max output resolution.
+ *
+ * Meta contains: options, canUpscale, sourceWidth, sourceHeight, maxOutputResolution
+ *
+ * @example
+ * // Image upscale with x2, x3, x4 multipliers
+ * .node(
+ *   'scaleFactor',
+ *   (ctx) => scaleFactorNode({
+ *     multipliers: [2, 3, 4],
+ *     maxOutputResolution: 4096,
+ *     sourceWidth: ctx.images?.[0]?.width,
+ *     sourceHeight: ctx.images?.[0]?.height,
+ *   }),
+ *   ['images']
+ * )
+ *
+ * // Video upscale with x2, x3 multipliers
+ * .node(
+ *   'scaleFactor',
+ *   (ctx) => scaleFactorNode({
+ *     multipliers: [2, 3],
+ *     maxOutputResolution: 2560,
+ *     sourceWidth: ctx.video?.metadata?.width,
+ *     sourceHeight: ctx.video?.metadata?.height,
+ *   }),
+ *   ['video']
+ * )
+ */
+export function scaleFactorNode({
+  multipliers,
+  maxOutputResolution,
+  sourceWidth,
+  sourceHeight,
+}: ScaleFactorNodeConfig & {
+  /** Source media width */
+  sourceWidth?: number;
+  /** Source media height */
+  sourceHeight?: number;
+}) {
+  const width = sourceWidth;
+  const height = sourceHeight;
+  const maxDimension = width && height ? Math.max(width, height) : undefined;
+
+  // Build options based on current dimensions
+  const options: ScaleFactorOption[] = multipliers.map((multiplier) => ({
+    value: multiplier,
+    label: `x${multiplier}`,
+    disabled: maxDimension ? multiplier * maxDimension > maxOutputResolution : false,
+    targetWidth: width ? multiplier * width : 0,
+    targetHeight: height ? multiplier * height : 0,
+  }));
+
+  // Find the first non-disabled option as default
+  const defaultOption = options.find((o) => !o.disabled);
+  const defaultValue = defaultOption?.value ?? multipliers[0];
+
+  // Calculate whether upscaling is possible at all
+  const canUpscale = maxDimension
+    ? maxDimension * Math.min(...multipliers) <= maxOutputResolution
+    : true;
+
+  // Schema bounds from multipliers
+  const minMultiplier = Math.min(...multipliers);
+  const maxMultiplier = Math.max(...multipliers);
+
+  return {
+    input: z.coerce.number().int().min(minMultiplier).max(maxMultiplier).optional(),
+    output: z
+      .number()
+      .int()
+      .min(minMultiplier)
+      .max(maxMultiplier)
+      .refine((val) => !maxDimension || val * maxDimension <= maxOutputResolution, {
+        message: `Scale factor would exceed maximum output resolution of ${maxOutputResolution}px`,
+      }),
+    defaultValue,
+    meta: {
+      options,
+      canUpscale,
+      sourceWidth: width,
+      sourceHeight: height,
+      maxOutputResolution,
+    },
+  };
+}
+

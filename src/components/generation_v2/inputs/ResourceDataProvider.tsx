@@ -6,15 +6,7 @@
  * batches them into a single tRPC query.
  */
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { trpc } from '~/utils/trpc';
 
@@ -22,13 +14,18 @@ import { trpc } from '~/utils/trpc';
 // Types
 // =============================================================================
 
+/** Resource data with AIR identifier */
+export type ResourceData = GenerationResource & { air: string };
+
 export interface ResourceDataContextValue {
   /** Register a resource ID to be fetched */
   registerResourceId: (id: number) => void;
   /** Unregister a resource ID */
   unregisterResourceId: (id: number) => void;
   /** Get resource data by ID (returns undefined if not loaded) */
-  getResourceData: (id: number) => (GenerationResource & { air: string }) | undefined;
+  getResourceData: (id: number) => ResourceData | undefined;
+  /** All fetched resources (for external context) */
+  resources: ResourceData[];
   /** Check if resources are currently loading */
   isLoading: boolean;
   /** Check if a specific resource is loading */
@@ -66,16 +63,17 @@ export function ResourceDataProvider({ children }: ResourceDataProviderProps) {
     }
   );
 
+  // All fetched resources as array
+  const resources = useMemo(() => data ?? [], [data]);
+
   // Create a map for quick lookup
   const resourceMap = useMemo(() => {
-    const map = new Map<number, GenerationResource & { air: string }>();
-    if (data) {
-      for (const resource of data) {
-        map.set(resource.id, resource);
-      }
+    const map = new Map<number, ResourceData>();
+    for (const resource of resources) {
+      map.set(resource.id, resource);
     }
     return map;
-  }, [data]);
+  }, [resources]);
 
   // Register a resource ID with reference counting
   const registerResourceId = useCallback((id: number) => {
@@ -119,10 +117,18 @@ export function ResourceDataProvider({ children }: ResourceDataProviderProps) {
       registerResourceId,
       unregisterResourceId,
       getResourceData,
+      resources,
       isLoading,
       isResourceLoading,
     }),
-    [registerResourceId, unregisterResourceId, getResourceData, isLoading, isResourceLoading]
+    [
+      registerResourceId,
+      unregisterResourceId,
+      getResourceData,
+      resources,
+      isLoading,
+      isResourceLoading,
+    ]
   );
 
   return <ResourceDataContext.Provider value={value}>{children}</ResourceDataContext.Provider>;

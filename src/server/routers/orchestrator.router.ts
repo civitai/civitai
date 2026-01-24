@@ -377,7 +377,15 @@ export const orchestratorRouter = router({
       const { input: formInput, civitaiTip, creatorTip, tags: inputTags } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
-      const externalCtx = await buildGenerationContext(userTier);
+      const { externalCtx, status } = await buildGenerationContext(userTier);
+
+      // Check generation status early
+      if (!status.available && !ctx.user.isModerator) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: status.message ?? 'Generation is currently disabled',
+        });
+      }
 
       return generateFromGraph({
         input: formInput,
@@ -401,7 +409,14 @@ export const orchestratorRouter = router({
    */
   whatIfFromGraph: orchestratorGuardedProcedure.input(z.any()).query(async ({ ctx, input }) => {
     const userTier = ctx.user.tier ?? 'free';
-    const externalCtx = await buildGenerationContext(userTier);
+    const { externalCtx, status } = await buildGenerationContext(userTier);
+
+    if (!status.available && !ctx.user.isModerator) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: status.message ?? 'Generation is currently disabled',
+      });
+    }
 
     try {
       return await whatIfFromGraph({

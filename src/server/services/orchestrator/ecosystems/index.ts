@@ -36,7 +36,6 @@ import { createWanInput } from './wan.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createHunyuanInput } from './hunyuan.handler';
-import { createMiniMaxInput } from './minimax.handler';
 import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
@@ -118,9 +117,6 @@ export type KlingCtx = EcosystemGraphOutput & { baseModel: 'Kling' };
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { baseModel: 'HyV1' };
 
-/** MiniMax context */
-export type MiniMaxCtx = EcosystemGraphOutput & { baseModel: 'MiniMax' };
-
 /** Mochi context */
 export type MochiCtx = EcosystemGraphOutput & { baseModel: 'Mochi' };
 
@@ -154,7 +150,6 @@ export { createWanInput } from './wan.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createHunyuanInput } from './hunyuan.handler';
-export { createMiniMaxInput } from './minimax.handler';
 export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
@@ -263,10 +258,6 @@ export async function createEcosystemStepInput(data: EcosystemGraphOutput): Prom
     // Hunyuan (HyV1)
     case 'HyV1':
       return { $type: 'videoGen', input: await createHunyuanInput(data as HunyuanCtx) };
-
-    // MiniMax
-    case 'MiniMax':
-      return { $type: 'videoGen', input: await createMiniMaxInput(data as MiniMaxCtx) };
 
     // Mochi
     case 'Mochi':

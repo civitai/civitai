@@ -9,6 +9,6 @@ export type GenerationCtx = {
     isMember: boolean;
     tier: 'free' | 'founder' | 'bronze' | 'silver' | 'gold';
   };
-  /** Optional resource metadata for validation context */
+  /** All fetched resources from ResourceDataProvider */
   resources?: { id: number; baseModel: string; modelType: string }[];
 };

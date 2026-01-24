@@ -15,28 +15,16 @@ import { Container } from '@mantine/core';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationForm } from '~/components/generation_v2/GenerationForm';
 import { GenerationFormProvider } from '~/components/generation_v2/GenerationFormProvider';
-import { type GenerationCtx } from '~/shared/data-graph/generation';
 
 // =============================================================================
 // Main Demo Component
 // =============================================================================
 
 function DataGraphV2Demo() {
-  const externalContext: GenerationCtx = {
-    limits: {
-      maxQuantity: 12,
-      maxResources: 12,
-    },
-    user: {
-      isMember: true,
-      tier: 'gold',
-    },
-  };
-
   return (
     <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden px-0 py-3">
       <IsClient>
-        <GenerationFormProvider externalContext={externalContext} debug>
+        <GenerationFormProvider debug>
           <GenerationForm />
         </GenerationFormProvider>
       </IsClient>

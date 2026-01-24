@@ -108,27 +108,42 @@ type EcosystemGraphOutput = Extract<GenerationGraphOutput, { baseModel: string }
 // External Context Builder
 // =============================================================================
 
+/** Result of buildGenerationContext including status for early checks */
+export type GenerationContextResult = {
+  externalCtx: GenerationCtx;
+  status: {
+    available: boolean;
+    message?: string;
+  };
+};
+
 /**
  * Builds the GenerationCtx from user tier information.
  * Fetches generation status to get tier-based limits.
  *
  * @param userTier - The user's subscription tier
- * @returns GenerationCtx with limits and user info
+ * @returns GenerationCtx with limits and user info, plus status for availability checks
  */
 export async function buildGenerationContext(
   userTier: GenerationCtx['user']['tier'] = 'free'
-): Promise<GenerationCtx> {
+): Promise<GenerationContextResult> {
   const status = await getGenerationStatus();
   const limits = status.limits[userTier];
 
   return {
-    limits: {
-      maxQuantity: limits.quantity,
-      maxResources: limits.resources,
+    externalCtx: {
+      limits: {
+        maxQuantity: limits.quantity,
+        maxResources: limits.resources,
+      },
+      user: {
+        isMember: userTier !== 'free',
+        tier: userTier,
+      },
     },
-    user: {
-      isMember: userTier !== 'free',
-      tier: userTier,
+    status: {
+      available: status.available,
+      message: status.message ?? undefined,
     },
   };
 }
@@ -387,13 +402,15 @@ async function createImageUpscaleInput(
     throw new Error('Image URL is required for image upscaling');
   }
 
+  const upscaleWidth = sourceImage.width * data.scaleFactor;
+  const upscaleHeight = sourceImage.height * data.scaleFactor;
+
   return createComfyInput({
     key: 'img2img-upscale',
     params: {
       image: sourceImage.url,
-      width: sourceImage.width,
-      height: sourceImage.height,
-      upscale: data.scaleFactor,
+      upscaleWidth,
+      upscaleHeight,
       outputFormat: data.outputFormat,
     },
   });
@@ -510,10 +527,11 @@ export async function createWorkflowStepFromGraph(
  * Submits a generation workflow using generation-graph input.
  *
  * Validates:
- * - Generation status (blocks if disabled and user not moderator)
  * - Graph input validation
  * - Resource validation (subscription, epochs, canGenerate, POI)
  * - Prompt POI detection
+ *
+ * Note: Generation status check should be done in the router before calling this function.
  */
 export async function generateFromGraph({
   input,
@@ -528,24 +546,18 @@ export async function generateFromGraph({
   creatorTip,
   tags: customTags = [],
 }: GenerateOptions) {
-  // Check generation status
-  const status = await getGenerationStatus();
-  if (!status.available && !isModerator) {
-    throw throwBadRequestError('Generation is currently disabled');
-  }
-
   const data = validateInput(input, externalCtx);
   const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator });
 
   // Determine workflow tags
   const baseModel = 'baseModel' in data ? data.baseModel : undefined;
-  const [process] = data.workflow.split(':')[0];
+  const [process, name] = data.workflow.split(':');
 
   const tags = [
     WORKFLOW_TAGS.GENERATION,
-    data.output,
+    data.output === 'image' ? WORKFLOW_TAGS.IMAGE : WORKFLOW_TAGS.VIDEO,
     process,
-    data.workflow,
+    name,
     baseModel,
     ...customTags,
   ].filter(isDefined);

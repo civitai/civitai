@@ -33,6 +33,7 @@ import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
 import { OverflowSegmentedControl } from './inputs/OverflowSegmentedControl';
 import { PriorityInput } from './inputs/PriorityInput';
 import { OutputFormatInput } from './inputs/OutputFormatInput';
+import { ScaleFactorInput } from './inputs/ScaleFactorInput';
 
 // =============================================================================
 // Component
@@ -302,6 +303,22 @@ export function GenerationForm() {
                 />
               );
             }}
+          />
+
+          {/* Scale factor (img2img:upscale, vid2vid:upscale) */}
+          <Controller
+            graph={graph}
+            name="scaleFactor"
+            render={({ value, meta, onChange }) => (
+              <ScaleFactorInput
+                value={value}
+                onChange={onChange}
+                width={meta.sourceWidth}
+                height={meta.sourceHeight}
+                maxResolution={meta.maxOutputResolution}
+                options={meta.options}
+              />
+            )}
           />
 
           {/* Prompt */}

@@ -6,10 +6,9 @@
  * to increase resolution through upscaling.
  */
 
-import { z } from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { videoNode } from './common';
+import { scaleFactorNode, videoNode } from './common';
 
 // =============================================================================
 // Constants
@@ -22,19 +21,6 @@ const MAX_OUTPUT_RESOLUTION = 2560;
 const UPSCALE_MULTIPLIERS = [2, 3] as const;
 
 // =============================================================================
-// Types
-// =============================================================================
-
-/** Upscale factor option */
-export type UpscaleOption = {
-  value: number;
-  label: string;
-  disabled: boolean;
-  targetWidth: number;
-  targetHeight: number;
-};
-
-// =============================================================================
 // Video Upscale Graph
 // =============================================================================
 
@@ -44,6 +30,7 @@ export type UpscaleOption = {
  * Nodes:
  * - video: Source video URL with metadata (fetched via trpc)
  * - scaleFactor: Multiplier for resolution (x2, x3)
+ * - targetDimensions: Computed output dimensions
  *
  * The upscale options are computed based on the video's current resolution
  * and the maximum allowed output resolution.
@@ -53,42 +40,13 @@ export const videoUpscaleGraph = new DataGraph<Record<never, never>, GenerationC
   // Scale factor node - depends on video metadata for available options
   .node(
     'scaleFactor',
-    (ctx) => {
-      const width = ctx.video?.metadata?.width;
-      const height = ctx.video?.metadata?.height;
-      const maxDimension = width && height ? Math.max(width, height) : undefined;
-
-      // Build options based on current video dimensions
-      const options: UpscaleOption[] = UPSCALE_MULTIPLIERS.map((multiplier) => ({
-        value: multiplier,
-        label: `x${multiplier}`,
-        disabled: maxDimension ? multiplier * maxDimension > MAX_OUTPUT_RESOLUTION : false,
-        targetWidth: width ? multiplier * width : 0,
-        targetHeight: height ? multiplier * height : 0,
-      }));
-
-      // Find the first non-disabled option as default
-      const defaultOption = options.find((o) => !o.disabled);
-      const defaultValue = defaultOption?.value ?? UPSCALE_MULTIPLIERS[0];
-
-      // Calculate whether upscaling is possible at all
-      const canUpscale = maxDimension
-        ? maxDimension * Math.min(...UPSCALE_MULTIPLIERS) <= MAX_OUTPUT_RESOLUTION
-        : true;
-
-      return {
-        input: z.coerce.number().int().min(2).max(3).optional(),
-        output: z.number().int().min(2).max(3),
-        defaultValue,
-        meta: {
-          options,
-          canUpscale,
-          sourceWidth: width,
-          sourceHeight: height,
-          maxOutputResolution: MAX_OUTPUT_RESOLUTION,
-        },
-      };
-    },
+    (ctx) =>
+      scaleFactorNode({
+        multipliers: UPSCALE_MULTIPLIERS,
+        maxOutputResolution: MAX_OUTPUT_RESOLUTION,
+        sourceWidth: ctx.video?.metadata?.width,
+        sourceHeight: ctx.video?.metadata?.height,
+      }),
     ['video']
   )
   // Computed target dimensions for display

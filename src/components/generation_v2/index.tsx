@@ -14,33 +14,15 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 
 import { GenerationForm } from './GenerationForm';
 import { GenerationFormProvider } from './GenerationFormProvider';
-import { type GenerationCtx } from '~/shared/data-graph/generation';
 
 // =============================================================================
 // Types
 // =============================================================================
 
 export interface GenerationFormV2Props {
-  /** External context to pass to the graph */
-  externalContext?: GenerationCtx;
   /** Enable debug mode for the graph */
   debug?: boolean;
 }
-
-// =============================================================================
-// Default Context
-// =============================================================================
-
-const defaultExternalContext: GenerationCtx = {
-  limits: {
-    maxQuantity: 12,
-    maxResources: 12,
-  },
-  user: {
-    isMember: true,
-    tier: 'gold',
-  },
-};
 
 // =============================================================================
 // Drop-in Replacement Component
@@ -66,10 +48,7 @@ const defaultExternalContext: GenerationCtx = {
  * };
  * ```
  */
-export function GenerationFormV2({
-  externalContext = defaultExternalContext,
-  debug = false,
-}: GenerationFormV2Props = {}) {
+export function GenerationFormV2({ debug = false }: GenerationFormV2Props = {}) {
   const loading = useGenerationStore((state) => state.loading);
   const isClient = useIsClient();
 
@@ -84,7 +63,7 @@ export function GenerationFormV2({
           pt={0}
           className="flex flex-col gap-2"
         >
-          <GenerationFormProvider externalContext={externalContext} debug={debug}>
+          <GenerationFormProvider debug={debug}>
             <GenerationForm />
           </GenerationFormProvider>
         </ScrollArea>

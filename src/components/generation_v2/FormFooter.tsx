@@ -26,7 +26,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Controller, useGraph } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
+import { useTipStore } from '~/store/tip.store';
 import { hashify } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { useWhatIfFromGraph } from './hooks/useWhatIfFromGraph';
 
 // =============================================================================
@@ -35,9 +37,10 @@ import { useWhatIfFromGraph } from './hooks/useWhatIfFromGraph';
 
 interface SubmitButtonProps {
   isLoading?: boolean;
+  onSubmit?: () => void;
 }
 
-function SubmitButton({ isLoading }: SubmitButtonProps) {
+function SubmitButton({ isLoading, onSubmit }: SubmitButtonProps) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
 
@@ -46,17 +49,20 @@ function SubmitButton({ isLoading }: SubmitButtonProps) {
     enabled: features.creatorComp,
   });
 
+  const handleClick = () => {
+    if (running) helpers?.next();
+    onSubmit?.();
+  };
+
   const generateButton = (
     <GenerateButton
-      type="submit"
+      type="button"
       data-tour="gen:submit"
       className="h-full flex-1 px-2"
       loading={isInitialLoading || isLoading}
       cost={data?.cost?.total ?? 0}
       disabled={isError || !isValid}
-      onClick={() => {
-        if (running) helpers?.next();
-      }}
+      onClick={handleClick}
       transactions={data?.transactions}
       allowMatureContent={data?.allowMatureContent}
     />
@@ -81,8 +87,8 @@ export function FormFooter() {
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const { running, helpers } = useTourContext();
+  const { creatorTip, civitaiTip } = useTipStore();
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | undefined>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
@@ -95,10 +101,22 @@ export function FormFooter() {
     [status.message]
   );
 
+  const generateMutation = trpc.orchestrator.generateFromGraph.useMutation({
+    onError: (error) => {
+      const isPOI =
+        error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI');
+      if (isPOI) {
+        setPromptWarning(error.message);
+        currentUser?.refresh();
+      } else {
+        setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
+      }
+    },
+  });
+
   const clearWarning = () => setPromptWarning(null);
 
   const handleSubmit = async () => {
-    console.log({ snapshot: graph.getSnapshot() });
     const result = graph.validate();
 
     if (!result.success) {
@@ -106,35 +124,19 @@ export function FormFooter() {
       return;
     }
 
-    setIsSubmitting(true);
     setSubmitError(undefined);
     setPromptWarning(null);
 
-    try {
-      // Filter out computed nodes (they're derived, not input)
-      const inputData = Object.fromEntries(
-        Object.entries(result.data).filter(([k]) => result.nodes[k]?.kind !== 'computed')
-      );
+    // Filter out computed nodes (they're derived, not input)
+    const inputData = Object.fromEntries(
+      Object.entries(result.data).filter(([k]) => result.nodes[k]?.kind !== 'computed')
+    );
 
-      console.log('Submitting:', inputData);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // TODO: Replace with actual submission logic
-      // await mutateAsync({ resources, params, tips, remixOfId })
-      //   .catch((error) => {
-      //     if (error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI')) {
-      //       setPromptWarning(error.message);
-      //       currentUser?.refresh();
-      //     } else {
-      //       setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
-      //     }
-      //   });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'An unexpected error occurred';
-      setSubmitError(message);
-    } finally {
-      setIsSubmitting(false);
-    }
+    await generateMutation.mutateAsync({
+      input: inputData,
+      creatorTip,
+      civitaiTip,
+    });
   };
 
   const handleReset = () => {
@@ -251,7 +253,7 @@ export function FormFooter() {
           )}
 
           {/* Quantity Input, Submit Button, Reset Button */}
-          <div className="flex gap-2">
+          <div className="flex min-h-[52px] gap-2">
             <Controller
               graph={graph}
               name="quantity"
@@ -280,7 +282,7 @@ export function FormFooter() {
                 </Card>
               )}
             />
-            <SubmitButton isLoading={isSubmitting} />
+            <SubmitButton isLoading={generateMutation.isLoading} onSubmit={handleSubmit} />
             <Button onClick={handleReset} variant="default" className="h-auto px-3">
               Reset
             </Button>

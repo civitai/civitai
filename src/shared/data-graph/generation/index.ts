@@ -36,7 +36,6 @@ export {
   wanInterpolatorModels,
 } from './wan-graph';
 export { hunyuanGraph, hunyuanAspectRatios, hunyuanDurations } from './hunyuan-graph';
-export { minimaxGraph } from './minimax-graph';
 export { mochiGraph } from './mochi-graph';
 export { soraGraph, soraAspectRatios, soraResolutions } from './sora-graph';
 export {

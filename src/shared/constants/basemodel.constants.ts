@@ -167,6 +167,7 @@ export const ECO = {
   Kling: 49,
   Haiper: 50,
   Lightricks: 51,
+  Seedance: 52,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -575,6 +576,13 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 214,
     // txt2vid + img2vid
   },
+  {
+    id: ECO.Seedance,
+    key: 'Seedance',
+    name: 'seedance',
+    displayName: 'Seedance',
+    sortOrder: 215,
+  },
   { id: ECO.ODOR, key: 'ODOR', name: 'odor', displayName: 'ODOR', sortOrder: 208 },
   {
     id: ECO.PlaygroundV2,
@@ -702,11 +710,12 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MiniMax (Hailuo) - checkpoint only
-  { ecosystemId: ECO.MiniMax, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Seedance - checkpoint only
+  { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -966,6 +975,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Vidu,
     defaults: {
+      model: { id: 2623839 },
       modelLocked: true,
     },
   },
@@ -978,6 +988,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Kling,
     defaults: {
+      model: { id: 2623821 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Seedance,
+    defaults: {
+      model: { id: 2623856 },
       modelLocked: true,
     },
   },
@@ -1288,6 +1306,7 @@ export const BM = {
   Vidu: 67,
   MiniMax: 68,
   Kling: 69,
+  Seedance: 70,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -2183,6 +2202,17 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.Kling,
     hidden: true,
     licenseId: 22,
+  },
+
+  // Seedance
+  {
+    id: BM.Seedance,
+    name: 'Seedance',
+    description: "ByteDance's video generation model",
+    type: 'video',
+    ecosystemId: ECO.Seedance,
+    hidden: true,
+    licenseId: 23,
   },
 ];
 
