@@ -71,6 +71,11 @@ export default defineNextConfig(
     eslint: {
       ignoreDuringBuilds: true,
     },
+    typescript: {
+      // Type checking runs separately in CI (pr-check.yml)
+      // Skip during build to reduce memory usage and speed up Docker builds
+      ignoreBuildErrors: true,
+    },
     generateEtags: false,
     compress: false,
     images: {
