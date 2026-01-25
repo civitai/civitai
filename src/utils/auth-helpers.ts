@@ -14,18 +14,16 @@ function isPrPreview(): boolean {
 }
 
 /**
- * Get the auth proxy URL - either from env var or by detecting PR preview hostname
+ * Get the auth proxy URL - either from env var or by detecting PR preview hostname.
+ * Uses nullish coalescing to ensure the fallback code is not tree-shaken.
  */
 function getAuthProxyUrl(): string | undefined {
-  // First try the env var (works if baked in at build time)
-  if (env.NEXT_PUBLIC_AUTH_PROXY_URL) {
-    return env.NEXT_PUBLIC_AUTH_PROXY_URL;
-  }
-  // Fallback: detect PR preview by hostname pattern
-  if (isPrPreview()) {
-    return PR_PREVIEW_AUTH_PROXY;
-  }
-  return undefined;
+  // Try env var first, then fallback to hostname detection for PR previews
+  // Using ?? ensures both branches are preserved in the bundle
+  return (
+    env.NEXT_PUBLIC_AUTH_PROXY_URL ??
+    (isPrPreview() ? PR_PREVIEW_AUTH_PROXY : undefined)
+  );
 }
 
 /**
