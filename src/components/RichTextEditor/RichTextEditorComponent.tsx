@@ -365,7 +365,7 @@ export function RichTextEditor({
 
             {addMedia && (
               <RTE.ControlsGroup>
-                {addImages && <InsertImageControl accepts={accepts} />}
+                <InsertImageControl accepts={accepts} />
                 <InsertYoutubeVideoControl />
                 <InsertInstagramEmbedControl />
               </RTE.ControlsGroup>

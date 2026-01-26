@@ -138,25 +138,43 @@ function EdgeMediaEditComponent({
       uploadingRef.current = true;
       onUploadStart?.();
 
-      fetchBlobAsFile(url, filename).then((file) => {
-        if (!file) {
-          onUploadEnd?.();
-          return;
-        }
-        uploadImage(file)
-          .then((result: UploadResult) => {
-            updateAttributes({
-              url: result.id,
-              type,
-              filename,
+      // Guard: uploadImage must be configured
+      if (!uploadImage) {
+        console.error('EdgeMediaEditNode: uploadImage option is required but not configured');
+        onUploadEnd?.();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      fetchBlobAsFile(url, filename)
+        .then((file) => {
+          if (!file) {
+            onUploadEnd?.();
+            URL.revokeObjectURL(url);
+            return;
+          }
+          uploadImage(file)
+            .then((result: UploadResult) => {
+              updateAttributes({
+                url: result.id,
+                type,
+                filename,
+              });
+              onUploadEnd?.();
+              URL.revokeObjectURL(url);
+            })
+            .catch(() => {
+              onUploadEnd?.();
+              URL.revokeObjectURL(url);
+              showWarningNotification({ message: `Failed to upload ${type}. Please try again.` });
             });
-            onUploadEnd?.();
-          })
-          .catch(() => {
-            onUploadEnd?.();
-            window.alert(`Failed to upload ${type}. Please try again`);
-          });
-      });
+        })
+        .catch((error) => {
+          console.error('Failed to fetch blob:', error);
+          onUploadEnd?.();
+          URL.revokeObjectURL(url);
+          showWarningNotification({ message: `Failed to upload ${type}. Please try again.` });
+        });
     }
   }, [url, isObjectUrl, filename, type, uploadImage, onUploadStart, onUploadEnd, updateAttributes]);
 
