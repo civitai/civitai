@@ -442,7 +442,12 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           sameSite: hostname == 'localhost' ? 'lax' : 'none',
           path: '/',
           secure: useSecureCookies,
-          domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
+          // Use NEXTAUTH_COOKIE_DOMAIN if set (for cross-subdomain sharing in PR previews),
+          // otherwise default to the hostname with a leading dot for subdomain support
+          domain:
+            hostname == 'localhost'
+              ? hostname
+              : env.NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname,
         },
       },
     },
