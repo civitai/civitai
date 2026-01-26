@@ -3,6 +3,7 @@ import { parseKey } from './s3-utils';
 
 const deliveryWorkerEndpoint = `${env.DELIVERY_WORKER_ENDPOINT}?token=${env.DELIVERY_WORKER_TOKEN}`;
 const storageResolverEndpoint = env.STORAGE_RESOLVER_ENDPOINT;
+const storageResolverAuth = env.STORAGE_RESOLVER_AUTH; // format: username:password
 
 export type DownloadInfo = {
   url: string;
@@ -36,9 +37,14 @@ export async function getDownloadUrlByFileId(
     fileName: fileName ? decodeURIComponent(fileName) : undefined,
   });
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (storageResolverAuth) {
+    headers['Authorization'] = `Basic ${Buffer.from(storageResolverAuth).toString('base64')}`;
+  }
+
   const response = await fetch(`${storageResolverEndpoint}/resolve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body,
   });
 
