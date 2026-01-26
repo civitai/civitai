@@ -182,23 +182,42 @@ declare global {
 const log = createLogger('redis', 'green');
 
 // Track topology refresh intervals for cleanup
-const clusterRefreshIntervals = new Map<string, NodeJS.Timeout>();
+const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 /**
  * Trigger topology rediscovery on a cluster client.
  * Uses internal _slots.rediscover() method - this is undocumented but stable.
  * See: https://github.com/redis/node-redis/issues/2806
  */
-function triggerTopologyRediscovery(client: any, reason: string) {
+function triggerTopologyRediscovery(clusterClient: any, reason: string) {
   try {
-    if (client._slots?.rediscover) {
-      log(`Triggering topology rediscovery: ${reason}`);
-      client._slots.rediscover().catch((err: Error) => {
-        log(`Topology rediscovery failed: ${err.message}`);
-      });
+    if (!clusterClient._slots?.rediscover) {
+      return;
     }
+
+    log(`Triggering topology rediscovery: ${reason}`);
+
+    // rediscover() requires a client instance with .options property
+    // Try to get a master client from the cluster to pass to rediscover
+    const masters = clusterClient._slots.masters;
+    if (masters && masters.length > 0) {
+      // Use the first available master client
+      const masterClient = masters[0]?.client;
+      if (masterClient) {
+        clusterClient._slots.rediscover(masterClient).catch((err: Error) => {
+          log(`Topology rediscovery failed: ${err.message}`);
+        });
+        return;
+      }
+    }
+
+    // Fallback: try calling without argument (may fail but worth trying)
+    clusterClient._slots.rediscover().catch((err: Error) => {
+      log(`Topology rediscovery failed (no master client): ${err.message}`);
+    });
   } catch (err) {
     // Silently ignore if rediscover is not available
+    log(`Topology rediscovery error: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -273,11 +292,11 @@ function getBaseClient(type: 'cache' | 'system') {
         pingInterval,
       });
 
-  // Common event handlers
-  baseClient.on('error', (err: Error) => log(`Redis Error`, err));
-  baseClient.on('connect', () => log('Redis connected'));
-  baseClient.on('reconnecting', () => log('Redis reconnecting'));
-  baseClient.on('ready', () => log('Redis ready!'));
+  // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
+  baseClient.on('error', (err: Error) => log(`Redis Error (${type})`, err));
+  baseClient.on('connect', () => log(`Redis connected (${type})`));
+  baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
+  baseClient.on('ready', () => log(`Redis ready! (${type})`));
 
   // Cluster-specific event handlers for failover detection
   // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
@@ -344,52 +363,78 @@ function getBaseClient(type: 'cache' | 'system') {
     // Set up periodic topology refresh after client is ready and feature flag is checked
     // This ensures we don't rely solely on MOVED/ASK errors for discovery
     // See: https://github.com/redis/node-redis/issues/2806
-    baseClient.once('ready', async () => {
-      const isEnhancedFailoverEnabled = await isFlipt(
-        FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
-        'redis-cluster', // entityId
-        fliptContext // context for segment matching
-      );
+    // Helper function to set up enhanced failover after connection
+    const setupEnhancedFailover = async () => {
+      try {
+        log('Checking enhanced failover feature flag...');
+        const isEnhancedFailoverEnabled = await isFlipt(
+          FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+          'redis-cluster', // entityId
+          fliptContext // context for segment matching
+        );
 
-      if (!isEnhancedFailoverEnabled) {
-        log('Enhanced cluster failover handling is DISABLED (feature flag off)');
-        return;
-      }
-
-      log('Enhanced cluster failover handling is ENABLED');
-
-      const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
-      if (refreshInterval > 0) {
-        const intervalId = setInterval(() => {
-          triggerTopologyRediscovery(baseClient, 'periodic refresh');
-        }, refreshInterval);
-
-        // Store interval for cleanup
-        clusterRefreshIntervals.set(type, intervalId);
-
-        // Wrap close to clean up interval
-        const originalClose = baseClient.close?.bind(baseClient);
-        if (originalClose) {
-          (baseClient as any).close = async () => {
-            const interval = clusterRefreshIntervals.get(type);
-            if (interval) {
-              clearInterval(interval);
-              clusterRefreshIntervals.delete(type);
-              log(`Cleared topology refresh interval for ${type}`);
-            }
-            return originalClose();
-          };
+        if (!isEnhancedFailoverEnabled) {
+          log('Enhanced cluster failover handling is DISABLED (feature flag off)');
+          return;
         }
 
-        log(`Topology refresh scheduled every ${refreshInterval}ms`);
+        log('Enhanced cluster failover handling is ENABLED');
+
+        const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
+        if (refreshInterval > 0) {
+          const intervalId = setInterval(() => {
+            triggerTopologyRediscovery(baseClient, 'periodic refresh');
+          }, refreshInterval);
+
+          // Store interval for cleanup
+          clusterRefreshIntervals.set(type, intervalId);
+
+          // Wrap close to clean up interval
+          const originalClose = baseClient.close?.bind(baseClient);
+          if (originalClose) {
+            (baseClient as any).close = async () => {
+              const interval = clusterRefreshIntervals.get(type);
+              if (interval) {
+                clearInterval(interval);
+                clusterRefreshIntervals.delete(type);
+                log(`Cleared topology refresh interval for ${type}`);
+              }
+              return originalClose();
+            };
+          }
+
+          log(`Topology refresh scheduled every ${refreshInterval}ms`);
+        }
+      } catch (err) {
+        log(`Enhanced failover setup failed: ${err instanceof Error ? err.message : err}`);
       }
+    };
+
+    // Note: node-redis v4.x cluster clients don't emit 'ready' event (known bug)
+    // So we set up enhanced failover in the connect() promise callback instead
+    // See: https://github.com/redis/node-redis/issues/1855
+
+    // Don't await here - let connection happen in background
+    // The client will queue commands until connected
+    log(`Calling connect() for ${type} (cluster) client...`);
+    baseClient.connect().then(async () => {
+      log(`${type} cluster client connected`);
+      await setupEnhancedFailover();
+    }).catch((err) => {
+      log(`Redis connection failed (${type})`, err);
     });
+
+    return baseClient;
   }
 
+  // Non-cluster client - use the normal flow
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
-  baseClient.connect().catch((err) => {
-    log(`Redis connection failed`, err);
+  log(`Calling connect() for ${type} (single) client...`);
+  baseClient.connect().then(() => {
+    log(`${type} single client connected`);
+  }).catch((err) => {
+    log(`Redis connection failed (${type})`, err);
   });
 
   return baseClient;

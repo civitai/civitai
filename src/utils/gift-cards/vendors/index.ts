@@ -1,10 +1,14 @@
 import type { Vendor, VendorRegistry } from './types';
 import { kinguinVendor } from './kinguin';
 import { buybuzzVendor } from './buybuzz';
+import { waifuWayVendor } from './waifu-way';
+import { lewtDropVendor } from './lewt-drop';
 
 const vendorRegistry: VendorRegistry = {
   kinguin: kinguinVendor,
   buybuzz: buybuzzVendor,
+  'waifu-way': waifuWayVendor,
+  'lewt-drop': lewtDropVendor,
 };
 
 export function getEnabledVendors(): Vendor[] {

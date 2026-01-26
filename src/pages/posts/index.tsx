@@ -15,8 +15,8 @@ function PostsPage() {
   return (
     <>
       <Meta
-        title="Civitai Posts | Explore Community-Created Content with Custom AI Resources"
-        description="Discover engaging posts from our growing community on Civitai, featuring unique and creative content generated with custom Stable Diffusion & Flux AI resources crafted by talented community members."
+        title="Community Posts | Civitai"
+        description="Discover creative posts from our community featuring AI art created with Stable Diffusion, Flux, and other models. Find tutorials, showcases, and inspiration."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/posts`, rel: 'canonical' }]}
       />
       <MasonryContainer>

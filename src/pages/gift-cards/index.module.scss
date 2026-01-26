@@ -1,21 +1,40 @@
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
 .headerSection {
   position: relative;
+}
+
+.newVendorDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--mantine-color-yellow-5);
+  animation: pulse 2s ease-in-out infinite;
 }
 
 .promoNotification {
   // Full width layout with proper spacing
   width: 100%;
-  margin-top: 1.5rem;
-  margin-bottom: 1.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: -0.5rem; // Counteract parent Stack gap
 
   // Center the notification content
   display: flex;
   justify-content: center;
 
-  // On desktop: slightly less top margin
+  // On desktop
   @media (min-width: 769px) {
-    margin-top: 1rem;
-    margin-bottom: 2rem;
+    margin-top: 0.5rem;
+    margin-bottom: -0.75rem; // Counteract parent Stack gap
   }
 
   // Enhanced styling for the notification content
@@ -185,6 +204,37 @@
 
   @media (max-width: 768px) {
     padding: var(--mantine-spacing-lg);
+  }
+}
+
+.newPlansBadge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 6px 12px;
+  border-radius: var(--mantine-radius-md);
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-green-6),
+    var(--mantine-color-teal-6)
+  );
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
+  animation: badgePulse 2s ease-in-out infinite;
+  z-index: 1;
+
+  @media (max-width: 768px) {
+    top: 12px;
+    right: 12px;
+    padding: 4px 8px;
+  }
+}
+
+@keyframes badgePulse {
+  0%, 100% {
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    box-shadow: 0 2px 16px rgba(34, 197, 94, 0.6);
   }
 }
 

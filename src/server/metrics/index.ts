@@ -1,6 +1,8 @@
 export { answerMetrics } from '~/server/metrics/answer.metrics';
 export { articleMetrics } from '~/server/metrics/article.metrics';
+export { baseModelMetrics } from '~/server/metrics/basemodel.metrics';
 export { imageMetrics } from '~/server/metrics/image.metrics';
+export { modelCollectionMetrics } from '~/server/metrics/model-collection.metrics';
 export { modelMetrics } from '~/server/metrics/model.metrics';
 export { postMetrics } from '~/server/metrics/post.metrics';
 export { questionMetrics } from '~/server/metrics/question.metrics';

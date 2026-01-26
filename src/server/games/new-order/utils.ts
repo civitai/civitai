@@ -181,7 +181,10 @@ function createCounter<TId extends number | string = number | string>({
       if (ordered) await sysRedis.zIncrBy(key, absValue * -1, id.toString());
       else await sysRedis.hIncrBy(key, id.toString(), absValue * -1);
     } else {
-      await reset({ id }); // Reset the count if it goes below 0
+      // Sorted sets: remove member to clean up leaderboards
+      // Hashes: set to 0 to prevent re-fetching stale data
+      if (ordered) await reset({ id });
+      else await setCacheValue(id, 0);
     }
 
     return newValue;
@@ -405,8 +408,11 @@ export const blessedBuzzCounter = createCounter({
       `
       : '0';
 
-    // Query ClickHouse for exp from last 3 days that hasn't been granted yet
-    const startDate = dayjs().subtract(3, 'days').startOf('day').toDate();
+    // Query from 2 days ago (not 3) to exclude just-granted data
+    // The grant job processes 3-days-ago data at midnight, so after midnight:
+    // - 3 days ago = just granted (exclude)
+    // - 2 days ago to today = not yet granted (include)
+    const startDate = dayjs().subtract(2, 'days').startOf('day').toDate();
     const endDate = dayjs().endOf('day').toDate();
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`

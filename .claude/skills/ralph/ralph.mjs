@@ -1,513 +1,701 @@
 #!/usr/bin/env node
-
 /**
- * Ralph - Autonomous AI agent loop using Claude Agent SDK
+ * Ralph - Autonomous Agent Management
  *
- * Spawns fresh Claude instances for each iteration until all PRD tasks complete.
- * Each iteration gets a clean context window, avoiding context rot.
+ * CLI for creating, running, and monitoring Ralph autonomous agent sessions.
+ * The daemon starts automatically if not running.
  *
  * Usage:
- *   node .claude/skills/ralph/ralph.mjs [options]
+ *   ralph.mjs <command> [options]
  *
- * Options:
- *   --prd <path>           Path to prd.json (default: .claude/skills/ralph/prd.json)
- *   --max-iterations <n>   Maximum iterations (default: 10)
- *   --model <model>        Model to use: opus, sonnet, haiku (default: sonnet)
- *   --quiet                Suppress iteration banners
- *   --dry-run              Show what would be done without executing
- *   --debug                Show debug output for message types
+ * Commands:
+ *   create      Create a new session
+ *   list        List all sessions
+ *   status      Get session status
+ *   start       Start a session
+ *   pause       Pause a session
+ *   resume      Resume a session
+ *   inject      Inject guidance into a session
+ *   abort       Abort a session
+ *   destroy     Destroy (delete) a session
+ *   logs        Get session logs
+ *   spawn       Spawn a child session (orchestration)
+ *   children    List children of a session
+ *   wait        Wait for children to complete
+ *   tree        Show session tree
+ *
+ * Examples:
+ *   ralph.mjs create --prd path/to/prd.json --start
+ *   ralph.mjs status my-session-abc123
+ *   ralph.mjs logs my-session --follow
+ *   ralph.mjs inject my-session --message "Try a different approach"
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { spawn } from 'child_process';
+import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const defaultProjectRoot = resolve(__dirname, '../../..');
+const DAEMON_SERVER = resolve(__dirname, 'daemon', 'server.mjs');
+const DAEMON_PID_FILE = resolve(__dirname, 'daemon', 'daemon.pid');
+const DEFAULT_HOST = 'http://localhost:9333';
+const DAEMON_URL = process.env.RALPH_DAEMON_URL || DEFAULT_HOST;
 
-// Parse arguments
-const args = process.argv.slice(2);
-let prdPath = resolve(__dirname, 'prd.json');
-let maxIterations = null; // Will default to story count
-let model = 'opus';
-let quietMode = false;
-let dryRun = false;
-let debugMode = false;
-let noCommit = false;
-let cwdOverride = null;
-let maxTurns = 100;
+// Check if daemon is responding
+async function isDaemonRunning() {
+  try {
+    const res = await fetch(`${DAEMON_URL}/api/sessions`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
-for (let i = 0; i < args.length; i++) {
-  const arg = args[i];
-  if (arg === '--prd' || arg === '-p') {
-    prdPath = resolve(process.cwd(), args[++i]);
-  } else if (arg === '--max-iterations' || arg === '-n') {
-    maxIterations = parseInt(args[++i], 10);
-  } else if (arg === '--model' || arg === '-m') {
-    model = args[++i];
-  } else if (arg === '--quiet' || arg === '-q') {
-    quietMode = true;
-  } else if (arg === '--dry-run') {
-    dryRun = true;
-  } else if (arg === '--debug') {
-    debugMode = true;
-  } else if (arg === '--no-commit') {
-    noCommit = true;
-  } else if (arg === '--cwd' || arg === '-C') {
-    cwdOverride = resolve(process.cwd(), args[++i]);
-  } else if (arg === '--max-turns' || arg === '-t') {
-    maxTurns = parseInt(args[++i], 10);
-  } else if (arg === '--help' || arg === '-h') {
+// Start daemon in background
+async function startDaemon() {
+  console.log('Starting Ralph daemon...');
+
+  const child = spawn('node', [DAEMON_SERVER], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: __dirname,
+  });
+
+  child.unref();
+
+  // Write PID file
+  writeFileSync(DAEMON_PID_FILE, String(child.pid));
+
+  // Wait for daemon to be ready
+  const maxAttempts = 30;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    if (await isDaemonRunning()) {
+      console.log('Ralph daemon started successfully.\n');
+      return true;
+    }
+  }
+
+  throw new Error('Failed to start daemon - timeout waiting for server');
+}
+
+// Ensure daemon is running before any command
+async function ensureDaemon() {
+  if (await isDaemonRunning()) {
+    return;
+  }
+  await startDaemon();
+}
+
+// Parse command line arguments
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+  const options = {};
+  const positional = [];
+
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      const nextArg = args[i + 1];
+
+      // Handle boolean flags
+      if (!nextArg || nextArg.startsWith('--')) {
+        options[key] = true;
+      } else {
+        options[key] = nextArg;
+        i++;
+      }
+    } else if (arg.startsWith('-')) {
+      // Short flags
+      const key = arg.slice(1);
+      const nextArg = args[i + 1];
+
+      if (!nextArg || nextArg.startsWith('-')) {
+        options[key] = true;
+      } else {
+        options[key] = nextArg;
+        i++;
+      }
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  return { command, options, positional };
+}
+
+// Make HTTP request to daemon
+async function request(method, path, body = null) {
+  const url = `${DAEMON_URL}${path}`;
+
+  const options = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  };
+
+  if (body) {
+    options.body = JSON.stringify(body);
+  }
+
+  const res = await fetch(url, options);
+  const data = await res.json();
+
+  if (!res.ok && data.error) {
+    throw new Error(data.error);
+  }
+
+  return data;
+}
+
+// Format output for display
+function formatOutput(data, options = {}) {
+  if (options.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  // Custom formatting based on data type
+  if (data.type === 'sessions') {
+    if (data.sessions.length === 0) {
+      console.log('No sessions found.');
+      return;
+    }
+    console.log(`Sessions (${data.sessions.length}):\n`);
+    for (const s of data.sessions) {
+      const progress = `${s.storiesCompleted || 0}/${s.storiesTotal || 0}`;
+      const parent = s.parentId ? ` (child of ${s.parentId})` : '';
+      const children = s.childIds?.length ? ` [${s.childIds.length} children]` : '';
+      const storyTurns = s.storyTurnCount || 0;
+      console.log(`  ${s.status.padEnd(10)} ${s.id}${parent}${children}`);
+      console.log(`             ${s.name || 'Unnamed'} - ${progress} stories, story turn ${storyTurns}/${s.maxTurns || 100} (total: ${s.turnCount || 0})`);
+    }
+    return;
+  }
+
+  if (data.type === 'session_status') {
+    console.log(`Session: ${data.id}`);
+    console.log(`  Status:   ${data.status}`);
+    console.log(`  Health:   ${data.health}`);
+    if (data.currentStory) {
+      console.log(`  Story:    ${data.currentStory.id} - ${data.currentStory.title}`);
+    }
+    console.log(`  Progress: ${data.progress.storiesCompleted}/${data.progress.storiesTotal} stories`);
+    console.log(`  Turns:    ${data.progress.storyTurnCount || 0}/${data.progress.maxTurns} (story), ${data.progress.turnCount} total`);
+    if (data.lock) {
+      console.log(`  Locked:   By ${data.lock.holder} (${data.lock.reason || 'no reason'})`);
+    }
+    return;
+  }
+
+  if (data.type === 'session_tree') {
+    const printTree = (node, indent = '') => {
+      const status = node.status.padEnd(10);
+      const progress = `${node.storiesCompleted || 0}/${node.storiesTotal || 0}`;
+      console.log(`${indent}${status} ${node.id} (${progress} stories)`);
+      for (const child of node.children || []) {
+        printTree(child, indent + '  ');
+      }
+    };
+    console.log('Session Tree:\n');
+    printTree(data.tree);
+    return;
+  }
+
+  if (data.type === 'logs') {
+    if (!data.logs || data.logs.length === 0) {
+      console.log('No logs found.');
+      return;
+    }
+    for (const log of data.logs) {
+      const time = new Date(log.createdAt).toLocaleTimeString();
+      console.log(`[${time}] [${log.level}] ${log.message}`);
+    }
+    return;
+  }
+
+  if (data.type === 'children') {
+    if (!data.children || data.children.length === 0) {
+      console.log('No children found.');
+      return;
+    }
+    console.log(`Children of ${data.sessionId}:\n`);
+    for (const c of data.children) {
+      const progress = `${c.storiesCompleted || 0}/${c.storiesTotal || 0}`;
+      console.log(`  ${c.status.padEnd(10)} ${c.id} - ${progress} stories`);
+    }
+    return;
+  }
+
+  if (data.type === 'wait_result') {
+    if (data.completed) {
+      console.log('All children completed:');
+      for (const c of data.children) {
+        console.log(`  ${c.status.padEnd(10)} ${c.id} - ${c.storiesCompleted}/${c.storiesTotal} stories`);
+      }
+    } else if (data.timedOut) {
+      console.log('Timed out. Pending children:');
+      for (const c of data.pendingChildren) {
+        console.log(`  ${c.status.padEnd(10)} ${c.id}`);
+      }
+    }
+    return;
+  }
+
+  // Default: print success message
+  if (data.type) {
+    const messages = {
+      session_created: `Session created: ${data.session?.id}`,
+      session_started: `Session ${data.sessionId} started`,
+      session_aborted: `Session ${data.sessionId} aborted`,
+      session_destroyed: `Session ${data.sessionId} destroyed`,
+      pause_requested: `Pause requested for ${data.sessionId}${data.lockToken ? ` (lock: ${data.lockToken})` : ''}`,
+      resume_requested: `Resume requested for ${data.sessionId}`,
+      guidance_injected: `Guidance injected into ${data.sessionId}`,
+      child_spawned: `Child session spawned: ${data.child?.id}`,
+      cascade_aborted: `Aborted ${Array.isArray(data.aborted) ? data.aborted.length : 0} sessions: ${Array.isArray(data.aborted) ? data.aborted.join(', ') : 'none'}`,
+    };
+    console.log(messages[data.type] || `Success: ${data.type}`);
+    return;
+  }
+
+  // Fallback to JSON
+  console.log(JSON.stringify(data, null, 2));
+}
+
+// Commands
+const commands = {
+  async create(options, positional) {
+    const prd = options.prd || positional[0];
+    if (!prd) {
+      throw new Error('PRD path required. Usage: ralph.mjs create --prd <path>');
+    }
+
+    const data = await request('POST', '/api/sessions', {
+      prd: resolve(prd),
+      name: options.name,
+      model: options.model || options.m,
+      maxTurns: options['max-turns'] ? parseInt(options['max-turns'], 10) : undefined,
+      workingDirectory: options.cwd,
+      autoStart: options.start || false,
+    });
+
+    formatOutput(data, options);
+    return data;
+  },
+
+  async list(options) {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    if (options.active) params.set('active', 'true');
+
+    const path = `/api/sessions${params.toString() ? '?' + params.toString() : ''}`;
+    const data = await request('GET', path);
+    formatOutput(data, options);
+    return data;
+  },
+
+  async status(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs status <session-id>');
+    }
+
+    const data = await request('GET', `/api/sessions/${sessionId}`);
+    formatOutput(data, options);
+    return data;
+  },
+
+  async start(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs start <session-id>');
+    }
+
+    const data = await request('POST', `/api/sessions/${sessionId}/start`);
+    formatOutput(data, options);
+    return data;
+  },
+
+  async pause(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs pause <session-id>');
+    }
+
+    const data = await request('POST', `/api/sessions/${sessionId}/pause`, {
+      source: options.source || 'cli',
+      reason: options.reason,
+    });
+    formatOutput(data, options);
+    return data;
+  },
+
+  async resume(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs resume <session-id>');
+    }
+
+    const data = await request('POST', `/api/sessions/${sessionId}/resume`, {
+      source: options.source || 'cli',
+      guidance: options.guidance || options.g,
+      guidanceType: options.type,
+      lockToken: options.token,
+      force: options.force || false,
+    });
+    formatOutput(data, options);
+    return data;
+  },
+
+  async inject(options, positional) {
+    const sessionId = options.session || positional[0];
+    const content = options.message || options.m || positional[1];
+
+    if (!sessionId || !content) {
+      throw new Error('Session ID and message required. Usage: ralph.mjs inject <session-id> --message "..."');
+    }
+
+    const data = await request('POST', `/api/sessions/${sessionId}/inject`, {
+      content,
+      type: options.type || 'HINT',
+      source: options.source || 'cli',
+    });
+    formatOutput(data, options);
+    return data;
+  },
+
+  async abort(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs abort <session-id>');
+    }
+
+    const endpoint = options.cascade
+      ? `/api/sessions/${sessionId}/abort-cascade`
+      : `/api/sessions/${sessionId}/abort`;
+
+    const data = await request('POST', endpoint, {
+      source: options.source || 'cli',
+    });
+    formatOutput(data, options);
+    return data;
+  },
+
+  async destroy(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs destroy <session-id>');
+    }
+
+    const data = await request('DELETE', `/api/sessions/${sessionId}`);
+    formatOutput(data, options);
+    return data;
+  },
+
+  async logs(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs logs <session-id>');
+    }
+
+    const params = new URLSearchParams();
+    if (options.limit) params.set('limit', options.limit);
+
+    const path = `/api/sessions/${sessionId}/logs${params.toString() ? '?' + params.toString() : ''}`;
+
+    if (options.follow || options.f) {
+      // Poll for new logs
+      let lastId = 0;
+      const poll = async () => {
+        try {
+          const pollParams = new URLSearchParams();
+          pollParams.set('limit', '50');
+          pollParams.set('offset', String(lastId));
+
+          const data = await request('GET', `/api/sessions/${sessionId}/logs?${pollParams.toString()}`);
+          if (data.logs && data.logs.length > 0) {
+            for (const log of data.logs) {
+              const time = new Date(log.createdAt).toLocaleTimeString();
+              console.log(`[${time}] [${log.level}] ${log.message}`);
+              if (log.id > lastId) lastId = log.id;
+            }
+          }
+        } catch (err) {
+          // Session might have ended
+          console.log(`\nSession ended or error: ${err.message}`);
+          process.exit(0);
+        }
+      };
+
+      console.log(`Following logs for ${sessionId}... (Ctrl+C to stop)\n`);
+      await poll();
+      setInterval(poll, 2000);
+      return; // Don't exit
+    }
+
+    const data = await request('GET', path);
+    formatOutput(data, options);
+    return data;
+  },
+
+  // Orchestration commands
+  async spawn(options, positional) {
+    const parentId = options.parent || positional[0];
+    const prd = options.prd || positional[1];
+
+    if (!parentId || !prd) {
+      throw new Error('Parent session ID and PRD path required. Usage: ralph.mjs spawn <parent-id> --prd <path>');
+    }
+
+    const data = await request('POST', `/api/sessions/${parentId}/spawn`, {
+      prd: resolve(prd),
+      name: options.name,
+      model: options.model || options.m,
+      maxTurns: options['max-turns'] ? parseInt(options['max-turns'], 10) : undefined,
+      autoStart: options.start || false,
+    });
+    formatOutput(data, options);
+
+    // Optionally wait for completion
+    if (options.wait) {
+      console.log(`\nWaiting for child ${data.child.id} to complete...`);
+      const childId = data.child.id;
+
+      const pollStatus = async () => {
+        while (true) {
+          const status = await request('GET', `/api/sessions/${childId}`);
+          if (['COMPLETED', 'ABORTED'].includes(status.status)) {
+            console.log(`\nChild ${childId} ${status.status.toLowerCase()}`);
+            return status;
+          }
+          await new Promise(r => setTimeout(r, 5000));
+          process.stdout.write('.');
+        }
+      };
+
+      await pollStatus();
+    }
+
+    return data;
+  },
+
+  async children(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs children <session-id>');
+    }
+
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+
+    const path = `/api/sessions/${sessionId}/children${params.toString() ? '?' + params.toString() : ''}`;
+    const data = await request('GET', path);
+    formatOutput(data, options);
+    return data;
+  },
+
+  async wait(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs wait <session-id>');
+    }
+
+    console.log(`Waiting for children of ${sessionId} to complete...`);
+
+    const data = await request('POST', `/api/sessions/${sessionId}/wait`, {
+      timeout: options.timeout ? parseInt(options.timeout, 10) * 1000 : 0,
+      pollInterval: options.interval ? parseInt(options.interval, 10) * 1000 : 2000,
+    });
+    formatOutput(data, options);
+    return data;
+  },
+
+  // Watch a session for significant state changes (blocked, completed, story done, etc.)
+  async watch(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs watch <session-id>');
+    }
+
+    console.log(`Watching ${sessionId} for state changes...`);
+
+    const data = await request('POST', `/api/sessions/${sessionId}/wait-state`, {
+      timeout: options.timeout ? parseInt(options.timeout, 10) * 1000 : 0,
+      pollInterval: options.interval ? parseInt(options.interval, 10) * 1000 : 2000,
+    });
+
+    // Pretty print the result
+    if (data.changed) {
+      console.log(`\nState change detected: ${data.reason}`);
+      if (data.reason === 'status_change') {
+        console.log(`  Status: ${data.previousStatus} -> ${data.currentStatus}`);
+      } else if (data.reason === 'story_completed') {
+        console.log(`  Stories: ${data.storiesCompleted}/${data.storiesTotal} completed`);
+      }
+    } else {
+      console.log(`\nNo state change (${data.reason})`);
+    }
+
+    formatOutput(data, options);
+    return data;
+  },
+
+  async tree(options, positional) {
+    const sessionId = options.session || positional[0];
+    if (!sessionId) {
+      throw new Error('Session ID required. Usage: ralph.mjs tree <session-id>');
+    }
+
+    const data = await request('GET', `/api/sessions/${sessionId}/tree`);
+    formatOutput(data, options);
+    return data;
+  },
+
+  // Daemon management
+  async shutdown(options) {
+    // Check if daemon is running first
+    if (!(await isDaemonRunning())) {
+      console.log('Ralph daemon is not running.');
+      return { type: 'not_running' };
+    }
+
+    console.log('Shutting down Ralph daemon...');
+    try {
+      const data = await request('POST', '/api/exit');
+      console.log('Ralph daemon stopped.');
+      return data;
+    } catch (err) {
+      // Connection reset is expected when server shuts down
+      if (err.message.includes('fetch failed') || err.message.includes('ECONNRESET')) {
+        console.log('Ralph daemon stopped.');
+        return { type: 'shutting_down' };
+      }
+      throw err;
+    }
+  },
+
+  async help() {
     console.log(`
-Ralph - Autonomous AI agent loop using Claude Agent SDK
+Ralph - Autonomous Agent Management
 
-Usage: node .claude/skills/ralph/ralph.mjs [options]
+Usage:
+  ralph.mjs <command> [options]
 
-Options:
-  --prd, -p <path>         Path to prd.json (default: .claude/skills/ralph/prd.json)
-  --max-iterations, -n <n> Maximum iterations (default: number of stories)
-  --max-turns, -t <n>      Max tool calls per iteration (default: 100)
-  --model, -m <model>      Model: opus, sonnet, haiku (default: opus)
-  --cwd, -C <path>         Working directory for Ralph (default: script location)
-  --quiet, -q              Suppress iteration banners
-  --dry-run                Show what would be done without executing
-  --no-commit              Skip git commits (for testing)
-  --debug                  Show debug output for message types
-  --help, -h               Show this help
+Session Commands:
+  create                 Create a new session
+    --prd <path>           PRD file path (required)
+    --name <name>          Session name
+    --model <model>        Model: opus, sonnet, haiku (default: opus)
+    --max-turns <n>        Max turns per iteration (default: 100)
+    --start                Auto-start after creation
+
+  list                   List all sessions
+    --status <status>      Filter by status (RUNNING, PAUSED, COMPLETED, ABORTED)
+    --active               Show only active sessions
+
+  status <session-id>    Get session status
+  start <session-id>     Start a session
+
+  pause <session-id>     Pause a session
+    --reason <reason>      Reason for pausing
+
+  resume <session-id>    Resume a session
+    --guidance <text>      Guidance to inject on resume
+    --force                Force resume even without lock token
+
+  inject <session-id>    Inject guidance into a running session
+    --message <text>       Guidance message (required)
+    --type <type>          Type: CORRECTION, HINT, ENVIRONMENT_UPDATE
+
+  abort <session-id>     Abort a session
+    --cascade              Also abort all children
+
+  destroy <session-id>   Delete a session permanently
+
+  logs <session-id>      Get session logs
+    --follow, -f           Follow logs in real-time
+    --limit <n>            Number of logs to fetch
+
+Orchestration Commands:
+  spawn <parent-id>      Spawn a child session
+    --prd <path>           Child PRD path (required)
+    --start                Auto-start child
+    --wait                 Wait for child to complete
+
+  children <session-id>  List children of a session
+  wait <session-id>      Wait for all children to complete
+    --timeout <seconds>    Max wait time (0 = forever)
+
+  watch <session-id>     Watch for state changes (blocked, story done, completed)
+    --timeout <seconds>    Max wait time (0 = forever)
+
+  tree <session-id>      Show session tree (parent + all descendants)
+
+Daemon Commands:
+  shutdown               Stop the Ralph daemon gracefully
+
+Global Options:
+  --json                 Output raw JSON
+  --help                 Show this help
+
+The daemon starts automatically if not already running.
 
 Examples:
-  node .claude/skills/ralph/ralph.mjs
-  node .claude/skills/ralph/ralph.mjs --max-iterations 50
-  node .claude/skills/ralph/ralph.mjs --prd ./my-feature/prd.json --model opus
+  # Create and start a session
+  ralph.mjs create --prd .claude/skills/ralph/projects/my-feature/prd.json --start
+
+  # Monitor a session
+  ralph.mjs logs my-session-abc123 --follow
+
+  # Inject guidance into a running session
+  ralph.mjs inject my-session-abc123 --message "Try using the existing helper function"
+
+  # Spawn a child and wait for it
+  ralph.mjs spawn parent-123 --prd child/prd.json --start --wait
+
+  # View session hierarchy
+  ralph.mjs tree orchestrator-123
 `);
+  },
+};
+
+// Main
+async function main() {
+  const { command, options, positional } = parseArgs();
+
+  if (!command || command === 'help' || options.help) {
+    await commands.help();
     process.exit(0);
   }
-}
 
-// Validate PRD exists first (need to read it to determine prompt type)
-if (!existsSync(prdPath)) {
-  console.error(`Error: PRD not found at ${prdPath}`);
-  console.error('Create a PRD first using the /ralph skill');
-  process.exit(1);
-}
-
-// Read and parse PRD
-function readPrd() {
-  const content = readFileSync(prdPath, 'utf-8');
-  return JSON.parse(content);
-}
-
-// Determine PRD type and load prompt
-const initialPrd = readPrd();
-const prdType = initialPrd.type || 'code';
-
-// Progress file path (in same directory as PRD)
-const progressPath = resolve(dirname(prdPath), 'progress.txt');
-
-// Load prompts
-const promptsDir = resolve(__dirname, 'prompts');
-let promptTemplate;
-
-if (prdType === 'original') {
-  // Original type uses the monolithic prompt directly (no composition)
-  const originalPromptPath = resolve(promptsDir, 'original.md');
-  if (!existsSync(originalPromptPath)) {
-    console.error(`Error: original.md not found at ${originalPromptPath}`);
+  if (!commands[command]) {
+    console.error(`Unknown command: ${command}`);
+    console.error('Run "ralph.mjs help" for usage information.');
     process.exit(1);
   }
-  promptTemplate = readFileSync(originalPromptPath, 'utf-8')
-    .replace(/`\.claude\/skills\/ralph\/prd\.json`/g, `\`${prdPath}\``)
-    .replace(/`\.claude\/skills\/ralph\/progress\.txt`/g, `\`${progressPath}\``);
-} else {
-  // Composite prompt: base + specialized
-  const basePromptPath = resolve(promptsDir, 'base.md');
-  const specializedPromptPath = resolve(promptsDir, `${prdType}.md`);
-
-  if (!existsSync(basePromptPath)) {
-    console.error(`Error: base.md not found at ${basePromptPath}`);
-    process.exit(1);
-  }
-  if (!existsSync(specializedPromptPath)) {
-    console.error(`Error: ${prdType}.md not found at ${specializedPromptPath}`);
-    process.exit(1);
-  }
-
-  const basePrompt = readFileSync(basePromptPath, 'utf-8');
-  const specializedPrompt = readFileSync(specializedPromptPath, 'utf-8');
-
-  // Inject paths into base prompt
-  promptTemplate = basePrompt
-    .replace(/\{\{PRD_PATH\}\}/g, prdPath)
-    .replace(/\{\{PROGRESS_PATH\}\}/g, progressPath)
-    + '\n\n---\n\n' + specializedPrompt;
-}
-
-// Write PRD
-function writePrd(prd) {
-  writeFileSync(prdPath, JSON.stringify(prd, null, 2));
-}
-
-// Get next incomplete story
-function getNextStory(prd) {
-  const incomplete = prd.userStories
-    .filter(s => !s.passes)
-    .sort((a, b) => a.priority - b.priority);
-  return incomplete[0] || null;
-}
-
-// Count remaining stories
-function countRemaining(prd) {
-  return prd.userStories.filter(s => !s.passes).length;
-}
-
-// Initialize or update progress file
-function initProgress(prd) {
-  if (!existsSync(progressPath)) {
-    const content = `# Ralph Progress Log
-Started: ${new Date().toISOString()}
-Feature: ${prd.description}
-
-## Codebase Patterns
-<!-- Patterns will be added as Ralph discovers them -->
-
----
-`;
-    writeFileSync(progressPath, content);
-  }
-}
-
-// Print iteration banner
-function printBanner(iteration, maxIterations, story) {
-  if (quietMode) return;
-
-  console.log('');
-  console.log('═'.repeat(60));
-  console.log(`  Ralph Iteration ${iteration} of ${maxIterations}`);
-  console.log(`  Working on: ${story.id} - ${story.title}`);
-  console.log('═'.repeat(60));
-  console.log('');
-}
-
-// Build the final prompt (paths already injected at load time)
-function buildPrompt() {
-  let prompt = promptTemplate;
-
-  // Add no-commit instruction if flag is set (only relevant for code PRDs)
-  if (noCommit && prdType === 'code') {
-    prompt += `
-
-## TESTING MODE - NO COMMITS
-
-**DO NOT commit any changes.** This is a test run.
-- Make the code changes as normal
-- Run typecheck as normal
-- Update the PRD to mark story as passing
-- Update progress log as normal
-- But SKIP the git commit step entirely
-`;
-  }
-
-  return prompt;
-}
-
-// Format tool name for logging
-function formatToolName(name) {
-  // Shorten common tool names for cleaner output
-  const shortNames = {
-    'Read': 'Read',
-    'Write': 'Write',
-    'Edit': 'Edit',
-    'Bash': 'Bash',
-    'Glob': 'Glob',
-    'Grep': 'Grep',
-    'TodoWrite': 'Todo',
-    'WebFetch': 'Fetch',
-    'WebSearch': 'Search',
-  };
-  return shortNames[name] || name;
-}
-
-// Run a single iteration using Claude Agent SDK
-async function runIteration(prd, story) {
-  const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-  // Build the prompt with correct paths
-  const prompt = buildPrompt();
-
-  let fullResponse = '';
-  let lastWasToolCall = false;
-  let pendingNewline = false;
-
-  // Turn tracking for context-aware warnings
-  let turnCount = 0;
-  let warned70 = false;
-  let warned90 = false;
-
-  // Create turn-tracking hook that injects warnings at thresholds
-  const turnTrackingHook = async () => {
-    turnCount++;
-    const percentUsed = (turnCount / maxTurns) * 100;
-
-    if (!quietMode) {
-      // Log turn count periodically
-      if (turnCount % 10 === 0) {
-        console.log(`  [Turn ${turnCount}/${maxTurns} - ${Math.round(percentUsed)}%]`);
-      }
-    }
-
-    // 70% warning - suggest checkpoint
-    if (percentUsed >= 70 && !warned70) {
-      warned70 = true;
-      return {
-        systemMessage: `⚠️ TURN BUDGET WARNING: You've used ${turnCount} of ${maxTurns} turns (${Math.round(percentUsed)}%). If you're not close to completing this story, consider:
-1. Documenting your current progress in progress.txt
-2. Noting what's left to do
-3. Preparing for a clean handoff to the next iteration`
-      };
-    }
-
-    // 90% warning - force wrap-up
-    if (percentUsed >= 90 && !warned90) {
-      warned90 = true;
-      return {
-        systemMessage: `🚨 TURN BUDGET CRITICAL: You've used ${turnCount} of ${maxTurns} turns (${Math.round(percentUsed)}%). You MUST wrap up NOW:
-1. Stop any new work
-2. Document exactly what's done and what's remaining in progress.txt
-3. If the story isn't complete, leave it as passes: false
-4. Exit gracefully - another iteration will continue the work`
-      };
-    }
-
-    return {};
-  };
-
-  // Change to project root so file paths resolve correctly
-  const projectRoot = cwdOverride || defaultProjectRoot;
-  const originalCwd = process.cwd();
-  process.chdir(projectRoot);
 
   try {
-    for await (const message of query({
-      prompt,
-      options: {
-        model,
-        maxTurns,
-        // Enable project settings so agent has access to skills, CLAUDE.md, etc.
-        settingSources: ['project'],
-        // Allow the agent to use all tools for autonomous operation
-        permissionMode: 'bypassPermissions',
-        // Hook to track turns and inject warnings
-        hooks: {
-          PostToolUse: [{
-            hooks: [turnTrackingHook]
-          }]
-        }
-      },
-    })) {
-      if (debugMode) {
-        console.log(`\n[DEBUG] Message type: ${message.type}`);
-        console.log(`[DEBUG] Content: ${JSON.stringify(message).substring(0, 300)}`);
-      }
-
-      // Handle system messages (init, etc.)
-      if (message.type === 'system') {
-        if (debugMode) {
-          console.log(`[System] ${message.subtype || ''}`);
-        }
-      }
-
-      // Process content blocks from assistant messages
-      const processContent = (content) => {
-        if (!content || !Array.isArray(content)) return;
-
-        for (const block of content) {
-          // Handle text blocks
-          if (block.type === 'text' && block.text) {
-            // Add newline before text if we just had tool calls
-            if (lastWasToolCall) {
-              console.log('');
-              lastWasToolCall = false;
-            }
-            // Ensure text ends with newline for proper formatting
-            const text = block.text;
-            process.stdout.write(text);
-            fullResponse += text;
-            // Track if we need a newline after this
-            pendingNewline = !text.endsWith('\n');
-          }
-
-          // Handle tool_use blocks - log the tool being called
-          if (block.type === 'tool_use' && !quietMode) {
-            // Add newline before tool call if text didn't end with one
-            if (pendingNewline) {
-              console.log('');
-              pendingNewline = false;
-            }
-            const toolName = formatToolName(block.name);
-            // Extract brief context from input if available
-            let context = '';
-            if (block.input) {
-              if (block.input.file_path) {
-                // For file operations, show the path
-                const path = block.input.file_path;
-                const shortPath = path.length > 50 ? '...' + path.slice(-47) : path;
-                context = ` → ${shortPath}`;
-              } else if (block.input.command) {
-                // For bash, show truncated command
-                const cmd = block.input.command;
-                const shortCmd = cmd.length > 40 ? cmd.slice(0, 37) + '...' : cmd;
-                context = ` → ${shortCmd}`;
-              } else if (block.input.pattern) {
-                // For glob/grep, show the pattern
-                context = ` → ${block.input.pattern}`;
-              }
-            }
-            console.log(`  [${toolName}]${context}`);
-            lastWasToolCall = true;
-          }
-        }
-      };
-
-      // Stream assistant content
-      if (message.type === 'assistant') {
-        processContent(message.content);
-        // Some messages might have message.message with content
-        if (message.message?.content) {
-          processContent(message.message.content);
-        }
-      }
-
-      // Handle user messages (tool results) - just note completion
-      if (message.type === 'user') {
-        // Tool results come back as user messages - we don't need to log these
-        // as the tool call was already logged above
-      }
-
-      // Handle final result
-      if (message.type === 'result') {
-        if (message.result) {
-          console.log('\n' + message.result);
-          fullResponse = message.result;
-        }
-      }
+    // Shutdown command doesn't need daemon to be started
+    if (command === 'shutdown') {
+      await commands.shutdown(options);
+      process.exit(0);
     }
+
+    // Ensure daemon is running before any other command
+    await ensureDaemon();
+    await commands[command](options, positional);
   } catch (err) {
-    console.error(`\nError during iteration: ${err.message}`);
-    if (debugMode) {
-      console.error(err.stack);
-    }
-    return { completed: false, allDone: false };
-  } finally {
-    // Restore original cwd
-    process.chdir(originalCwd);
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
   }
-
-  // Ensure we end with a newline
-  if (pendingNewline) {
-    console.log('');
-  }
-
-  // Check for completion signal
-  const allDone = fullResponse.includes('<promise>COMPLETE</promise>');
-
-  // Re-read PRD to see if it was updated
-  const updatedPrd = readPrd();
-  const storyCompleted = updatedPrd.userStories.find(s => s.id === story.id)?.passes === true;
-
-  return { completed: storyCompleted, allDone };
 }
 
-// Main loop
-async function main() {
-  let prd = readPrd();
-  initProgress(prd);
-
-  const totalStories = prd.userStories.length;
-  const initialRemaining = countRemaining(prd);
-
-  // Default maxIterations to story count if not explicitly set
-  if (maxIterations === null) {
-    maxIterations = totalStories;
-  }
-
-  console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                         RALPH                                 ║
-║           Autonomous AI Agent Loop                            ║
-║                                                               ║
-║  Model: ${model.padEnd(10)} Iterations: ${String(maxIterations).padEnd(4)} Turns: ${String(maxTurns).padEnd(4)}     ║
-╚══════════════════════════════════════════════════════════════╝
-`);
-
-  console.log(`PRD: ${prdPath}`);
-  console.log(`Progress: ${progressPath}`);
-  if (cwdOverride) {
-    console.log(`Working dir: ${cwdOverride}`);
-  }
-  console.log(`Total stories: ${totalStories}`);
-  console.log(`Remaining: ${initialRemaining}`);
-  if (noCommit) {
-    console.log(`Mode: NO-COMMIT (testing)`);
-  }
-  console.log('');
-
-  if (dryRun) {
-    console.log('Dry run - would process these stories:');
-    prd.userStories
-      .filter(s => !s.passes)
-      .sort((a, b) => a.priority - b.priority)
-      .forEach(s => console.log(`  ${s.id}: ${s.title}`));
-    process.exit(0);
-  }
-
-  for (let iteration = 1; iteration <= maxIterations; iteration++) {
-    // Re-read PRD each iteration (it may have been updated)
-    prd = readPrd();
-
-    const story = getNextStory(prd);
-    if (!story) {
-      console.log('\n✓ All stories complete!');
-      process.exit(0);
-    }
-
-    printBanner(iteration, maxIterations, story);
-
-    const { completed, allDone } = await runIteration(prd, story);
-
-    if (allDone) {
-      console.log('\n');
-      console.log('═'.repeat(60));
-      console.log('  ✓ RALPH COMPLETE - All tasks finished!');
-      console.log(`  Completed in ${iteration} iteration(s)`);
-      console.log('═'.repeat(60));
-      process.exit(0);
-    }
-
-    // Re-read to get updated state
-    prd = readPrd();
-    const remaining = countRemaining(prd);
-
-    console.log('\n');
-    console.log(`Iteration ${iteration} complete.`);
-    console.log(`Story ${story.id} ${completed ? '✓ passed' : '✗ not yet complete'}`);
-    console.log(`Remaining: ${remaining} stories`);
-
-    if (iteration < maxIterations && remaining > 0) {
-      console.log('Starting next iteration in 2 seconds...');
-      await new Promise(r => setTimeout(r, 2000));
-    }
-  }
-
-  console.log('\n');
-  console.log('═'.repeat(60));
-  console.log(`  Ralph reached max iterations (${maxIterations})`);
-  console.log(`  ${countRemaining(readPrd())} stories remaining`);
-  console.log('  Run again to continue, or increase --max-iterations');
-  console.log('═'.repeat(60));
-  process.exit(1);
-}
-
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+main();
