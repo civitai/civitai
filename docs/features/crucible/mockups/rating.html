@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crucible Rating - Civitai Mockup</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+    }
+    body {
+      background: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    .header-top {
+      background: #25262b;
+      border-bottom: 1px solid #373a40;
+      padding: 1rem 0;
+    }
+
+    .crucible-name {
+      font-size: 1.875rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .time-remaining {
+      background: rgba(250, 82, 82, 0.1);
+      border: 1px solid rgba(250, 82, 82, 0.3);
+      border-radius: 0.5rem;
+      padding: 0.5rem 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      color: #ff8787;
+    }
+
+    .header-back {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #228be6;
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 200ms ease;
+      margin-bottom: 1rem;
+    }
+
+    .header-back:hover {
+      color: #4dabf7;
+    }
+
+    .header-back i {
+      font-size: 1rem;
+    }
+
+    /* STATS BAR - NOW AT TOP */
+    .stats-bar {
+      background: #25262b;
+      border-bottom: 1px solid #373a40;
+      padding: 1.5rem;
+    }
+
+    .stats-grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 2rem;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: #909296;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .stat-secondary {
+      font-size: 0.75rem;
+      color: #a6e3a1;
+    }
+
+    /* VOTING AREA */
+    .voting-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      max-width: 1200px;
+      margin: 3rem auto;
+      padding: 0 1rem;
+    }
+
+    @media (max-width: 768px) {
+      .voting-container {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+        margin: 1.5rem auto;
+      }
+    }
+
+    /* IMAGE CARD - NO OVERLAY NUMBERS */
+    .image-card {
+      position: relative;
+      border-radius: 0.75rem;
+      overflow: hidden;
+      background: #25262b;
+      border: 2px solid transparent;
+      transition: all 200ms ease;
+      cursor: pointer;
+    }
+
+    .image-card:hover {
+      border-color: #228be6;
+      transform: translateY(-2px);
+    }
+
+    .image-card.voted {
+      border-color: #40c057;
+      box-shadow: 0 0 20px rgba(64, 192, 87, 0.3);
+    }
+
+    .image-wrapper {
+      aspect-ratio: 4 / 5;
+      overflow: hidden;
+      background: #1a1b1e;
+    }
+
+    .image-wrapper img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* VOTE BUTTON - UNDER IMAGE */
+    .image-vote-section {
+      padding: 1rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .vote-button-small {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      background: #228be6;
+      border: none;
+      border-radius: 0.5rem;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.95rem;
+    }
+
+    .vote-button-small:hover {
+      background: #4dabf7;
+      transform: translateY(-2px);
+    }
+
+    .vote-button-small.active {
+      background: #40c057;
+    }
+
+    /* KBD-STYLE HOTKEY */
+    .kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #373a40;
+      border: 1px solid #495057;
+      border-radius: 0.375rem;
+      padding: 0.125rem 0.5rem;
+      font-family: 'Courier New', monospace;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #c1c2c5;
+      min-width: 24px;
+      height: 24px;
+      box-shadow: inset 0 -2px 0 0 #495057, 0 2px 0 0 rgba(0, 0, 0, 0.4);
+    }
+
+    .hotkey-text {
+      font-size: 0.75rem;
+      color: #909296;
+      margin-top: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    /* COMMENTS CARD - SEPARATE */
+    .comment-card {
+      margin-top: 1rem;
+      border-radius: 0.75rem;
+      background: #25262b;
+      border: 1px solid #373a40;
+      padding: 1rem;
+      transition: all 200ms ease;
+    }
+
+    .comment-card:hover {
+      border-color: #373a40;
+    }
+
+    .comment-item {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .comment-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #373a40;
+      flex-shrink: 0;
+    }
+
+    .comment-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .comment-author {
+      font-weight: 600;
+      color: #fff;
+      font-size: 0.875rem;
+    }
+
+    .comment-text {
+      font-size: 0.875rem;
+      color: #c1c2c5;
+      margin-top: 0.25rem;
+      line-height: 1.4;
+    }
+
+    .reaction-counts {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: #909296;
+    }
+
+    .reaction-item {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .view-comments-link {
+      color: #228be6;
+      font-size: 0.875rem;
+      cursor: pointer;
+      text-decoration: none;
+      margin-top: 0.5rem;
+      display: inline-block;
+      transition: color 200ms ease;
+    }
+
+    .view-comments-link:hover {
+      color: #4dabf7;
+      text-decoration: underline;
+    }
+
+    /* SKIP BUTTON */
+    .skip-button {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: #373a40;
+      border: 1px solid #495057;
+      border-radius: 0.5rem;
+      color: #c1c2c5;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 2rem;
+    }
+
+    .skip-button:hover {
+      background: #495057;
+      border-color: #5c636e;
+    }
+
+    .skip-hotkey {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-left: auto;
+    }
+
+    /* End of crucible state */
+    .end-crucible-container {
+      display: none;
+      max-width: 1000px;
+      margin: 3rem auto;
+      padding: 2rem 1rem;
+      text-align: center;
+    }
+
+    .end-crucible-container.active {
+      display: block;
+    }
+
+    .end-message {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    .end-description {
+      color: #909296;
+      margin-bottom: 2rem;
+    }
+
+    .next-crucibles-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+      margin: 2rem 0 1.5rem;
+      text-align: left;
+    }
+
+    .next-crucibles-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .next-crucible-card {
+      background: #25262b;
+      border: 1px solid #373a40;
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      text-align: left;
+      transition: all 200ms ease;
+    }
+
+    .next-crucible-card:hover {
+      border-color: #228be6;
+      transform: translateY(-2px);
+    }
+
+    .next-crucible-name {
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 1rem;
+    }
+
+    .next-crucible-stat {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      color: #c1c2c5;
+      margin-bottom: 0.75rem;
+    }
+
+    .next-crucible-stat-icon {
+      color: #228be6;
+      width: 16px;
+      height: 16px;
+    }
+
+    .start-judging-btn {
+      width: 100%;
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: #228be6;
+      border: none;
+      border-radius: 0.5rem;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+    }
+
+    .start-judging-btn:hover {
+      background: #4dabf7;
+      transform: translateY(-2px);
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #40c057;
+      color: #fff;
+      padding: 1rem 1.5rem;
+      border-radius: 0.5rem;
+      font-weight: 600;
+      animation: slideIn 300ms ease;
+      z-index: 1000;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- HEADER -->
+  <div class="header-top">
+    <div class="max-w-7xl mx-auto px-4">
+      <a href="#" class="header-back">
+        <i class="ti ti-arrow-left"></i>
+        Back to Crucible
+      </a>
+
+      <div class="flex items-center justify-between mt-4">
+        <div>
+          <h1 class="crucible-name">Judging: Flux Portrait Challenge</h1>
+          <p class="text-sm text-gray-400 mt-1">Competition running across 3 rounds</p>
+        </div>
+        <div class="time-remaining">
+          <i class="ti ti-clock"></i>
+          <span>3 days 5 hrs remaining</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATS BAR - AT TOP -->
+  <div class="stats-bar">
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-label">Pairs Rated This Session</div>
+        <div class="stat-value">17</div>
+        <div class="stat-secondary">3 skipped</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Total Pairs Rated</div>
+        <div class="stat-value">2,847</div>
+        <div class="stat-secondary">Top 8% of judges</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Current Streak</div>
+        <div class="stat-value">9 pairs</div>
+        <div class="stat-secondary">+2 influence score</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Your Influence</div>
+        <div class="stat-value">156</div>
+        <div class="stat-secondary">You're influential!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VOTING AREA -->
+  <div class="voting-container">
+    <!-- Left Image Column -->
+    <div>
+      <!-- Image Card -->
+      <div class="image-card" data-position="left">
+        <div class="image-wrapper">
+          <img src="https://picsum.photos/seed/portrait-left-42/400/500" alt="Left submission">
+        </div>
+        <!-- Vote Button Below Image -->
+        <div class="image-vote-section">
+          <button class="vote-button-small" onclick="voteFor('left')">
+            <span>Vote</span>
+            <div class="hotkey-text">
+              <span class="kbd">1</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Comment Card - Separate -->
+      <div class="comment-card">
+        <div class="comment-item">
+          <div class="comment-avatar" style="background: linear-gradient(135deg, #7950f2 0%, #e599f7 100%);"></div>
+          <div class="comment-content">
+            <div class="comment-author">Aurora Vex</div>
+            <div class="comment-text">Amazing lighting and composition! The shadows are perfectly placed.</div>
+            <div class="reaction-counts">
+              <div class="reaction-item"><span>❤️</span> <span>342</span></div>
+              <div class="reaction-item"><span>😂</span> <span>15</span></div>
+              <div class="reaction-item"><span>🔥</span> <span>89</span></div>
+            </div>
+            <a href="#" class="view-comments-link">View 24 comments →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Image Column -->
+    <div>
+      <!-- Image Card -->
+      <div class="image-card" data-position="right">
+        <div class="image-wrapper">
+          <img src="https://picsum.photos/seed/portrait-right-42/400/500" alt="Right submission">
+        </div>
+        <!-- Vote Button Below Image -->
+        <div class="image-vote-section">
+          <button class="vote-button-small" onclick="voteFor('right')">
+            <span>Vote</span>
+            <div class="hotkey-text">
+              <span class="kbd">2</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Comment Card - Separate -->
+      <div class="comment-card">
+        <div class="comment-item">
+          <div class="comment-avatar" style="background: linear-gradient(135deg, #228be6 0%, #74c0fc 100%);"></div>
+          <div class="comment-content">
+            <div class="comment-author">CreativeStudio</div>
+            <div class="comment-text">Love the color palette in this one. Very professional execution and eye-catching.</div>
+            <div class="reaction-counts">
+              <div class="reaction-item"><span>❤️</span> <span>218</span></div>
+              <div class="reaction-item"><span>😂</span> <span>6</span></div>
+              <div class="reaction-item"><span>🔥</span> <span>156</span></div>
+            </div>
+            <a href="#" class="view-comments-link">View 18 comments →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SKIP BUTTON -->
+  <div class="max-w-7xl mx-auto px-4">
+    <button class="skip-button" onclick="skipPair()" title="Skips this pair without voting. The pair may appear again later.">
+      <i class="ti ti-skip-forward"></i>
+      <span>Skip Pair</span>
+      <div class="skip-hotkey">
+        <span class="kbd">Space</span>
+      </div>
+    </button>
+  </div>
+
+  <!-- END OF CRUCIBLE STATE (hidden by default) -->
+  <div class="end-crucible-container" id="endCrucibleContainer">
+    <div class="end-message">
+      ✓ You've rated all available pairs!
+    </div>
+    <div class="end-description">
+      Excellent judging session. Check back soon for new pairs or explore other crucibles.
+    </div>
+
+    <div class="next-crucibles-title">Continue Judging These Crucibles</div>
+    <div class="next-crucibles-grid">
+      <!-- Crucible 1 -->
+      <div class="next-crucible-card">
+        <div class="next-crucible-name">Anime Character Design</div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-coin next-crucible-stat-icon"></i>
+          <span>Prize Pool: 500 Buzz</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-layout-grid next-crucible-stat-icon"></i>
+          <span>284 pairs to judge</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-users next-crucible-stat-icon"></i>
+          <span>1,240 judges active</span>
+        </div>
+        <button class="start-judging-btn">Start Judging</button>
+      </div>
+
+      <!-- Crucible 2 -->
+      <div class="next-crucible-card">
+        <div class="next-crucible-name">Landscape Photography</div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-coin next-crucible-stat-icon"></i>
+          <span>Prize Pool: 750 Buzz</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-layout-grid next-crucible-stat-icon"></i>
+          <span>156 pairs to judge</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-users next-crucible-stat-icon"></i>
+          <span>892 judges active</span>
+        </div>
+        <button class="start-judging-btn">Start Judging</button>
+      </div>
+
+      <!-- Crucible 3 -->
+      <div class="next-crucible-card">
+        <div class="next-crucible-name">3D Model Quality</div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-coin next-crucible-stat-icon"></i>
+          <span>Prize Pool: 1000 Buzz</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-layout-grid next-crucible-stat-icon"></i>
+          <span>412 pairs to judge</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-users next-crucible-stat-icon"></i>
+          <span>2,156 judges active</span>
+        </div>
+        <button class="start-judging-btn">Start Judging</button>
+      </div>
+
+      <!-- Crucible 4 -->
+      <div class="next-crucible-card">
+        <div class="next-crucible-name">AI Art Mashups</div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-coin next-crucible-stat-icon"></i>
+          <span>Prize Pool: 600 Buzz</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-layout-grid next-crucible-stat-icon"></i>
+          <span>523 pairs to judge</span>
+        </div>
+        <div class="next-crucible-stat">
+          <i class="ti ti-users next-crucible-stat-icon"></i>
+          <span>3,847 judges active</span>
+        </div>
+        <button class="start-judging-btn">Start Judging</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast" style="display: none;"></div>
+
+  <script>
+    let currentPairIndex = 0;
+    const totalPairs = 25;
+    let pairsRated = 17; // From stats
+
+    // Handle voting
+    function voteFor(position) {
+      const cards = document.querySelectorAll('.image-card');
+      cards.forEach(card => card.classList.remove('voted'));
+
+      const selectedCard = document.querySelector(`[data-position="${position}"]`);
+      selectedCard.classList.add('voted');
+
+      pairsRated++;
+      updateStats();
+      showToast(`Voted for image ${position === 'left' ? '1' : '2'}!`);
+
+      // Check if this was the last pair
+      if (pairsRated >= totalPairs) {
+        setTimeout(endCrucible, 800);
+      } else {
+        loadNextPair();
+      }
+    }
+
+    function skipPair() {
+      const cards = document.querySelectorAll('.image-card');
+      cards.forEach(card => card.classList.remove('voted'));
+
+      pairsRated++;
+      updateStats();
+      showToast('Pair skipped - marked as equal');
+
+      // Check if this was the last pair
+      if (pairsRated >= totalPairs) {
+        setTimeout(endCrucible, 800);
+      } else {
+        loadNextPair();
+      }
+    }
+
+    function loadNextPair() {
+      // Simulate loading new pair
+      const cards = document.querySelectorAll('.image-card');
+      cards.forEach(card => {
+        card.classList.remove('voted');
+        const seeds = Math.floor(Math.random() * 10000);
+        const images = card.querySelectorAll('img');
+        images.forEach(img => {
+          const position = card.getAttribute('data-position');
+          img.src = `https://picsum.photos/seed/portrait-${position}-${seeds}/400/500`;
+        });
+      });
+    }
+
+    function updateStats() {
+      // Update the pairs rated stat
+      const statValues = document.querySelectorAll('.stat-value');
+      if (statValues[0]) {
+        statValues[0].textContent = pairsRated;
+      }
+    }
+
+    function endCrucible() {
+      document.querySelector('.voting-container').style.display = 'none';
+      document.querySelectorAll('.skip-button')[0].style.display = 'none';
+      document.querySelector('.stats-bar').style.display = 'none';
+      document.getElementById('endCrucibleContainer').classList.add('active');
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.style.display = 'block';
+      setTimeout(() => {
+        toast.style.display = 'none';
+      }, 2000);
+    }
+
+    // Hotkey handling
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '1' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        voteFor('left');
+      } else if (e.key === '2' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        voteFor('right');
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        skipPair();
+      }
+    });
+
+    // Add click handlers to next crucible buttons
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('start-judging-btn')) {
+        e.preventDefault();
+        const crucibleName = e.target.closest('.next-crucible-card').querySelector('.next-crucible-name').textContent;
+        showToast(`Starting: ${crucibleName}`);
+        setTimeout(() => {
+          // Reset for new crucible
+          pairsRated = 0;
+          document.querySelector('.voting-container').style.display = 'grid';
+          document.querySelectorAll('.skip-button')[0].style.display = 'flex';
+          document.querySelector('.stats-bar').style.display = 'block';
+          document.getElementById('endCrucibleContainer').classList.remove('active');
+          loadNextPair();
+          updateStats();
+        }, 1200);
+      }
+    });
+  </script>
+</body>
+</html>

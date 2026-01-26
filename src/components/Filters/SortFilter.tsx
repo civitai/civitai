@@ -11,6 +11,7 @@ import {
   BuzzWithdrawalRequestSort,
   // ClubSort,
   CollectionSort,
+  CrucibleSort,
   GenerationSort,
   ImageSort,
   ImageSortHidden,
@@ -39,6 +40,7 @@ const sortOptions = {
   articles: Object.values(ArticleSort),
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
+  crucibles: Object.values(CrucibleSort),
   // clubs: Object.values(ClubSort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   threads: Object.values(ThreadSort),
@@ -60,6 +62,7 @@ type SortOption =
   | ArticleSort
   | CollectionSort
   | BountySort
+  | CrucibleSort
   // | ClubSort
   | GenerationSort
   | ThreadSort

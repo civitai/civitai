@@ -417,12 +417,15 @@ function getBaseClient(type: 'cache' | 'system') {
     // Don't await here - let connection happen in background
     // The client will queue commands until connected
     log(`Calling connect() for ${type} (cluster) client...`);
-    baseClient.connect().then(async () => {
-      log(`${type} cluster client connected`);
-      await setupEnhancedFailover();
-    }).catch((err) => {
-      log(`Redis connection failed (${type})`, err);
-    });
+    baseClient
+      .connect()
+      .then(async () => {
+        log(`${type} cluster client connected`);
+        await setupEnhancedFailover();
+      })
+      .catch((err) => {
+        log(`Redis connection failed (${type})`, err);
+      });
 
     return baseClient;
   }
@@ -431,11 +434,14 @@ function getBaseClient(type: 'cache' | 'system') {
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
   log(`Calling connect() for ${type} (single) client...`);
-  baseClient.connect().then(() => {
-    log(`${type} single client connected`);
-  }).catch((err) => {
-    log(`Redis connection failed (${type})`, err);
-  });
+  baseClient
+    .connect()
+    .then(() => {
+      log(`${type} single client connected`);
+    })
+    .catch((err) => {
+      log(`Redis connection failed (${type})`, err);
+    });
 
   return baseClient;
 }
@@ -751,6 +757,12 @@ export const REDIS_SYS_KEYS = {
   CACHES: {
     IMAGE_EXISTS: 'feed:image:exists',
   },
+  CRUCIBLE: {
+    ELO: 'crucible:elo', // Hash: entryId -> elo score
+    VOTED_PAIRS: 'crucible:voted', // Set: crucibleId:userId -> 'entryId1:entryId2' pairs user has voted on
+    JUDGES: 'crucible:judges', // Set: crucibleId -> userId of users who have voted
+    USER_VOTES: 'crucible:user-votes', // Hash: userId -> total vote count across all crucibles
+  },
 } as const;
 
 // Cached data
@@ -906,6 +918,9 @@ export const REDIS_KEYS = {
   },
   QUEUES: {
     SEEN_IMAGES: 'queues:recent-images',
+  },
+  CRUCIBLE: {
+    USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
 } as const;
 

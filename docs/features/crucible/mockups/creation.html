@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<!--
+  ==============================================================================
+  IMPLEMENTATION NOTE: WIZARD vs SINGLE-PAGE LAYOUT
+  ==============================================================================
+
+  This mockup shows a single-page form layout where all sections are visible
+  simultaneously. The live implementation at src/pages/crucibles/create.tsx
+  INTENTIONALLY differs by using a WIZARD (multi-step) approach.
+
+  Reasons for the wizard pattern:
+  1. Progressive Disclosure - Reduces cognitive load
+  2. Better Mobile UX - One section at a time vs scrolling
+  3. Step-by-step Validation - Ensures completion before proceeding
+  4. Guided Experience - Helps new users navigate complex options
+
+  The core functionality remains identical; only navigation differs.
+  See the comment in create.tsx for full details.
+
+  ==============================================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Crucible - Civitai Mockup</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+    }
+    body {
+      background: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    /* Header Styles */
+    .page-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+      padding-bottom: 0;
+    }
+
+    .back-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: #c1c2c5;
+      cursor: pointer;
+      transition: all 200ms ease;
+      flex-shrink: 0;
+    }
+
+    .back-button:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .header-content h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+      margin: 0 0 4px 0;
+    }
+
+    .header-content p {
+      font-size: 14px;
+      color: #909296;
+      margin: 0;
+    }
+
+    /* Form Section Styles (v3 styling) */
+    .form-section {
+      background: #25262b;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .section-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: rgba(34, 139, 230, 0.1);
+      border-radius: 8px;
+      color: #228be6;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .form-field {
+      margin-bottom: 20px;
+    }
+
+    .form-field:last-child {
+      margin-bottom: 0;
+    }
+
+    .field-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .required-badge {
+      color: #fa5252;
+      font-size: 12px;
+    }
+
+    .optional-badge {
+      color: #909296;
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .form-input {
+      background: #1a1b1e;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #c1c2c5;
+      font-size: 14px;
+      width: 100%;
+      transition: border-color 200ms ease;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #228be6;
+      box-shadow: 0 0 0 3px rgba(34, 139, 230, 0.1);
+    }
+
+    .form-textarea {
+      background: #1a1b1e;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #c1c2c5;
+      font-size: 14px;
+      width: 100%;
+      font-family: inherit;
+      resize: vertical;
+      transition: border-color 200ms ease;
+    }
+
+    .form-textarea:focus {
+      outline: none;
+      border-color: #228be6;
+      box-shadow: 0 0 0 3px rgba(34, 139, 230, 0.1);
+    }
+
+    .upload-zone {
+      border: 2px dashed rgba(34, 139, 230, 0.4);
+      border-radius: 8px;
+      padding: 32px;
+      text-align: center;
+      background: rgba(34, 139, 230, 0.05);
+      cursor: pointer;
+      transition: all 200ms ease;
+    }
+
+    .upload-zone:hover {
+      border-color: #228be6;
+      background: rgba(34, 139, 230, 0.1);
+    }
+
+    .upload-zone.has-image {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 0;
+      background: #1a1b1e;
+    }
+
+    .upload-preview {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+    }
+
+    .upload-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .upload-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 200ms ease;
+    }
+
+    .upload-preview:hover .upload-overlay {
+      opacity: 1;
+    }
+
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 12px;
+    }
+
+    .option-button {
+      padding: 12px;
+      background: #1a1b1e;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 200ms ease;
+      font-size: 13px;
+      font-weight: 500;
+      color: #c1c2c5;
+      position: relative;
+    }
+
+    .option-button:hover {
+      border-color: #228be6;
+      background: rgba(34, 139, 230, 0.1);
+    }
+
+    .option-button.selected {
+      background: rgba(34, 139, 230, 0.2);
+      border-color: #228be6;
+      color: #fff;
+    }
+
+    .buzz-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(250, 176, 5, 0.2);
+      color: #fab005;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      margin-left: 6px;
+    }
+
+    .field-helper {
+      font-size: 12px;
+      color: #909296;
+      margin-top: 6px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.31);
+      border-radius: 9999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #c1c2c5;
+      cursor: pointer;
+      transition: all 200ms ease;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .chip.active {
+      background: rgba(34, 139, 230, 0.2);
+      color: #228be6;
+      border-color: #228be6;
+    }
+
+    .chip:hover {
+      border-color: #228be6;
+    }
+
+    .nsfw-chip-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Prize Distribution Section */
+    .prize-distribution-section {
+      background: #1a1b1e;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .progress-bar-container {
+      width: 100%;
+      height: 32px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      margin-bottom: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .progress-segment {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      transition: flex 200ms ease;
+    }
+
+    .segment-1st {
+      background: linear-gradient(90deg, #228be6 0%, #1971c2 100%);
+      flex: 50;
+    }
+
+    .segment-2nd {
+      background: linear-gradient(90deg, #40c057 0%, #2f9e44 100%);
+      flex: 30;
+    }
+
+    .segment-3rd {
+      background: linear-gradient(90deg, #fab005 0%, #e8a700 100%);
+      flex: 20;
+    }
+
+    .prize-row {
+      display: grid;
+      grid-template-columns: 100px 1fr 60px;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding: 12px;
+      background: #25262b;
+      border-radius: 6px;
+      align-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .prize-position-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .prize-slider-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .prize-slider {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.1);
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    .prize-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #228be6;
+      cursor: pointer;
+      border: 2px solid #1971c2;
+    }
+
+    .prize-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #228be6;
+      cursor: pointer;
+      border: 2px solid #1971c2;
+    }
+
+    .prize-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      min-width: 40px;
+      text-align: right;
+    }
+
+    .distribution-button {
+      padding: 10px 16px;
+      background: #228be6;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .distribution-button:hover {
+      background: #1971c2;
+    }
+
+    .distribution-button.reset {
+      background: rgba(255, 255, 255, 0.1);
+      color: #c1c2c5;
+    }
+
+    .distribution-button.reset:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .add-position-button {
+      padding: 10px 16px;
+      background: rgba(34, 139, 230, 0.2);
+      color: #228be6;
+      border: 1px solid rgba(34, 139, 230, 0.3);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .add-position-button:hover {
+      background: rgba(34, 139, 230, 0.3);
+      border-color: rgba(34, 139, 230, 0.5);
+    }
+
+    /* Preview Card */
+    .preview-card {
+      background: #25262b;
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 7 / 9;
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .preview-card-image {
+      width: 100%;
+      height: 65%;
+      background: linear-gradient(135deg, #2c2e33 0%, #1a1b1e 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #909296;
+      font-size: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .preview-card-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .preview-card-content {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    .preview-card-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      white-space: normal;
+      line-height: 1.3;
+      margin-bottom: 8px;
+    }
+
+    .preview-stats {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      font-size: 11px;
+      color: #909296;
+      margin-top: auto;
+    }
+
+    .preview-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .preview-stat-value {
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* Cost Card */
+    .cost-card {
+      background: #25262b;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .cost-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #909296;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      letter-spacing: 0.5px;
+    }
+
+    .cost-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .cost-row:last-child {
+      border-bottom: none;
+      padding-top: 12px;
+      margin-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      font-weight: 600;
+    }
+
+    .cost-label {
+      color: #909296;
+    }
+
+    .cost-value {
+      color: #fab005;
+      font-weight: 600;
+    }
+
+    /* Main Layout */
+    .main-container {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 32px;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 20px;
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .field-row.full {
+      grid-template-columns: 1fr;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 12px 24px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-buzz {
+      background: linear-gradient(135deg, #fab005 0%, #f59f00 100%);
+      color: #1a1b1e;
+      width: 100%;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .btn-buzz:hover {
+      background: linear-gradient(135deg, #f59f00 0%, #e8a700 100%);
+      transform: translateY(-2px);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #c1c2c5;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      width: 100%;
+      justify-content: center;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    .split-option {
+      background: rgba(64, 192, 87, 0.1);
+      border: 1px solid rgba(64, 192, 87, 0.2);
+      border-radius: 6px;
+      padding: 12px;
+      margin: 12px 0;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .split-option input[type="checkbox"] {
+      margin-top: 4px;
+    }
+
+    .split-option-text {
+      font-size: 13px;
+      color: #c1c2c5;
+      flex: 1;
+    }
+
+    .split-input-row {
+      background: rgba(34, 139, 230, 0.1);
+      border: 1px solid rgba(34, 139, 230, 0.2);
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #c1c2c5;
+    }
+
+    .split-input-row input {
+      background: #1a1b1e;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      padding: 6px 8px;
+      color: #fff;
+      font-size: 12px;
+      width: 50px;
+      text-align: center;
+    }
+
+    @media (max-width: 768px) {
+      .main-container {
+        grid-template-columns: 1fr;
+      }
+
+      .field-row {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-section {
+        order: -1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="main-container">
+    <!-- LEFT SIDE - FORM -->
+    <div>
+      <!-- Header with Back Button -->
+      <div class="page-header">
+        <button class="back-button" title="Go back" onclick="alert('Back clicked - would navigate away')">
+          <i class="ti ti-arrow-left" style="font-size: 20px;"></i>
+        </button>
+        <div class="header-content">
+          <h1>Create Crucible</h1>
+          <p>Set up a new creative competition</p>
+        </div>
+      </div>
+
+      <!-- Basic Information Section -->
+      <div class="form-section">
+        <div class="section-header">
+          <div class="section-icon">
+            <i class="ti ti-info-circle"></i>
+          </div>
+          <div class="section-title">Basic Information</div>
+        </div>
+
+        <!-- Cover Image Upload -->
+        <div class="form-field">
+          <label class="field-label">
+            Cover Image
+            <span class="required-badge">*</span>
+          </label>
+          <div class="upload-zone has-image">
+            <div class="upload-preview">
+              <img src="https://picsum.photos/seed/crucible-card1/800/450" alt="cover image">
+              <div class="upload-overlay">
+                <div style="text-align: center; color: #fff;">
+                  <i class="ti ti-photo" style="font-size: 24px; margin-bottom: 8px;"></i>
+                  <div style="font-size: 12px;">Click to change</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="field-helper">This image appears on discovery cards (16:9 aspect ratio recommended)</div>
+        </div>
+
+        <!-- Name -->
+        <div class="form-field">
+          <label class="field-label">
+            Crucible Name
+            <span class="required-badge">*</span>
+          </label>
+          <input type="text" class="form-input" placeholder="e.g., Anime Character Design Challenge" value="Epic Robot Battle Arena">
+          <div class="field-helper">Maximum 100 characters</div>
+        </div>
+
+        <!-- Description -->
+        <div class="form-field">
+          <label class="field-label">
+            Description
+            <span class="optional-badge">(optional)</span>
+          </label>
+          <textarea class="form-textarea" rows="4" placeholder="Describe the theme, rules, or inspiration for this crucible...">Design the most creative futuristic robot warriors. Focus on unique armor designs, weapon integration, and overall aesthetic appeal. Winners will be based on creativity, technical quality, and community voting.</textarea>
+          <div class="field-helper">Markdown supported. Maximum 500 characters</div>
+        </div>
+      </div>
+
+      <!-- Entry Settings Section -->
+      <div class="form-section">
+        <div class="section-header">
+          <div class="section-icon">
+            <i class="ti ti-ticket"></i>
+          </div>
+          <div class="section-title">Entry Settings</div>
+        </div>
+
+        <!-- Duration -->
+        <div class="form-field">
+          <label class="field-label">Duration <span class="required-badge">*</span></label>
+          <div class="option-grid" style="grid-template-columns: repeat(4, 1fr);">
+            <button class="option-button selected" onclick="selectDuration(this, 0)">8h <span class="buzz-badge" style="background: rgba(64, 192, 87, 0.2); color: #40c057;">FREE</span></button>
+            <button class="option-button" onclick="selectDuration(this, 500)">24h <span class="buzz-badge">+500</span></button>
+            <button class="option-button" onclick="selectDuration(this, 1000)">3d <span class="buzz-badge">+1,000</span></button>
+            <button class="option-button" onclick="selectDuration(this, 2000)">7d <span class="buzz-badge">+2,000</span></button>
+          </div>
+          <div class="field-helper">Duration determines how long the crucible accepts entries</div>
+        </div>
+
+        <!-- Entry Fee & Entry Limit -->
+        <div class="field-row">
+          <div class="form-field">
+            <label class="field-label">Entry Fee per User</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="number" class="form-input" id="entryFeeInput" placeholder="0" value="100" style="flex: 1;" onchange="updateCost()">
+              <span style="font-weight: 600; color: #fab005;">Buzz</span>
+            </div>
+            <div class="field-helper" id="entryFeeHelper">100 Buzz entry fee</div>
+          </div>
+
+          <div class="form-field">
+            <label class="field-label">Entry Limit per User</label>
+            <select class="form-input" id="entryLimitSelect" onchange="updateCost()">
+              <option value="0">1 entry</option>
+              <option value="0">2 entries</option>
+              <option value="0">3 entries</option>
+              <option value="0">5 entries</option>
+              <option value="200">10 entries <span class="buzz-badge">+200 Buzz</span></option>
+              <option value="500">Unlimited <span class="buzz-badge">+500 Buzz</span></option>
+            </select>
+            <div class="field-helper">How many times can one user enter?</div>
+          </div>
+        </div>
+
+        <!-- NSFW/Content Settings -->
+        <div class="form-field">
+          <label class="field-label">Allowed Content Levels</label>
+          <div class="nsfw-chip-group">
+            <div class="chip active" onclick="toggleNSFW(this)" data-level="pg">PG</div>
+            <div class="chip active" onclick="toggleNSFW(this)" data-level="pg13">PG-13</div>
+            <div class="chip" onclick="toggleNSFW(this)" data-level="r">R</div>
+            <div class="chip" onclick="toggleNSFW(this)" data-level="x">X</div>
+            <div class="chip" onclick="toggleNSFW(this)" data-level="xxx">XXX</div>
+          </div>
+          <div class="field-helper">Users can only submit content matching these levels</div>
+        </div>
+
+        <!-- Resource Requirements -->
+        <div class="form-field">
+          <label class="field-label">
+            Resource Requirements
+            <span class="optional-badge">(optional)</span>
+          </label>
+          <div style="padding: 12px; background: #1a1b1e; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1);">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <input type="text" class="form-input" placeholder="Search models, LoRAs..." style="flex: 1;">
+              <button class="btn btn-secondary" style="padding: 10px 12px;">
+                <i class="ti ti-plus"></i>
+              </button>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <div class="chip" style="background: rgba(34, 139, 230, 0.2); color: #228be6;">
+                Realistic Vision v4.0
+                <i class="ti ti-x" style="margin-left: 6px; cursor: pointer;"></i>
+              </div>
+              <div class="chip" style="background: rgba(34, 139, 230, 0.2); color: #228be6;">
+                Detail Tweaker LoRA
+                <i class="ti ti-x" style="margin-left: 6px; cursor: pointer;"></i>
+              </div>
+            </div>
+          </div>
+          <div class="field-helper">Models/LoRAs required for submissions</div>
+        </div>
+      </div>
+
+      <!-- Prize Distribution Section -->
+      <div class="form-section">
+        <div class="section-header">
+          <div class="section-icon">
+            <i class="ti ti-trophy"></i>
+          </div>
+          <div class="section-title">Prize Distribution</div>
+        </div>
+
+        <!-- Display Mode (Default) -->
+        <div id="prizeDisplayMode">
+          <!-- Visual Progress Bar -->
+          <div style="margin-bottom: 16px;">
+            <div style="font-size: 12px; color: #909296; margin-bottom: 8px; font-weight: 600;">Default Distribution</div>
+            <div class="progress-bar-container">
+              <div class="progress-segment segment-1st">1st: 50%</div>
+              <div class="progress-segment segment-2nd">2nd: 30%</div>
+              <div class="progress-segment segment-3rd">3rd: 20%</div>
+            </div>
+          </div>
+
+          <!-- Distribution Summary -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px;">
+            <div style="background: #2c2e33; padding: 12px; border-radius: 6px; text-align: center; border: 1px solid rgba(255, 255, 255, 0.06);">
+              <div style="font-size: 11px; color: #909296; margin-bottom: 6px;">1st Place</div>
+              <div style="font-size: 18px; font-weight: 700; color: #fff;">50%</div>
+            </div>
+            <div style="background: #2c2e33; padding: 12px; border-radius: 6px; text-align: center; border: 1px solid rgba(255, 255, 255, 0.06);">
+              <div style="font-size: 11px; color: #909296; margin-bottom: 6px;">2nd Place</div>
+              <div style="font-size: 18px; font-weight: 700; color: #fff;">30%</div>
+            </div>
+            <div style="background: #2c2e33; padding: 12px; border-radius: 6px; text-align: center; border: 1px solid rgba(255, 255, 255, 0.06);">
+              <div style="font-size: 11px; color: #909296; margin-bottom: 6px;">3rd Place</div>
+              <div style="font-size: 18px; font-weight: 700; color: #fff;">20%</div>
+            </div>
+          </div>
+
+          <!-- Customize Button -->
+          <div style="display: flex; gap: 12px;">
+            <button class="distribution-button" onclick="toggleEditMode()">
+              <i class="ti ti-pencil"></i>
+              Customize Distribution
+              <span class="buzz-badge" style="margin-left: auto;">+1,000</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Edit Mode (Hidden by default) -->
+        <div id="prizeEditMode" style="display: none;">
+          <div style="font-size: 12px; color: #228be6; font-weight: 600; margin-bottom: 12px;">
+            <i class="ti ti-pencil"></i> Editing Prize Distribution
+          </div>
+
+          <!-- Prize Row 1 -->
+          <div class="prize-row">
+            <div class="prize-position-label">1st Place</div>
+            <div class="prize-slider-container">
+              <input type="range" class="prize-slider" id="slider1st" min="0" max="100" value="50" oninput="updateSliders()">
+            </div>
+            <div class="prize-value"><span id="value1st">50</span>%</div>
+          </div>
+
+          <!-- Prize Row 2 -->
+          <div class="prize-row">
+            <div class="prize-position-label">2nd Place</div>
+            <div class="prize-slider-container">
+              <input type="range" class="prize-slider" id="slider2nd" min="0" max="100" value="30" oninput="updateSliders()">
+            </div>
+            <div class="prize-value"><span id="value2nd">30</span>%</div>
+          </div>
+
+          <!-- Prize Row 3 -->
+          <div class="prize-row">
+            <div class="prize-position-label">3rd Place</div>
+            <div class="prize-slider-container">
+              <input type="range" class="prize-slider" id="slider3rd" min="0" max="100" value="20" oninput="updateSliders()">
+            </div>
+            <div class="prize-value"><span id="value3rd">20</span>%</div>
+          </div>
+
+          <!-- Add Position Button -->
+          <button class="add-position-button" onclick="addPosition()">
+            <i class="ti ti-plus"></i>
+            Add Prize Position
+          </button>
+
+          <!-- Split Option -->
+          <div id="splitContainer" style="display: none;">
+            <div class="split-option">
+              <input type="checkbox" id="splitCheckbox" onchange="toggleSplitRow()">
+              <div class="split-option-text">
+                <div>Split remaining equally among positions</div>
+                <div style="font-size: 11px; color: #909296;">Auto-distribute remaining percentage</div>
+              </div>
+            </div>
+            <div id="splitRow" class="split-input-row" style="display: none;">
+              <span style="font-size: 12px; color: #c1c2c5;">Positions [4] through</span>
+              <input type="number" id="splitThrough" value="10" min="4" max="20" style="width: 45px;">
+              <span style="font-size: 12px; color: #c1c2c5;">split</span>
+              <input type="number" id="splitPercent" value="0" disabled style="width: 45px;">
+              <span style="font-size: 12px; color: #c1c2c5;">% equally</span>
+            </div>
+          </div>
+
+          <!-- Total Indicator -->
+          <div style="background: #2c2e33; padding: 12px; border-radius: 6px; margin-top: 16px; display: flex; justify-content: space-between; border: 1px solid rgba(255, 255, 255, 0.06);">
+            <span style="color: #c1c2c5;">Total Distribution</span>
+            <span style="font-size: 18px; font-weight: 700; color: #40c057;" id="totalPercent">100</span><span style="font-weight: 700; color: #40c057;">%</span>
+          </div>
+
+          <!-- Action Buttons -->
+          <div style="display: flex; gap: 12px; margin-top: 16px;">
+            <button class="distribution-button reset" onclick="resetToDefault()" style="flex: 1;">
+              <i class="ti ti-undo"></i>
+              Reset to Default
+            </button>
+            <button class="distribution-button" onclick="toggleEditMode()" style="flex: 1;">
+              <i class="ti ti-check"></i>
+              Done Editing
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT SIDE - PREVIEW & COSTS -->
+    <div style="position: sticky; top: 32px; height: fit-content;">
+      <!-- Live Preview -->
+      <div style="font-size: 12px; font-weight: 600; color: #909296; margin-bottom: 12px; text-transform: uppercase;">
+        <i class="ti ti-eye"></i> Preview
+      </div>
+      <div class="preview-card">
+        <div class="preview-card-image">
+          <img src="https://picsum.photos/seed/crucible-preview/400/260" alt="preview">
+        </div>
+        <div class="preview-card-content">
+          <div class="preview-card-name">Epic Robot Battle Arena</div>
+          <div class="preview-stats">
+            <div class="preview-stat">
+              <span class="preview-stat-value">100</span>
+              <span>Entry</span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-stat-value">8h</span>
+              <span>Duration</span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-stat-value">24</span>
+              <span>Entries</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Create Crucible Button -->
+      <button class="btn btn-buzz" onclick="alert('Crucible created with total cost shown in breakdown!')">
+        <i class="ti ti-coin" style="font-size: 18px;"></i>
+        <span id="createButtonText">Create Crucible • Free</span>
+      </button>
+
+      <!-- Cost Breakdown Card -->
+      <div class="cost-card">
+        <div class="cost-card-title">
+          <i class="ti ti-receipt" style="margin-right: 4px;"></i> Cost Breakdown
+        </div>
+        <div class="cost-row">
+          <span class="cost-label">Duration</span>
+          <span class="cost-value" id="durationCost">Free</span>
+        </div>
+        <div class="cost-row">
+          <span class="cost-label">Entry Limit</span>
+          <span class="cost-value" id="limitCost">Free</span>
+        </div>
+        <div class="cost-row">
+          <span class="cost-label">Prize Customization</span>
+          <span class="cost-value" id="prizeCost">Free</span>
+        </div>
+        <div class="cost-row">
+          <span style="color: #fff; font-weight: 600;">Total Cost</span>
+          <span class="cost-value" style="font-size: 16px;" id="totalCostDisplay">Free</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State management
+    let state = {
+      durationCost: 0,
+      entryLimitCost: 0,
+      prizeCost: 0,
+      entryFee: 100,
+      durationLabel: '8h',
+      entryLimitLabel: '1 entry',
+      distributionCustomized: false,
+      addedPositions: 3,
+    };
+
+    function updateCost() {
+      const entryFeeInput = document.getElementById('entryFeeInput');
+      const entryFee = parseInt(entryFeeInput.value) || 0;
+
+      const helper = document.getElementById('entryFeeHelper');
+      if (entryFee === 0) {
+        helper.textContent = 'Free Entry (No Prize Pool)';
+        helper.style.color = '#40c057';
+      } else {
+        helper.textContent = entryFee + ' Buzz entry fee';
+        helper.style.color = '#909296';
+      }
+
+      state.entryFee = entryFee;
+      updateTotalCost();
+    }
+
+    function selectDuration(button, cost) {
+      const buttons = button.closest('.option-grid').querySelectorAll('.option-button');
+      buttons.forEach(b => b.classList.remove('selected'));
+      button.classList.add('selected');
+      state.durationCost = cost;
+      state.durationLabel = button.textContent.split('\n')[0].trim();
+      updateTotalCost();
+    }
+
+    function updateTotalCost() {
+      const total = state.durationCost + state.entryLimitCost + (state.distributionCustomized ? 1000 : 0);
+      const button = document.getElementById('createButtonText');
+
+      if (total === 0) {
+        button.textContent = 'Create Crucible • Free';
+      } else {
+        button.textContent = `Create Crucible • ${total.toLocaleString()} Buzz`;
+      }
+
+      document.getElementById('durationCost').textContent = state.durationCost === 0 ? 'Free' : `+${state.durationCost} Buzz`;
+      document.getElementById('limitCost').textContent = state.entryLimitCost === 0 ? 'Free' : `+${state.entryLimitCost} Buzz`;
+      document.getElementById('prizeCost').textContent = state.distributionCustomized ? '+1,000 Buzz' : 'Free';
+      document.getElementById('totalCostDisplay').textContent = total === 0 ? 'Free' : `${total.toLocaleString()} Buzz`;
+    }
+
+    function toggleNSFW(chip) {
+      chip.classList.toggle('active');
+    }
+
+    function toggleEditMode() {
+      const displayMode = document.getElementById('prizeDisplayMode');
+      const editMode = document.getElementById('prizeEditMode');
+
+      displayMode.style.display = displayMode.style.display === 'none' ? 'block' : 'none';
+      editMode.style.display = editMode.style.display === 'none' ? 'block' : 'none';
+
+      if (editMode.style.display === 'block') {
+        if (!state.distributionCustomized) {
+          state.distributionCustomized = true;
+          updateTotalCost();
+        }
+      }
+    }
+
+    function updateSliders() {
+      const val1 = parseInt(document.getElementById('slider1st').value);
+      const val2 = parseInt(document.getElementById('slider2nd').value);
+      const val3 = parseInt(document.getElementById('slider3rd').value);
+      const total = val1 + val2 + val3;
+
+      if (total > 100) {
+        const excess = total - 100;
+        if (excess > 0) {
+          if (val1 > 50) document.getElementById('slider1st').value = Math.max(0, val1 - excess);
+          else if (val2 > 30) document.getElementById('slider2nd').value = Math.max(0, val2 - excess);
+          else document.getElementById('slider3rd').value = Math.max(0, val3 - excess);
+        }
+      }
+
+      const newVal1 = parseInt(document.getElementById('slider1st').value);
+      const newVal2 = parseInt(document.getElementById('slider2nd').value);
+      const newVal3 = parseInt(document.getElementById('slider3rd').value);
+
+      document.getElementById('value1st').textContent = newVal1;
+      document.getElementById('value2nd').textContent = newVal2;
+      document.getElementById('value3rd').textContent = newVal3;
+
+      const seg1 = document.querySelector('.segment-1st');
+      const seg2 = document.querySelector('.segment-2nd');
+      const seg3 = document.querySelector('.segment-3rd');
+
+      seg1.style.flex = newVal1;
+      seg2.style.flex = newVal2;
+      seg3.style.flex = newVal3;
+
+      seg1.textContent = `1st: ${newVal1}%`;
+      seg2.textContent = `2nd: ${newVal2}%`;
+      seg3.textContent = `3rd: ${newVal3}%`;
+
+      updateTotalPercent();
+    }
+
+    function updateTotalPercent() {
+      const inputs = document.querySelectorAll('#prizeEditMode input[type="range"]');
+      let total = 0;
+      inputs.forEach(input => total += parseInt(input.value));
+      const totalEl = document.getElementById('totalPercent');
+      totalEl.textContent = total;
+      totalEl.style.color = total === 100 ? '#40c057' : '#fa5252';
+    }
+
+    function resetToDefault() {
+      document.getElementById('slider1st').value = 50;
+      document.getElementById('slider2nd').value = 30;
+      document.getElementById('slider3rd').value = 20;
+      state.addedPositions = 3;
+      document.getElementById('splitContainer').style.display = 'none';
+      updateSliders();
+      state.distributionCustomized = false;
+      updateTotalCost();
+    }
+
+    function addPosition() {
+      state.addedPositions++;
+      const newPosition = state.addedPositions;
+      const container = document.getElementById('prizeEditMode');
+      const addBtn = container.querySelector('.add-position-button');
+
+      const newRow = document.createElement('div');
+      newRow.className = 'prize-row';
+      newRow.innerHTML = `
+        <div class="prize-position-label">${getOrdinalSuffix(newPosition)} Place</div>
+        <div class="prize-slider-container">
+          <input type="range" class="prize-slider" min="0" max="100" value="0" oninput="updateSliders()">
+        </div>
+        <div class="prize-value"><span>0</span>%</div>
+      `;
+
+      addBtn.parentNode.insertBefore(newRow, addBtn);
+
+      if (state.addedPositions > 3) {
+        document.getElementById('splitContainer').style.display = 'block';
+      }
+
+      updateSliders();
+    }
+
+    function getOrdinalSuffix(num) {
+      const j = num % 10;
+      const k = num % 100;
+      if (j === 1 && k !== 11) return num + 'st';
+      if (j === 2 && k !== 12) return num + 'nd';
+      if (j === 3 && k !== 13) return num + 'rd';
+      return num + 'th';
+    }
+
+    function toggleSplitRow() {
+      const checkbox = document.getElementById('splitCheckbox');
+      const splitRow = document.getElementById('splitRow');
+      splitRow.style.display = checkbox.checked ? 'flex' : 'none';
+    }
+
+    // Entry limit select listener
+    document.getElementById('entryLimitSelect').addEventListener('change', function() {
+      const selected = this.options[this.selectedIndex];
+      const cost = parseInt(this.value) || 0;
+      state.entryLimitCost = cost;
+      state.entryLimitLabel = selected.text;
+      updateTotalCost();
+    });
+
+    // Initialize
+    updateTotalCost();
+  </script>
+</body>
+</html>
