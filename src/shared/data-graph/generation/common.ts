@@ -147,16 +147,26 @@ const defaultSamplerPresets = [
  */
 export function samplerNode({
   options = samplers,
-  defaultValue = 'Euler a',
+  defaultValue,
   presets = defaultSamplerPresets,
 }: {
   options?: readonly string[];
   defaultValue?: string;
   presets?: Array<{ label: string; value: string }>;
 } = {}) {
+  const resolvedDefault =
+    defaultValue && options.includes(defaultValue) ? defaultValue : options[0];
   return {
+    input: z
+      .string()
+      .optional()
+      .transform((val) => {
+        if (!val) return undefined;
+        if (options.includes(val)) return val;
+        return resolvedDefault;
+      }),
     output: z.enum(options),
-    defaultValue,
+    defaultValue: resolvedDefault,
     meta: {
       options: options.map((s) => ({ label: s, value: s })),
       presets,
