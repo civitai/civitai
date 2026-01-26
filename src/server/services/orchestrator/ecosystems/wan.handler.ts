@@ -14,7 +14,6 @@ import type {
   Wan25FalTextToVideoInput,
   Wan25FalImageToVideoInput,
 } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -66,7 +65,6 @@ function resourceToLora(resource: ResourceData) {
  * Handles multiple versions with version-specific parameters.
  */
 export async function createWanInput(data: WanCtx): Promise<WanInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const hasImages = !!data.images?.length;
   const version: WanVersion = 'version' in data ? (data.version as WanVersion) : 'v2.1';
 
@@ -86,7 +84,7 @@ export async function createWanInput(data: WanCtx): Promise<WanInput> {
     prompt: data.prompt,
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     duration: 'duration' in data ? data.duration : undefined,
-    seed,
+    seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
   };
 

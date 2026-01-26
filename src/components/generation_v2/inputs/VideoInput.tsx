@@ -184,7 +184,7 @@ export function VideoInput({
     setUploadError(null);
   }, [onChange]);
 
-  const isLoading = isLoadingMetadata || isUploading || (videoUrl && !videoDimensions);
+  const isLoading = isUploading;
 
   return (
     <Input.Wrapper
@@ -200,33 +200,46 @@ export function VideoInput({
           onDrop={handleDrop}
           accept={VIDEO_MIME_TYPE}
           maxFiles={1}
-          disabled={disabled}
+          disabled={disabled || isUploading}
           className="cursor-pointer"
         >
           <div className="flex flex-col items-center justify-center gap-2 py-8">
-            <Dropzone.Accept>
-              <IconUpload
-                size={50}
-                stroke={1.5}
-                color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
-              />
-            </Dropzone.Accept>
-            <Dropzone.Reject>
-              <IconX
-                size={50}
-                stroke={1.5}
-                color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
-              />
-            </Dropzone.Reject>
-            <Dropzone.Idle>
-              <IconVideo size={50} stroke={1.5} />
-            </Dropzone.Idle>
-            <Text size="sm" c="dimmed" ta="center">
-              Drag a video here or click to select
-            </Text>
-            <Text size="xs" c="dimmed">
-              MP4, WebM, MOV supported (max {formatBytes(maxVideoFileSize)})
-            </Text>
+            {isUploading ? (
+              // Show uploading state
+              <>
+                <Loader size={50} />
+                <Text size="sm" c="dimmed" ta="center">
+                  Uploading video...
+                </Text>
+              </>
+            ) : (
+              // Show normal dropzone states
+              <>
+                <Dropzone.Accept>
+                  <IconUpload
+                    size={50}
+                    stroke={1.5}
+                    color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
+                  />
+                </Dropzone.Accept>
+                <Dropzone.Reject>
+                  <IconX
+                    size={50}
+                    stroke={1.5}
+                    color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
+                  />
+                </Dropzone.Reject>
+                <Dropzone.Idle>
+                  <IconVideo size={50} stroke={1.5} />
+                </Dropzone.Idle>
+                <Text size="sm" c="dimmed" ta="center">
+                  Drag a video here or click to select
+                </Text>
+                <Text size="xs" c="dimmed">
+                  MP4, WebM, MOV supported (max {formatBytes(maxVideoFileSize)})
+                </Text>
+              </>
+            )}
           </div>
         </Dropzone>
       ) : (

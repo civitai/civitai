@@ -12,7 +12,6 @@ import type {
   Gemini25FlashEditImageGenInput,
   NanoBananaProImageGenInput,
 } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { nanoBananaVersionIds, type NanoBananaMode } from '~/shared/data-graph/generation/nano-banana-graph';
@@ -44,7 +43,6 @@ export async function createNanoBananaInput(data: NanoBananaCtx): Promise<NanoBa
     if (match) model = match;
   }
 
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const quantity = data.quantity ?? 1;
 
   // aspectRatio only exists in "pro" mode
@@ -61,7 +59,7 @@ export async function createNanoBananaInput(data: NanoBananaCtx): Promise<NanoBa
         prompt: data.prompt,
         quantity,
         images: data.images?.map((x) => x.url) ?? [],
-        seed,
+        seed: data.seed,
       }) as Gemini25FlashEditImageGenInput;
     } else {
       return removeEmpty({
@@ -70,7 +68,7 @@ export async function createNanoBananaInput(data: NanoBananaCtx): Promise<NanoBa
         operation: 'createImage',
         prompt: data.prompt,
         quantity,
-        seed,
+        seed: data.seed,
       }) as Gemini25FlashCreateImageGenInput;
     }
   } else {
@@ -87,7 +85,7 @@ export async function createNanoBananaInput(data: NanoBananaCtx): Promise<NanoBa
       outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
       images: data.images?.map((x) => x.url),
       numImages: quantity,
-      seed,
+      seed: data.seed,
     }) as NanoBananaProImageGenInput;
   }
 }

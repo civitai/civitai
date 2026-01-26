@@ -11,7 +11,6 @@ import type {
   Flux2MaxImageGenInput,
   Flux2ProImageGenInput,
 } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -50,7 +49,6 @@ function resourceToLora(resource: ResourceData) {
  * LoRAs are only supported in dev mode.
  */
 export async function createFlux2Input(data: Flux2Ctx): Promise<Flux2Input> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const quantity = data.quantity ?? 1;
 
   // Determine model from model version
@@ -81,7 +79,7 @@ export async function createFlux2Input(data: Flux2Ctx): Promise<Flux2Input> {
     guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
     numInferenceSteps: 'steps' in data ? data.steps : undefined,
     quantity,
-    seed,
+    seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
     images: hasImages ? data.images?.map((x) => x.url) : undefined,
   }) as Flux2Input;

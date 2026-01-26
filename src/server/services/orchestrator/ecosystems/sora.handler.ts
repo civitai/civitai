@@ -6,7 +6,6 @@
  */
 
 import type { Sora2TextToVideoInput, Sora2ImageToVideoInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 
@@ -22,7 +21,6 @@ type SoraInput = Sora2TextToVideoInput | Sora2ImageToVideoInput;
  * Supports txt2vid and img2vid with resolution, pro mode, and duration options.
  */
 export async function createSoraInput(data: SoraCtx): Promise<SoraInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const hasImages = !!data.images?.length;
 
   const baseInput = {
@@ -32,7 +30,7 @@ export async function createSoraInput(data: SoraCtx): Promise<SoraInput> {
     resolution: 'resolution' in data ? data.resolution : undefined,
     usePro: 'usePro' in data ? data.usePro : undefined,
     duration: 'duration' in data ? data.duration : undefined,
-    seed,
+    seed: data.seed,
   };
 
   if (hasImages) {

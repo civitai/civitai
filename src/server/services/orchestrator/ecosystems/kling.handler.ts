@@ -6,7 +6,6 @@
  */
 
 import type { KlingVideoGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
@@ -28,7 +27,6 @@ const versionIdToModel = new Map<number, KlingModel>([
  * Supports txt2vid and img2vid with model versions, modes, and duration options.
  */
 export async function createKlingInput(data: KlingCtx): Promise<KlingVideoGenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const hasImages = !!data.images?.length;
 
   // Determine model version
@@ -48,7 +46,7 @@ export async function createKlingInput(data: KlingCtx): Promise<KlingVideoGenInp
     duration: 'duration' in data ? data.duration : undefined,
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     images: hasImages ? data.images?.map((x) => x.url) : undefined,
-    seed,
+    seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as KlingVideoGenInput;
 }

@@ -6,7 +6,6 @@
  */
 
 import type { Flux1KontextMaxImageGenInput, Flux1KontextProImageGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import {
@@ -31,7 +30,6 @@ const versionIdToMode = new Map<number, FluxKontextMode>(
  * This is an img2img model that transforms source images based on prompts.
  */
 export async function createFluxKontextInput(data: FluxKontextCtx): Promise<FluxKontextInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const quantity = data.quantity ?? 1;
 
   // Determine model from model version
@@ -49,6 +47,6 @@ export async function createFluxKontextInput(data: FluxKontextCtx): Promise<Flux
     aspectRatio: data.aspectRatio?.value,
     quantity,
     guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    seed,
+    seed: data.seed,
   }) as FluxKontextInput;
 }

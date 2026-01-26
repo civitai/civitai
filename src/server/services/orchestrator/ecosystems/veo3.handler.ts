@@ -6,7 +6,6 @@
  */
 
 import type { Veo3VideoGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -41,7 +40,6 @@ function resourceToLora(resource: ResourceData) {
  * Supports txt2vid and img2vid with model versions, duration, audio generation, and LoRAs.
  */
 export async function createVeo3Input(data: Veo3Ctx): Promise<Veo3VideoGenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const hasImages = !!data.images?.length;
 
   // Determine mode from model version
@@ -69,7 +67,7 @@ export async function createVeo3Input(data: Veo3Ctx): Promise<Veo3VideoGenInput>
     version: 'version' in data ? data.version : undefined,
     generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
     images: hasImages ? data.images?.map((x) => x.url) : undefined,
-    seed,
+    seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
     loras: loras.length > 0 ? loras : undefined,
   }) as Veo3VideoGenInput;

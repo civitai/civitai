@@ -6,7 +6,6 @@
  */
 
 import type { ViduVideoGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 
@@ -19,7 +18,6 @@ type ViduCtx = EcosystemGraphOutput & { baseModel: 'Vidu' };
  * Supports txt2vid, img2vid, img2vid:first-last-frame, and img2vid:ref2vid workflows.
  */
 export async function createViduInput(data: ViduCtx): Promise<ViduVideoGenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const hasImages = !!data.images?.length;
 
   return removeEmpty({
@@ -29,7 +27,7 @@ export async function createViduInput(data: ViduCtx): Promise<ViduVideoGenInput>
     style: 'style' in data ? data.style : undefined,
     movementAmplitude: 'movementAmplitude' in data ? data.movementAmplitude : undefined,
     images: hasImages ? data.images?.map((x) => x.url) : undefined,
-    seed,
+    seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as ViduVideoGenInput;
 }

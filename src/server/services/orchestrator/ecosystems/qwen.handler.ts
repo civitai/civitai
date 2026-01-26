@@ -6,7 +6,6 @@
  */
 
 import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -46,7 +45,6 @@ function resourceToAir(resource: ResourceData): string {
  * Handles both txt2img and img2img operations based on model version.
  */
 export async function createQwenInput(data: QwenCtx): Promise<QwenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const quantity = data.quantity ?? 1;
 
   // Determine process type and version from model
@@ -81,7 +79,7 @@ export async function createQwenInput(data: QwenCtx): Promise<QwenInput> {
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     steps: 'steps' in data ? data.steps : undefined,
     quantity,
-    seed,
+    seed: data.seed,
     loras: Object.keys(loras).length > 0 ? loras : undefined,
   };
 

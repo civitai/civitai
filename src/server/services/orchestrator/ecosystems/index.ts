@@ -14,6 +14,7 @@
  */
 
 import type { WorkflowStepTemplate } from '@civitai/client';
+import { maxRandomSeed } from '~/server/common/constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 
 // Image ecosystem handlers
@@ -161,9 +162,15 @@ export { createVeo3Input } from './veo3.handler';
 /**
  * Creates step input for any ecosystem.
  * Routes to the appropriate handler based on baseModel.
+ * Normalizes seed value before passing to handlers.
  */
 export async function createEcosystemStepInput(data: EcosystemGraphOutput): Promise<StepInput> {
-  const { baseModel } = data;
+  // Normalize seed - generate random if not provided
+  const normalizedData = {
+    ...data,
+    seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
+  };
+  const { baseModel } = normalizedData;
 
   switch (baseModel) {
     // =========================================================================
@@ -177,28 +184,28 @@ export async function createEcosystemStepInput(data: EcosystemGraphOutput): Prom
     case 'Pony':
     case 'Illustrious':
     case 'NoobAI':
-      return createStableDiffusionInput(data as SDFamilyCtx);
+      return createStableDiffusionInput(normalizedData);
 
     // Flux Family
     case 'Flux1':
     case 'FluxKrea':
-      return createFluxInput(data as FluxCtx);
+      return createFluxInput(normalizedData);
 
     // Chroma
     case 'Chroma':
-      return createChromaInput(data as ChromaCtx);
+      return createChromaInput(normalizedData);
 
     // ZImageTurbo
     case 'ZImageTurbo':
-      return createZImageTurboInput(data as ZImageTurboCtx);
+      return createZImageTurboInput(normalizedData);
 
     // HiDream
     case 'HiDream':
-      return createHiDreamInput(data as HiDreamCtx);
+      return createHiDreamInput(normalizedData);
 
     // PonyV7
     case 'PonyV7':
-      return createPonyV7Input(data as PonyV7Ctx);
+      return createPonyV7Input(normalizedData);
 
     // =========================================================================
     // Image Ecosystems - imageGen step type
@@ -206,31 +213,31 @@ export async function createEcosystemStepInput(data: EcosystemGraphOutput): Prom
 
     // Flux2
     case 'Flux2':
-      return { $type: 'imageGen', input: await createFlux2Input(data as Flux2Ctx) };
+      return { $type: 'imageGen', input: await createFlux2Input(normalizedData) };
 
     // Flux Kontext
     case 'Flux1Kontext':
-      return { $type: 'imageGen', input: await createFluxKontextInput(data as FluxKontextCtx) };
+      return { $type: 'imageGen', input: await createFluxKontextInput(normalizedData) };
 
     // Qwen
     case 'Qwen':
-      return { $type: 'imageGen', input: await createQwenInput(data as QwenCtx) };
+      return { $type: 'imageGen', input: await createQwenInput(normalizedData) };
 
     // Seedream
     case 'Seedream':
-      return { $type: 'imageGen', input: await createSeedreamInput(data as SeedreamCtx) };
+      return { $type: 'imageGen', input: await createSeedreamInput(normalizedData) };
 
     // Imagen4
     case 'Imagen4':
-      return { $type: 'imageGen', input: await createImagen4Input(data as Imagen4Ctx) };
+      return { $type: 'imageGen', input: await createImagen4Input(normalizedData) };
 
     // OpenAI
     case 'OpenAI':
-      return { $type: 'imageGen', input: await createOpenAIInput(data as OpenAICtx) };
+      return { $type: 'imageGen', input: await createOpenAIInput(normalizedData) };
 
     // NanoBanana
     case 'NanoBanana':
-      return { $type: 'imageGen', input: await createNanoBananaInput(data as NanoBananaCtx) };
+      return { $type: 'imageGen', input: await createNanoBananaInput(normalizedData) };
 
     // =========================================================================
     // Video Ecosystems - videoGen step type
@@ -245,31 +252,31 @@ export async function createEcosystemStepInput(data: EcosystemGraphOutput): Prom
     case 'WanVideo22_T2V_A14B':
     case 'WanVideo25_T2V':
     case 'WanVideo25_I2V':
-      return { $type: 'videoGen', input: await createWanInput(data as WanCtx) };
+      return { $type: 'videoGen', input: await createWanInput(normalizedData) };
 
     // Vidu
     case 'Vidu':
-      return { $type: 'videoGen', input: await createViduInput(data as ViduCtx) };
+      return { $type: 'videoGen', input: await createViduInput(normalizedData) };
 
     // Kling
     case 'Kling':
-      return { $type: 'videoGen', input: await createKlingInput(data as KlingCtx) };
+      return { $type: 'videoGen', input: await createKlingInput(normalizedData) };
 
     // Hunyuan (HyV1)
     case 'HyV1':
-      return { $type: 'videoGen', input: await createHunyuanInput(data as HunyuanCtx) };
+      return { $type: 'videoGen', input: await createHunyuanInput(normalizedData) };
 
     // Mochi
     case 'Mochi':
-      return { $type: 'videoGen', input: await createMochiInput(data as MochiCtx) };
+      return { $type: 'videoGen', input: await createMochiInput(normalizedData) };
 
     // Sora2
     case 'Sora2':
-      return { $type: 'videoGen', input: await createSoraInput(data as SoraCtx) };
+      return { $type: 'videoGen', input: await createSoraInput(normalizedData) };
 
     // Veo3
     case 'Veo3':
-      return { $type: 'videoGen', input: await createVeo3Input(data as Veo3Ctx) };
+      return { $type: 'videoGen', input: await createVeo3Input(normalizedData) };
 
     default:
       throw new Error(`Unknown ecosystem: ${baseModel}`);

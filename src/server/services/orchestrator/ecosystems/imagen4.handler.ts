@@ -6,7 +6,6 @@
  */
 
 import type { Imagen4ImageGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 
@@ -22,7 +21,6 @@ type Imagen4AspectRatio = '16:9' | '4:3' | '1:1' | '3:4' | '9:16';
  * Imagen4 only supports text-to-image generation.
  */
 export async function createImagen4Input(data: Imagen4Ctx): Promise<Imagen4ImageGenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const quantity = data.quantity ?? 1;
 
   return removeEmpty({
@@ -32,6 +30,6 @@ export async function createImagen4Input(data: Imagen4Ctx): Promise<Imagen4Image
     negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
     aspectRatio: data.aspectRatio?.value as Imagen4AspectRatio | undefined,
     numImages: quantity,
-    seed,
+    seed: data.seed,
   }) as Imagen4ImageGenInput;
 }

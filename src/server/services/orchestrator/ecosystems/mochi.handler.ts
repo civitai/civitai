@@ -7,7 +7,6 @@
  */
 
 import type { MochiVideoGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 
@@ -20,12 +19,10 @@ type MochiCtx = EcosystemGraphOutput & { baseModel: 'Mochi' };
  * Txt2vid only with minimal configuration.
  */
 export async function createMochiInput(data: MochiCtx): Promise<MochiVideoGenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
-
   return removeEmpty({
     engine: 'mochi',
     prompt: data.prompt,
-    seed,
+    seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as MochiVideoGenInput;
 }

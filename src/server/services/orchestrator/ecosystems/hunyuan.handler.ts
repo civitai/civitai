@@ -7,7 +7,6 @@
  */
 
 import type { HunyuanVdeoGenInput } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -32,8 +31,6 @@ function resourceToLora(resource: ResourceData) {
  * Txt2vid only with CFG scale, steps, duration, and LoRA support.
  */
 export async function createHunyuanInput(data: HunyuanCtx): Promise<HunyuanVdeoGenInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
-
   // Build loras from additional resources
   const loras: { air: string; strength: number }[] = [];
   if ('resources' in data && Array.isArray(data.resources)) {
@@ -50,7 +47,7 @@ export async function createHunyuanInput(data: HunyuanCtx): Promise<HunyuanVdeoG
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     steps: 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
-    seed,
+    seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
   }) as HunyuanVdeoGenInput;
 }

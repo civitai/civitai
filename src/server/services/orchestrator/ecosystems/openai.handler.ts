@@ -11,7 +11,6 @@ import type {
   OpenAiGpt15CreateImageInput,
   OpenAiGpt15EditImageInput,
 } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -47,7 +46,6 @@ const versionIdToModel = new Map<number, OpenAIModel>([
  * Handles both createImage and editImage operations.
  */
 export async function createOpenAIInput(data: OpenAICtx): Promise<OpenAIInput> {
-  const seed = data.seed ?? Math.floor(Math.random() * maxRandomSeed);
   const quantity = Math.min(data.quantity ?? 1, 10);
 
   // Determine model from resources
@@ -79,7 +77,7 @@ export async function createOpenAIInput(data: OpenAICtx): Promise<OpenAIInput> {
     quantity,
     quality,
     size: `${width}x${height}`,
-    seed,
+    seed: data.seed,
   };
 
   const hasImages = !!data.images?.length;

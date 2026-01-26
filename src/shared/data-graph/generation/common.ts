@@ -947,7 +947,7 @@ const videoValueSchema = z.object({
 export function videoNode() {
   return {
     input: z.union([z.string().transform((url) => ({ url })), videoValueSchema]).optional(),
-    output: videoValueSchema.optional(),
+    output: videoValueSchema,
     defaultValue: undefined,
   };
 }
@@ -1060,4 +1060,3 @@ export function scaleFactorNode({
     },
   };
 }
-
