@@ -20,22 +20,20 @@ export default withAxiom(
     router: appRouter,
     createContext,
     responseMeta: ({ ctx, type }) => {
+      const headers: Record<string, string> = {};
       const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
       if (willEdgeCache && type === 'query') {
         ctx.res?.removeHeader('Set-Cookie');
-        const headers: Record<string, string> = {
-          'Cache-Control': [
-            'public',
-            `max-age=${ctx.cache.browserTTL ?? 0}`,
-            `s-maxage=${ctx.cache.edgeTTL ?? 0}`,
-            `stale-while-revalidate=${ctx.cache.staleWhileRevalidate ?? 0}`,
-          ].join(', '),
-        };
+        headers['Cache-Control'] = [
+          'public',
+          `max-age=${ctx.cache.browserTTL ?? 0}`,
+          `s-maxage=${ctx.cache.edgeTTL ?? 0}`,
+          `stale-while-revalidate=${ctx.cache.staleWhileRevalidate ?? 0}`,
+        ].join(', ');
         if (ctx.cache.tags) headers['Cache-Tag'] = ctx.cache.tags.join(', ');
-        return { headers };
       }
 
-      return {};
+      return Object.keys(headers).length > 0 ? { headers } : {};
     },
     onError: async ({ error, type, path, input, ctx, req }) => {
       if (isProd) {

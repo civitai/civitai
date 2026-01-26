@@ -326,6 +326,7 @@ type CollectionForPermission = {
   userId: number;
   write: CollectionWriteConfiguration;
   imageId?: number;
+  type?: CollectionType;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -340,7 +341,7 @@ export const getUserCollectionsWithPermissions = async <
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type"`
   );
 
   if (input.type) {

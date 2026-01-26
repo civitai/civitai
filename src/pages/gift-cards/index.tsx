@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Button,
   Card,
   Container,
@@ -27,13 +28,14 @@ import { Meta } from '~/components/Meta/Meta';
 import { PromoNotification } from '~/components/PromoNotification/PromoNotification';
 import { KinguinCheckout } from '~/components/KinguinCheckout';
 import { useKinguinSDK } from '~/hooks/useKinguinSDK';
-import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift-cards/vendors';
-import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
+import type { Vendor } from '~/utils/gift-cards/vendors';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getVendorDiscount } from '~/utils/gift-cards/discount-utils';
 import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
 import { trpc } from '~/utils/trpc';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getEnabledVendorsServer } from '~/server/services/gift-card-vendors.service';
 import classes from './index.module.scss';
 
 // Kinguin utility moved to KinguinCheckout component
@@ -166,10 +168,26 @@ const GiftCardItem = ({
   );
 };
 
-export default function GiftCardsPage() {
+interface GiftCardsPageProps {
+  enabledVendors: Vendor[];
+}
+
+export const getServerSideProps = createServerSideProps<GiftCardsPageProps>({
+  useSession: true,
+  resolver: async ({ session }) => {
+    const enabledVendors = await getEnabledVendorsServer(session?.user?.id);
+
+    return {
+      props: {
+        enabledVendors,
+      },
+    };
+  },
+});
+
+export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
   const router = useRouter();
   const [selectedVendor, setSelectedVendor] = useState<Vendor | undefined>();
-  const enabledVendors = getEnabledVendors();
   const { data: kinguinPaymentWarning } = trpc.system.getDbKV.useQuery({
     key: 'kinguinPaymentWarning',
   });
@@ -187,20 +205,20 @@ export default function GiftCardsPage() {
   useEffect(() => {
     const vendorParam = router.query.vendor as string | undefined;
     if (vendorParam) {
-      const vendor = getVendorById(vendorParam);
-      if (vendor && vendor.enabled) {
+      const vendor = enabledVendors.find((v) => v.id === vendorParam);
+      if (vendor) {
         setSelectedVendor(vendor);
         return;
       }
     }
     // Set default vendor if no valid vendor in URL
-    setSelectedVendor(getDefaultVendor());
-  }, [router.query.vendor]);
+    setSelectedVendor(enabledVendors[0]);
+  }, [router.query.vendor, enabledVendors]);
 
   // Update URL when vendor changes
   const handleVendorChange = (vendorId: string) => {
-    const vendor = getVendorById(vendorId);
-    if (vendor && vendor.enabled) {
+    const vendor = enabledVendors.find((v) => v.id === vendorId);
+    if (vendor) {
       // Close Kinguin checkout if switching vendors
       if (showKinguinCheckout) {
         closeKinguinCheckout();
@@ -304,7 +322,7 @@ export default function GiftCardsPage() {
 
               <Stack gap="sm" align="flex-end">
                 {/* Controls Row */}
-                <Group gap="xl" wrap="nowrap">
+                <Group gap="md" wrap="wrap">
                   {/* Type Selector */}
                   <Stack gap="xs">
                     <Text size="xs" c="dimmed" fw={700}>
@@ -323,7 +341,7 @@ export default function GiftCardsPage() {
                   </Stack>
 
                   {/* Vendor Selector */}
-                  <Stack gap="xs" align="center">
+                  <Stack gap="xs">
                     <Text size="xs" c="dimmed" fw={700}>
                       Vendor
                     </Text>
@@ -332,7 +350,14 @@ export default function GiftCardsPage() {
                         value={selectedVendor.id}
                         onChange={handleVendorChange}
                         data={enabledVendors.map((v) => ({
-                          label: v.displayName,
+                          label: v.badge ? (
+                            <Group gap={6} wrap="nowrap" align="center">
+                              <span>{v.displayName}</span>
+                              <Box className={classes.newVendorDot} />
+                            </Group>
+                          ) : (
+                            v.displayName
+                          ),
                           value: v.id,
                         }))}
                         size="sm"
@@ -342,7 +367,7 @@ export default function GiftCardsPage() {
                         value={selectedVendor.id}
                         onChange={(value) => value && handleVendorChange(value)}
                         data={enabledVendors.map((v) => ({
-                          label: v.displayName,
+                          label: v.badge ? `${v.displayName} •` : v.displayName,
                           value: v.id,
                         }))}
                         size="sm"
@@ -599,6 +624,13 @@ const WholesaleCallout = () => {
       mt="xl"
       className={classes.wholesaleCallout}
     >
+      {/* New Plans Badge */}
+      <div className={classes.newPlansBadge}>
+        <Text size="xs" fw={700} c="white">
+          New Plans Available
+        </Text>
+      </div>
+
       <Grid align="center">
         <Grid.Col span={{ base: 12, md: 8 }}>
           <Stack gap="md">
@@ -615,23 +647,23 @@ const WholesaleCallout = () => {
                 </Text>
               </Stack>
             </Group>
-            <Group gap="xl" ml={60}>
+            <Group gap="xl" ml={60} wrap="wrap">
               <Group gap="xs">
                 <IconBolt size={20} className={classes.wholesaleHighlight} />
                 <Text size="sm" fw={500}>
-                  Up to 15% discount
+                  Starting at just $1k/month
+                </Text>
+              </Group>
+              <Group gap="xs">
+                <IconBolt size={20} className={classes.wholesaleHighlight} />
+                <Text size="sm" fw={500}>
+                  Up to 10% discount
                 </Text>
               </Group>
               <Group gap="xs">
                 <IconCheck size={20} className={classes.wholesaleHighlight} />
                 <Text size="sm" fw={500}>
                   Featured on gift cards page
-                </Text>
-              </Group>
-              <Group gap="xs">
-                <IconCheck size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Marketing support
                 </Text>
               </Group>
             </Group>

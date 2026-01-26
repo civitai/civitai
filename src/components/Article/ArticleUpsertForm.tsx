@@ -11,6 +11,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputMultiFileUpload,
+  InputMultiSelect,
   InputRTE,
   InputSelect,
   InputSimpleImageUpload,
@@ -39,11 +40,14 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
-  categoryId: z.number().min(0, 'Please select a valid category'),
-  coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
-  userNsfwLevel: z.string().optional(),
-});
+const schema = upsertArticleInput
+  .omit({ coverImage: true, userNsfwLevel: true, lockedProperties: true })
+  .extend({
+    categoryId: z.number().min(0, 'Please select a valid category'),
+    coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
+    userNsfwLevel: z.string().optional(),
+    lockedProperties: z.string().array().optional(),
+  });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
 });
@@ -56,6 +60,8 @@ const tooltipProps: Partial<TooltipProps> = {
   zIndex: 10,
   withinPortal: true,
 };
+
+const lockableProperties = ['nsfw', 'userNsfwLevel'];
 
 export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
   label: browsingLevelLabels[level],
@@ -87,6 +93,7 @@ export function ArticleUpsertForm({ article }: Props) {
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
+      lockedProperties: article?.lockedProperties ?? [],
     } as any,
   });
   const clearStorage = useFormStorage({
@@ -134,11 +141,17 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: selectedTags,
     coverImage,
     userNsfwLevel,
+    lockedProperties,
     ...rest
   }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
+
+    // Moderators can directly edit lockedProperties; non-moderators use the ref
+    const finalLockedProperties = currentUser?.isModerator
+      ? lockedProperties
+      : lockedPropertiesRef.current;
 
     upsertArticleMutation.mutate(
       {
@@ -152,7 +165,7 @@ export function ArticleUpsertForm({ article }: Props) {
         publishedAt: publishing ? new Date() : null,
         status: publishing ? ArticleStatus.Published : undefined,
         coverImage: coverImage,
-        lockedProperties: lockedPropertiesRef.current,
+        lockedProperties: finalLockedProperties,
       },
       {
         async onSuccess(result) {
@@ -351,6 +364,15 @@ export function ArticleUpsertForm({ article }: Props) {
               )}
             />
             <UploadNotice className="-mt-2" />
+            {currentUser?.isModerator && (
+              <Paper radius="md" p="xl" withBorder>
+                <InputMultiSelect
+                  name="lockedProperties"
+                  label="Locked properties"
+                  data={lockableProperties}
+                />
+              </Paper>
+            )}
             <ActionButtons
               article={article}
               saveButtonProps={{

@@ -41,6 +41,9 @@ export const serverSchema = z.object({
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
     process.env.VERCEL ? z.string() : z.url()
   ),
+  // Optional cookie domain override for cross-subdomain session sharing (e.g., PR previews)
+  // When set, session cookies will use this domain (e.g., ".civitaic.com") instead of the hostname
+  NEXTAUTH_COOKIE_DOMAIN: z.string().optional(),
   CLICKHOUSE_HOST: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),

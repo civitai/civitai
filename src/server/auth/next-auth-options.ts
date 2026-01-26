@@ -24,7 +24,7 @@ import { getSessionUser } from './session-user';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
-import { refreshToken } from '~/server/auth/token-refresh';
+import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -198,6 +198,12 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           if (freshUser) {
             token.user = freshUser;
             token.signedAt = Date.now(); // Update signedAt to mark this refresh
+          }
+
+          // Clear the refresh marker for THIS token since the cookie is now being updated
+          // Other tokens (multi-session) will still have their markers from refreshSession() above
+          if (token.id) {
+            await clearTokenRefreshMarker(token.id as string);
           }
 
           // Return immediately - no need to go through refreshToken() since we just refreshed
@@ -436,7 +442,12 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           sameSite: hostname == 'localhost' ? 'lax' : 'none',
           path: '/',
           secure: useSecureCookies,
-          domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
+          // Use NEXTAUTH_COOKIE_DOMAIN if set (for cross-subdomain sharing in PR previews),
+          // otherwise default to the hostname with a leading dot for subdomain support
+          domain:
+            hostname == 'localhost'
+              ? hostname
+              : env.NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname,
         },
       },
     },

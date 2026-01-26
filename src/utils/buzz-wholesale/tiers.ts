@@ -11,7 +11,6 @@ export interface WholesaleTier {
   subtitle: string;
   monthlyMinimum: number;
   maxDiscount: number;
-  contractMonths: number;
   features: string[];
   discountScale: DiscountTier[];
   recommended?: boolean;
@@ -26,9 +25,8 @@ export const wholesaleTiers: WholesaleTier[] = [
     level: 3,
     name: 'Partner',
     subtitle: 'Perfect for growing stores',
-    monthlyMinimum: 10000,
-    maxDiscount: 7.5,
-    contractMonths: 6,
+    monthlyMinimum: 1000,
+    maxDiscount: 5,
     ctaText: 'Apply for Partner',
     ctaVariant: 'light',
     features: [
@@ -38,9 +36,9 @@ export const wholesaleTiers: WholesaleTier[] = [
       'Help customers discover and support their preferred stores',
     ],
     discountScale: [
-      { volume: 10000, discount: 5 },
-      { volume: 20000, discount: 6.25 },
-      { volume: 30000, discount: 7.5 },
+      { volume: 1000, discount: 3 },
+      { volume: 2000, discount: 4 },
+      { volume: 3000, discount: 5 },
     ],
     applicationQueryParams: {
       'Wholesale Program Tier': 'Tier 3 - Partner',
@@ -51,9 +49,8 @@ export const wholesaleTiers: WholesaleTier[] = [
     level: 2,
     name: 'Premium Partner',
     subtitle: 'Scale your Buzz sales',
-    monthlyMinimum: 50000,
-    maxDiscount: 12.5,
-    contractMonths: 6,
+    monthlyMinimum: 10000,
+    maxDiscount: 7.5,
     ctaText: 'Apply for Premium',
     ctaVariant: 'light',
     recommended: true,
@@ -68,9 +65,9 @@ export const wholesaleTiers: WholesaleTier[] = [
       'Quarterly business reviews',
     ],
     discountScale: [
-      { volume: 50000, discount: 10 },
-      { volume: 75000, discount: 11.25 },
-      { volume: 100000, discount: 12.5 },
+      { volume: 10000, discount: 5 },
+      { volume: 20000, discount: 6.25 },
+      { volume: 30000, discount: 7.5 },
     ],
     applicationQueryParams: {
       'Wholesale Program Tier': 'Tier 2 - Premium Partner',
@@ -81,9 +78,8 @@ export const wholesaleTiers: WholesaleTier[] = [
     level: 1,
     name: 'Strategic Vendor',
     subtitle: 'Exclusive partnership opportunity',
-    monthlyMinimum: 100000,
-    maxDiscount: 15,
-    contractMonths: 6,
+    monthlyMinimum: 50000,
+    maxDiscount: 10,
     ctaText: 'Apply for Strategic',
     ctaVariant: 'filled',
     features: [
@@ -99,9 +95,9 @@ export const wholesaleTiers: WholesaleTier[] = [
       'Strategic partnership designation',
     ],
     discountScale: [
-      { volume: 100000, discount: 12.5 },
-      { volume: 150000, discount: 13.5 },
-      { volume: 200000, discount: 15 },
+      { volume: 50000, discount: 7.5 },
+      { volume: 75000, discount: 8.5 },
+      { volume: 100000, discount: 10 },
     ],
     applicationQueryParams: {
       'Wholesale Program Tier': 'Tier 1 - Strategic Vendor',

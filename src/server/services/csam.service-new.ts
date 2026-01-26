@@ -15,7 +15,7 @@ import { env } from '~/env/server';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
-import stream from 'stream';
+import stream, { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import * as z from 'zod';
 import plimit from 'p-limit';
@@ -25,7 +25,6 @@ import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isDev, isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
-import nodeFetch from 'node-fetch';
 import JSZip from 'jszip';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -771,10 +770,11 @@ async function getTrainingDataZipStream({
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 
-  return await nodeFetch(modelFile.url).then((response) => {
-    if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
-    return response.body;
-  });
+  const response = await fetch(modelFile.url);
+  if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
+  if (!response.body) throw new Error(`no response body for model version: ${versionId}`);
+  // Convert Web ReadableStream to Node.js Readable stream
+  return Readable.fromWeb(response.body as import('stream/web').ReadableStream);
 }
 
 function uploadStream({

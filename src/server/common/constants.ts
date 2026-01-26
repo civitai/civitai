@@ -502,6 +502,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://purplesmart.ai/license',
     name: 'Pony',
   },
+  ltxv2: {
+    url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
+    name: 'LTXV2',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -547,13 +551,14 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],
   'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
-  'Flux.2 Klein 4B': baseLicenses['flux1D'],
-  'Flux.2 Klein 4B-base': baseLicenses['flux1D'],
+  'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
+  'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
+  LTXV2: baseLicenses['ltxv2'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],

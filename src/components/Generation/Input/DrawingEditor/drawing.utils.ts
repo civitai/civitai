@@ -25,11 +25,14 @@ export function generateElementId(): string {
 // #endregion
 
 /**
- * Check if an element type is transformable (can be moved/resized)
- * Lines are NOT transformable as they are freehand drawings
+ * Check if an element is transformable (can be selected, moved, resized, rotated)
+ * Eraser strokes are NOT transformable as they create holes in the drawing
  */
 export function isTransformableElement(el: DrawingElement): boolean {
-  return el.type !== 'line';
+  if (el.type === 'line' && el.tool === 'eraser') {
+    return false;
+  }
+  return true;
 }
 
 // #region Normalization

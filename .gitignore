@@ -105,3 +105,4 @@ scripts/local-dev/
 
 # Claude agent temp directories
 tmpclaude-*-cwd
+.claude/skills/flipt/.env

@@ -11,8 +11,9 @@ import {
 } from '@mantine/core';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
-import { getProviders, signIn } from 'next-auth/react';
+import { getProviders } from 'next-auth/react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { handleSignIn } from '~/utils/auth-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { dbRead } from '~/server/db/client';
@@ -97,7 +98,7 @@ export default function LinkRole({ providers, linked }: Props) {
                 size="lg"
                 key={providers.discord.name}
                 provider={providers.discord.id as BuiltInProviderType}
-                onClick={() => signIn(providers.discord.id, { callbackUrl: '/discord/link-role' })}
+                onClick={() => handleSignIn(providers.discord.id, '/discord/link-role')}
               />
             )}
             <AlertWithIcon icon={<IconExclamationMark />} color="yellow">

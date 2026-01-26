@@ -15,9 +15,10 @@ const imageTrainingBaseSchema = z.object({
 });
 
 // AI Toolkit specific parameters - uses discriminated union for proper modelVariant validation
+const aiToolkitMaxEpochs = 40;
 const aiToolkitBaseParams = z.object({
   engine: z.literal(OrchEngineTypes.AiToolkit),
-  epochs: z.number(),
+  epochs: z.number().max(aiToolkitMaxEpochs),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
@@ -125,7 +126,7 @@ const whatIfAiToolkitParams = z.object({
   trainingDataImagesCount: z.number(),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
-  epochs: z.number(),
+  epochs: z.number().max(aiToolkitMaxEpochs),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),

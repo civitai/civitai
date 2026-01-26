@@ -49,7 +49,7 @@ function GeneratePage() {
           <Text align="center">
             Your account has been restricted due to potential Terms of Service violations, and has
             been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within 48 hours. You do not need to contact us.
+            determination notification within 2 business days. You do not need to contact us.
           </Text>
         </Stack>
       </Center>
