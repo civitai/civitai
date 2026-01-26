@@ -59,9 +59,9 @@ export const flux2KleinVariantDefaults: Record<
   Flux2KleinModelVariant,
   { steps: number; cfgScale: number; hideAdvanced: boolean }
 > = {
-  '4b': { steps: 4, cfgScale: 1, hideAdvanced: true },
+  '4b': { steps: 12, cfgScale: 1, hideAdvanced: true },
   '4b-base': { steps: 20, cfgScale: 2.5, hideAdvanced: false },
-  '9b': { steps: 4, cfgScale: 1, hideAdvanced: true },
+  '9b': { steps: 12, cfgScale: 1, hideAdvanced: true },
   '9b-base': { steps: 20, cfgScale: 2.5, hideAdvanced: false },
 };
 

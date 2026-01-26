@@ -657,9 +657,14 @@ export function GenerationFormContent() {
               isChroma ||
               isZImageTurbo ||
               isFlux2 ||
-              isFlux2Klein ||
               isPonyV7 ||
               isSeedream;
+
+            // Flux2 Klein doesn't support certain samplers
+            const flux2KleinDisabledSamplers = ['DPM++ 2M Karras', 'DDIM', 'DPM2', 'DPM2 a'];
+            const samplerOptions = isFlux2Klein
+              ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
+              : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
@@ -1648,11 +1653,15 @@ export function GenerationFormContent() {
                                         </InfoPopover>
                                       </div>
                                     }
-                                    data={generation.samplers}
-                                    presets={[
-                                      { label: 'Fast', value: 'Euler a' },
-                                      { label: 'Popular', value: 'DPM++ 2M Karras' },
-                                    ]}
+                                    data={samplerOptions}
+                                    presets={
+                                      isFlux2Klein
+                                        ? [{ label: 'Fast', value: 'Euler a' }]
+                                        : [
+                                            { label: 'Fast', value: 'Euler a' },
+                                            { label: 'Popular', value: 'DPM++ 2M Karras' },
+                                          ]
+                                    }
                                   />
                                 )}
                                 {!disableSteps && (
