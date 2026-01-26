@@ -635,6 +635,20 @@ Instead of manual status changes, moderators have contextual quick actions:
 - Does NOT pick winners or award prizes
 - Sets status to `Cancelled`
 
+#### Multi-Challenge Job Processing
+The daily challenge jobs support **multiple concurrent active challenges**:
+
+- `reviewEntries()` - Processes ALL active challenges, not just one
+- `pickWinners()` - Handles ended challenges (winner picking) and starts scheduled challenges
+- Each challenge is processed independently with error isolation (one failure doesn't stop others)
+- System challenges are auto-created only when no upcoming system challenges exist
+
+**Key helper functions:**
+- `getActiveChallenges()` - Returns all active challenges
+- `getEndedActiveChallenges()` - Returns active challenges past their `endsAt`
+- `getChallengesReadyToStart()` - Returns scheduled challenges ready to activate
+- `getUpcomingSystemChallenge()` - Checks if a system challenge exists
+
 #### Key Files
 - Schema: `prisma/schema.full.prisma` (Challenge, ChallengeWinner models)
 - Service: `src/server/services/challenge.service.ts`
@@ -642,6 +656,8 @@ Instead of manual status changes, moderators have contextual quick actions:
 - Moderator UI: `src/pages/moderator/challenges.tsx`
 - Create/Edit Form: `src/components/Challenge/ChallengeUpsertForm.tsx`
 - Daily Job: `src/server/jobs/daily-challenge-processing.ts`
+- Challenge Helpers: `src/server/games/daily-challenge/challenge-helpers.ts`
+- Challenge Utils: `src/server/games/daily-challenge/daily-challenge.utils.ts`
 
 ### Phase 2-4: Future Work
 - [ ] User-created challenges

@@ -128,6 +128,74 @@ export async function getActiveChallengeFromDb(): Promise<ChallengeDetails | nul
   return getChallengeById(row.id);
 }
 
+/**
+ * Gets ALL active challenges (supports multiple concurrent challenges).
+ * Returns challenges ordered by startsAt DESC.
+ */
+export async function getActiveChallengesFromDb(limit = 50): Promise<ChallengeDetails[]> {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
+    ORDER BY "startsAt" DESC
+    LIMIT ${limit}
+  `;
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is ChallengeDetails => c !== null);
+}
+
+/**
+ * Gets active challenges that have ENDED (endsAt <= now).
+ * These challenges need winner picking and status transition.
+ * Returns challenges ordered by endsAt ASC (oldest first).
+ */
+export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails[]> {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
+    AND "endsAt" <= now()
+    ORDER BY "endsAt" ASC
+  `;
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is ChallengeDetails => c !== null);
+}
+
+/**
+ * Gets scheduled challenges that are ready to START (startsAt <= now).
+ * These challenges should be activated.
+ * Returns challenges ordered by startsAt ASC (oldest first).
+ */
+export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDetails[]> {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
+    AND "startsAt" <= now()
+    ORDER BY "startsAt" ASC
+  `;
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is ChallengeDetails => c !== null);
+}
+
+/**
+ * Gets an upcoming system-created challenge (scheduled or active).
+ * Used to determine if auto-generation of a new system challenge is needed.
+ * Returns null if no system challenge exists.
+ */
+export async function getUpcomingSystemChallengeFromDb(): Promise<ChallengeDetails | null> {
+  const [row] = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE source = ${ChallengeSource.System}::"ChallengeSource"
+    AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+    ORDER BY "startsAt" ASC
+    LIMIT 1
+  `;
+  if (!row) return null;
+  return getChallengeById(row.id);
+}
+
 export async function getScheduledChallengeFromDb(): Promise<ChallengeDetails | null> {
   const [row] = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id

@@ -7,7 +7,11 @@ import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/clie
 import {
   type ChallengeDetails,
   getActiveChallengeFromDb,
+  getActiveChallengesFromDb,
+  getEndedActiveChallengesFromDb,
   getScheduledChallengeFromDb,
+  getScheduledChallengesReadyToStart,
+  getUpcomingSystemChallengeFromDb,
 } from './challenge-helpers';
 
 const challengeConfigSchema = z.object({
@@ -147,7 +151,7 @@ export type Score = {
   aesthetic: number; // 0-10 how aesthetically pleasing it is
 };
 
-type DailyChallengeDetails = {
+export type DailyChallengeDetails = {
   challengeId?: number; // NEW: Challenge table ID for status updates
   articleId: number;
   type: string;
@@ -307,4 +311,44 @@ export async function endChallenge(challenge?: { collectionId: number } | null) 
     DELETE FROM "CollectionContributor"
     WHERE "collectionId" = ${challenge.collectionId}
   `;
+}
+
+// =============================================================================
+// Multi-Challenge Support Functions
+// =============================================================================
+
+/**
+ * Gets ALL active challenges in legacy format (supports multiple concurrent challenges).
+ */
+export async function getActiveChallenges(): Promise<DailyChallengeDetails[]> {
+  const challenges = await getActiveChallengesFromDb();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets active challenges that have ENDED (endsAt <= now) in legacy format.
+ * These challenges need winner picking.
+ */
+export async function getEndedActiveChallenges(): Promise<DailyChallengeDetails[]> {
+  const challenges = await getEndedActiveChallengesFromDb();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets scheduled challenges that are ready to START (startsAt <= now) in legacy format.
+ * These challenges should be activated.
+ */
+export async function getChallengesReadyToStart(): Promise<DailyChallengeDetails[]> {
+  const challenges = await getScheduledChallengesReadyToStart();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets an upcoming system-created challenge (scheduled or active) in legacy format.
+ * Returns null if no system challenge exists.
+ */
+export async function getUpcomingSystemChallenge(): Promise<DailyChallengeDetails | null> {
+  const challenge = await getUpcomingSystemChallengeFromDb();
+  if (!challenge) return null;
+  return challengeToLegacyFormat(challenge);
 }

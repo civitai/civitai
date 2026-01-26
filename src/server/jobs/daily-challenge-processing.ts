@@ -11,14 +11,19 @@ import {
   updateChallengeStatus,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
-import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import type {
+  ChallengeConfig,
+  DailyChallengeDetails,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   endChallenge,
+  getActiveChallenges,
   getChallengeConfig,
   getChallengeDetails,
+  getChallengesReadyToStart,
   getChallengeTypeConfig,
-  getCurrentChallenge,
-  getUpcomingChallenge,
+  getEndedActiveChallenges,
+  getUpcomingSystemChallenge,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
@@ -71,9 +76,13 @@ export const dailyChallengeJobs = [
 // Job Functions
 // ----------------------------------------------
 export async function createUpcomingChallenge() {
-  // Stop if we already have an upcoming challenge
-  const upcomingChallenge = await getUpcomingChallenge();
-  if (upcomingChallenge) return upcomingChallenge;
+  // Stop if we already have any upcoming system challenges (scheduled or active)
+  // This allows user-created challenges to run without blocking system challenge creation
+  const existingSystemChallenge = await getUpcomingSystemChallenge();
+  if (existingSystemChallenge) {
+    log('System challenge already exists, skipping creation');
+    return existingSystemChallenge;
+  }
   log('Setting up daily challenge');
   const config = await getChallengeConfig();
   const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
@@ -331,245 +340,306 @@ export async function createUpcomingChallenge() {
 
 export async function reviewEntries() {
   try {
-    // Get current challenge
-    const currentChallenge = await getCurrentChallenge();
-    console.log('currentChallenge', currentChallenge);
-    if (!currentChallenge) return;
-    log('Processing entries for challenge:', currentChallenge);
-    const config = await getChallengeConfig();
-    const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
-
-    // Update pending entries
-    // ----------------------------------------------
-    const reviewing = Date.now();
-
-    // Get the Challenge record to check allowedNsfwLevel (new system)
-    // Fall back to PG-only (1) for old article-based challenges
-    const [challengeRecord] = await dbRead.$queryRaw<[{ allowedNsfwLevel: number } | undefined]>`
-      SELECT "allowedNsfwLevel"
-      FROM "Challenge"
-      WHERE "collectionId" = ${currentChallenge.collectionId}
-      LIMIT 1
-    `;
-    const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
-
-    // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
-    // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
-    const reviewedCount = await dbWrite.$executeRaw`
-    WITH source AS (
-      SELECT
-      i.id,
-      (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
-      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
-      i."createdAt" >= ${currentChallenge.date} as "isRecent"
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE ci."collectionId" = ${currentChallenge.collectionId}
-      AND ci.status = 'REVIEW'
-      AND i."nsfwLevel" != 0
-    )
-    UPDATE "CollectionItem" ci SET
-      status = CASE
-        WHEN "isSafe" AND "hasResource" AND "isRecent" THEN 'ACCEPTED'::"CollectionItemStatus"
-        ELSE 'REJECTED'::"CollectionItemStatus"
-      END,
-      "reviewedAt" = now(),
-      "reviewedById" = ${challengeTypeConfig.userId}
-    FROM source s
-    WHERE s.id = ci."imageId";
-  `;
-    log('Reviewed entries:', reviewedCount);
-
-    // Notify users of rejection
-    const rejectedUsers = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
-    SELECT
-      i."userId",
-      CAST(COUNT(*) as int) as count
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    WHERE ci."collectionId" = ${currentChallenge.collectionId}
-    AND ci.status = 'REJECTED'
-    GROUP BY 1;
-  `;
-    const processingDateStr = dayjs().utc().startOf('hour').format('HH');
-    const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
-      await createNotification({
-        type: 'challenge-rejection',
-        category: NotificationCategory.System,
-        key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}:${userId}`,
-        userId,
-        details: {
-          articleId: currentChallenge.articleId,
-          collectionId: currentChallenge.collectionId,
-          challengeName: currentChallenge.title,
-          count,
-        },
-      });
-    });
-    await limitConcurrency(notificationTasks, 3);
-
-    // Remove rejected entries from collection
-    await dbWrite.$executeRaw`
-    DELETE FROM "CollectionItem"
-    WHERE "collectionId" = ${currentChallenge.collectionId}
-    AND status = 'REJECTED';
-  `;
-
-    // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
-
-    // TEMP: Remove judged tag from unjudged entries
-    // Doing this because users can still manually add it
-    await dbWrite.$executeRaw`
-    UPDATE "CollectionItem"
-      SET "tagId" = NULL
-    WHERE "collectionId" = ${currentChallenge.collectionId}
-    AND "tagId" = ${config.judgedTagId}
-    AND note IS NULL;
-  `;
-
-    // Rate new entries
-    // ----------------------------------------------
-    // Get last time reviewed
-    const [article] = await dbRead.$queryRaw<{ reviewedAt: number }[]>`
-    SELECT
-      coalesce(cast(metadata->'reviewedAt' as bigint), 0) as "reviewedAt"
-    FROM "Article"
-    WHERE id = ${currentChallenge.articleId}
-  `;
-    const lastReviewedAt = new Date(Number(article.reviewedAt));
-    log('Last reviewed at:', lastReviewedAt);
-
-    // Get count of already-scored entries per user for this challenge (for per-user cap)
-    const userScoredCounts = await dbWrite.$queryRaw<{ userId: number; count: bigint }[]>`
-    SELECT i."userId", COUNT(*) as count
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    WHERE ci."collectionId" = ${currentChallenge.collectionId}
-    AND ci."tagId" = ${config.judgedTagId}
-    GROUP BY i."userId"
-  `;
-    const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
-    log('Users with scored entries:', scoredCountMap.size);
-
-    // Get entries approved since last reviewed
-    const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
-    SELECT
-      ci."imageId",
-      i."userId",
-      u."username",
-      i."url"
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    JOIN "User" u ON u.id = i."userId"
-    WHERE ci."collectionId" = ${currentChallenge.collectionId}
-    AND ci.status = 'ACCEPTED'
-    AND ci."tagId" IS NULL
-    AND ci."reviewedAt" >= ${lastReviewedAt}
-  `;
-    log('Recent entries:', recentEntries.length);
-
-    // Randomly select entries to review up to the limit
-    let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
-    const shuffledEntries = shuffle(recentEntries);
-    const toReview: typeof shuffledEntries = [];
-    const reviewingUsers = new Set<number>();
-    for (const entry of shuffledEntries) {
-      if (toReviewCount <= 0) break;
-      if (reviewingUsers.has(entry.userId)) continue;
-      // Skip users who have already hit the per-user scored cap
-      const userScored = scoredCountMap.get(entry.userId) ?? 0;
-      if (userScored >= config.maxScoredPerUser) continue;
-      toReview.push(entry);
-      reviewingUsers.add(entry.userId);
-      toReviewCount--;
-    }
-    log('Entries to review:', toReview.length);
-
-    // Get forced to review entries (also respecting per-user cap)
-    const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
-    SELECT
-      ci."imageId",
-      i."userId",
-      u."username",
-      i."url"
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    JOIN "User" u ON u.id = i."userId"
-    WHERE ci."collectionId" = ${currentChallenge.collectionId}
-    AND ci.status = 'ACCEPTED'
-    AND ci."tagId" = ${config.reviewMeTagId}
-  `;
-    log('Requested review:', requestReview.length);
-    // Filter reviewMe entries to also respect per-user cap
-    for (const entry of requestReview) {
-      const userScored = scoredCountMap.get(entry.userId) ?? 0;
-      if (userScored >= config.maxScoredPerUser) continue;
-      if (reviewingUsers.has(entry.userId)) continue;
-      toReview.push(entry);
-      reviewingUsers.add(entry.userId);
+    // Get ALL active challenges (supports multiple concurrent challenges)
+    const activeChallenges = await getActiveChallenges();
+    if (!activeChallenges.length) {
+      log('No active challenges to process');
+      return;
     }
 
-    // Rate entries
-    const tasks = toReview.map((entry) => async () => {
+    log(`Processing entries for ${activeChallenges.length} active challenge(s)`);
+
+    // Process each challenge with error isolation
+    for (const challenge of activeChallenges) {
       try {
-        log('Reviewing entry:', entry);
-        const review = await generateReview({
-          theme: currentChallenge.theme,
-          creator: entry.username,
-          imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-          config: challengeTypeConfig,
+        await reviewEntriesForChallenge(challenge);
+      } catch (error) {
+        // Log error but continue with other challenges
+        const err = error as Error;
+        logToAxiom({
+          type: 'error',
+          name: 'daily-challenge-process-entries',
+          message: err.message,
+          challengeId: challenge.challengeId,
+          articleId: challenge.articleId,
         });
-        log('Review prepared', entry.imageId, review);
+        log(`Failed to process challenge ${challenge.articleId}:`, error);
+      }
+    }
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({
+      type: 'error',
+      name: 'daily-challenge-process-entries-global',
+      message: error.message,
+    });
+    throw e;
+  }
+}
 
-        // Add tag and score note to collection item
-        const note = JSON.stringify({
-          score: review.score,
-          summary: review.summary,
-        });
-        await dbWrite.$executeRaw`
-        UPDATE "CollectionItem"
-        SET "tagId" = ${config.judgedTagId}, note = ${note}
-        WHERE
-          "collectionId" = ${currentChallenge.collectionId}
-          AND "imageId" = ${entry.imageId};
-      `;
-        log('Tag and note added', entry.imageId);
+/**
+ * Process entries for a single challenge.
+ * Extracted from reviewEntries() to support multi-challenge processing.
+ */
+async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
+  log('Processing entries for challenge:', currentChallenge.challengeId);
+  const config = await getChallengeConfig();
+  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
-        // Send comment
-        await upsertComment({
-          userId: challengeTypeConfig.userId,
+  // Update pending entries
+  // ----------------------------------------------
+  const reviewing = Date.now();
+
+  // Get the Challenge record to check allowedNsfwLevel (new system)
+  // Fall back to PG-only (1) for old article-based challenges
+  const [challengeRecord] = await dbRead.$queryRaw<[{ allowedNsfwLevel: number } | undefined]>`
+    SELECT "allowedNsfwLevel"
+    FROM "Challenge"
+    WHERE "collectionId" = ${currentChallenge.collectionId}
+    LIMIT 1
+  `;
+  const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+
+  // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
+  // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
+  const reviewedCount = await dbWrite.$executeRaw`
+  WITH source AS (
+    SELECT
+    i.id,
+    (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
+    EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
+    i."createdAt" >= ${currentChallenge.date} as "isRecent"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${currentChallenge.collectionId}
+    AND ci.status = 'REVIEW'
+    AND i."nsfwLevel" != 0
+  )
+  UPDATE "CollectionItem" ci SET
+    status = CASE
+      WHEN "isSafe" AND "hasResource" AND "isRecent" THEN 'ACCEPTED'::"CollectionItemStatus"
+      ELSE 'REJECTED'::"CollectionItemStatus"
+    END,
+    "reviewedAt" = now(),
+    "reviewedById" = ${challengeTypeConfig.userId}
+  FROM source s
+  WHERE s.id = ci."imageId";
+`;
+  log('Reviewed entries:', reviewedCount);
+
+  // Notify users of rejection
+  const rejectedUsers = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
+  SELECT
+    i."userId",
+    CAST(COUNT(*) as int) as count
+  FROM "CollectionItem" ci
+  JOIN "Image" i ON i.id = ci."imageId"
+  WHERE ci."collectionId" = ${currentChallenge.collectionId}
+  AND ci.status = 'REJECTED'
+  GROUP BY 1;
+`;
+  const processingDateStr = dayjs().utc().startOf('hour').format('HH');
+  // Use challengeId for notification key if articleId is not available
+  const notificationKeyId =
+    currentChallenge.articleId > 0
+      ? currentChallenge.articleId
+      : `c${currentChallenge.challengeId ?? 0}`;
+  const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
+    await createNotification({
+      type: 'challenge-rejection',
+      category: NotificationCategory.System,
+      key: `challenge-rejection:${notificationKeyId}:${processingDateStr}:${userId}`,
+      userId,
+      details: {
+        articleId: currentChallenge.articleId > 0 ? currentChallenge.articleId : undefined,
+        challengeId: currentChallenge.challengeId,
+        collectionId: currentChallenge.collectionId,
+        challengeName: currentChallenge.title,
+        count,
+      },
+    });
+  });
+  await limitConcurrency(notificationTasks, 3);
+
+  // Remove rejected entries from collection
+  await dbWrite.$executeRaw`
+  DELETE FROM "CollectionItem"
+  WHERE "collectionId" = ${currentChallenge.collectionId}
+  AND status = 'REJECTED';
+`;
+
+  // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
+
+  // TEMP: Remove judged tag from unjudged entries
+  // Doing this because users can still manually add it
+  await dbWrite.$executeRaw`
+  UPDATE "CollectionItem"
+    SET "tagId" = NULL
+  WHERE "collectionId" = ${currentChallenge.collectionId}
+  AND "tagId" = ${config.judgedTagId}
+  AND note IS NULL;
+`;
+
+  // Rate new entries
+  // ----------------------------------------------
+  // Get last time reviewed (from Article if exists, otherwise from Challenge metadata or challenge start)
+  let lastReviewedAt = currentChallenge.date ?? new Date(0); // Default to challenge start
+  if (currentChallenge.articleId > 0) {
+    const [article] = await dbRead.$queryRaw<{ reviewedAt: number }[]>`
+      SELECT
+        coalesce(cast(metadata->'reviewedAt' as bigint), 0) as "reviewedAt"
+      FROM "Article"
+      WHERE id = ${currentChallenge.articleId}
+    `;
+    if (article) {
+      lastReviewedAt = new Date(Number(article.reviewedAt));
+    }
+  } else if (currentChallenge.challengeId) {
+    // Try to get reviewedAt from Challenge metadata
+    const [challengeRecord] = await dbRead.$queryRaw<{ reviewedAt: number | null }[]>`
+      SELECT
+        cast(metadata->>'reviewedAt' as bigint) as "reviewedAt"
+      FROM "Challenge"
+      WHERE id = ${currentChallenge.challengeId}
+    `;
+    if (challengeRecord?.reviewedAt) {
+      lastReviewedAt = new Date(Number(challengeRecord.reviewedAt));
+    }
+  }
+  log('Last reviewed at:', lastReviewedAt);
+
+  // Get count of already-scored entries per user for this challenge (for per-user cap)
+  const userScoredCounts = await dbWrite.$queryRaw<{ userId: number; count: bigint }[]>`
+  SELECT i."userId", COUNT(*) as count
+  FROM "CollectionItem" ci
+  JOIN "Image" i ON i.id = ci."imageId"
+  WHERE ci."collectionId" = ${currentChallenge.collectionId}
+  AND ci."tagId" = ${config.judgedTagId}
+  GROUP BY i."userId"
+`;
+  const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
+  log('Users with scored entries:', scoredCountMap.size);
+
+  // Get entries approved since last reviewed
+  const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
+  SELECT
+    ci."imageId",
+    i."userId",
+    u."username",
+    i."url"
+  FROM "CollectionItem" ci
+  JOIN "Image" i ON i.id = ci."imageId"
+  JOIN "User" u ON u.id = i."userId"
+  WHERE ci."collectionId" = ${currentChallenge.collectionId}
+  AND ci.status = 'ACCEPTED'
+  AND ci."tagId" IS NULL
+  AND ci."reviewedAt" >= ${lastReviewedAt}
+`;
+  log('Recent entries:', recentEntries.length);
+
+  // Randomly select entries to review up to the limit
+  let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
+  const shuffledEntries = shuffle(recentEntries);
+  const toReview: typeof shuffledEntries = [];
+  const reviewingUsers = new Set<number>();
+  for (const entry of shuffledEntries) {
+    if (toReviewCount <= 0) break;
+    if (reviewingUsers.has(entry.userId)) continue;
+    // Skip users who have already hit the per-user scored cap
+    const userScored = scoredCountMap.get(entry.userId) ?? 0;
+    if (userScored >= config.maxScoredPerUser) continue;
+    toReview.push(entry);
+    reviewingUsers.add(entry.userId);
+    toReviewCount--;
+  }
+  log('Entries to review:', toReview.length);
+
+  // Get forced to review entries (also respecting per-user cap)
+  const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
+  SELECT
+    ci."imageId",
+    i."userId",
+    u."username",
+    i."url"
+  FROM "CollectionItem" ci
+  JOIN "Image" i ON i.id = ci."imageId"
+  JOIN "User" u ON u.id = i."userId"
+  WHERE ci."collectionId" = ${currentChallenge.collectionId}
+  AND ci.status = 'ACCEPTED'
+  AND ci."tagId" = ${config.reviewMeTagId}
+`;
+  log('Requested review:', requestReview.length);
+  // Filter reviewMe entries to also respect per-user cap
+  for (const entry of requestReview) {
+    const userScored = scoredCountMap.get(entry.userId) ?? 0;
+    if (userScored >= config.maxScoredPerUser) continue;
+    if (reviewingUsers.has(entry.userId)) continue;
+    toReview.push(entry);
+    reviewingUsers.add(entry.userId);
+  }
+
+  // Rate entries
+  const tasks = toReview.map((entry) => async () => {
+    try {
+      log('Reviewing entry:', entry);
+      const review = await generateReview({
+        theme: currentChallenge.theme,
+        creator: entry.username,
+        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+        config: challengeTypeConfig,
+      });
+      log('Review prepared', entry.imageId, review);
+
+      // Add tag and score note to collection item
+      const note = JSON.stringify({
+        score: review.score,
+        summary: review.summary,
+      });
+      await dbWrite.$executeRaw`
+      UPDATE "CollectionItem"
+      SET "tagId" = ${config.judgedTagId}, note = ${note}
+      WHERE
+        "collectionId" = ${currentChallenge.collectionId}
+        AND "imageId" = ${entry.imageId};
+    `;
+      log('Tag and note added', entry.imageId);
+
+      // Send comment
+      await upsertComment({
+        userId: challengeTypeConfig.userId,
+        entityType: 'image',
+        entityId: entry.imageId,
+        content: review.comment,
+      });
+      log('Comment sent', entry.imageId);
+
+      // Send reaction
+      try {
+        await toggleReaction({
           entityType: 'image',
           entityId: entry.imageId,
-          content: review.comment,
+          reaction: review.reaction,
+          userId: challengeTypeConfig.userId,
         });
-        log('Comment sent', entry.imageId);
-
-        // Send reaction
-        try {
-          await toggleReaction({
-            entityType: 'image',
-            entityId: entry.imageId,
-            reaction: review.reaction,
-            userId: challengeTypeConfig.userId,
-          });
-          log('Reaction sent', entry.imageId);
-        } catch (error) {
-          log('Failed to send reaction', entry.imageId, review.reaction);
-        }
+        log('Reaction sent', entry.imageId);
       } catch (error) {
-        const err = error as Error;
-        logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
-        log('Failed to review entry', entry.imageId, error);
+        log('Failed to send reaction', entry.imageId, review.reaction);
       }
-    });
-    await limitConcurrency(tasks, 5);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
+      log('Failed to review entry', entry.imageId, error);
+    }
+  });
+  await limitConcurrency(tasks, 5);
 
-    // Reward entry prizes
-    // ----------------------------------------------
-    // Get users that have recently added new entries
-    const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
-    if (userIds.length > 0) {
-      // Process event engagement for approved entries
+  // Reward entry prizes
+  // ----------------------------------------------
+  // Get users that have recently added new entries
+  const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
+  if (userIds.length > 0) {
+    // Process event engagement for approved entries (only if articleId exists for event tracking)
+    if (currentChallenge.articleId > 0) {
       const eventEngagementTasks = userIds.map((userId) => async () => {
         eventEngine.processEngagement({
           entityType: 'challenge',
@@ -579,88 +649,158 @@ export async function reviewEntries() {
         });
       });
       await limitConcurrency(eventEngagementTasks, 3);
-
-      // Send prizes to users that have met the entry requirement
-      const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
-      SELECT
-      i."userId",
-      COUNT(*) as count
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE
-        ci."collectionId" = ${currentChallenge.collectionId}
-        AND ci.status = 'ACCEPTED'
-        AND i."userId" IN (${Prisma.join(userIds)})
-      GROUP BY 1
-      HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
-    `;
-      log('Earned prizes:', earnedPrizes.length);
-
-      if (earnedPrizes.length > 0) {
-        const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
-        await withRetries(() =>
-          createBuzzTransactionMany(
-            earnedPrizes.map(({ userId }) => ({
-              type: TransactionType.Reward,
-              toAccountId: userId,
-              fromAccountId: 0, // central bank
-              amount: currentChallenge.entryPrize.buzz,
-              description: `Challenge Entry Prize: ${dateStr}`,
-              externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
-              toAccountType: 'blue',
-            }))
-          )
-        );
-
-        log('Prizes sent');
-
-        // Notify them
-        const notifyDate = dayjs(currentChallenge.date).format('HH-mm');
-        await createNotification({
-          type: 'challenge-participation',
-          category: NotificationCategory.System,
-          key: `challenge-participation:${currentChallenge.articleId}:${notifyDate}`,
-          userIds: earnedPrizes.map((entry) => entry.userId),
-          details: {
-            articleId: currentChallenge.articleId,
-            challengeName: currentChallenge.title,
-            prize: currentChallenge.entryPrize.buzz,
-          },
-        });
-        log('Users notified');
-      }
     }
 
-    // Update last review time
-    // ----------------------------------------------
-    await dbWrite.$executeRawUnsafe(`
-    UPDATE "Article"
-    SET metadata = metadata::jsonb || '{"reviewedAt": ${reviewing}}'
-    WHERE id = ${currentChallenge.articleId};
-  `);
-    log('Last reviewed at updated');
-  } catch (e) {
-    const error = e as Error;
-    logToAxiom({
-      type: 'error',
-      name: 'daily-challenge-process-entries',
-      message: error.message,
-    });
-    throw e;
+    // Send prizes to users that have met the entry requirement
+    const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
+    SELECT
+    i."userId",
+    COUNT(*) as count
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE
+      ci."collectionId" = ${currentChallenge.collectionId}
+      AND ci.status = 'ACCEPTED'
+      AND i."userId" IN (${Prisma.join(userIds)})
+    GROUP BY 1
+    HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
+  `;
+    log('Earned prizes:', earnedPrizes.length);
+
+    if (earnedPrizes.length > 0) {
+      const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
+      await withRetries(() =>
+        createBuzzTransactionMany(
+          earnedPrizes.map(({ userId }) => ({
+            type: TransactionType.Reward,
+            toAccountId: userId,
+            fromAccountId: 0, // central bank
+            amount: currentChallenge.entryPrize.buzz,
+            description: `Challenge Entry Prize: ${dateStr}`,
+            externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
+            toAccountType: 'blue',
+          }))
+        )
+      );
+
+      log('Prizes sent');
+
+      // Notify them
+      const notifyDate = dayjs(currentChallenge.date).format('HH-mm');
+      const participationKeyId =
+        currentChallenge.articleId > 0
+          ? currentChallenge.articleId
+          : `c${currentChallenge.challengeId ?? 0}`;
+      await createNotification({
+        type: 'challenge-participation',
+        category: NotificationCategory.System,
+        key: `challenge-participation:${participationKeyId}:${notifyDate}`,
+        userIds: earnedPrizes.map((entry) => entry.userId),
+        details: {
+          articleId: currentChallenge.articleId > 0 ? currentChallenge.articleId : undefined,
+          challengeId: currentChallenge.challengeId,
+          challengeName: currentChallenge.title,
+          prize: currentChallenge.entryPrize.buzz,
+        },
+      });
+      log('Users notified');
+    }
   }
+
+  // Update last review time
+  // ----------------------------------------------
+  if (currentChallenge.articleId > 0) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Article"
+      SET metadata = metadata::jsonb || '{"reviewedAt": ${reviewing}}'
+      WHERE id = ${currentChallenge.articleId};
+    `);
+  }
+  // Also update Challenge metadata (for challenges without articles)
+  if (currentChallenge.challengeId) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Challenge"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"reviewedAt": ${reviewing}}'
+      WHERE id = ${currentChallenge.challengeId};
+    `);
+  }
+  log('Last reviewed at updated');
 }
 
 export async function pickWinners() {
-  // Get current challenge
   const config = await getChallengeConfig();
-  const currentChallenge = await getCurrentChallenge();
-  if (!currentChallenge) {
-    await startNextChallenge(config);
-    return;
+
+  // Step 1: Process ended challenges (pick winners)
+  // ----------------------------------------------
+  const endedChallenges = await getEndedActiveChallenges();
+  log(`Found ${endedChallenges.length} ended challenge(s) to process`);
+
+  for (const challenge of endedChallenges) {
+    try {
+      await pickWinnersForChallenge(challenge, config);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'daily-challenge-pick-winners',
+        message: err.message,
+        challengeId: challenge.challengeId,
+        articleId: challenge.articleId,
+      });
+      log(`Failed to pick winners for challenge ${challenge.challengeId ?? 'unknown'}:`, error);
+    }
   }
+
+  // Step 2: Start scheduled challenges ready to begin
+  // ----------------------------------------------
+  const challengesToStart = await getChallengesReadyToStart();
+  log(`Found ${challengesToStart.length} scheduled challenge(s) ready to start`);
+
+  for (const challenge of challengesToStart) {
+    try {
+      await startScheduledChallenge(challenge, config);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'daily-challenge-start',
+        message: err.message,
+        challengeId: challenge.challengeId,
+        articleId: challenge.articleId,
+      });
+      log(`Failed to start challenge ${challenge.challengeId ?? 'unknown'}:`, error);
+    }
+  }
+
+  // Step 3: Ensure system challenge exists for next period
+  const existingSystemChallenge = await getUpcomingSystemChallenge();
+  if (!existingSystemChallenge) {
+    log('No system challenges found, creating upcoming challenge');
+    try {
+      await createUpcomingChallenge();
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'failed-to-create-upcoming-challenge',
+        message: error.message,
+      });
+      log('Failed to create upcoming challenge:', error);
+    }
+  }
+}
+
+/**
+ * Pick winners for a single challenge.
+ * Extracted from pickWinners() to support multi-challenge processing.
+ */
+async function pickWinnersForChallenge(
+  currentChallenge: DailyChallengeDetails,
+  config: ChallengeConfig
+) {
   const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
-  log('Picking winners for challenge:', currentChallenge);
+  log('Picking winners for challenge:', currentChallenge.challengeId);
 
   // Close challenge
   // ----------------------------------------------
@@ -672,7 +812,18 @@ export async function pickWinners() {
   // Get top judged entries
   const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config);
   if (!judgedEntries.length) {
-    await startNextChallenge(config);
+    log('No judged entries for challenge:', currentChallenge.challengeId);
+    // Still need to mark the challenge as completed even with no entries
+    const challengeRecord = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Challenge"
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+      AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
+      LIMIT 1
+    `;
+    if (challengeRecord[0]) {
+      await updateChallengeStatus(challengeRecord[0].id, ChallengeStatus.Completed);
+      log('Challenge marked as completed (no entries)');
+    }
     return;
   }
 
@@ -727,28 +878,36 @@ ${outcome}
 
 ---`);
 
-  await dbWrite.$executeRaw`
-    UPDATE "Article"
-    SET
-      metadata = metadata::jsonb || '{"status": "complete", "winners": ${Prisma.raw(
-        JSON.stringify(winnerUserIds)
-      )} }',
-      content = CONCAT(${updateContent}, content),
-      title = CONCAT('Completed: ', title),
-      "updatedAt" = now()
-    WHERE id = ${currentChallenge.articleId};
-  `;
-  log('Article updated');
+  // Update Article with winners (only if articleId exists)
+  if (currentChallenge.articleId > 0) {
+    await dbWrite.$executeRaw`
+      UPDATE "Article"
+      SET
+        metadata = metadata::jsonb || '{"status": "complete", "winners": ${Prisma.raw(
+          JSON.stringify(winnerUserIds)
+        )} }',
+        content = CONCAT(${updateContent}, content),
+        title = CONCAT('Completed: ', title),
+        "updatedAt" = now()
+      WHERE id = ${currentChallenge.articleId};
+    `;
+    log('Article updated');
+  }
 
   // Send notifications to winners
+  const winnerKeyId =
+    currentChallenge.articleId > 0
+      ? currentChallenge.articleId
+      : `c${currentChallenge.challengeId ?? 0}`;
   for (const entry of winningEntries) {
     await createNotification({
       type: 'challenge-winner',
       category: NotificationCategory.System,
-      key: `challenge-winner:${currentChallenge.articleId}:${entry.position}`,
+      key: `challenge-winner:${winnerKeyId}:${entry.position}`,
       userId: entry.userId,
       details: {
-        articleId: currentChallenge.articleId,
+        articleId: currentChallenge.articleId > 0 ? currentChallenge.articleId : undefined,
+        challengeId: currentChallenge.challengeId,
         challengeName: currentChallenge.title,
         position: entry.position,
         prize: entry.prize,
@@ -800,10 +959,105 @@ ${outcome}
     await updateChallengeStatus(winnerChallengeRecord.id, ChallengeStatus.Completed);
     log('ChallengeWinner records created and status updated to Completed');
   }
+}
 
-  // Start next challenge
-  // ----------------------------------------------
-  await startNextChallenge(config);
+/**
+ * Start a scheduled challenge that is ready to begin.
+ * Adapted from startNextChallenge() to work with a specific challenge.
+ */
+async function startScheduledChallenge(challenge: DailyChallengeDetails, config: ChallengeConfig) {
+  log('Starting scheduled challenge:', challenge.challengeId);
+
+  // Open collection
+  await dbWrite.$executeRaw`
+    UPDATE "Collection"
+    SET write = 'Review'::"CollectionWriteConfiguration",
+        read = 'Public'::"CollectionReadConfiguration"
+    WHERE id = ${challenge.collectionId};
+  `;
+  log('Collection opened');
+
+  // Publish article (only if articleId exists)
+  if (challenge.articleId > 0) {
+    await dbWrite.$executeRaw`
+      UPDATE "Article"
+      SET
+        status = 'Published',
+        "publishedAt" = now(),
+        metadata = metadata::jsonb || '{"status": "active"}',
+        "updatedAt" = now()
+      WHERE id = ${challenge.articleId};
+    `;
+    log('Article published');
+  }
+
+  // Update Challenge status to Active
+  if (challenge.challengeId) {
+    await updateChallengeStatus(challenge.challengeId, ChallengeStatus.Active);
+    log('Challenge status updated to Active:', challenge.challengeId);
+  }
+
+  // Accept Collection Item in Challenge Collection (only if articleId exists)
+  if (challenge.articleId > 0) {
+    await dbWrite.$executeRaw`
+      UPDATE "CollectionItem"
+      SET status = 'ACCEPTED'
+      WHERE "collectionId" = ${config.challengeCollectionId}
+      AND "articleId" = ${challenge.articleId};
+    `;
+    log('Collection item accepted');
+  }
+
+  // Give cosmetic to resource owner
+  if (config.resourceCosmeticId) {
+    await dbWrite.$executeRaw`
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
+      SELECT
+        "userId",
+        ${config.resourceCosmeticId},
+        now(),
+        now(),
+        id,
+        'Model',
+        id,
+        'Model'
+      FROM "Model"
+      WHERE id = ${challenge.modelId};
+    `;
+    log('Cosmetic given');
+  }
+
+  // Notify to owner of the resource (only if modelId exists)
+  if (challenge.modelId > 0) {
+    const model = await dbRead.model.findUnique({
+      where: { id: challenge.modelId },
+      select: { userId: true, name: true },
+    });
+    if (model) {
+      const resourceKeyId =
+        challenge.articleId > 0 ? challenge.articleId : `c${challenge.challengeId ?? 0}`;
+      createNotification({
+        type: 'challenge-resource',
+        category: NotificationCategory.System,
+        key: `challenge-resource:${resourceKeyId}`,
+        userId: model.userId,
+        details: {
+          articleId: challenge.articleId > 0 ? challenge.articleId : undefined,
+          challengeId: challenge.challengeId,
+          challengeName: challenge.title,
+          resourceName: model.name,
+        },
+      }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'challenge-resource-notification',
+          message: error.message,
+        });
+        log('Failed to notify resource owner', error);
+      });
+      log('Resource owner notified');
+    }
+  }
 }
 
 // Helper Functions
@@ -940,12 +1194,32 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
 }
 
 export async function startNextChallenge(config: ChallengeConfig) {
-  let upcomingChallenge = await getUpcomingChallenge();
-  if (!upcomingChallenge) {
+  // Step 1: Start all scheduled challenges that are ready
+  const challengesToStart = await getChallengesReadyToStart();
+  log(`Found ${challengesToStart.length} scheduled challenge(s) ready to start`);
+
+  for (const challenge of challengesToStart) {
+    try {
+      await startScheduledChallenge(challenge, config);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'daily-challenge-start',
+        message: err.message,
+        challengeId: challenge.challengeId,
+        articleId: challenge.articleId,
+      });
+      log(`Failed to start challenge ${challenge.challengeId ?? 'unknown'}:`, error);
+    }
+  }
+
+  // Step 2: If no system challenges exist, create one for the next period
+  const existingSystemChallenge = await getUpcomingSystemChallenge();
+  if (!existingSystemChallenge) {
+    log('No system challenges found, creating upcoming challenge');
     try {
       await createUpcomingChallenge();
-      upcomingChallenge = await getUpcomingChallenge();
-      if (!upcomingChallenge) throw new Error('Failed to create upcoming challenge');
     } catch (e) {
       const error = e as Error;
       logToAxiom({
@@ -953,103 +1227,9 @@ export async function startNextChallenge(config: ChallengeConfig) {
         name: 'failed-to-create-upcoming-challenge',
         message: error.message,
       });
-      return;
+      log('Failed to create upcoming challenge:', error);
     }
   }
-  log('Starting next challenge');
-
-  // Open collection
-  await dbWrite.$executeRaw`
-    UPDATE "Collection"
-    SET write = 'Review'::"CollectionWriteConfiguration",
-        read = 'Public'::"CollectionReadConfiguration"
-    WHERE id = ${upcomingChallenge.collectionId};
-  `;
-  log('Collection opened');
-
-  // Publish article
-  await dbWrite.$executeRaw`
-    UPDATE "Article"
-    SET
-      status = 'Published',
-      "publishedAt" = now(),
-      metadata = metadata::jsonb || '{"status": "active"}',
-      "updatedAt" = now()
-    WHERE id = ${upcomingChallenge.articleId};
-  `;
-  log('Article published');
-
-  // Update Challenge status to Active (new system - dual write during transition)
-  // Find the Challenge by collectionId since we don't have challengeId here
-  const challengeRecords = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "Challenge"
-    WHERE "collectionId" = ${upcomingChallenge.collectionId}
-    AND status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
-    LIMIT 1
-  `;
-  const challengeRecord = challengeRecords[0];
-  if (challengeRecord) {
-    await updateChallengeStatus(challengeRecord.id, ChallengeStatus.Active);
-    log('Challenge status updated to Active:', challengeRecord.id);
-  }
-
-  // Accept Collection Item in Challenge Collection
-  await dbWrite.$executeRaw`
-    UPDATE "CollectionItem"
-    SET status = 'ACCEPTED'
-    WHERE "collectionId" = ${config.challengeCollectionId}
-    AND "articleId" = ${upcomingChallenge.articleId};
-  `;
-  log('Collection item accepted');
-
-  // Give cosmetic to resource owner
-  if (config.resourceCosmeticId) {
-    await dbWrite.$executeRaw`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
-      SELECT
-        "userId",
-        ${config.resourceCosmeticId},
-        now(),
-        now(),
-        id,
-        'Model',
-        id,
-        'Model'
-      FROM "Model"
-      WHERE id = ${upcomingChallenge.modelId};
-    `;
-    log('Cosmetic given');
-  }
-
-  // Notify to owner of the resource
-  const model = await dbRead.model.findUnique({
-    where: { id: upcomingChallenge.modelId },
-    select: { userId: true, name: true },
-  });
-  if (model) {
-    createNotification({
-      type: 'challenge-resource',
-      category: NotificationCategory.System,
-      key: `challenge-resource:${upcomingChallenge.articleId}`,
-      userId: model.userId,
-      details: {
-        articleId: upcomingChallenge.articleId,
-        challengeName: upcomingChallenge.title,
-        resourceName: model.name,
-      },
-    }).catch((error) => {
-      logToAxiom({
-        type: 'error',
-        name: 'challenge-resource-notification',
-        message: error.message,
-      });
-      log('Failed to notify resource owner', error);
-    });
-    log('Resource owner notified');
-  }
-
-  // Challenge is now tracked via Challenge table status (updated above)
-  // No need to set Redis cache as Challenge.status = 'Active' is the source of truth
 }
 
 // Types
