@@ -3,6 +3,7 @@ import { env } from '~/env/client';
 
 // Auth proxy URL for PR previews - hardcoded as fallback since env vars may not be
 // baked in at build time for newly added variables
+// Trigger rebuild for PR #1989 pipeline test
 const PR_PREVIEW_AUTH_PROXY = 'https://auth.civitaic.com';
 
 /**
