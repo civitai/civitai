@@ -451,6 +451,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
         // Flux2 Klein doesn't support certain samplers
         if (
+          baseModel &&
+          watchedValues.sampler &&
           getIsFlux2KleinGroup(baseModel) &&
           flux2KleinDisabledSamplers.includes(watchedValues.sampler)
         ) {
