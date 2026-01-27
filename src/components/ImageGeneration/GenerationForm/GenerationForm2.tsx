@@ -653,6 +653,7 @@ export function GenerationFormContent() {
                 !isPonyV7 &&
                 !isNanoBanana &&
                 !isSeedream &&
+                !isFlux2Klein &&
                 !isQwenImageEdit) ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
