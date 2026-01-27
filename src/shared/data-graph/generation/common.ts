@@ -405,6 +405,11 @@ const resourceSchema = z.object({
     id: z.number(),
     type: z.string(),
   }),
+  epochDetails: z
+    .object({
+      epochNumber: z.number().optional(),
+    })
+    .optional(),
 });
 
 /** Resource data type inferred from resourceSchema */

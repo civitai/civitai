@@ -77,7 +77,9 @@ export const useGenerationStore = create<GenerationState>()(
               state.data = {
                 ...data,
                 params,
+                model: data.model ? substituteResource(data.model) : undefined,
                 resources: withSubstitute(data.resources),
+                vae: data.vae ? substituteResource(data.vae) : undefined,
                 runType: input.type === 'image' || input.type === 'video' ? 'remix' : 'run',
               };
               state.loading = false;
@@ -121,7 +123,9 @@ export const useGenerationStore = create<GenerationState>()(
             ...data,
             type,
             params,
+            model: data.model ? substituteResource(data.model) : undefined,
             resources: withSubstitute(data.resources),
+            vae: data.vae ? substituteResource(data.vae) : undefined,
             runType,
           };
           state.counter++;
@@ -155,12 +159,14 @@ export const generationStore = {
   // },
 };
 
+function substituteResource(item: GenerationResource): GenerationResource {
+  const { substitute, ...rest } = item;
+  if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
+  return rest;
+}
+
 function withSubstitute(resources: GenerationResource[]) {
-  return resources.map((item) => {
-    const { substitute, ...rest } = item;
-    if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
-    return rest;
-  });
+  return resources.map(substituteResource);
 }
 
 // const stripWeightDate = new Date('03-14-2025');

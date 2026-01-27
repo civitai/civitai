@@ -3,7 +3,9 @@
  */
 
 export {
+  DataGraphContext,
   DataGraphProvider,
+  useDataGraph,
   useGraph,
   useGraphValue,
   useGraphValues,

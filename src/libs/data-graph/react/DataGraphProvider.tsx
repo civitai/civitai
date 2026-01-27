@@ -13,25 +13,10 @@ import type { DataGraph, InferDataGraph, NodeSnapshot, StorageAdapter } from '..
 // Types
 // ============================================================================
 
-export interface DataGraphProviderProps<
-  Ctx extends Record<string, unknown>,
-  ExternalCtx extends Record<string, unknown>,
-  CtxMeta extends Record<string, unknown>
-> {
-  /** The DataGraph definition (will be cloned internally) */
+export interface DataGraphProviderProps {
+  /** An initialized DataGraph instance (from useDataGraph) */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  graph: DataGraph<any, ExternalCtx, any>;
-  /** Optional storage adapter for persistence */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  storage?: StorageAdapter<any>;
-  /** Default/initial values to pass to graph.init() */
-  defaultValues?: Partial<Ctx>;
-  /** External context to pass to graph.init() */
-  externalContext?: ExternalCtx;
-  /** Enable debug logging */
-  debug?: boolean;
-  /** Skip loading values from storage adapter (use only defaultValues and node defaults) */
-  skipStorage?: boolean;
+  graph: DataGraph<any, any, any, any>;
   /** Children */
   children: ReactNode;
 }
@@ -41,26 +26,27 @@ export interface DataGraphProviderProps<
 // ============================================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const DataGraphContext = createContext<DataGraph<any, any, any, any> | null>(null);
+export const DataGraphContext = createContext<DataGraph<any, any, any, any> | null>(null);
 
 // ============================================================================
 // useDataGraph Hook
 // ============================================================================
 
-interface UseDataGraphOptions<
+export interface UseDataGraphOptions<
   Ctx extends Record<string, unknown>,
   ExternalCtx extends Record<string, unknown>,
   CtxMeta extends Record<string, unknown>
 > {
   graph: DataGraph<Ctx, ExternalCtx, CtxMeta>;
-  storage?: StorageAdapter<Ctx>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  storage?: StorageAdapter<any>;
   defaultValues?: Partial<Ctx>;
   externalContext?: ExternalCtx;
   debug?: boolean;
   skipStorage?: boolean;
 }
 
-function useDataGraph<
+export function useDataGraph<
   Ctx extends Record<string, unknown>,
   ExternalCtx extends Record<string, unknown>,
   CtxMeta extends Record<string, unknown>
@@ -128,28 +114,7 @@ function useDataGraph<
 /**
  * Provides a DataGraph instance to descendant components via context.
  */
-export function DataGraphProvider<
-  Ctx extends Record<string, unknown>,
-  ExternalCtx extends Record<string, unknown>,
-  CtxMeta extends Record<string, unknown>
->({
-  graph: graphDef,
-  storage,
-  defaultValues,
-  externalContext,
-  debug,
-  skipStorage,
-  children,
-}: DataGraphProviderProps<Ctx, ExternalCtx, CtxMeta>) {
-  const { graph } = useDataGraph({
-    graph: graphDef,
-    storage,
-    defaultValues,
-    externalContext,
-    debug,
-    skipStorage,
-  });
-
+export function DataGraphProvider({ graph, children }: DataGraphProviderProps) {
   return <DataGraphContext.Provider value={graph}>{children}</DataGraphContext.Provider>;
 }
 

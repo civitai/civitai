@@ -146,14 +146,26 @@ function createFormSchema() {
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
 function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormData {
-  const { quantity, ...params } = data.params;
-  // check for new model in resources, otherwise use stored model
-  let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
-  let vae = data.resources.find((x) => x.model.type === 'VAE') ?? null;
+  const { quantity, ...params } = data.params as Partial<
+    z.infer<typeof textToImageParamsSchema>
+  > &
+    Record<string, unknown>;
+
+  // Handle graph-format aspectRatio (v2 mapper returns { value, width, height }, v1 form expects string)
+  if (params.aspectRatio && typeof params.aspectRatio === 'object') {
+    params.aspectRatio = (params.aspectRatio as unknown as { value: string }).value;
+  }
+
+  // Use pre-split model/vae from server, fall back to finding in resources (backwards compat)
+  let checkpoint =
+    data.model ?? data.resources.find((x) => x.model.type === 'Checkpoint') ?? undefined;
+  let vae: GenerationResource | null =
+    data.vae ?? data.resources.find((x) => x.model.type === 'VAE') ?? null;
+  const allResources = [data.model, ...data.resources, data.vae].filter(isDefined);
   const baseModel =
     params.baseModel ??
     getBaseModelFromResourcesWithDefault(
-      data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+      allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
   const config = getGenerationConfig(baseModel, checkpoint?.id);
@@ -180,8 +192,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   )
     params.sampler = defaultValues.sampler;
 
-  // filter out any additional resources that don't belong
-  // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
+  // Filter additional resources — exclude Checkpoint/VAE (may still be present from unsplit data)
   const resources = data.resources.filter((resource) => {
     if (
       resource.model.type === 'Checkpoint' ||
@@ -273,14 +284,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function checkSimilarity(id: number, prompt?: string) {
     fetchGenerationData({ type: 'image', id }).then((data) => {
+      const p = data.params as { prompt?: string; negativePrompt?: string };
       form.setValue(
         'remixSimilarity',
-        !!data.params.prompt && !!prompt
-          ? promptSimilarity(data.params.prompt, prompt).adjustedCosine
-          : undefined
+        !!p.prompt && !!prompt ? promptSimilarity(p.prompt, prompt).adjustedCosine : undefined
       );
-      form.setValue('remixPrompt', data.params.prompt);
-      form.setValue('remixNegativePrompt', data.params.negativePrompt);
+      form.setValue('remixPrompt', p.prompt);
+      form.setValue('remixNegativePrompt', p.negativePrompt);
       // setValues({
       //   remixSimilarity:
       //     !!data.params.prompt && !!prompt
@@ -302,7 +312,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   // #region [effects]
   useEffect(() => {
     if (type === 'image' && storeData) {
-      const { runType, remixOfId, resources, params } = storeData;
+      const { runType, remixOfId, model, resources, vae, params: rawParams } = storeData;
+      const params = rawParams as Partial<z.infer<typeof textToImageParamsSchema>>;
       if (!params.sourceImage && !params.workflow)
         form.setValue('workflow', params.process ?? 'txt2img');
 
@@ -315,11 +326,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         case 'run':
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources = [
-            formData.model,
-            ...(formData.resources ?? []),
-            formData.vae,
-          ].filter(isDefined) as GenerationResource[];
 
           const data = formatGenerationData({
             params: {
@@ -328,8 +334,18 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               workflow,
             },
             remixOfId: runType === 'remix' ? remixOfId : undefined,
-            resources:
-              runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
+            model: (runType === 'remix' ? model : model ?? formData.model) as
+              | GenerationResource
+              | undefined,
+            resources: (runType === 'remix'
+              ? resources
+              : uniqBy(
+                  [...resources, ...(formData.resources ?? [])],
+                  'id'
+                )) as GenerationResource[],
+            vae: (runType === 'remix' ? vae : vae ?? formData.vae ?? undefined) as
+              | GenerationResource
+              | undefined,
           });
 
           const values =
@@ -342,7 +358,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         checkSimilarity(remixOfId, params.prompt);
       }
 
-      if (runType === 'remix' && resources.length && resources.some((x) => !x.canGenerate)) {
+      const allResources = [model, ...resources, vae].filter(isDefined);
+      if (runType === 'remix' && allResources.length && allResources.some((x) => !x.canGenerate)) {
         showNotification({
           color: 'yellow',
           title: 'Remix',

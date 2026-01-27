@@ -514,7 +514,7 @@ export async function createWorkflowStepFromGraph(
       ? undefined
       : {
           isPrivateGeneration,
-          ...data,
+          input: data,
         },
   } as WorkflowStepTemplate;
 }

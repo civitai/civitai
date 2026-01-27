@@ -5,12 +5,17 @@
  * This includes the graph, storage adapter, and external context.
  */
 
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { DataGraphProvider } from '~/libs/data-graph/react';
+import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
+import {
+  useGenerationStore,
+  useGenerationFormStore,
+  generationStore,
+} from '~/store/generation.store';
 
 import { ResourceDataProvider, useResourceDataContext } from './inputs/ResourceDataProvider';
 
@@ -104,18 +109,52 @@ function InnerProvider({
     [status.limits.quantity, status.limits.resources, status.tier, mappedResources]
   );
 
-  return (
-    <DataGraphProvider
-      graph={generationGraph}
-      storage={storageAdapter}
-      defaultValues={defaultValues}
-      externalContext={externalContext}
-      debug={debug}
-      skipStorage={skipStorage}
-    >
-      {children}
-    </DataGraphProvider>
-  );
+  // Initialize the DataGraph (clone, attach storage, init once)
+  const { graph } = useDataGraph({
+    graph: generationGraph,
+    storage: storageAdapter,
+    defaultValues,
+    externalContext,
+    debug,
+    skipStorage,
+  });
+
+  // Sync generation store data into the graph
+  // - Remix/Replay: full override (reset + set)
+  // - Run/Patch: partial update (set only)
+  const prevCounterRef = useRef(0);
+  useEffect(() => {
+    function applyStoreData() {
+      const { data, counter } = useGenerationStore.getState();
+      if (!data || counter === prevCounterRef.current) return;
+      prevCounterRef.current = counter;
+
+      const { workflow } = useGenerationFormStore.getState();
+      const values = {
+        ...data.params,
+        workflow: workflow ?? data.params.workflow ?? data.params.process,
+        model: data.model,
+        resources: data.resources,
+        vae: data.vae,
+      };
+
+      if (data.runType === 'remix' || data.runType === 'replay') {
+        graph.reset();
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
+      graph.set(values as any);
+
+      generationStore.clearData();
+    }
+
+    // Check on mount (data may arrive before component mounts)
+    applyStoreData();
+
+    // Subscribe to future changes
+    return useGenerationStore.subscribe(applyStoreData);
+  }, [graph]);
+
+  return <DataGraphProvider graph={graph}>{children}</DataGraphProvider>;
 }
 
 // =============================================================================

@@ -18,9 +18,7 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
 import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
-import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
@@ -41,8 +39,6 @@ import {
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
-  getClosestAspectRatio,
-  getResourceGenerationType,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -60,6 +56,10 @@ import {
   getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
 import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
+import {
+  mapDataToGraphInput,
+  splitResourcesByType,
+} from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 type GenerationResourceSimple = {
   id: number;
@@ -234,9 +234,11 @@ export type RemixOfProps = {
 export type GenerationData = {
   type: MediaType;
   remixOfId?: number;
-  resources: GenerationResource[];
-  params: Partial<TextToImageParams>;
   remixOf?: RemixOfProps;
+  model?: GenerationResource;
+  resources: GenerationResource[];
+  vae?: GenerationResource;
+  params: Record<string, unknown>;
 };
 
 export const getGenerationData = async ({
@@ -345,68 +347,27 @@ async function getMediaGenerationData({
         supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
       );
 
-  const common = {
-    prompt: normalized.prompt,
-    negativePrompt: normalized.negativePrompt,
+  // Split resources into model/resources/vae
+  const split = splitResourcesByType(resources);
+
+  // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
+  // Cast to Record for loose field access (normalizeMeta returns a union type)
+  const meta = normalized as Record<string, unknown>;
+  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  if (type === 'audio') throw new Error('not implemented');
+
+  return {
+    type,
+    remixOfId: media.id, // TODO - remove
+    remixOf,
+    model: split.model,
+    resources: split.resources,
+    vae: split.vae,
+    params,
   };
-
-  switch (type) {
-    case 'image':
-      let aspectRatio = '0';
-      try {
-        if (width && height) {
-          aspectRatio = getClosestAspectRatio(width, height, baseModel);
-        }
-      } catch (e) {}
-
-      const {
-        'Clip skip': legacyClipSkip,
-        clipSkip = legacyClipSkip,
-        cfgScale,
-        steps,
-        seed,
-        sampler,
-        // comfy, // don't return to client
-        // external, // don't return to client
-        // ...meta
-      } = imageGenerationSchema.parse(media.meta);
-
-      return {
-        type: 'image',
-        remixOfId: media.id, // TODO - remove
-        remixOf,
-        resources,
-        params: {
-          ...common,
-          cfgScale: cfgScale !== 0 ? cfgScale : undefined,
-          steps: steps !== 0 ? steps : undefined,
-          seed: seed !== 0 ? seed : undefined,
-          sampler: sampler,
-          width,
-          height,
-          aspectRatio,
-          baseModel,
-          clipSkip,
-          engine,
-        },
-      };
-    case 'video':
-      return {
-        type: 'video',
-        remixOfId: media.id, // TODO - remove,
-        remixOf,
-        resources,
-        params: {
-          ...normalized,
-          ...common,
-          width,
-          height,
-          engine,
-        },
-      };
-    case 'audio':
-      throw new Error('not implemented');
-  }
 }
 
 const getModelVersionGenerationData = async ({
@@ -427,40 +388,41 @@ const getModelVersionGenerationData = async ({
   }
 
   const deduped = uniqBy(resources, 'id');
-  const baseModel = getBaseModelFromResourcesWithDefault(
-    deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+
+  // const engine = getBaseModelEngine(baseModel);
+
+  // let version: string | undefined;
+  // let process: string | undefined;
+  // switch (engine) {
+  //   case 'wan':
+  //     version = getWanVersion(baseModel);
+  //     process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
+  //     break;
+  //   case 'hunyuan':
+  //     process = 'txt2vid';
+  //     break;
+  //   case 'veo3':
+  //     process = getVeo3ProcessFromAir(resources[0].air);
+  //     break;
+  // }
+
+  const split = splitResourcesByType(deduped);
+  const params = mapDataToGraphInput(
+    {
+      model: checkpoint,
+      resources: split.resources,
+      vae: split.vae,
+      clipSkip: checkpoint?.clipSkip,
+    },
+    deduped
   );
 
-  const engine = getBaseModelEngine(baseModel);
-
-  let version: string | undefined;
-  let process: string | undefined;
-  switch (engine) {
-    case 'wan':
-      version = getWanVersion(baseModel);
-      process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
-      break;
-    case 'hunyuan':
-      process = 'txt2vid';
-      break;
-    case 'veo3':
-      process = getVeo3ProcessFromAir(resources[0].air);
-      break;
-  }
-
-  // TODO - refactor this elsewhere
-
   return {
-    type: getResourceGenerationType(baseModel),
-    resources: deduped,
-    params: {
-      baseModel,
-      clipSkip: checkpoint?.clipSkip ?? undefined,
-      engine,
-      process,
-      version,
-      fluxMode: baseModel === 'FluxKrea' ? fluxKreaAir : undefined,
-    },
+    type: getBaseModelMediaType(params.baseModel as string),
+    model: split.model,
+    resources: split.resources,
+    vae: split.vae,
+    params,
   };
 };
 

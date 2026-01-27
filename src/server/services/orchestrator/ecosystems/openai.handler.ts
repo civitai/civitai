@@ -56,18 +56,10 @@ export async function createOpenAIInput(data: OpenAICtx): Promise<OpenAIInput> {
   }
 
   // Find closest supported size
-  const { width, height } = data.aspectRatio
-    ? findClosestAspectRatio(data.aspectRatio, openAISizes)
-    : { width: 1024, height: 1024 };
+  const { width, height } = data.aspectRatio;
 
   // Get background setting
-  const background =
-    'openAITransparentBackground' in data && data.openAITransparentBackground
-      ? 'transparent'
-      : 'opaque';
-
-  // Get quality setting
-  const quality = 'openAIQuality' in data ? data.openAIQuality : undefined;
+  const background = data.transparent ? 'transparent' : 'opaque';
 
   const baseData = {
     engine: 'openai',
@@ -75,7 +67,7 @@ export async function createOpenAIInput(data: OpenAICtx): Promise<OpenAIInput> {
     prompt: data.prompt,
     background,
     quantity,
-    quality,
+    quality: data.quality,
     size: `${width}x${height}`,
     seed: data.seed,
   };
