@@ -117,10 +117,11 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   flux2KleinModelVariantOptions,
+  flux2KleinDisabledSamplers,
   getFlux2KleinBaseModel,
   getFlux2KleinDefaults,
   getIsFlux2Klein,
-  getIsFlux2Klein9b,
+  getIsFlux2KleinDistilled,
 } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import {
   getModelVersionUsesImageGen,
@@ -146,6 +147,7 @@ import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
+  getBaseModelConfig,
 } from '~/shared/constants/base-model.constants';
 import {
   geminiModelVersionMap,
@@ -481,7 +483,7 @@ export function GenerationFormContent() {
   const isFluxKontext = getIsFluxKontext(model.id);
   const isFlux2 = getIsFlux2(model.id);
   const isFlux2Klein = getIsFlux2Klein(model.id);
-  const isFlux2Klein9b = getIsFlux2Klein9b(model.id);
+  const isFlux2KleinDistilled = getIsFlux2KleinDistilled(model.id);
   const flux2KleinDefaults = getFlux2KleinDefaults(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
@@ -594,7 +596,12 @@ export function GenerationFormContent() {
               isSeedream ||
               isFlux2NotDev;
             const disableAdvanced =
-              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana || isFlux2Klein9b;
+              isFluxUltra ||
+              isOpenAI ||
+              isImagen4 ||
+              isHiDream ||
+              isNanoBanana ||
+              isFlux2KleinDistilled;
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
@@ -661,7 +668,6 @@ export function GenerationFormContent() {
               isSeedream;
 
             // Flux2 Klein doesn't support certain samplers
-            const flux2KleinDisabledSamplers = ['DPM++ 2M Karras', 'DDIM', 'DPM2', 'DPM2 a'];
             const samplerOptions = isFlux2Klein
               ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
               : generation.samplers;
@@ -1158,9 +1164,16 @@ export function GenerationFormContent() {
                         onChange={(value) => {
                           const modelVersionId = Number(value);
                           if (model.id !== modelVersionId) {
-                            form.setValue('model', { ...model, id: modelVersionId });
                             // Update baseModel for Flux2Klein since each variant has its own group
                             const kleinBaseModel = getFlux2KleinBaseModel(modelVersionId);
+                            const baseModelName = kleinBaseModel
+                              ? getBaseModelConfig(kleinBaseModel).name
+                              : model.baseModel;
+                            form.setValue('model', {
+                              ...model,
+                              id: modelVersionId,
+                              baseModel: baseModelName,
+                            });
                             if (kleinBaseModel) {
                               form.setValue('baseModel', kleinBaseModel as any);
                             }

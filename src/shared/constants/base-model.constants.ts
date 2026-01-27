@@ -162,6 +162,7 @@ type BaseModelGroupConfigEntry = {
   name: string;
   description: string;
   family?: BaseModelFamily;
+  selector?: string;
 };
 
 export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEntry> = {
@@ -201,21 +202,25 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'Flux.2 Klein 9B',
     family: 'Flux',
     description: 'Distilled 9B parameter Flux.2 model for faster generation',
+    selector: 'Flux.2 Klein',
   },
   Flux2Klein_9B_base: {
     name: 'Flux.2 Klein 9B-base',
     family: 'Flux',
     description: 'Base 9B parameter Flux.2 Klein model',
+    selector: 'Flux.2 Klein',
   },
   Flux2Klein_4B: {
     name: 'Flux.2 Klein 4B',
     family: 'Flux',
     description: 'Distilled 4B parameter Flux.2 model for efficient generation',
+    selector: 'Flux.2 Klein',
   },
   Flux2Klein_4B_base: {
     name: 'Flux.2 Klein 4B-base',
     family: 'Flux',
     description: 'Base 4B parameter Flux.2 Klein model',
+    selector: 'Flux.2 Klein',
   },
   HiDream: {
     name: 'HiDream',

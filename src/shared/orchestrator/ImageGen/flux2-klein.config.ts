@@ -71,10 +71,10 @@ export function getFlux2KleinDefaults(modelVersionId?: number) {
   return variant ? flux2KleinVariantDefaults[variant] : flux2KleinVariantDefaults['9b'];
 }
 
-export function getIsFlux2Klein9b(modelVersionId?: number) {
+export function getIsFlux2KleinDistilled(modelVersionId?: number) {
   if (!modelVersionId) return false;
   const variant = flux2KleinModelVersionToVariantMap.get(modelVersionId);
-  return variant === '9b';
+  return variant === '9b' || variant === '4b';
 }
 
 // Map variant to baseModel name
@@ -90,6 +90,14 @@ export function getFlux2KleinBaseModel(modelVersionId?: number): string | undefi
   const variant = flux2KleinModelVersionToVariantMap.get(modelVersionId);
   return variant ? flux2KleinVariantToBaseModel[variant] : undefined;
 }
+
+const flux2KleinGroups = Object.values(flux2KleinVariantToBaseModel);
+
+export function getIsFlux2KleinGroup(baseModel: string) {
+  return flux2KleinGroups.includes(baseModel);
+}
+
+export const flux2KleinDisabledSamplers = ['DPM++ 2M Karras', 'DDIM', 'DPM2', 'DPM2 a'];
 
 const sdCppSampleMethods = [
   'euler',
@@ -143,7 +151,19 @@ const schema = z.discriminatedUnion('operation', [
 ]);
 
 export const flux2KleinConfig = ImageGenConfig({
-  metadataFn: (params) => {
+  metadataFn: (params, resources) => {
+    let modelVersion: Flux2KleinModelVariant = '9b';
+    for (const resource of resources) {
+      const match = flux2KleinModelVersionToVariantMap.get(resource.id);
+      if (match) modelVersion = match;
+    }
+
+    // For distilled variants (9b, 4b), enforce default steps and cfgScale
+    const variantDefaults = flux2KleinVariantDefaults[modelVersion];
+    const isDistilled = variantDefaults.hideAdvanced;
+    const steps = isDistilled ? variantDefaults.steps : params.steps;
+    const cfgScale = isDistilled ? variantDefaults.cfgScale : params.cfgScale;
+
     return {
       engine,
       process: !params.images?.length ? 'txt2img' : 'img2img',
@@ -155,8 +175,8 @@ export const flux2KleinConfig = ImageGenConfig({
       seed: params.seed,
       width: params.width,
       height: params.height,
-      cfgScale: params.cfgScale,
-      steps: params.steps,
+      cfgScale,
+      steps,
       sampler: params.sampler,
     };
   },
@@ -181,18 +201,10 @@ export const flux2KleinConfig = ImageGenConfig({
     // Convert UI sampler to SdCpp sampleMethod and schedule
     const { sampleMethod, schedule } = samplerToSdCpp(params.sampler as Sampler | undefined);
 
-    // For distilled variants (9b, 4b), enforce default steps and cfgScale
-    const variantDefaults = flux2KleinVariantDefaults[modelVersion];
-    const isDistilled = variantDefaults.hideAdvanced;
-    const steps = isDistilled ? variantDefaults.steps : params.steps;
-    const cfgScale = isDistilled ? variantDefaults.cfgScale : params.cfgScale;
-
     return schema.parse({
       ...params,
       operation: params.images?.length ? 'editImage' : 'createImage',
       modelVersion,
-      steps,
-      cfgScale,
       sampleMethod,
       schedule,
       loras,
