@@ -97,7 +97,13 @@ export function getIsFlux2KleinGroup(baseModel: string) {
   return flux2KleinGroups.includes(baseModel);
 }
 
-export const flux2KleinDisabledSamplers = ['DPM++ 2M Karras', 'DDIM', 'DPM2', 'DPM2 a'];
+export const flux2KleinDisabledSamplers = [
+  'DPM++ 2M Karras',
+  'DDIM',
+  'DPM2',
+  'DPM2 a',
+  'undefined',
+];
 
 const sdCppSampleMethods = [
   'euler',
