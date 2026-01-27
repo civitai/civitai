@@ -140,6 +140,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_t2v_14b: { all: { default: 'musubi' } },
       qwen_image: { all: { default: 'ai-toolkit' } },
       zimageturbo: { all: { default: 'ai-toolkit' } },
+      flux2klein_4b: { all: { default: 'ai-toolkit' } },
+      flux2klein_9b: { all: { default: 'ai-toolkit' } },
+      ltx2: { all: { default: 'ai-toolkit' } },
     },
   },
   {
@@ -177,6 +180,15 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       zimageturbo: {
         all: { default: 10, max: 40 },
+      },
+      flux2klein_4b: {
+        all: { default: 5 },
+      },
+      flux2klein_9b: {
+        all: { default: 5 },
+      },
+      ltx2: {
+        all: { min: 1, max: 20 },
       },
       // sd3_medium: { all: { default: 5 } },
       // sd3_large: { all: { default: 5 } },
@@ -222,6 +234,13 @@ export const trainingSettings: TrainingSettingsType[] = [
       zimageturbo: {
         all: { default: 4, max: 4 },
       },
+      flux2klein_4b: {
+        all: { default: 4, max: 4 },
+      },
+      flux2klein_9b: {
+        all: { default: 4, max: 4 },
+      },
+      ltx2: { all: { default: 2, min: 1, max: 4 } },
       // sd3_medium: { all: { default: 4, max: 4 } },
       // sd3_large: { all: { default: 4, max: 4 } },
       hy_720_fp8: { all: { default: 2, min: 1, max: 4 } },
@@ -269,6 +288,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
       wan_2_1_t2v_14b: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
       zimageturbo: { all: { default: 1024 } },
+      flux2klein_4b: { all: { default: 1024 } },
+      flux2klein_9b: { all: { default: 1024 } },
+      ltx2: { all: { disabled: true, default: 960, min: 960, max: 960 } },
     },
   },
   {
@@ -300,6 +322,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       chroma: { all: { disabled: true } },
       qwen_image: { all: { disabled: true } },
       zimageturbo: { all: { disabled: true } },
+      flux2klein_4b: { all: { disabled: true } },
+      flux2klein_9b: { all: { disabled: true } },
+      ltx2: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
       // sd3_large: { all: { disabled: true } },
       hy_720_fp8: { all: { disabled: true } },
@@ -331,6 +356,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       chroma: { all: { disabled: true } },
       qwen_image: { all: { disabled: true } },
       zimageturbo: { all: { disabled: true } },
+      flux2klein_4b: { all: { disabled: true } },
+      flux2klein_9b: { all: { disabled: true } },
+      ltx2: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
       // sd3_large: { all: { disabled: true } },
       hy_720_fp8: { all: { disabled: true } },
@@ -352,6 +380,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      ltx2: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -364,6 +393,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true } },
       wan_2_1_t2v_14b: { all: { disabled: true } },
+      ltx2: { all: { disabled: true } },
     },
   },
   {
@@ -381,6 +411,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       wan_2_1_i2v_14b_720p: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       wan_2_1_t2v_14b: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      ltx2: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
     },
   },
   {
@@ -400,6 +431,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       chroma: { all: { disabled: true, default: 0, max: 0 } },
       qwen_image: { all: { disabled: true, default: 0, max: 0 } },
       zimageturbo: { all: { disabled: true, default: 0, max: 0 } },
+      flux2klein_4b: { all: { disabled: true, default: 0, max: 0 } },
+      flux2klein_9b: { all: { disabled: true, default: 0, max: 0 } },
+      ltx2: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_large: { all: { disabled: true, default: 0, max: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
@@ -419,6 +453,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { default: 'constant' } },
       wan_2_1_i2v_14b_720p: { all: { default: 'constant' } },
       wan_2_1_t2v_14b: { all: { default: 'constant' } },
+      ltx2: { all: { default: 'constant' } },
     },
   },
   {
@@ -435,6 +470,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { default: 1 } },
       wan_2_1_i2v_14b_720p: { all: { default: 1 } },
       wan_2_1_t2v_14b: { all: { default: 1 } },
+      ltx2: { all: { default: 1 } },
     },
   },
   {
@@ -461,6 +497,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
       zimageturbo: { all: { default: 0 } },
+      ltx2: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -481,6 +518,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       chroma: { all: { default: 2 } },
       qwen_image: { all: { default: 2 } },
       zimageturbo: { all: { default: 32 } },
+      flux2klein_4b: { all: { default: 2 } },
+      flux2klein_9b: { all: { default: 2 } },
       // sd3_medium: { all: { default: 2 } },
       // sd3_large: { all: { default: 2 } },
     },
@@ -512,6 +551,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { default: 1 } },
       wan_2_1_t2v_14b: { all: { default: 1 } },
       zimageturbo: { all: { default: 32 } },
+      flux2klein_4b: { all: { default: 1 } },
+      flux2klein_9b: { all: { default: 1 } },
+      ltx2: { all: { default: 1 } },
     },
   },
   {
@@ -529,6 +571,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       zimageturbo: { all: { default: 0 } },
+      flux2klein_4b: { all: { default: 0 } },
+      flux2klein_9b: { all: { default: 0 } },
+      ltx2: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -576,6 +621,13 @@ export const trainingSettings: TrainingSettingsType[] = [
       zimageturbo: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
+      flux2klein_4b: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      flux2klein_9b: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      ltx2: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
       hy_720_fp8: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
       wan_2_1_i2v_14b_720p: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
       wan_2_1_t2v_14b: { all: { default: optimizerArgMapVideo.AdamW8Bit } },

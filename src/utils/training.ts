@@ -15,11 +15,12 @@ export const trainingBaseModelTypesImage = [
   'sd35',
   'flux',
   'flux2',
+  'flux2klein',
   'chroma',
   'qwen',
   'zimageturbo',
 ] as const;
-export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
+export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
   ...trainingBaseModelTypesVideo,
@@ -226,6 +227,38 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'zimageturbo' },
   },
   //
+  flux2klein_4b: {
+    label: '4B',
+    pretty: 'Flux.2 Klein 4B',
+    type: 'flux2klein',
+    description: 'Efficient 4B parameter Flux.2 Klein model.',
+    air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734041',
+    baseModel: 'Flux.2 Klein 4B',
+    isNew: true,
+    aiToolkit: { ecosystem: 'flux2klein', modelVariant: '4b' },
+  },
+  flux2klein_9b: {
+    label: '9B',
+    pretty: 'Flux.2 Klein 9B',
+    type: 'flux2klein',
+    description: 'High-quality 9B parameter Flux.2 Klein model.',
+    air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734042',
+    baseModel: 'Flux.2 Klein 9B',
+    isNew: true,
+    aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
+  },
+  //
+  ltx2: {
+    label: 'LTX2',
+    pretty: 'LTX2',
+    type: 'ltx2',
+    description: 'Advanced video generation model.',
+    air: 'urn:air:ltx2:checkpoint:civitai:2427783@2734043',
+    baseModel: 'LTXV',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ltx2' },
+  },
+  //
   flux2_dev: {
     label: 'Dev',
     pretty: 'Flux.2',
@@ -356,13 +389,15 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'chroma',
     'qwen',
     'zimageturbo',
+    'flux2klein',
+    'ltx2',
   ];
   return supportedTypes.includes(baseType);
 };
 
 // Check if AI Toolkit is mandatory (cannot use other engines)
 export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
-  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimageturbo'];
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimageturbo', 'flux2klein', 'ltx2'];
   return mandatoryTypes.includes(baseType);
 };
 
@@ -373,6 +408,8 @@ export const getDefaultEngine = (
 ): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimageturbo') return 'ai-toolkit'; // ZImageTurbo requires AI Toolkit
+  if (baseType === 'flux2klein') return 'ai-toolkit'; // Flux2 Klein requires AI Toolkit
+  if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
   if (baseType === 'flux2') {

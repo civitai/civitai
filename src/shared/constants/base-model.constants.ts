@@ -89,6 +89,7 @@ const baseModelConfig = [
   { name: 'Imagen4', type: 'image', group: 'Imagen4', hidden: true },
   { name: 'Kolors', type: 'image', group: 'Kolors' },
   { name: 'LTXV', type: 'video', group: 'LTXV', engine: 'lightricks' },
+  { name: 'LTXV2', type: 'video', group: 'LTXV2', engine: 'ltx2' },
   { name: 'Lumina', type: 'image', group: 'Lumina' },
   { name: 'Mochi', type: 'image', group: 'Mochi' },
   { name: 'Nano Banana', type: 'image', group: 'NanoBanana', hidden: true },
@@ -247,6 +248,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
   LTXV: {
     name: 'LTX Video',
     description: "Lightricks' efficient video generation model for fast rendering",
+  },
+  LTXV2: {
+    name: 'LTX Video 2',
+    description: "Lightricks' next-generation video model with improved quality and LoRA support",
   },
   Lumina: {
     name: 'Lumina',
@@ -904,6 +909,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'LTXV',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['LTXV'] }],
+  },
+  {
+    group: 'LTXV2',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['LTXV2'] }],
   },
   {
     group: 'ZImageTurbo',
