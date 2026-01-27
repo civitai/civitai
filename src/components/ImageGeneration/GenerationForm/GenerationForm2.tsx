@@ -112,6 +112,11 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
 import {
+  getIsZImage,
+  zImageModelModeOptions,
+  zImageModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/zImage.config';
+import {
   flux2ModelModeOptions,
   getIsFlux2,
   getIsFlux2Dev,
@@ -480,6 +485,7 @@ export function GenerationFormContent() {
   const isQwenImageEdit = getIsQwenImageEditModel(model.id);
   const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
+  const isZImage = getIsZImage(model.id);
 
   const disablePriority = false;
 
@@ -488,10 +494,11 @@ export function GenerationFormContent() {
     () => [
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
+      { isActive: isZImage, options: zImageModelModeOptions },
       // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
-    [isFluxKontext, isFlux2]
+    [isFluxKontext, isFlux2, isZImage]
   );
 
   const activeModelMode = modelModeConfig.find((config) => config.isActive);
@@ -1131,8 +1138,16 @@ export function GenerationFormContent() {
                         data={activeModelMode.options}
                         onChange={(value) => {
                           const modelVersionId = Number(value);
-                          if (model.id !== modelVersionId)
+                          if (model.id === modelVersionId) return;
+                          const zImageEntry = zImageModelVersionToModelMap.get(modelVersionId);
+                          if (zImageEntry) {
+                            form.setValue(
+                              'model',
+                              getGenerationConfig(zImageEntry.baseModel).checkpoint
+                            );
+                          } else {
                             form.setValue('model', { ...model, id: modelVersionId });
+                          }
                         }}
                       />
                     </div>

@@ -12,11 +12,18 @@ type ZImageModel = 'turbo' | 'base';
 
 export const zImageModelVersionToModelMap = new Map<
   number,
-  { modelId: number; model: ZImageModel; name: string }
+  { modelId: number; model: ZImageModel; name: string; baseModel: string }
 >([
-  [2442439, { modelId: 2168935, model: 'turbo', name: 'Turbo' }],
-  [2635223, { modelId: 2342797, model: 'base', name: 'Base' }],
+  [2442439, { modelId: 2168935, model: 'turbo', name: 'Turbo', baseModel: 'ZImageTurbo' }],
+  [2635223, { modelId: 2342797, model: 'base', name: 'Base', baseModel: 'ZImageBase' }],
 ]);
+
+export const zImageModelModeOptions = Array.from(zImageModelVersionToModelMap.entries()).map(
+  ([key, value]) => ({
+    label: value.name,
+    value: key.toString(),
+  })
+);
 
 export function getIsZImage(modelVersionId?: number) {
   return modelVersionId ? !!zImageModelVersionToModelMap.get(modelVersionId) : false;
