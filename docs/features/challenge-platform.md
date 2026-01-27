@@ -688,3 +688,209 @@ The daily challenge jobs support **multiple concurrent active challenges**:
 - [ ] Prompt Lab for custom judging criteria
 - [ ] UserChallengeStats and leaderboards
 - [ ] Streak tracking and badges
+
+---
+
+## Developer Testing Guide
+
+This section describes how to set up test data for the challenge system during development.
+
+### Testing Endpoints
+
+The testing webhook endpoint at `/api/testing/daily-challenge` provides actions for testing challenge workflows:
+
+| Action | Description |
+|--------|-------------|
+| `article` | Test article content generation for a model |
+| `collection` | Test collection details generation |
+| `review` | Test entry review/scoring for an image |
+| `winners` | Test winner selection logic |
+| `complete-review` | Run the entry review job |
+| `complete-challenge` | Run the winner picking job |
+| `create-challenge` | Create a new scheduled challenge via AI |
+
+### Setting Up Test Challenges Manually
+
+Since test data setup requires database writes, use the following SQL queries or Prisma commands to create test challenges.
+
+#### 1. Create a Test Collection
+
+```sql
+-- Create a collection for the challenge
+INSERT INTO "Collection" (
+  name, description, "userId", mode, type, read, write, metadata
+) VALUES (
+  '[TEST] My Test Challenge',
+  'Test challenge for development',
+  6235605, -- CivBot user ID (or your user ID)
+  'Contest',
+  'Image',
+  'Public',
+  'Review',
+  '{"maxItemsPerUser": 20, "forcedBrowsingLevel": 1}'
+) RETURNING id;
+-- Note the collection ID for the next step
+```
+
+#### 2. Create a Test Challenge
+
+```sql
+-- Create the challenge record
+INSERT INTO "Challenge" (
+  "startsAt", "endsAt", "visibleAt",
+  title, description, theme, invitation,
+  "nsfwLevel", "allowedNsfwLevel",
+  "collectionId", "modelVersionIds",
+  "maxEntriesPerUser", prizes, "entryPrize", "entryPrizeRequirement", "prizePool",
+  "createdById", source, status, metadata
+) VALUES (
+  '2020-01-01', -- Old date so existing images pass recency check
+  NOW() + INTERVAL '1 day', -- Ends tomorrow
+  NOW() - INTERVAL '1 day', -- Already visible
+  '[TEST] Development Challenge',
+  'This is a test challenge for development',
+  'TestTheme',
+  'Submit your test entries!',
+  1, 1,
+  <COLLECTION_ID>, -- From step 1
+  ARRAY[598256], -- Model version IDs (use a popular one)
+  20,
+  '[{"buzz": 5000, "points": 150}, {"buzz": 2500, "points": 100}, {"buzz": 1500, "points": 50}]',
+  '{"buzz": 200, "points": 10}',
+  3,
+  9000,
+  6235605, -- CivBot user ID
+  'System',
+  'Active',
+  '{"challengeType": "world-morph"}'
+) RETURNING id;
+```
+
+#### 3. Add Test Entries
+
+To add entries from **multiple different users** (required for testing 3-winner selection):
+
+```sql
+-- Find images from different users that have the required resource
+SELECT DISTINCT ON (i."userId")
+  i.id, i."userId", u.username
+FROM "Image" i
+JOIN "User" u ON u.id = i."userId"
+JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
+WHERE i."nsfwLevel" = 1
+  AND ir."modelVersionId" = 598256 -- Match challenge's modelVersionIds
+ORDER BY i."userId", i."createdAt" DESC
+LIMIT 10;
+
+-- Add each image as a collection item with ACCEPTED status and scores
+INSERT INTO "CollectionItem" (
+  "collectionId", "imageId", "addedById", status, "reviewedAt", note
+) VALUES (
+  <COLLECTION_ID>,
+  <IMAGE_ID>,
+  <USER_ID>,
+  'ACCEPTED',
+  NOW(),
+  '{"score": {"theme": 8, "wittiness": 7, "humor": 6, "aesthetic": 9}, "summary": "Test entry"}'
+);
+```
+
+**Important:** For winner picking to select 3 winners, entries must come from at least 3 different users. The system deduplicates by user (only the top entry per user is considered).
+
+#### 4. Test the Challenge Workflow
+
+```bash
+# Review entries (processes unreviewed REVIEW status items)
+curl "https://your-dev.civitai.com/api/testing/daily-challenge?action=complete-review"
+
+# Pick winners (for ended challenges with status=Active)
+curl "https://your-dev.civitai.com/api/testing/daily-challenge?action=complete-challenge"
+```
+
+### Quick Test: Using Existing Challenges
+
+If you want to test on an existing challenge:
+
+1. **Check challenge status:**
+```sql
+SELECT id, title, status, "collectionId", "modelVersionIds", "endsAt"
+FROM "Challenge"
+WHERE status = 'Active'
+ORDER BY "endsAt" DESC
+LIMIT 5;
+```
+
+2. **Check entry count and user diversity:**
+```sql
+SELECT
+  COUNT(*) as total_entries,
+  COUNT(DISTINCT i."userId") as unique_users
+FROM "CollectionItem" ci
+JOIN "Image" i ON i.id = ci."imageId"
+WHERE ci."collectionId" = <COLLECTION_ID>
+  AND ci.status = 'ACCEPTED';
+```
+
+3. **Manually end a challenge early** (to test winner picking):
+```sql
+UPDATE "Challenge"
+SET "endsAt" = NOW() - INTERVAL '1 hour'
+WHERE id = <CHALLENGE_ID>;
+```
+
+Then run `complete-challenge` action to pick winners.
+
+### Debugging Challenge Issues
+
+#### Entry Not Being Accepted
+
+Entries are rejected if they fail any of these checks:
+- `nsfwLevel != 1` (must be SFW)
+- Image doesn't have required resource (`ImageResourceNew.modelVersionId` not in challenge's `modelVersionIds`)
+- Image created before challenge `startsAt` (recency check)
+
+Debug query:
+```sql
+SELECT
+  i.id as image_id,
+  i."nsfwLevel",
+  i."createdAt" as image_created,
+  c."startsAt" as challenge_starts,
+  EXISTS (
+    SELECT 1 FROM "ImageResourceNew" ir
+    WHERE ir."imageId" = i.id
+    AND ir."modelVersionId" = ANY(c."modelVersionIds")
+  ) as has_resource
+FROM "Image" i
+CROSS JOIN "Challenge" c
+WHERE i.id = <IMAGE_ID> AND c.id = <CHALLENGE_ID>;
+```
+
+#### Only 1 Winner Selected
+
+This happens when all entries belong to the same user. Check user diversity:
+```sql
+SELECT i."userId", u.username, COUNT(*) as entries
+FROM "CollectionItem" ci
+JOIN "Image" i ON i.id = ci."imageId"
+JOIN "User" u ON u.id = i."userId"
+WHERE ci."collectionId" = <COLLECTION_ID>
+  AND ci.status = 'ACCEPTED'
+GROUP BY i."userId", u.username;
+```
+
+### Cleanup Test Data
+
+```sql
+-- Delete test challenges and their winners
+DELETE FROM "ChallengeWinner" WHERE "challengeId" IN (
+  SELECT id FROM "Challenge" WHERE title LIKE '[TEST]%'
+);
+DELETE FROM "Challenge" WHERE title LIKE '[TEST]%';
+
+-- Delete test collections and their items
+DELETE FROM "CollectionItem" WHERE "collectionId" IN (
+  SELECT id FROM "Collection" WHERE name LIKE '[TEST]%'
+);
+DELETE FROM "Collection" WHERE name LIKE '[TEST]%';
+```
