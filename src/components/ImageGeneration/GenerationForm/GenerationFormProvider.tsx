@@ -40,6 +40,10 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import {
+  flux2KleinDisabledSamplers,
+  getIsFlux2KleinGroup,
+} from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
@@ -180,6 +184,14 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     (params.sampler && !(generation.samplers as string[]).includes(params.sampler))
   )
     params.sampler = defaultValues.sampler;
+
+  // Flux2 Klein doesn't support certain samplers
+  if (
+    getIsFlux2KleinGroup(baseModel) &&
+    params.sampler &&
+    flux2KleinDisabledSamplers.includes(params.sampler)
+  )
+    params.sampler = 'Euler a';
 
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
@@ -433,6 +445,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           prevBaseModel === 'Flux1' &&
           baseModel !== 'Flux1' &&
           watchedValues.sampler === 'undefined'
+        ) {
+          form.setValue('sampler', 'Euler a');
+        }
+
+        // Flux2 Klein doesn't support certain samplers
+        if (
+          baseModel &&
+          watchedValues.sampler &&
+          getIsFlux2KleinGroup(baseModel) &&
+          flux2KleinDisabledSamplers.includes(watchedValues.sampler)
         ) {
           form.setValue('sampler', 'Euler a');
         }
