@@ -56,6 +56,7 @@ import {
   getIsQwen,
   getIsSD3,
   getIsZImageTurbo,
+  getIsZImageBase,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -262,6 +263,13 @@ export async function parseGenerateImageInput({
 
   const isZImageTurbo = getIsZImageTurbo(originalParams.baseModel);
   if (isZImageTurbo) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
+    delete originalParams.negativePrompt;
+  }
+
+  const isZImageBase = getIsZImageBase(originalParams.baseModel);
+  if (isZImageBase) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
     delete originalParams.negativePrompt;

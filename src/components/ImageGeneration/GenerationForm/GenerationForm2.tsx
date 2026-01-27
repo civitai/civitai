@@ -103,6 +103,7 @@ import {
   getIsFluxKrea,
   getIsChroma,
   getIsZImageTurbo,
+  getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -461,6 +462,7 @@ export function GenerationFormContent() {
   const isQwen = getIsQwen(model.id);
   const isChroma = getIsChroma(baseModel);
   const isZImageTurbo = getIsZImageTurbo(baseModel);
+  const isZImageBase = getIsZImageBase(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
@@ -522,6 +524,7 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
+                !isZImageBase &&
                 !isFlux2 &&
                 !isPonyV7;
             const minQuantity = !!isDraft ? 4 : 1;
@@ -545,6 +548,11 @@ export function GenerationFormContent() {
               stepsMax = 15;
             }
 
+            if (isZImageBase) {
+              stepsMin = 1;
+              stepsMax = 50;
+            }
+
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
             let cfgScaleStep = 0.5;
@@ -557,6 +565,11 @@ export function GenerationFormContent() {
               cfgScaleMin = 1;
               cfgScaleMax = 2;
               cfgScaleStep = 0.1;
+            }
+
+            if (isZImageBase) {
+              cfgScaleMin = 1;
+              cfgScaleMax = 10;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -581,7 +594,8 @@ export function GenerationFormContent() {
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
               isSeedream ||
-              isZImageTurbo;
+              isZImageTurbo ||
+              isZImageBase;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -592,6 +606,7 @@ export function GenerationFormContent() {
               isNanoBanana ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isSeedream ||
               isPonyV7;
@@ -607,6 +622,7 @@ export function GenerationFormContent() {
               isNanoBanana ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isSeedream ||
               isPonyV7;
@@ -617,6 +633,7 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
+                !isZImageBase &&
                 !isOpenAI &&
                 !isPonyV7 &&
                 !isNanoBanana &&
@@ -631,6 +648,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isPonyV7 ||
               isSeedream;
@@ -643,6 +661,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isPonyV7 ||
               isSeedream;
@@ -654,7 +673,8 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isPonyV7 ||
               isSeedream ||
-              isZImageTurbo;
+              isZImageTurbo ||
+              isZImageBase;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
@@ -781,7 +801,7 @@ export function GenerationFormContent() {
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
                             hideVersion={isFluxStandard || isFlux2 || isHiDream || isImageGen}
-                            isPreview={isZImageTurbo || isFlux2}
+                            isPreview={isZImageTurbo || isZImageBase || isFlux2}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -946,6 +966,7 @@ export function GenerationFormContent() {
                             !isSD3 &&
                             !isChroma &&
                             !isZImageTurbo &&
+                            !isZImageBase &&
                             !isFlux2 &&
                             !isPonyV7 && <ReadySection />}
                         </Card>
@@ -1572,6 +1593,7 @@ export function GenerationFormContent() {
                                       isSD3 ||
                                       isChroma ||
                                       isZImageTurbo ||
+                                      isZImageBase ||
                                       isFlux2 ||
                                       isPonyV7
                                         ? undefined
@@ -1642,6 +1664,7 @@ export function GenerationFormContent() {
                                             isSD3 ||
                                             isChroma ||
                                             isZImageTurbo ||
+                                            isZImageBase ||
                                             isFlux2 ||
                                             isPonyV7
                                               ? undefined

@@ -580,6 +580,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],
+  ZImageBase: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -1106,6 +1107,25 @@ export const generationConfig = {
       model: {
         id: 2168935,
         name: 'ZImageTurbo',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  ZImageBase: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2635223,
+      name: 'Base',
+      trainedWords: [],
+      baseModel: 'ZImageBase',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2342797,
+        name: 'Z Image Base',
         type: 'Checkpoint',
       },
     } as GenerationResource,

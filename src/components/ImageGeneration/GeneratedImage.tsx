@@ -58,6 +58,7 @@ import {
   getIsQwen,
   getIsSD3,
   getIsZImageTurbo,
+  getIsZImageBase,
 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
@@ -551,6 +552,7 @@ function GeneratedImageWorkflowMenuItems({
   const isSD3 = !isVideo && getIsSD3(baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
   const isZImageTurbo = !isVideo && getIsZImageTurbo(baseModel);
+  const isZImageBase = !isVideo && getIsZImageBase(baseModel);
   const canImg2Img =
     !isQwen &&
     !isFlux &&
@@ -559,7 +561,8 @@ function GeneratedImageWorkflowMenuItems({
     !isImageGen &&
     !isHiDream &&
     !isPonyV7 &&
-    !isZImageTurbo;
+    !isZImageTurbo &&
+    !isZImageBase;
 
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream || isQwen;
   const img2imgWorkflows =
