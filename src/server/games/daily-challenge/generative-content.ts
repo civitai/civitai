@@ -277,14 +277,15 @@ export async function generateWinners(input: GenerateWinnersInput) {
         input.config,
         'winner',
         `{
-          "winners": [{
-          "creatorId": "id of the creator",
-          "creator": "name of the creator",
-          "reason": "why you chose them and what you liked about their image"
-          }],
-          "process": "about your judging process and the challenge as markdown",
-          "outcome": "summary about the outcome of the challenge as markdown"
-        }`
+          "winners": [
+            {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 1st place>"},
+            {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 2nd place>"},
+            {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 3rd place>"}
+          ],
+          "process": "<about your judging process and the challenge as markdown>",
+          "outcome": "<summary about the outcome of the challenge as markdown>"
+        }
+        IMPORTANT: Select exactly 3 different winners (1st, 2nd, 3rd place) using creatorId and creator values from the entries provided.`
       ),
       {
         role: 'user' as const,

@@ -7,7 +7,7 @@ import {
   Divider,
   Group,
   ScrollArea,
-  SimpleGrid,
+  Spoiler,
   Stack,
   Text,
   ThemeIcon,
@@ -16,7 +16,7 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
-import React from 'react';
+import React, { useState } from 'react';
 import * as z from 'zod';
 
 import { Page } from '~/components/AppLayout/Page';
@@ -26,8 +26,6 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
-import { constants } from '~/server/common/constants';
-import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -37,6 +35,8 @@ import { Currency, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconClockHour4,
+  IconCrown,
+  IconGift,
   IconPhoto,
   IconShare3,
   IconSparkles,
@@ -193,7 +193,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                             <EdgeMedia2
                               src={challenge.coverImage!.url}
                               type={challenge.coverImage!.type}
-                              className="w-full"
+                              className="max-h-80 w-full object-cover md:max-h-[450px]"
                             />
                           ) : (
                             <div className="relative aspect-video w-full overflow-hidden">
@@ -331,11 +331,19 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
 
   if (challenge.entryPrize) {
     prizeItems.push({
-      label: <Text size="sm">Participation</Text>,
+      label: (
+        <Group gap={4}>
+          <ThemeIcon size="sm" color="blue" variant="light">
+            <IconGift size={14} />
+          </ThemeIcon>
+          <Text size="sm">Participation</Text>
+        </Group>
+      ),
       value: (
         <CurrencyBadge
           size="sm"
           currency={Currency.BUZZ}
+          type="blue"
           unitAmount={challenge.entryPrize.buzz}
           variant="transparent"
         />
@@ -458,16 +466,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel p={0}>
             <CreatorCardSimple
-              user={
-                challenge.source === ChallengeSource.System
-                  ? { id: constants.system.user.id, username: constants.system.user.username }
-                  : {
-                      ...challenge.createdBy,
-                      // Convert null to undefined for CreatorCardSimple compatibility
-                      cosmetics: challenge.createdBy.cosmetics ?? undefined,
-                      profilePicture: challenge.createdBy.profilePicture ?? undefined,
-                    }
-              }
+              user={{
+                ...challenge.createdBy,
+                // Convert null to undefined for CreatorCardSimple compatibility
+                cosmetics: challenge.createdBy.cosmetics ?? undefined,
+                profilePicture: challenge.createdBy.profilePicture ?? undefined,
+              }}
               statDisplayOverwrite={[]}
               style={{ border: 'none', borderRadius: 0 }}
             />
@@ -479,80 +483,268 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
 }
 
 function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const isDark = colorScheme === 'dark';
+
+  // Reorder winners for podium display: [2nd, 1st, 3rd]
+  const podiumOrder = [
+    challenge.winners.find((w) => w.place === 2),
+    challenge.winners.find((w) => w.place === 1),
+    challenge.winners.find((w) => w.place === 3),
+  ].filter(Boolean) as ChallengeDetail['winners'];
 
   return (
-    <Container
-      fluid
-      my="md"
+    <div
+      className="relative overflow-hidden py-12"
       style={{
-        background: colorScheme === 'dark' ? theme.colors.yellow[9] + '20' : theme.colors.yellow[1],
+        background: isDark
+          ? 'linear-gradient(180deg, rgba(250, 176, 5, 0.15) 0%, rgba(250, 176, 5, 0.05) 100%)'
+          : 'linear-gradient(180deg, rgba(250, 176, 5, 0.2) 0%, rgba(250, 176, 5, 0.05) 100%)',
       }}
     >
-      <Container size="xl">
-        <Stack gap="md" py={32}>
-          <Group gap="xs">
-            <ThemeIcon size="lg" color="yellow" variant="light">
-              <IconTrophy size={20} />
-            </ThemeIcon>
-            <Title order={2}>Winners</Title>
-          </Group>
-          <SimpleGrid
-            cols={{
-              base: 1,
-              sm: 2,
-              md: Math.min(challenge.winners.length, 3),
-            }}
-            spacing="md"
-          >
-            {challenge.winners.map((winner) => (
-              <div
-                key={winner.place}
-                className="flex flex-col gap-2 rounded-lg bg-black/10 p-4 dark:bg-white/5"
-              >
-                <Group justify="space-between">
-                  <Badge
-                    size="lg"
-                    color={
-                      winner.place === 1 ? 'yellow' : winner.place === 2 ? 'gray.4' : 'orange.7'
-                    }
-                    leftSection={<IconTrophy size={14} />}
-                  >
-                    {getPlaceLabel(winner.place)}
-                  </Badge>
-                  <CurrencyBadge
-                    currency={Currency.BUZZ}
-                    unitAmount={winner.buzzAwarded}
-                    size="lg"
+      {/* Decorative elements */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-20 -top-20 size-40 rounded-full bg-yellow-500/10 blur-3xl" />
+        <div className="absolute -right-20 top-1/2 size-60 rounded-full bg-orange-500/10 blur-3xl" />
+      </div>
+
+      <Container size="xl" className="relative">
+        <Stack gap="xl">
+          {/* Header */}
+          <div className="text-center">
+            <Group justify="center" gap="sm" mb="xs">
+              <IconTrophy size={32} className="text-yellow-500" />
+              <Title order={2}>Challenge Winners</Title>
+              <IconTrophy size={32} className="text-yellow-500" />
+            </Group>
+            <Text c="dimmed" size="sm">
+              Selected by AI Judge based on theme, creativity, and aesthetic quality
+            </Text>
+          </div>
+
+          {/* Podium Layout - Desktop: 2nd | 1st (elevated) | 3rd */}
+          <div className="hidden md:block">
+            <div className="flex items-end justify-center gap-4">
+              {podiumOrder.map((winner, index) => (
+                <WinnerPodiumCard
+                  key={winner.place}
+                  winner={winner}
+                  isFirst={index === 1}
+                  className={index === 1 ? 'z-10' : ''}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Mobile Layout - Stacked with 1st on top */}
+          <div className="md:hidden">
+            <Stack gap="md">
+              {challenge.winners
+                .sort((a, b) => a.place - b.place)
+                .map((winner) => (
+                  <WinnerPodiumCard
+                    key={winner.place}
+                    winner={winner}
+                    isFirst={winner.place === 1}
+                    isMobile
                   />
-                </Group>
-                {winner.imageUrl && (
-                  <div className="aspect-square overflow-hidden rounded-md">
-                    <EdgeMedia2
-                      src={winner.imageUrl}
-                      type={MediaType.image}
-                      width={400}
-                      className="size-full object-cover"
-                    />
+                ))}
+            </Stack>
+          </div>
+
+          {/* Judge's Commentary Section */}
+          {(challenge.completionSummary?.judgingProcess ||
+            challenge.completionSummary?.outcome) && (
+            <div
+              className={`mt-4 rounded-xl border p-6 ${
+                isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-white/80'
+              }`}
+            >
+              <Group gap="sm" mb="md">
+                <div className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-cyan-400">
+                  <IconSparkles size={20} className="text-white" />
+                </div>
+                <div>
+                  <Text fw={600} size="sm">
+                    AI Judge Commentary
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Automated analysis powered by GPT-4
+                  </Text>
+                </div>
+              </Group>
+
+              <Stack gap="md">
+                {challenge.completionSummary?.judgingProcess && (
+                  <div>
+                    <Text size="xs" fw={600} c="dimmed" mb={4}>
+                      Judging Process
+                    </Text>
+                    <Spoiler maxHeight={120} showLabel="Show more" hideLabel="Show less">
+                      <div className="text-sm">
+                        <RenderHtml html={challenge.completionSummary.judgingProcess} />
+                      </div>
+                    </Spoiler>
                   </div>
                 )}
-                <Link href={`/user/${winner.username}`}>
-                  <Text size="sm" fw={600}>
-                    {winner.username}
-                  </Text>
-                </Link>
-                {winner.reason && (
-                  <Text size="xs" c="dimmed" lineClamp={2}>
-                    {winner.reason}
-                  </Text>
+
+                {challenge.completionSummary?.outcome && (
+                  <div>
+                    <Text size="xs" fw={600} c="dimmed" mb={4}>
+                      Final Verdict
+                    </Text>
+                    <Spoiler maxHeight={80} showLabel="Show more" hideLabel="Show less">
+                      <div className="text-sm">
+                        <RenderHtml html={challenge.completionSummary.outcome} />
+                      </div>
+                    </Spoiler>
+                  </div>
                 )}
-              </div>
-            ))}
-          </SimpleGrid>
+              </Stack>
+            </div>
+          )}
         </Stack>
       </Container>
-    </Container>
+    </div>
+  );
+}
+
+const placeConfig = {
+  1: {
+    label: '1st Place',
+    gradient: 'from-yellow-400 via-amber-500 to-orange-500',
+    border: 'border-yellow-500/50',
+    icon: IconCrown,
+    iconColor: 'text-yellow-500',
+    bgGlow: 'shadow-yellow-500/20',
+  },
+  2: {
+    label: '2nd Place',
+    gradient: 'from-slate-300 via-gray-400 to-slate-500',
+    border: 'border-slate-400/50',
+    icon: IconTrophy,
+    iconColor: 'text-slate-400',
+    bgGlow: 'shadow-slate-500/20',
+  },
+  3: {
+    label: '3rd Place',
+    gradient: 'from-amber-600 via-orange-700 to-amber-800',
+    border: 'border-orange-700/50',
+    icon: IconTrophy,
+    iconColor: 'text-orange-700',
+    bgGlow: 'shadow-orange-700/20',
+  },
+} as const;
+
+function WinnerPodiumCard({
+  winner,
+  isFirst,
+  className = '',
+  isMobile = false,
+}: {
+  winner: ChallengeDetail['winners'][number];
+  isFirst: boolean;
+  className?: string;
+  isMobile?: boolean;
+}) {
+  const [reasonExpanded, setReasonExpanded] = useState(false);
+  const colorScheme = useComputedColorScheme('dark');
+  const isDark = colorScheme === 'dark';
+  const config = placeConfig[winner.place as 1 | 2 | 3] ?? placeConfig[3];
+  const PlaceIcon = config.icon;
+
+  // Mobile: full width; Desktop: fixed widths for podium effect
+  const widthClass = isMobile ? 'w-full' : isFirst ? 'w-80' : 'w-64';
+
+  return (
+    <div
+      className={`flex flex-col overflow-hidden rounded-xl border-2 ${config.border} ${
+        isDark ? 'bg-dark-6' : 'bg-white'
+      } ${widthClass} ${isFirst ? 'shadow-xl' : ''} ${config.bgGlow} shadow-lg ${className}`}
+    >
+      {/* Place Header with Gradient */}
+      <div className={`bg-gradient-to-r ${config.gradient} px-4 py-2.5`}>
+        <Group justify="space-between" wrap="nowrap" gap="xs">
+          <Group gap={6} wrap="nowrap">
+            <PlaceIcon size={isMobile ? 20 : isFirst ? 24 : 18} className="text-white" />
+            <Text
+              fw={700}
+              c="white"
+              size={isMobile || isFirst ? 'md' : 'sm'}
+              className="whitespace-nowrap"
+            >
+              {config.label}
+            </Text>
+          </Group>
+          <CurrencyBadge
+            currency={Currency.BUZZ}
+            unitAmount={winner.buzzAwarded}
+            size="sm"
+            style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}
+          />
+        </Group>
+      </div>
+
+      {/* Winner Image */}
+      {winner.imageUrl && (
+        <Link href={`/images/${winner.imageId}`}>
+          <div
+            className={`w-full overflow-hidden ${isFirst ? 'aspect-square' : 'aspect-[4/3]'}`}
+            style={{ cursor: 'pointer' }}
+          >
+            <EdgeMedia2
+              src={winner.imageUrl}
+              type={MediaType.image}
+              width={450}
+              className="size-full object-cover transition-transform duration-300 hover:scale-105"
+            />
+          </div>
+        </Link>
+      )}
+
+      {/* Winner Info */}
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        {/* Username */}
+        <Link href={`/user/${winner.username}`}>
+          <Group gap="xs">
+            <Text fw={600} size={isFirst ? 'md' : 'sm'} className="hover:underline">
+              {winner.username}
+            </Text>
+            {isFirst && <IconCrown size={16} className={config.iconColor} />}
+          </Group>
+        </Link>
+
+        {/* Judge's Reason */}
+        {winner.reason && (
+          <div
+            className={`rounded-lg p-3 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}
+            style={{ borderLeft: `3px solid var(--mantine-color-blue-5)` }}
+          >
+            <Text size="xs" c="dimmed" mb={4}>
+              <IconSparkles size={12} className="mr-1 inline" />
+              Judge&apos;s Note
+            </Text>
+            <Text
+              size="xs"
+              style={{ fontStyle: 'italic', lineHeight: 1.6 }}
+              lineClamp={reasonExpanded ? undefined : 3}
+            >
+              &ldquo;{winner.reason}&rdquo;
+            </Text>
+            {winner.reason.length > 120 && (
+              <Text
+                size="xs"
+                c="blue"
+                className="mt-2 cursor-pointer hover:underline"
+                onClick={() => setReasonExpanded(!reasonExpanded)}
+              >
+                {reasonExpanded ? 'Show less' : 'Read full note'}
+              </Text>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

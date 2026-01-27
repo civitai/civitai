@@ -3,11 +3,12 @@ import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   type ChallengeDetails,
   getActiveChallengeFromDb,
   getActiveChallengesFromDb,
+  getChallengeById,
   getEndedActiveChallengesFromDb,
   getScheduledChallengeFromDb,
   getScheduledChallengesReadyToStart,
@@ -152,8 +153,8 @@ export type Score = {
 };
 
 export type DailyChallengeDetails = {
-  challengeId?: number; // NEW: Challenge table ID for status updates
-  articleId: number;
+  challengeId?: number; // Challenge table ID for status updates
+  articleId?: number; // Deprecated: Legacy article ID (no longer used for new challenges)
   type: string;
   date: Date;
   theme: string;
@@ -172,7 +173,7 @@ export type DailyChallengeDetails = {
  * Convert new ChallengeDetails format to legacy DailyChallengeDetails format.
  * This adapter enables backward compatibility during the transition period.
  */
-function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChallengeDetails {
+export function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChallengeDetails {
   const metadata = challenge.metadata as Record<string, unknown> | null;
   return {
     challengeId: challenge.id,
@@ -192,6 +193,11 @@ function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChallengeDet
   };
 }
 
+/**
+ * @deprecated Use getChallengeById from challenge-helpers.ts instead.
+ * This function looks up challenges by Article ID which is no longer used.
+ * Will be removed in a future release.
+ */
 export async function getChallengeDetails(articleId: number) {
   const db = await getDbWithoutLag('article', articleId);
   const rows = await db.$queryRaw<DailyChallengeDetails[]>`
@@ -235,65 +241,20 @@ export async function setCurrentChallenge(_articleId: number): Promise<void> {
 
 /**
  * Gets the currently active challenge from the Challenge table.
- * Falls back to legacy Article-based lookup if no Challenge record is found.
  */
 export async function getCurrentChallenge(): Promise<DailyChallengeDetails | null> {
-  // Primary: Get active challenge from Challenge table
   const challenge = await getActiveChallengeFromDb();
-  if (challenge) {
-    return challengeToLegacyFormat(challenge);
-  }
-
-  // Fallback: Check Redis cache for legacy challenges (to be removed)
-  const cachedChallenge = await redis.packed.get<DailyChallengeDetails>(
-    REDIS_KEYS.DAILY_CHALLENGE.DETAILS
-  );
-  if (cachedChallenge) {
-    return cachedChallenge;
-  }
-
-  // Final fallback: Legacy Article-based lookup
-  const [article] = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT
-      ci."articleId" as id
-    FROM "CollectionItem" ci
-    JOIN "Article" a ON a.id = ci."articleId"
-    WHERE
-      ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
-      AND ci."status" = 'ACCEPTED'
-      AND (a.metadata->>'status') = 'active'
-    ORDER BY ci."createdAt" DESC
-    LIMIT 1
-  `;
-  if (!article) return null;
-  return getChallengeDetails(article.id);
+  if (!challenge) return null;
+  return challengeToLegacyFormat(challenge);
 }
 
 /**
  * Gets the next scheduled challenge from the Challenge table.
- * Falls back to legacy Article-based lookup if no Challenge record is found.
  */
 export async function getUpcomingChallenge(): Promise<DailyChallengeDetails | null> {
-  // Primary: Get scheduled challenge from Challenge table
   const challenge = await getScheduledChallengeFromDb();
-  if (challenge) {
-    return challengeToLegacyFormat(challenge);
-  }
-
-  // Fallback: Legacy Article-based lookup via CollectionItem
-  const results = await dbRead.$queryRaw<{ articleId: number }[]>`
-    SELECT
-      ci."articleId"
-    FROM "CollectionItem" ci
-    WHERE
-      ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
-      AND ci."status" = 'REVIEW'
-    ORDER BY ci."createdAt" DESC
-    LIMIT 1
-  `;
-  if (!results.length) return null;
-
-  return await getChallengeDetails(results[0].articleId);
+  if (!challenge) return null;
+  return challengeToLegacyFormat(challenge);
 }
 export async function endChallenge(challenge?: { collectionId: number } | null) {
   challenge ??= await getCurrentChallenge();

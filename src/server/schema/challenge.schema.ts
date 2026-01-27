@@ -58,6 +58,13 @@ export type ChallengeListItem = {
   };
 };
 
+// Completion summary stored in Challenge.metadata when winners are picked
+export type ChallengeCompletionSummary = {
+  judgingProcess: string;
+  outcome: string;
+  completedAt: string;
+};
+
 export type ChallengeDetail = {
   id: number;
   title: string;
@@ -104,6 +111,7 @@ export type ChallengeDetail = {
     buzzAwarded: number;
     reason: string | null;
   }>;
+  completionSummary: ChallengeCompletionSummary | null;
 };
 
 export type ModeratorChallengeListItem = {

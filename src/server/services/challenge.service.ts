@@ -12,6 +12,7 @@ import {
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   ChallengeSort,
+  type ChallengeCompletionSummary,
   type ChallengeDetail,
   type ChallengeListItem,
   type GetInfiniteChallengesInput,
@@ -148,7 +149,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.status,
       c.source,
       c."prizePool",
-      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId") as "entryCount",
+      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       c."modelVersionIds",
       (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
@@ -252,13 +253,14 @@ export async function getChallengeDetail(
     }
   }
 
-  // Get entry count from the challenge's collection
+  // Get entry count from the challenge's collection (only accepted entries)
   let entryCount = 0;
   if (challenge.collectionId) {
     const [countResult] = await dbRead.$queryRaw<[{ count: bigint }]>`
       SELECT COUNT(*) as count
       FROM "CollectionItem"
       WHERE "collectionId" = ${challenge.collectionId}
+        AND status = 'ACCEPTED'
     `;
     entryCount = Number(countResult.count);
   }
@@ -304,6 +306,11 @@ export async function getChallengeDetail(
     winners = await getChallengeWinners(id);
   }
 
+  // Extract completion summary from metadata
+  const metadata = challenge.metadata as Record<string, unknown> | null;
+  const completionSummary =
+    (metadata?.completionSummary as ChallengeCompletionSummary | undefined) ?? null;
+
   return {
     id: challenge.id,
     title: challenge.title,
@@ -346,6 +353,7 @@ export async function getChallengeDetail(
       cosmetics: cosmetics[challenge.createdById] ?? null,
     },
     winners,
+    completionSummary,
   };
 }
 
@@ -438,7 +446,7 @@ export async function getModeratorChallenges(input: GetModeratorChallengesInput)
       c.status,
       c.source,
       c."prizePool",
-      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId") as "entryCount",
+      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername"
@@ -770,10 +778,71 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   }
   log('Winners notified');
 
-  // Update challenge status to Completed
+  // Send entry participation prizes to all eligible users
+  if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
+    const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT i."userId"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${challenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+      GROUP BY i."userId"
+      HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
+    `;
+
+    if (earnedEntryPrizes.length > 0) {
+      const winnerUserIds = winningEntries.map((e) => e.userId);
+      // Exclude winners from entry prizes (they get winner prizes instead)
+      const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+
+      if (entryPrizeUsers.length > 0) {
+        await withRetries(() =>
+          createBuzzTransactionMany(
+            entryPrizeUsers.map(({ userId }) => ({
+              type: TransactionType.Reward,
+              toAccountId: userId,
+              fromAccountId: 0, // central bank
+              amount: challenge.entryPrize!.buzz,
+              description: `Challenge Entry Prize: ${challenge.title}`,
+              externalTransactionId: `challenge-entry-prize-${challengeId}-${dateStr}-${userId}`,
+              toAccountType: 'blue',
+            }))
+          )
+        );
+        log('Entry participation prizes sent:', entryPrizeUsers.length);
+
+        // Notify entry prize recipients
+        await createNotification({
+          type: 'challenge-participation',
+          category: NotificationCategory.System,
+          key: `challenge-participation:${challengeId}:final`,
+          userIds: entryPrizeUsers.map((e) => e.userId),
+          details: {
+            challengeId,
+            challengeName: challenge.title,
+            prize: challenge.entryPrize!.buzz,
+          },
+        });
+        log('Entry prize users notified');
+      }
+    }
+  }
+
+  // Update challenge status to Completed and store completion summary
+  const existingMetadata = typeof challenge.metadata === 'object' ? challenge.metadata : {};
   await dbWrite.challenge.update({
     where: { id: challengeId },
-    data: { status: ChallengeStatus.Completed },
+    data: {
+      metadata: {
+        ...existingMetadata,
+        completionSummary: {
+          judgingProcess: process,
+          outcome: outcome,
+          completedAt: new Date().toISOString(),
+        },
+      },
+      status: ChallengeStatus.Completed,
+    },
   });
   log('Challenge status updated to Completed');
 

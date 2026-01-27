@@ -512,19 +512,19 @@ model ChallengeWinner {
 
 ## Revised Implementation Phases
 
-### Phase 1: Core Challenge System
+### Phase 1: Core Challenge System ✅
 **Goal:** Replace Article-based challenges with dedicated Challenge entity + OpenRouter migration
 
 - [ ] **OpenRouter migration** - Replace OpenAI SDK with OpenRouter SDK
   - Create abstraction layer for LLM calls
   - Support model selection per task type
   - Add fallback routing
-- [ ] Create `Challenge`, `ChallengeEntry`, `ChallengeWinner` tables
-- [ ] Migrate existing challenge data from Articles
-- [ ] Create `/challenges` feed page (list view)
-- [ ] Create `/challenges/[id]` detail page
-- [ ] Update jobs to use new tables
-- [ ] Mod management at `/moderator/challenges` (list + CRUD)
+- [x] Create `Challenge`, `ChallengeEntry`, `ChallengeWinner` tables
+- [x] Deprecate Article-based challenges (new challenges no longer create Articles)
+- [x] Create `/challenges` feed page (list view)
+- [x] Create `/challenges/[id]` detail page
+- [x] Update jobs to use new tables
+- [x] Mod management at `/moderator/challenges` (list + CRUD)
 - [ ] Auto-queue job to maintain 30-day horizon
 
 ### Phase 2: Enhanced Features
@@ -626,14 +626,36 @@ Instead of manual status changes, moderators have contextual quick actions:
 **End & Pick Winners:**
 - Closes the collection
 - Runs LLM-based winner selection
-- Awards prizes to winners
-- Sends notifications
+- Awards winner prizes (yellow Buzz)
+- Awards entry participation prizes to eligible non-winners (blue Buzz)
+- Stores completion summary in `Challenge.metadata.completionSummary`
+- Sends notifications to winners and entry prize recipients
 - Sets status to `Completed`
 
 **Void Challenge:**
 - Closes the collection
 - Does NOT pick winners or award prizes
 - Sets status to `Cancelled`
+
+#### Completion Summary Storage
+
+When a challenge completes (either via job or manual action), the AI-generated judging content is stored:
+
+```typescript
+Challenge.metadata.completionSummary = {
+  judgingProcess: string;  // HTML describing the judging process
+  outcome: string;         // HTML summary of the challenge outcome
+  completedAt: string;     // ISO timestamp
+};
+```
+
+This content is displayed on the challenge detail page in the Winners section.
+
+**Note:** Challenges no longer create or update Articles. The Article-based system has been fully deprecated:
+- New challenges are created directly in the `Challenge` table
+- Cooldown tracking uses the `Challenge` table (not Article metadata)
+- Admin/mod endpoints use Challenge IDs (not Article IDs)
+- The `getChallengeDetails` function (Article-based) is deprecated; use `getChallengeById` instead
 
 #### Multi-Challenge Job Processing
 The daily challenge jobs support **multiple concurrent active challenges**:
@@ -651,9 +673,11 @@ The daily challenge jobs support **multiple concurrent active challenges**:
 
 #### Key Files
 - Schema: `prisma/schema.full.prisma` (Challenge, ChallengeWinner models)
+- Types: `src/server/schema/challenge.schema.ts` (ChallengeDetail, ChallengeCompletionSummary)
 - Service: `src/server/services/challenge.service.ts`
 - Router: `src/server/routers/challenge.router.ts`
 - Moderator UI: `src/pages/moderator/challenges.tsx`
+- Challenge Detail Page: `src/pages/challenges/[id]/[[...slug]].tsx`
 - Create/Edit Form: `src/components/Challenge/ChallengeUpsertForm.tsx`
 - Daily Job: `src/server/jobs/daily-challenge-processing.ts`
 - Challenge Helpers: `src/server/games/daily-challenge/challenge-helpers.ts`
