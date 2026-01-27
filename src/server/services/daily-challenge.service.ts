@@ -35,7 +35,10 @@ export async function getAllDailyChallenges() {
 }
 
 export type ChallengeDetails = {
-  articleId: number;
+  /** @deprecated Article IDs are no longer used for new challenges. Use challengeId instead. */
+  articleId?: number;
+  /** Challenge ID from the new Challenge table */
+  challengeId?: number;
   date: Date;
   resources?: { id: number; modelId: number }[];
   engine?: string;
@@ -47,6 +50,10 @@ export type ChallengeDetails = {
   endsToday?: boolean;
 };
 
+/**
+ * @deprecated Use trpc.challenge.getInfinite with status: [ChallengeStatus.Active] instead.
+ * This function uses the legacy Article-based system which is being phased out.
+ */
 export async function getCurrentDailyChallenge() {
   const [currentChallenge, customChallenge] = await Promise.all([
     getCurrentChallenge(),
@@ -56,6 +63,7 @@ export async function getCurrentDailyChallenge() {
   const challengeDetails: ChallengeDetails[] = [];
   if (currentChallenge)
     challengeDetails.push({
+      challengeId: currentChallenge.challengeId,
       articleId: currentChallenge.articleId,
       date: currentChallenge.date,
       resources: currentChallenge.modelVersionIds.map((id) => ({
@@ -139,7 +147,7 @@ export async function getAllChallengesFromDb(options?: {
 
   let statusFilter = '';
   if (status && status.length > 0) {
-    const statusList = status.map((s) => `'${s}'`).join(', ');
+    const statusList = status.map((s) => `'${String(s)}'`).join(', ');
     statusFilter = `AND status IN (${statusList})`;
   }
 

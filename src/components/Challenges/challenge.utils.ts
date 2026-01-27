@@ -10,6 +10,10 @@ export const useQueryChallenges = () => {
   return { challenges: data?.items ?? [], loading: isLoading || isRefetching };
 };
 
+/**
+ * @deprecated Use useGetActiveChallenges() instead, which uses the new Challenge table
+ * and supports multiple concurrent challenges.
+ */
 export const useQueryCurrentChallenge = () => {
   const { data, isLoading } = trpc.dailyChallenge.getCurrent.useQuery(undefined, {
     staleTime: Infinity,
