@@ -90,6 +90,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   }
 
   // Cursor for pagination (parameterized)
+  // NOTE: Cursor pagination is stable only for Newest sort (id-based ordering).
+  // For other sorts (EndingSoon, MostEntries, HighestPrize), items may be
+  // skipped/duplicated between pages if data changes. A proper fix would require
+  // composite cursors (e.g., {endsAt, id} for EndingSoon). For now, this is
+  // acceptable since challenges change infrequently and feed refreshes are common.
   if (cursor) {
     conditions.push(Prisma.sql`c.id < ${cursor}`);
   }

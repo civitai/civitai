@@ -8,7 +8,6 @@ import {
   type ChallengeDetails,
   getActiveChallengeFromDb,
   getActiveChallengesFromDb,
-  getChallengeById,
   getEndedActiveChallengesFromDb,
   getScheduledChallengeFromDb,
   getScheduledChallengesReadyToStart,

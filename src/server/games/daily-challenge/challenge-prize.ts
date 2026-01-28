@@ -48,19 +48,6 @@ export async function checkAndAwardEntryPrize({
       return false; // No entry prize configured
     }
 
-    // Check if user already received entry prize for this challenge
-    const [existing] = await dbRead.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(*) as count
-      FROM "BuzzTransaction"
-      WHERE "toUserId" = ${userId}
-      AND type = ${TransactionType.Reward}
-      AND description LIKE ${'%challenge-entry-prize:' + challenge.id + '%'}
-    `;
-
-    if (Number(existing.count) > 0) {
-      return false; // Already awarded
-    }
-
     // Count user's accepted entries in this collection
     const [entryCount] = await dbRead.$queryRaw<[{ count: bigint }]>`
       SELECT COUNT(*) as count
@@ -77,12 +64,14 @@ export async function checkAndAwardEntryPrize({
     }
 
     // Award the entry prize
+    // Note: externalTransactionId ensures idempotency - duplicate calls are safely ignored
     await createBuzzTransaction({
       fromAccountId: 0, // System account
       toAccountId: userId,
       amount: challenge.entryPrize.buzz,
       type: TransactionType.Reward,
-      description: `Challenge participation prize (challenge-entry-prize:${challenge.id})`,
+      description: `Challenge participation prize: Challenge #${challenge.id}`,
+      externalTransactionId: `challenge-entry-prize-immediate-${challenge.id}-${userId}`,
       details: {
         challengeId: challenge.id,
         entryCount: userEntryCount,

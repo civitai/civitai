@@ -57,6 +57,7 @@ CREATE TABLE "ChallengeWinner" (
 -- Compound indexes for feed queries (status is always filtered first)
 CREATE INDEX "Challenge_status_startsAt_idx" ON "Challenge"("status", "startsAt");
 CREATE INDEX "Challenge_status_endsAt_idx" ON "Challenge"("status", "endsAt");
+CREATE INDEX "Challenge_status_visibleAt_idx" ON "Challenge"("status", "visibleAt");
 
 -- User's challenges
 CREATE INDEX "Challenge_createdById_status_idx" ON "Challenge"("createdById", "status");
