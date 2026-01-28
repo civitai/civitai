@@ -693,9 +693,11 @@ export function GenerationFormContent() {
               isSeedream;
 
             // Flux2 Klein doesn't support certain samplers
-            const samplerOptions = isFlux2Klein
-              ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
-              : generation.samplers;
+            // Flux2 Klein and zImageBase share the same restricted sampler set
+            const samplerOptions =
+              isFlux2Klein || isZImageBase
+                ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
+                : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
