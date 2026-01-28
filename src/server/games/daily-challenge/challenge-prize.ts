@@ -65,13 +65,14 @@ export async function checkAndAwardEntryPrize({
 
     // Award the entry prize
     // Note: externalTransactionId ensures idempotency - duplicate calls are safely ignored
+    // Uses same ID pattern as end-of-challenge distribution to prevent double payments
     await createBuzzTransaction({
       fromAccountId: 0, // System account
       toAccountId: userId,
       amount: challenge.entryPrize.buzz,
       type: TransactionType.Reward,
-      description: `Challenge participation prize: Challenge #${challenge.id}`,
-      externalTransactionId: `challenge-entry-prize-immediate-${challenge.id}-${userId}`,
+      description: `Challenge Entry Prize: ${challenge.id}`,
+      externalTransactionId: `challenge-entry-prize-${challenge.id}-${userId}`,
       details: {
         challengeId: challenge.id,
         entryCount: userEntryCount,
@@ -84,7 +85,7 @@ export async function checkAndAwardEntryPrize({
 
     return true;
   } catch (error) {
-    log(`Error checking/awarding entry prize: ${error}`);
+    log('Error checking/awarding entry prize:', error);
     return false;
   }
 }
