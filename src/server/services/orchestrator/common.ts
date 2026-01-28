@@ -215,6 +215,7 @@ export async function parseGenerateImageInput({
   whatIf?: boolean;
   batchAll?: boolean;
 }) {
+  delete originalParams.scheduler;
   delete originalParams.resolution;
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
