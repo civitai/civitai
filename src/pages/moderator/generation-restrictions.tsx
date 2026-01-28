@@ -51,6 +51,31 @@ type RestrictionTrigger = {
   time?: string;
 };
 
+function HighlightedCode({ text, highlight }: { text: string; highlight?: string }) {
+  if (!highlight) {
+    return <Code block>{text}</Code>;
+  }
+
+  // Escape special regex characters in the highlight string
+  const escapedHighlight = highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escapedHighlight})`, 'gi');
+  const parts = text.split(regex);
+
+  return (
+    <Code block className="whitespace-pre-wrap">
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="rounded bg-yellow-3 px-0.5 text-black dark:bg-yellow-5">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </Code>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   if (status === UserRestrictionStatus.Pending)
     return (
@@ -359,7 +384,7 @@ export default function GenerationRestrictionsPage() {
                         <Text size="xs" fw={500} c="dimmed">
                           Prompt
                         </Text>
-                        <Code block>{trigger.prompt}</Code>
+                        <HighlightedCode text={trigger.prompt} highlight={trigger.matchedWord} />
                       </div>
                     )}
                     {trigger.negativePrompt && (
@@ -367,7 +392,10 @@ export default function GenerationRestrictionsPage() {
                         <Text size="xs" fw={500} c="dimmed">
                           Negative Prompt
                         </Text>
-                        <Code block>{trigger.negativePrompt}</Code>
+                        <HighlightedCode
+                          text={trigger.negativePrompt}
+                          highlight={trigger.matchedWord}
+                        />
                       </div>
                     )}
                     <Group>
