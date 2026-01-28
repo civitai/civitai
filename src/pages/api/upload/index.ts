@@ -29,12 +29,14 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
 
   // Determine upload backend: B2 for model uploads when flag is enabled
   let backend: UploadBackend = 'default';
-  if (type === UploadType.Model) {
-    const useB2 = await isFlipt(
+  if (type === UploadType.Model && env.S3_UPLOAD_B2_ENDPOINT) {
+    // Force B2 on preview environments; otherwise check Flipt flag
+    const isPreview = !!env.NEXTAUTH_COOKIE_DOMAIN;
+    const useB2 = isPreview || await isFlipt(
       FLIPT_FEATURE_FLAGS.B2_UPLOAD_DEFAULT,
       String(userId)
     );
-    if (useB2 && env.S3_UPLOAD_B2_ENDPOINT) {
+    if (useB2) {
       backend = 'b2';
     }
   }
