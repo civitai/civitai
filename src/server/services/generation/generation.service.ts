@@ -519,6 +519,10 @@ type GenerationResourceBase = {
   minStrength: number;
   maxStrength: number;
   strength: number;
+  /** Whether the current user owns the model this resource belongs to (computed by server) */
+  isOwnedByUser?: boolean;
+  /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
+  isPrivate?: boolean;
 };
 
 export type GenerationResource = GenerationResourceBase & {
@@ -530,7 +534,7 @@ export type GenerationResource = GenerationResourceBase & {
     poi?: boolean;
     minor?: boolean;
     sfwOnly?: boolean;
-    // userId: number;
+    userId?: number;
   };
   epochDetails?: {
     jobId: string;
@@ -560,11 +564,31 @@ export async function getResourceData(
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
     const isUnavailable = unavailableResources.includes(item.id);
 
-    const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
+    const isOwnedByUser = !!user.id && user.id === item.model.userId;
+    const hasAccess = !!(item.hasAccess || isOwnedByUser || user.isModerator);
     const covered =
       (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-    const canGenerate = covered;
+
+    // Valid statuses for generation: Draft (training epochs), Training, Published
+    // Other statuses (Deleted, Unpublished, etc.) cannot be used for generation
+    const validGenerationStatuses = ['Draft', 'Training', 'Published'];
+    const hasValidStatus = validGenerationStatuses.includes(item.status);
+
+    // Resource is private if:
+    // 1. Availability is explicitly Private, OR
+    // 2. Status is Draft or Training (unpublished/training epochs)
+    const isPrivate = item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
+
+    // canGenerate is the definitive "can this user use this resource" flag
+    // Requires: covered by orchestrator AND valid status AND (not private OR user owns it)
+    const canGenerate = covered && hasValidStatus && (!isPrivate || isOwnedByUser);
     const epochNumber = args.find((x) => x.id === item.id)?.epoch;
+
+    if(!canGenerate) {
+      // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
+      delete item.model.sfwOnly;
+      delete item.model.minor;
+    }
 
     return {
       ...item,
@@ -574,6 +598,8 @@ export async function getResourceData(
       hasAccess,
       canGenerate,
       epochNumber,
+      isOwnedByUser,
+      isPrivate,
     };
   }
 

@@ -19,11 +19,9 @@ import {
   Collapse,
   Divider,
   Group,
-  HoverCard,
   Input,
   Skeleton,
   Text,
-  ThemeIcon,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconPlus, IconX } from '@tabler/icons-react';
@@ -34,8 +32,13 @@ import type {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useResourceDataContext } from './ResourceDataProvider';
+import {
+  ResourceItemContent,
+  getResourceStatus,
+  getStatusClasses,
+  isResourceDisabled,
+} from './ResourceItemContent';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -108,25 +111,6 @@ interface ResourceItemProps {
   options?: ResourceSelectOptions;
 }
 
-/**
- * Check compatibility of a resource's baseModel against the options.resources config.
- * Returns 'full' if in baseModels, 'partial' if in partialSupport, null if neither.
- */
-function getResourceCompatibility(
-  resourceBaseModel: string | undefined,
-  resourceType: string,
-  options?: ResourceSelectOptions
-): 'full' | 'partial' | null {
-  if (!resourceBaseModel || !options?.resources) return 'full'; // No options = assume compatible
-
-  const resourceConfig = options.resources.find((r) => r.type === resourceType);
-  if (!resourceConfig) return 'full'; // No config for this type = assume compatible
-
-  if (resourceConfig.baseModels?.includes(resourceBaseModel)) return 'full';
-  if (resourceConfig.partialSupport?.includes(resourceBaseModel)) return 'partial';
-  return null; // Not in either list = incompatible
-}
-
 function ResourceItem({
   resourceValue,
   resource,
@@ -156,84 +140,33 @@ function ResourceItem({
     );
   }
 
-  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(displayResource.model.type);
-  const isSameMinMaxStrength = displayResource.minStrength === displayResource.maxStrength;
-
-  const compatibility = getResourceCompatibility(
-    displayResource.baseModel,
-    displayResource.model.type,
-    options
-  );
-  const isPartiallyCompatible = compatibility === 'partial';
-  const isIncompatible = compatibility === null;
+  const status = getResourceStatus(displayResource, options);
+  const statusClasses = getStatusClasses(status);
+  const hasStatusStyling = status !== 'compatible';
+  const resourceIsDisabled = isResourceDisabled(status);
 
   return (
     <div
       className={clsx('px-3 py-1.5', {
-        'bg-gray-2 dark:bg-dark-5': isOdd && !isPartiallyCompatible && !isIncompatible,
-        'bg-yellow-1 dark:bg-yellow-9/20': isPartiallyCompatible,
-        'bg-red-1 dark:bg-red-9/20': isIncompatible,
+        'bg-gray-2 dark:bg-dark-5': isOdd && !hasStatusStyling,
+        [statusClasses.background ?? '']: hasStatusStyling,
       })}
     >
-      <Group gap="xs" justify="space-between" wrap="nowrap">
-        <Group gap={4} wrap="nowrap" className="min-w-0 flex-1">
-          <Text size="sm" lineClamp={1} fw={590} className="truncate">
-            {displayResource.model.name}
-          </Text>
-          {displayResource.name &&
-            displayResource.model.name.toLowerCase() !== displayResource.name.toLowerCase() && (
-            <Text size="xs" c="dimmed" className="shrink-0">
-              ({displayResource.name})
-            </Text>
-          )}
-          {isPartiallyCompatible && (
-            <HoverCard position="bottom" withArrow width={200}>
-              <HoverCard.Target>
-                <ThemeIcon size={18} color="yellow.7" variant="filled" className="shrink-0">
-                  <IconAlertTriangle size={14} />
-                </ThemeIcon>
-              </HoverCard.Target>
-              <HoverCard.Dropdown>
-                <Text size="sm">
-                  This resource may not be fully supported with the current base model
-                </Text>
-              </HoverCard.Dropdown>
-            </HoverCard>
-          )}
-          {isIncompatible && (
-            <HoverCard position="bottom" withArrow width={200}>
-              <HoverCard.Target>
-                <ThemeIcon size={18} color="red" variant="filled" className="shrink-0">
-                  <IconAlertTriangle size={14} />
-                </ThemeIcon>
-              </HoverCard.Target>
-              <HoverCard.Dropdown>
-                <Text size="sm">This resource is not compatible with the current base model</Text>
-              </HoverCard.Dropdown>
-            </HoverCard>
-          )}
-        </Group>
-        <ActionIcon size="sm" variant="subtle" onClick={onRemove} disabled={disabled}>
-          <IconX size={16} />
-        </ActionIcon>
-      </Group>
-      {hasStrength && (
-        <div className="mt-1 flex w-full items-center gap-2">
-          <NumberSlider
-            className="flex-1"
-            value={resourceValue.strength ?? displayResource.strength ?? 1}
-            onChange={(strength) => {
-              // Use the display resource as base, with updated strength
-              onChange({ ...displayResource, strength: strength ?? 1 });
-            }}
-            min={!isSameMinMaxStrength ? displayResource.minStrength : -1}
-            max={!isSameMinMaxStrength ? displayResource.maxStrength : 2}
-            step={0.05}
-            reverse
-            disabled={disabled}
-          />
-        </div>
-      )}
+      <ResourceItemContent
+        resource={displayResource}
+        strengthValue={resourceValue.strength ?? displayResource.strength}
+        // Don't allow strength changes for disabled resources
+        onStrengthChange={
+          resourceIsDisabled ? undefined : (strength) => onChange({ ...displayResource, strength })
+        }
+        disabled={disabled}
+        options={options}
+        actions={
+          <ActionIcon size="sm" variant="subtle" onClick={onRemove} disabled={disabled}>
+            <IconX size={16} />
+          </ActionIcon>
+        }
+      />
     </div>
   );
 }
@@ -358,12 +291,14 @@ export function ResourceSelectMultipleInput({
       ? { ...options, resources: [{ type: resourceType }] }
       : options;
 
-  // Group resources by type
-  const groups = useMemo(() => {
+  // Group resources by type and sort disabled resources to the end
+  const { groups, disabledCount } = useMemo(() => {
     const groupMap = new Map<
       string,
       { value: PartialResourceValue; resource?: GenerationResource & { air: string } }[]
     >();
+
+    let disabled = 0;
 
     for (const resourceValue of value) {
       const resource = resources.get(resourceValue.id);
@@ -373,14 +308,41 @@ export function ResourceSelectMultipleInput({
       const group = groupMap.get(type) ?? [];
       group.push({ value: resourceValue, resource });
       groupMap.set(type, group);
+
+      // Count disabled resources
+      const displayResource = resource ?? (isFullyHydrated(resourceValue) ? resourceValue : undefined);
+      if (displayResource) {
+        const status = getResourceStatus(displayResource, options);
+        if (isResourceDisabled(status)) {
+          disabled++;
+        }
+      }
     }
 
-    return Array.from(groupMap.entries()).map(([type, items]) => ({
-      type,
-      label: getDisplayName(type),
-      items,
-    }));
-  }, [value, resources]);
+    // Sort each group so disabled resources are at the end
+    const sortedGroups = Array.from(groupMap.entries()).map(([type, items]) => {
+      const sortedItems = [...items].sort((a, b) => {
+        const aResource = a.resource ?? (isFullyHydrated(a.value) ? a.value : undefined);
+        const bResource = b.resource ?? (isFullyHydrated(b.value) ? b.value : undefined);
+
+        const aDisabled = aResource ? isResourceDisabled(getResourceStatus(aResource, options)) : false;
+        const bDisabled = bResource ? isResourceDisabled(getResourceStatus(bResource, options)) : false;
+
+        // Disabled resources go to the end
+        if (aDisabled && !bDisabled) return 1;
+        if (!aDisabled && bDisabled) return -1;
+        return 0;
+      });
+
+      return {
+        type,
+        label: getDisplayName(type),
+        items: sortedItems,
+      };
+    });
+
+    return { groups: sortedGroups, disabledCount: disabled };
+  }, [value, resources, options]);
 
   const canAdd = !limit || value.length < limit;
 
@@ -427,6 +389,18 @@ export function ResourceSelectMultipleInput({
               <Badge size="sm" variant="light" color="gray">
                 {countDisplay}
               </Badge>
+
+              {/* Show warning indicator when there are disabled resources */}
+              {disabledCount > 0 && (
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color="red"
+                  leftSection={<IconAlertTriangle size={12} />}
+                >
+                  {disabledCount}
+                </Badge>
+              )}
             </Group>
 
             <Group gap="xs" wrap="nowrap">

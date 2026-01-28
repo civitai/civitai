@@ -12,8 +12,8 @@
 
 import { useEffect, useRef } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
-import { Button, Group, HoverCard, Input, Skeleton, Text, ThemeIcon } from '@mantine/core';
-import { IconAlertTriangle, IconPlus, IconX } from '@tabler/icons-react';
+import { Button, Group, Input, Skeleton } from '@mantine/core';
+import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
@@ -21,8 +21,13 @@ import type {
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useResourceData } from './ResourceDataProvider';
+import {
+  ResourceItemContent,
+  getResourceStatus,
+  getStatusClasses,
+  isResourceDisabled,
+} from './ResourceItemContent';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 
 /** Resource data as returned by ResourceDataProvider (GenerationResource with air field) */
@@ -76,6 +81,8 @@ export interface ResourceSelectInputProps extends Omit<InputWrapperProps, 'child
   disabled?: boolean;
   /** Resource type to filter by (e.g., 'LORA', 'Checkpoint') */
   resourceType?: 'Checkpoint' | 'LORA' | 'VAE' | 'TextualInversion';
+  /** Callback to revert to default model (shown when resource is disabled) */
+  onRevertToDefault?: () => void;
 }
 
 // =============================================================================
@@ -88,29 +95,10 @@ interface ResourceCardProps {
   onChange?: (value: ResourceSelectValue) => void;
   onSwap: () => void;
   onRemove?: () => void;
+  onRevertToDefault?: () => void;
   disabled?: boolean;
   allowSwap?: boolean;
   options?: ResourceSelectOptions;
-}
-
-/**
- * Check compatibility of a resource's baseModel against the options.resources config.
- * Returns 'full' if in baseModels, 'partial' if in partialSupport, null if neither.
- */
-function getResourceCompatibility(
-  resourceBaseModel: string | undefined,
-  resourceType: string,
-  options?: ResourceSelectOptions
-): 'full' | 'partial' | null {
-  if (!resourceBaseModel || !options?.resources) return 'full'; // No options = assume compatible
-
-  const resourceConfig = options.resources.find((r) => r.type === resourceType);
-  if (!resourceConfig) return 'full'; // No config for this type = assume compatible
-
-  if (!resourceConfig.baseModels && !resourceConfig.partialSupport) return 'full'; // No restrictions
-  if (resourceConfig.baseModels?.includes(resourceBaseModel)) return 'full';
-  if (resourceConfig.partialSupport?.includes(resourceBaseModel)) return 'partial';
-  return null; // Not in either list = incompatible
 }
 
 function ResourceCard({
@@ -119,16 +107,14 @@ function ResourceCard({
   onChange,
   onSwap,
   onRemove,
+  onRevertToDefault,
   disabled,
   allowSwap = true,
   options,
 }: ResourceCardProps) {
-  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
-  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
-
-  const compatibility = getResourceCompatibility(resource.baseModel, resource.model.type, options);
-  const isPartiallyCompatible = compatibility === 'partial';
-  const isIncompatible = compatibility === null;
+  const status = getResourceStatus(resource, options);
+  const statusClasses = getStatusClasses(status);
+  const resourceIsDisabled = isResourceDisabled(status);
 
   return (
     <div
@@ -136,82 +122,55 @@ function ResourceCard({
         'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
         'bg-gray-0 dark:bg-dark-6',
         'p-2',
-        {
-          'border-yellow-5 bg-yellow-1 dark:bg-yellow-9/20': isPartiallyCompatible,
-          'border-red-5 bg-red-1 dark:bg-red-9/20': isIncompatible,
-        }
+        statusClasses.border,
+        statusClasses.background
       )}
     >
-      <Group gap="xs" justify="space-between" wrap="nowrap">
-        <Group gap={4} wrap="nowrap" className="min-w-0 flex-1">
-          <Text size="sm" lineClamp={1} fw={590} className="truncate">
-            {resource.model.name}
-          </Text>
-          {resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
-            <Text size="xs" c="dimmed" className="shrink-0">
-              ({resource.name})
-            </Text>
-          )}
-          {isPartiallyCompatible && (
-            <HoverCard position="bottom" withArrow width={200}>
-              <HoverCard.Target>
-                <ThemeIcon size={18} color="yellow.7" variant="filled" className="shrink-0">
-                  <IconAlertTriangle size={14} />
-                </ThemeIcon>
-              </HoverCard.Target>
-              <HoverCard.Dropdown>
-                <Text size="sm">
-                  This resource may not be fully supported with the current base model
-                </Text>
-              </HoverCard.Dropdown>
-            </HoverCard>
-          )}
-          {isIncompatible && (
-            <HoverCard position="bottom" withArrow width={200}>
-              <HoverCard.Target>
-                <ThemeIcon size={18} color="red" variant="filled" className="shrink-0">
-                  <IconAlertTriangle size={14} />
-                </ThemeIcon>
-              </HoverCard.Target>
-              <HoverCard.Dropdown>
-                <Text size="sm">This resource is not compatible with the current base model</Text>
-              </HoverCard.Dropdown>
-            </HoverCard>
-          )}
-        </Group>
-        <Group gap={4} className="shrink-0">
-          {allowSwap && (
-            <Button
-              variant="light"
-              radius="xl"
-              size="compact-xs"
-              onClick={onSwap}
-              disabled={disabled}
-            >
-              Swap
-            </Button>
-          )}
-          {onRemove && (
-            <LegacyActionIcon size="sm" variant="subtle" onClick={onRemove} disabled={disabled}>
-              <IconX size={16} />
-            </LegacyActionIcon>
-          )}
-        </Group>
-      </Group>
-      {hasStrength && onChange && (
-        <div className="mt-2 flex w-full items-center gap-2">
-          <NumberSlider
-            className="flex-1"
-            value={value.strength ?? resource.strength ?? 1}
-            onChange={(strength) => onChange({ ...value, strength: strength ?? 1 })}
-            min={!isSameMinMaxStrength ? resource.minStrength : -1}
-            max={!isSameMinMaxStrength ? resource.maxStrength : 2}
-            step={0.05}
-            reverse
-            disabled={disabled}
-          />
-        </div>
-      )}
+      <ResourceItemContent
+        resource={resource}
+        strengthValue={value.strength ?? resource.strength}
+        onStrengthChange={
+          // Don't allow strength changes for disabled resources
+          onChange && !resourceIsDisabled
+            ? (strength) => onChange({ ...value, strength })
+            : undefined
+        }
+        disabled={disabled}
+        options={options}
+        actions={
+          <>
+            {/* Show Revert to Default button when resource is disabled */}
+            {resourceIsDisabled && onRevertToDefault && (
+              <Button
+                variant="light"
+                radius="xl"
+                size="compact-xs"
+                onClick={onRevertToDefault}
+                leftSection={<IconRotate size={14} />}
+              >
+                Default
+              </Button>
+            )}
+            {/* Show Swap button (even for disabled resources so user can swap to compatible one) */}
+            {allowSwap && (
+              <Button
+                variant="light"
+                radius="xl"
+                size="compact-xs"
+                onClick={onSwap}
+                disabled={disabled}
+              >
+                Swap
+              </Button>
+            )}
+            {onRemove && (
+              <LegacyActionIcon size="sm" variant="subtle" onClick={onRemove} disabled={disabled}>
+                <IconX size={16} />
+              </LegacyActionIcon>
+            )}
+          </>
+        }
+      />
     </div>
   );
 }
@@ -249,6 +208,7 @@ export function ResourceSelectInput({
   selectSource = 'generation',
   disabled,
   resourceType,
+  onRevertToDefault,
   ...inputWrapperProps
 }: ResourceSelectInputProps) {
   // Only fetch if the value needs hydration (missing full resource data)
@@ -353,6 +313,7 @@ export function ResourceSelectInput({
         onChange={onChange}
         onSwap={handleOpenResourceSearch}
         onRemove={allowRemove ? handleRemove : undefined}
+        onRevertToDefault={onRevertToDefault}
         disabled={disabled}
         allowSwap={allowSwap}
         options={options}

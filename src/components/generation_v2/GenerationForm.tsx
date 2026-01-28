@@ -192,6 +192,11 @@ export function GenerationForm() {
                     options={meta.options}
                     allowRemove={false}
                     allowSwap={!meta.modelLocked}
+                    onRevertToDefault={
+                      meta.defaultModelId
+                        ? () => onChange({ id: meta.defaultModelId } as any)
+                        : undefined
+                    }
                   />
                   {/* Version selector (for models with multiple versions like Flux modes) */}
 
@@ -287,7 +292,10 @@ export function GenerationForm() {
             graph={graph}
             name="video"
             render={({ value, onChange }) => (
-              <VideoInput value={value} onChange={(v) => onChange(v as VideoValue | undefined)} />
+              <VideoInput
+                value={value}
+                onChange={onChange as (v: VideoValue | undefined) => void}
+              />
             )}
           />
 

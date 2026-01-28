@@ -18,6 +18,8 @@ import { useGraph } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { trpc } from '~/utils/trpc';
+import { useResourceDataContext } from '../inputs/ResourceDataProvider';
+import { filterSnapshotForSubmit } from '../inputs/ResourceItemContent';
 
 // =============================================================================
 // Constants
@@ -46,6 +48,7 @@ export interface UseWhatIfFromGraphOptions {
 export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions = {}) {
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
+  const { isLoading: resourcesLoading } = useResourceDataContext();
 
   // Track graph changes with a monotonic revision counter.
   // This avoids relying on getSnapshot() returning a new object reference,
@@ -106,13 +109,16 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   }, [debouncedValues, isValid]);
 
   // Build the query payload using the lighter cost check
+  // Filter out computed nodes and disabled resources
   const queryPayload = useMemo(() => {
     if (!debouncedValues || !canEstimateCost) return null;
-    return debouncedValues;
-  }, [debouncedValues, canEstimateCost]);
+    return filterSnapshotForSubmit(debouncedValues as Record<string, unknown>, {
+      computedKeys: graph.getComputedKeys(),
+    });
+  }, [debouncedValues, canEstimateCost, graph]);
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
-    enabled: enabled && !!currentUser && !!queryPayload,
+    enabled: enabled && !!currentUser && !!queryPayload && !resourcesLoading,
   });
 
   return {

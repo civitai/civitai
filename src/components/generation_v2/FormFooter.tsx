@@ -12,11 +12,14 @@ import { IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
+import {
+  DailyBoostRewardClaim,
+  useDailyBoostReward,
+} from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
+import { MembershipUpsell, useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -30,6 +33,7 @@ import { useTipStore } from '~/store/tip.store';
 import { hashify } from '~/utils/string-helpers';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useWhatIfContext } from './WhatIfProvider';
+import { filterSnapshotForSubmit } from './inputs/ResourceItemContent';
 
 // =============================================================================
 // Helper Functions
@@ -48,6 +52,66 @@ interface ResourceSnapshot {
 function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
   const { model, resources, vae } = snapshot;
   return !!(model?.id || (resources && resources.length > 0) || vae?.id);
+}
+
+// =============================================================================
+// PriorityAlertSpace Component
+// =============================================================================
+
+interface PriorityAlertSpaceProps {
+  submitError?: string;
+  onClearSubmitError: () => void;
+}
+
+/**
+ * Priority-based alert space that shows only one alert at a time.
+ * Priority order:
+ * 1. WhatIf error (cost estimation failed)
+ * 2. Submit error
+ * 3. Daily boost reward claim
+ * 4. Membership upsell
+ * 5. Queue snackbar (fallback)
+ */
+function PriorityAlertSpace({ submitError, onClearSubmitError }: PriorityAlertSpaceProps) {
+  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const dailyBoost = useDailyBoostReward();
+  const membershipUpsell = useMembershipUpsell();
+
+  if (hasWhatIfError && whatIfError) {
+    return (
+      <Notification
+        icon={<IconX size={18} />}
+        color="red"
+        className="whitespace-pre-wrap rounded-md bg-red-8/20"
+        withCloseButton={false}
+      >
+        {whatIfError.message || 'Failed to estimate generation cost.'}
+      </Notification>
+    );
+  }
+
+  if (submitError) {
+    return (
+      <Notification
+        icon={<IconX size={18} />}
+        color="red"
+        onClose={onClearSubmitError}
+        className="whitespace-pre-wrap rounded-md bg-red-8/20"
+      >
+        {submitError}
+      </Notification>
+    );
+  }
+
+  if (dailyBoost.canShow) {
+    return <DailyBoostRewardClaim />;
+  }
+
+  if (membershipUpsell.canShow) {
+    return <MembershipUpsell />;
+  }
+
+  return <QueueSnackbar />;
 }
 
 // =============================================================================
@@ -158,10 +222,10 @@ export function FormFooter() {
     setSubmitError(undefined);
     setPromptWarning(null);
 
-    // Filter out computed nodes (they're derived, not input)
-    const inputData = Object.fromEntries(
-      Object.entries(result.data).filter(([k]) => result.nodes[k]?.kind !== 'computed')
-    );
+    // Filter out computed nodes and disabled resources
+    const inputData = filterSnapshotForSubmit(result.data as Record<string, unknown>, {
+      computedKeys: graph.getComputedKeys(),
+    });
 
     // Only include creator tip if there are user-created resources
     const snapshot = graph.getSnapshot() as ResourceSnapshot;
@@ -235,10 +299,6 @@ export function FormFooter() {
 
   return (
     <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
-      {/* Daily Boost and Membership Upsell */}
-      <DailyBoostRewardClaim />
-      <MembershipUpsell />
-
       {/* Terms Agreement Alert */}
       {!reviewed && (
         <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
@@ -273,19 +333,10 @@ export function FormFooter() {
       {/* Main form footer - only show when terms are reviewed */}
       {reviewed && (
         <>
-          {/* Submit Error Notification */}
-          {submitError ? (
-            <Notification
-              icon={<IconX size={18} />}
-              color="red"
-              onClose={() => setSubmitError(undefined)}
-              className="whitespace-pre-wrap rounded-md bg-red-8/20"
-            >
-              {submitError}
-            </Notification>
-          ) : (
-            <QueueSnackbar />
-          )}
+          <PriorityAlertSpace
+            submitError={submitError}
+            onClearSubmitError={() => setSubmitError(undefined)}
+          />
 
           {/* Quantity Input, Submit Button, Reset Button */}
           <div className="flex min-h-[52px] gap-2">

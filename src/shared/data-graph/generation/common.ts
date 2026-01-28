@@ -676,6 +676,8 @@ export function createCheckpointGraph(options?: {
             modelLocked,
             // Versions are always passed; showVersionSelector computed determines visibility
             versions,
+            // Default model ID for "revert to default" functionality
+            defaultModelId: modelVersionId,
           },
           // Transform model version when workflow changes (if workflowVersions configured)
           transform: buildModelTransform(),
@@ -958,6 +960,10 @@ const videoValueSchema = z.object({
  * Creates a video source node.
  * Accepts a URL string or a full video object with metadata.
  * The component fetches metadata and provides the full output.
+ *
+ * Note: Output is required so validation fails when no video is provided.
+ * The input is optional to allow clearing via graph.set({ video: undefined }).
+ * Components must cast onChange to accept undefined for clearing.
  */
 export function videoNode() {
   return {
