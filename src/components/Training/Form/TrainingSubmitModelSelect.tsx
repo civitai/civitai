@@ -183,7 +183,14 @@ const ModelSelector = ({
                       ...getBaseModelsByGroup('ZImageBase'),
                     ] as string[]).includes(baseModel)
                   ? 'zimage'
-                  : ([...getBaseModelsByGroup('Flux2Klein')] as string[]).includes(baseModel)
+                  : (
+                      [
+                        ...getBaseModelsByGroup('Flux2Klein_4B'),
+                        ...getBaseModelsByGroup('Flux2Klein_4B_base'),
+                        ...getBaseModelsByGroup('Flux2Klein_9B'),
+                        ...getBaseModelsByGroup('Flux2Klein_9B_base'),
+                      ] as string[]
+                    ).includes(baseModel)
                   ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'

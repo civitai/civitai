@@ -1,8 +1,8 @@
-import { Center, Group, Stack, Tabs, Text, ThemeIcon } from '@mantine/core';
-import { IconClockHour9 } from '@tabler/icons-react';
-import { IconGridDots, IconLock } from '@tabler/icons-react';
+import { Group, Tabs } from '@mantine/core';
+import { IconClockHour9, IconGridDots } from '@tabler/icons-react';
 import React from 'react';
 import { Page } from '~/components/AppLayout/Page';
+import { GenerationMutedNotice } from '~/components/Generation/GenerationMutedNotice';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { Queue } from '~/components/ImageGeneration/Queue';
@@ -39,21 +39,7 @@ function GeneratePage() {
   const view = useGenerationPanelStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
-  if (currentUser?.muted)
-    return (
-      <Center h="100%" w="75%" mx="auto">
-        <Stack gap="xl" align="center">
-          <ThemeIcon size="xl" radius="xl" color="yellow">
-            <IconLock />
-          </ThemeIcon>
-          <Text align="center">
-            Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within 2 business days. You do not need to contact us.
-          </Text>
-        </Stack>
-      </Center>
-    );
+  if (currentUser?.muted) return <GenerationMutedNotice />;
 
   // desktop view
   return (

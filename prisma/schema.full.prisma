@@ -383,6 +383,7 @@ model User {
   playerInfo                 NewOrderPlayer?
   CryptoWallet               CryptoWallet[]
   CryptoTransaction          CryptoTransaction[]
+  userRestrictions            UserRestriction[]               @relation("userRestrictions")
 
   @@index([deletedAt])
 }
@@ -4759,4 +4760,45 @@ model TagsOnImageDetails {
   confidence  Int
 
   @@id([imageId, tagId])
+}
+
+// Generation restriction system — tracks restrictions issued for prohibited prompt violations
+model UserRestriction {
+  id              Int                   @id @default(autoincrement())
+  userId          Int
+  user            User                  @relation("userRestrictions", fields: [userId], references: [id], onDelete: Cascade)
+  type            String                @default("generation")
+  status          UserRestrictionStatus @default(Pending)
+  triggers        Json                  @default("[]")
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  resolvedAt      DateTime?
+  resolvedBy      Int?
+  resolvedMessage String?
+  userMessage     String?
+  userMessageAt   DateTime?
+
+  @@index([userId])
+  @@index([status])
+  @@index([type, status])
+}
+
+enum UserRestrictionStatus {
+  Pending
+  Upheld
+  Overturned
+}
+
+// Moderator-curated allowlist for false-positive prompt triggers
+model PromptAllowlist {
+  id        Int      @id @default(autoincrement())
+  trigger   String
+  category  String
+  addedBy   Int
+  reason    String?
+  userRestrictionId Int?
+  createdAt DateTime @default(now())
+
+  @@unique([trigger, category])
+  @@index([category])
 }
