@@ -152,7 +152,7 @@ export type Score = {
 };
 
 export type DailyChallengeDetails = {
-  challengeId?: number; // Challenge table ID for status updates
+  challengeId: number; // Challenge table ID for status updates
   articleId?: number; // Deprecated: Legacy article ID (no longer used for new challenges)
   type: string;
   date: Date;

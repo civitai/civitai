@@ -599,7 +599,6 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     log('Earned prizes:', earnedPrizes.length);
 
     if (earnedPrizes.length > 0) {
-      const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
       await withRetries(() =>
         createBuzzTransactionMany(
           earnedPrizes.map(({ userId }) => ({
@@ -607,8 +606,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             toAccountId: userId,
             fromAccountId: 0, // central bank
             amount: currentChallenge.entryPrize.buzz,
-            description: `Challenge Entry Prize: ${dateStr}`,
-            externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
+            description: `Challenge Entry Prize: ${currentChallenge.title}`,
+            externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
             toAccountType: 'blue',
           }))
         )
@@ -795,7 +794,6 @@ async function pickWinnersForChallenge(
 
   // Send prizes to winners
   // ----------------------------------------------
-  const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
   await withRetries(() =>
     createBuzzTransactionMany(
       winningEntries.map((entry, i) => ({
@@ -803,8 +801,8 @@ async function pickWinnersForChallenge(
         toAccountId: entry.userId,
         fromAccountId: 0, // central bank
         amount: currentChallenge.prizes[i].buzz,
-        description: `Challenge Winner Prize ${i + 1}: ${dateStr}`,
-        externalTransactionId: `challenge-winner-prize-${dateStr}-${i + 1}`,
+        description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
+        externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
         toAccountType: 'yellow',
       }))
     )
@@ -837,8 +835,8 @@ async function pickWinnersForChallenge(
               toAccountId: userId,
               fromAccountId: 0, // central bank
               amount: currentChallenge.entryPrize.buzz,
-              description: `Challenge Entry Prize: ${dateStr}`,
-              externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
+              description: `Challenge Entry Prize: ${currentChallenge.title}`,
+              externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
               toAccountType: 'blue',
             }))
           )

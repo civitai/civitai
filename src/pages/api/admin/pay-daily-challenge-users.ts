@@ -37,7 +37,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   `;
 
   if (earnedPrizes.length > 0) {
-    const dateStr = dayjs(challenge.date).format('YYYY-MM-DD');
     await withRetries(() =>
       createBuzzTransactionMany(
         earnedPrizes.map(({ userId }) => ({
@@ -45,8 +44,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount: challenge.entryPrize.buzz,
-          description: `Challenge Entry Prize: ${dateStr}`,
-          externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
+          description: `Challenge Entry Prize: ${challenge.title}`,
+          externalTransactionId: `challenge-entry-prize-${challenge.challengeId}-${userId}`,
           toAccountType: 'blue',
         }))
       )

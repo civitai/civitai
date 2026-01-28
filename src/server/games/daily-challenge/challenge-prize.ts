@@ -17,6 +17,7 @@ type ChallengeForPrize = {
   id: number;
   entryPrize: { buzz: number; points: number } | null;
   entryPrizeRequirement: number;
+  title: string;
 };
 
 /**
@@ -33,7 +34,7 @@ export async function checkAndAwardEntryPrize({
   try {
     // Find the active challenge for this collection
     const [challenge] = await dbRead.$queryRaw<ChallengeForPrize[]>`
-      SELECT id, "entryPrize", "entryPrizeRequirement"
+      SELECT id, "entryPrize", "entryPrizeRequirement", title
       FROM "Challenge"
       WHERE "collectionId" = ${collectionId}
       AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
@@ -71,7 +72,7 @@ export async function checkAndAwardEntryPrize({
       toAccountId: userId,
       amount: challenge.entryPrize.buzz,
       type: TransactionType.Reward,
-      description: `Challenge Entry Prize: ${challenge.id}`,
+      description: `Challenge Entry Prize: ${challenge.title}`,
       externalTransactionId: `challenge-entry-prize-${challenge.id}-${userId}`,
       details: {
         challengeId: challenge.id,
