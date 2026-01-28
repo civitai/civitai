@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   closeChallengeCollection,
@@ -745,16 +744,17 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   log('ChallengeWinner records created');
 
   // Send prizes to winners
-  const dateStr = dayjs().format('YYYY-MM-DD-HHmm');
+  // Note: externalTransactionId uses challengeId-userId-place pattern for idempotency
+  // This ensures retries don't create duplicate payments
   await withRetries(() =>
     createBuzzTransactionMany(
-      winningEntries.map((entry, i) => ({
+      winningEntries.map((entry) => ({
         type: TransactionType.Reward,
         toAccountId: entry.userId,
         fromAccountId: 0, // central bank
         amount: entry.prize,
-        description: `Challenge Winner Prize ${i + 1}: ${challenge.title}`,
-        externalTransactionId: `challenge-winner-prize-${challengeId}-${dateStr}-${i + 1}`,
+        description: `Challenge Winner Prize #${entry.position}: ${challenge.title}`,
+        externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
         toAccountType: 'yellow',
       }))
     )
@@ -796,6 +796,8 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
 
       if (entryPrizeUsers.length > 0) {
+        // Note: externalTransactionId uses challengeId-userId pattern for idempotency
+        // This ensures retries don't create duplicate payments
         await withRetries(() =>
           createBuzzTransactionMany(
             entryPrizeUsers.map(({ userId }) => ({
@@ -804,7 +806,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
               fromAccountId: 0, // central bank
               amount: challenge.entryPrize!.buzz,
               description: `Challenge Entry Prize: ${challenge.title}`,
-              externalTransactionId: `challenge-entry-prize-${challengeId}-${dateStr}-${userId}`,
+              externalTransactionId: `challenge-entry-prize-${challengeId}-${userId}`,
               toAccountType: 'blue',
             }))
           )

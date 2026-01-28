@@ -11,7 +11,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import clsx from 'clsx';
-import { Currency, ChallengeStatus, ChallengeSource, MediaType } from '~/shared/utils/prisma/enums';
+import { Currency, ChallengeStatus, ChallengeSource } from '~/shared/utils/prisma/enums';
 import type { ChallengeListItem } from '~/server/schema/challenge.schema';
 
 const sharedBadgeProps: Omit<BadgeProps, 'children'> = {

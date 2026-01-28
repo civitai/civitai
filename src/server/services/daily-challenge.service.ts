@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { ArticleSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
@@ -145,20 +146,24 @@ export async function getAllChallengesFromDb(options?: {
 }) {
   const { status, limit = 100 } = options ?? {};
 
-  let statusFilter = '';
+  // Build WHERE conditions using parameterized queries (SQL injection safe)
+  const conditions: Prisma.Sql[] = [];
+
   if (status && status.length > 0) {
-    const statusList = status.map((s) => `'${String(s)}'`).join(', ');
-    statusFilter = `AND status IN (${statusList})`;
+    const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
+    conditions.push(Prisma.sql`status IN (${Prisma.join(statusValues)})`);
   }
 
-  const rows = await dbRead.$queryRawUnsafe<{ id: number }[]>(`
+  const whereClause =
+    conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id
     FROM "Challenge"
-    WHERE 1=1
-    ${statusFilter}
+    ${whereClause}
     ORDER BY "startsAt" DESC
     LIMIT ${limit}
-  `);
+  `;
 
   const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
   return challenges.filter((c): c is NewChallengeDetails => c !== null);
@@ -173,7 +178,7 @@ export async function getVisibleChallenges(limit = 30) {
     SELECT id
     FROM "Challenge"
     WHERE "visibleAt" <= now()
-    AND status NOT IN (${ChallengeStatus.Cancelled}::"ChallengeStatus")
+    AND status NOT IN (${ChallengeStatus.Completed}::"ChallengeStatus", ${ChallengeStatus.Cancelled}::"ChallengeStatus")
     ORDER BY
       CASE
         WHEN status = ${ChallengeStatus.Active}::"ChallengeStatus" THEN 1

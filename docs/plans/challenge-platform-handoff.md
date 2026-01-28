@@ -19,7 +19,7 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 #### Database Schema
 - **Migration ready**: `prisma/migrations/20260113113902_add_challenge_system/migration.sql`
 - Tables: `Challenge`, `ChallengeWinner`
-- Enums: `ChallengeSource` (System/Mod/User), `ChallengeStatus` (Draft/Scheduled/Active/Judging/Completed/Cancelled)
+- Enums: `ChallengeSource` (System/Mod/User), `ChallengeStatus` (Scheduled/Active/Completed/Cancelled)
 - Entries stored as `CollectionItems` in Contest Mode collections (no separate ChallengeEntry table)
 
 #### API Layer (tRPC)
@@ -45,12 +45,12 @@ Read docs/plans/challenge-platform-handoff.md and docs/challenge-design-question
 
 #### UI Components
 - `src/components/Cards/ChallengeCard.tsx` - Card for challenge feed (displays cover image)
-- `src/components/Challenge/ChallengesInfinite.tsx` - Infinite scroll feed
+- `src/components/Challenge/Infinite/ChallengesInfinite.tsx` - Infinite scroll feed
 - `src/components/Challenge/ChallengeUpsertForm.tsx` - Moderator create/edit form
 - `src/components/Challenge/challenge.utils.ts` - React Query hooks
 - `src/pages/challenges/index.tsx` - Public challenges page
 - `src/pages/challenges/[id]/[[...slug]].tsx` - Challenge details page (displays cover image)
-- `src/pages/moderator/challenges/index.tsx` - Mod management page
+- `src/pages/moderator/challenges.tsx` - Mod management page
 - `src/pages/moderator/challenges/create.tsx` - Mod create page
 - `src/pages/moderator/challenges/[id]/edit.tsx` - Mod edit page
 
@@ -155,7 +155,7 @@ See `docs/features/challenge-platform.md` for full roadmap:
 | Helper functions | `src/server/games/daily-challenge/challenge-helpers.ts` |
 | Auto-queue job | `src/server/jobs/challenge-auto-queue.ts` |
 | Processing job | `src/server/jobs/daily-challenge-processing.ts` |
-| Challenge feed | `src/components/Challenge/ChallengesInfinite.tsx` |
+| Challenge feed | `src/components/Challenge/Infinite/ChallengesInfinite.tsx` |
 | Challenge card | `src/components/Cards/ChallengeCard.tsx` |
 | Challenge details page | `src/pages/challenges/[id]/[[...slug]].tsx` |
 | Create/edit form | `src/components/Challenge/ChallengeUpsertForm.tsx` |
