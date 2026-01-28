@@ -174,8 +174,6 @@ export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
 
-export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
-
 export interface Account {
   id: number;
   userId: number;
@@ -440,7 +438,6 @@ export interface User {
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
-  userRestrictions?: UserRestriction[];
 }
 
 export interface CustomerSubscription {
@@ -3693,32 +3690,6 @@ export interface TagsOnImageDetails {
   reserved_1: boolean;
   reserved_2: boolean;
   confidence: number;
-}
-
-export interface UserRestriction {
-  id: number;
-  userId: number;
-  user?: User;
-  type: string;
-  status: UserRestrictionStatus;
-  triggers: JsonValue;
-  createdAt: Date;
-  updatedAt: Date;
-  resolvedAt: Date | null;
-  resolvedBy: number | null;
-  resolvedMessage: string | null;
-  userMessage: string | null;
-  userMessageAt: Date | null;
-}
-
-export interface PromptAllowlist {
-  id: number;
-  trigger: string;
-  category: string;
-  addedBy: number;
-  reason: string | null;
-  userRestrictionId: number | null;
-  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
