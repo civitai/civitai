@@ -151,10 +151,13 @@ function ProjectCard({ id, name, panelCount, thumbnailUrl, updatedAt }: ProjectC
       <Stack justify="space-between" className="h-full">
         <div>
           {thumbnailUrl ? (
-            <div
-              className="w-full h-20 bg-cover bg-center rounded mb-2"
-              style={{ backgroundImage: `url(${thumbnailUrl})` }}
-            />
+            <div className="w-full h-20 rounded mb-2 overflow-hidden">
+              <img
+                src={thumbnailUrl}
+                alt={name}
+                className="w-full h-full object-cover"
+              />
+            </div>
           ) : (
             <div className="w-full h-20 bg-gray-800 rounded mb-2 flex items-center justify-center">
               <IconPhoto size={24} className="text-gray-600" />

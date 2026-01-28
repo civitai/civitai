@@ -17,8 +17,9 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconArrowLeft, IconCheck, IconPhoto, IconSearch, IconUpload, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -60,7 +61,6 @@ function CharacterUpload() {
     id: number;
     name: string;
     versionId: number;
-    imageUrl?: string;
   } | null>(null);
 
   const { data: project } = trpc.comics.getProject.useQuery(
@@ -72,6 +72,25 @@ function CharacterUpload() {
     { query: debouncedSearch || undefined, limit: 20 },
     { enabled: sourceType === 'existing' }
   );
+
+  // Fetch cover images for models using the same pattern as showcase items
+  const modelEntities = useMemo(
+    () => (myModels ?? []).map((m) => ({ entityType: 'Model' as const, entityId: m.id })),
+    [myModels]
+  );
+  const { data: coverImages } = trpc.image.getEntitiesCoverImage.useQuery(
+    { entities: modelEntities },
+    { enabled: modelEntities.length > 0 }
+  );
+  const coverImageMap = useMemo(() => {
+    const map = new Map<number, { url: string; type: string; metadata?: any }>();
+    if (coverImages) {
+      for (const img of coverImages) {
+        map.set(img.entityId, { url: img.url, type: img.type, metadata: img.metadata });
+      }
+    }
+    return map;
+  }, [coverImages]);
 
   const createFromUploadMutation = trpc.comics.createCharacterFromUpload.useMutation({
     onSuccess: () => {
@@ -239,56 +258,111 @@ function CharacterUpload() {
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-80 overflow-y-auto">
+                    <div
+                      className="max-h-[420px] overflow-y-auto pr-1"
+                      style={{
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#495057 #25262b',
+                      }}
+                    >
                       {isLoadingModels ? (
-                        <Text c="dimmed" size="sm">Loading models...</Text>
+                        <div className="py-8 text-center">
+                          <Text c="dimmed" size="sm">Loading models...</Text>
+                        </div>
                       ) : myModels?.length === 0 ? (
-                        <Text c="dimmed" size="sm" className="col-span-full">
-                          No LoRA models found. Create one first or upload images to train a new character.
-                        </Text>
+                        <div className="py-8 text-center">
+                          <Stack align="center" gap="xs">
+                            <IconPhoto size={32} className="text-gray-600" />
+                            <Text c="dimmed" size="sm">
+                              No LoRA models found. Create one first or upload images to train a new character.
+                            </Text>
+                          </Stack>
+                        </div>
                       ) : (
-                        myModels?.map((model) => (
-                          <Card
-                            key={model.id}
-                            withBorder
-                            padding="xs"
-                            className={`cursor-pointer transition-all ${
-                              selectedModel?.id === model.id
-                                ? 'border-blue-500 ring-2 ring-blue-500/20'
-                                : 'hover:border-gray-500'
-                            }`}
-                            onClick={() => setSelectedModel({
-                              id: model.id,
-                              name: model.name,
-                              versionId: model.versionId!,
-                              imageUrl: model.imageUrl ?? undefined,
-                            })}
-                          >
-                            <Stack gap="xs">
-                              <div className="aspect-square bg-gray-800 rounded overflow-hidden relative">
-                                {model.imageUrl ? (
-                                  <Image
-                                    src={model.imageUrl}
-                                    alt={model.name}
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center">
-                                    <IconPhoto size={24} className="text-gray-600" />
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {myModels?.map((model) => {
+                            const coverImage = coverImageMap.get(model.id);
+                            const isSelected = selectedModel?.id === model.id;
+                            return (
+                              <div
+                                key={model.id}
+                                onClick={() => setSelectedModel({
+                                  id: model.id,
+                                  name: model.name,
+                                  versionId: model.versionId!,
+                                })}
+                                className="cursor-pointer rounded-xl overflow-hidden flex flex-col transition-all duration-200 hover:-translate-y-0.5"
+                                style={{
+                                  background: 'var(--mantine-color-dark-6)',
+                                  border: isSelected
+                                    ? '2px solid var(--mantine-color-blue-6)'
+                                    : '2px solid var(--mantine-color-dark-4)',
+                                  boxShadow: isSelected
+                                    ? '0 0 0 3px rgba(34,139,230,0.2), 0 8px 16px rgba(0,0,0,0.5)'
+                                    : '0 2px 8px rgba(0,0,0,0.3)',
+                                }}
+                              >
+                                {/* Image */}
+                                <div
+                                  className="relative overflow-hidden"
+                                  style={{
+                                    aspectRatio: '1',
+                                    background: 'var(--mantine-color-dark-7)',
+                                  }}
+                                >
+                                  {coverImage ? (
+                                    <EdgeMedia2
+                                      src={coverImage.url}
+                                      type={coverImage.type as any}
+                                      metadata={coverImage.metadata}
+                                      name={model.name}
+                                      alt={model.name}
+                                      width={300}
+                                      style={{
+                                        maxWidth: '100%',
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: 'cover',
+                                        objectPosition: 'top center',
+                                        display: 'block',
+                                      }}
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center">
+                                      <IconPhoto size={28} style={{ color: 'var(--mantine-color-dark-3)' }} />
+                                    </div>
+                                  )}
+
+                                  {/* Selection badge */}
+                                  <div
+                                    className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200"
+                                    style={{
+                                      background: 'var(--mantine-color-blue-6)',
+                                      border: '3px solid var(--mantine-color-dark-6)',
+                                      opacity: isSelected ? 1 : 0,
+                                      transform: isSelected ? 'scale(1)' : 'scale(0.6)',
+                                    }}
+                                  >
+                                    <IconCheck size={14} color="white" />
                                   </div>
-                                )}
-                                {selectedModel?.id === model.id && (
-                                  <div className="absolute top-1 right-1 bg-blue-500 rounded-full p-1">
-                                    <IconCheck size={12} className="text-white" />
-                                  </div>
-                                )}
+                                </div>
+
+                                {/* Info */}
+                                <div className="px-3 py-2.5">
+                                  <Text size="sm" fw={600} c="white" truncate>
+                                    {model.name}
+                                  </Text>
+                                  {model.versionName && (
+                                    <Text size="xs" c="dimmed" mt={2}>
+                                      {model.versionName}
+                                    </Text>
+                                  )}
+                                </div>
                               </div>
-                              <Text size="xs" truncate fw={500}>
-                                {model.name}
-                              </Text>
-                            </Stack>
-                          </Card>
-                        ))
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   </Stack>

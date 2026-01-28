@@ -155,8 +155,15 @@ export const comicsRouter = router({
 
   deleteProject: protectedProcedure
     .input(getProjectSchema)
-    .use(isProjectOwner)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: { userId: true },
+      });
+      if (!project || project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
       await dbWrite.comicProject.update({
         where: { id: input.id },
         data: { status: ComicProjectStatus.Deleted },
@@ -260,17 +267,37 @@ export const comicsRouter = router({
       return character;
     }),
 
+  // Internal: called by training pipeline webhooks to update character status.
+  // Restricted transitions prevent users from bypassing training.
   updateCharacterStatus: protectedProcedure
     .input(updateCharacterStatusSchema)
     .mutation(async ({ ctx, input }) => {
-      // Verify ownership
       const character = await dbRead.comicCharacter.findUnique({
         where: { id: input.characterId },
-        select: { userId: true },
+        select: { userId: true, status: true, sourceType: true },
       });
 
       if (!character || character.userId !== ctx.user.id) {
         throw throwAuthorizationError();
+      }
+
+      // Only allow valid status transitions for Upload characters
+      // ExistingModel characters are set to Ready on creation and shouldn't change
+      if (character.sourceType === ComicCharacterSourceType.ExistingModel) {
+        throw throwBadRequestError('Cannot change status of a model-linked character');
+      }
+
+      const allowedTransitions: Record<string, string[]> = {
+        [ComicCharacterStatus.Pending]: [ComicCharacterStatus.Processing, ComicCharacterStatus.Failed],
+        [ComicCharacterStatus.Processing]: [ComicCharacterStatus.Ready, ComicCharacterStatus.Failed],
+        [ComicCharacterStatus.Failed]: [ComicCharacterStatus.Pending], // allow retry
+      };
+
+      const allowed = allowedTransitions[character.status] ?? [];
+      if (!allowed.includes(input.status)) {
+        throw throwBadRequestError(
+          `Cannot transition from ${character.status} to ${input.status}`
+        );
       }
 
       const updated = await dbWrite.comicCharacter.update({
@@ -302,6 +329,7 @@ export const comicsRouter = router({
     }),
 
   // Search user's models for character selection
+  // Images are fetched separately on the frontend via image.getEntitiesCoverImage
   searchMyModels: protectedProcedure
     .input(z.object({
       query: z.string().optional(),
@@ -311,8 +339,7 @@ export const comicsRouter = router({
       const models = await dbRead.model.findMany({
         where: {
           userId: ctx.user.id,
-          status: 'Published',
-          type: 'LORA', // Only LoRAs for character consistency
+          type: 'LORA',
           ...(input.query && {
             name: { contains: input.query, mode: 'insensitive' },
           }),
@@ -321,16 +348,11 @@ export const comicsRouter = router({
           id: true,
           name: true,
           modelVersions: {
-            where: { status: 'Published' },
             orderBy: { createdAt: 'desc' },
             take: 1,
             select: {
               id: true,
               name: true,
-              images: {
-                take: 1,
-                select: { url: true },
-              },
             },
           },
         },
@@ -338,13 +360,17 @@ export const comicsRouter = router({
         orderBy: { updatedAt: 'desc' },
       });
 
-      return models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        versionId: m.modelVersions[0]?.id,
-        versionName: m.modelVersions[0]?.name,
-        imageUrl: m.modelVersions[0]?.images[0]?.url,
-      })).filter((m) => m.versionId); // Only return models with at least one version
+      return models
+        .map((m) => {
+          const version = m.modelVersions[0];
+          return {
+            id: m.id,
+            name: m.name,
+            versionId: version?.id,
+            versionName: version?.name,
+          };
+        })
+        .filter((m) => m.versionId); // Only return models with at least one version
     }),
 
   // Panels
@@ -449,15 +475,27 @@ export const comicsRouter = router({
     .input(reorderPanelsSchema)
     .use(isProjectOwner)
     .mutation(async ({ input }) => {
-      // Update positions based on array order
-      const updates = input.panelIds.map((id, index) =>
-        dbWrite.comicPanel.update({
-          where: { id },
-          data: { position: index },
-        })
-      );
+      // Verify all panels belong to this project
+      const panels = await dbRead.comicPanel.findMany({
+        where: { projectId: input.projectId },
+        select: { id: true },
+      });
+      const projectPanelIds = new Set(panels.map((p) => p.id));
+      for (const id of input.panelIds) {
+        if (!projectPanelIds.has(id)) {
+          throw throwBadRequestError('Panel does not belong to this project');
+        }
+      }
 
-      await Promise.all(updates);
+      // Update positions in a transaction
+      await dbWrite.$transaction(
+        input.panelIds.map((id, index) =>
+          dbWrite.comicPanel.update({
+            where: { id },
+            data: { position: index },
+          })
+        )
+      );
 
       return { success: true };
     }),

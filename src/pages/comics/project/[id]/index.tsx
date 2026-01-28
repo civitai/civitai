@@ -27,8 +27,9 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -62,6 +63,28 @@ function ProjectWorkspace() {
     { enabled: !!projectId }
   );
 
+  // Fetch cover images for characters that have a linked model
+  const characterModelEntities = useMemo(
+    () =>
+      (project?.characters ?? [])
+        .filter((c) => c.modelId)
+        .map((c) => ({ entityType: 'Model' as const, entityId: c.modelId! })),
+    [project?.characters]
+  );
+  const { data: characterCoverImages } = trpc.image.getEntitiesCoverImage.useQuery(
+    { entities: characterModelEntities },
+    { enabled: characterModelEntities.length > 0 }
+  );
+  const characterImageMap = useMemo(() => {
+    const map = new Map<number, { url: string; type: string; metadata?: any }>();
+    if (characterCoverImages) {
+      for (const img of characterCoverImages) {
+        map.set(img.entityId, { url: img.url, type: img.type, metadata: img.metadata });
+      }
+    }
+    return map;
+  }, [characterCoverImages]);
+
   const createPanelMutation = trpc.comics.createPanel.useMutation({
     onSuccess: () => {
       closePanelModal();
@@ -74,15 +97,6 @@ function ProjectWorkspace() {
     onSuccess: () => refetch(),
   });
 
-  const handleGeneratePanel = () => {
-    if (!prompt.trim()) return;
-    createPanelMutation.mutate({
-      projectId,
-      characterId: selectedCharacterId ?? undefined,
-      prompt: prompt.trim(),
-    });
-  };
-
   if (isLoading || !project) {
     return (
       <Container size="xl" py="xl">
@@ -91,7 +105,19 @@ function ProjectWorkspace() {
     );
   }
 
-  const readyCharacter = project.characters.find((c) => c.status === 'Ready');
+  const activeCharacters = project.characters.filter((c) => c.status === 'Ready');
+  const activeCharacter = activeCharacters.find((c) => c.id === selectedCharacterId)
+    ?? activeCharacters[0]
+    ?? null;
+
+  const handleGeneratePanel = () => {
+    if (!prompt.trim() || !activeCharacter) return;
+    createPanelMutation.mutate({
+      projectId,
+      characterId: activeCharacter.id,
+      prompt: prompt.trim(),
+    });
+  };
 
   return (
     <>
@@ -110,11 +136,21 @@ function ProjectWorkspace() {
           <Grid>
             {/* Sidebar - Character */}
             <Grid.Col span={{ base: 12, md: 3 }}>
-              <Card withBorder>
-                <Stack gap="md">
-                  <Text fw={500}>Character</Text>
+              <Stack gap="sm">
+                <Group justify="space-between">
+                  <Text fw={500}>Characters</Text>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    component={Link}
+                    href={`/comics/project/${projectId}/character`}
+                  >
+                    <IconPlus size={16} />
+                  </ActionIcon>
+                </Group>
 
-                  {project.characters.length === 0 ? (
+                {project.characters.length === 0 ? (
+                  <Card withBorder>
                     <Stack align="center" gap="sm" py="md">
                       <IconUser size={32} className="text-gray-500" />
                       <Text size="sm" c="dimmed" ta="center">
@@ -128,38 +164,80 @@ function ProjectWorkspace() {
                         Add Character
                       </Button>
                     </Stack>
-                  ) : (
-                    project.characters.map((character) => (
-                      <Card key={character.id} withBorder padding="sm">
-                        <Group>
-                          <div className="w-12 h-12 bg-gray-800 rounded flex items-center justify-center">
-                            <IconUser size={20} className="text-gray-500" />
-                          </div>
-                          <div className="flex-1">
-                            <Text size="sm" fw={500}>
-                              {character.name}
-                            </Text>
-                            <Badge
-                              size="xs"
-                              color={
-                                character.status === 'Ready'
-                                  ? 'green'
-                                  : character.status === 'Processing'
-                                    ? 'yellow'
-                                    : character.status === 'Failed'
-                                      ? 'red'
-                                      : 'gray'
-                              }
-                            >
-                              {character.status}
-                            </Badge>
-                          </div>
-                        </Group>
-                      </Card>
-                    ))
-                  )}
-                </Stack>
-              </Card>
+                  </Card>
+                ) : (
+                  project.characters.map((character) => {
+                    const coverImage = character.modelId
+                      ? characterImageMap.get(character.modelId)
+                      : undefined;
+                    return (
+                      <div
+                        key={character.id}
+                        className="flex items-center gap-3 rounded-lg px-3 py-2"
+                        style={{
+                          border: '1px solid var(--mantine-color-dark-4)',
+                          background: 'var(--mantine-color-dark-6)',
+                        }}
+                      >
+                        {/* Thumbnail */}
+                        <div
+                          className="flex-shrink-0 rounded-md overflow-hidden"
+                          style={{
+                            width: 40,
+                            height: 40,
+                            background: 'var(--mantine-color-dark-7)',
+                          }}
+                        >
+                          {coverImage ? (
+                            <EdgeMedia2
+                              src={coverImage.url}
+                              type={coverImage.type as any}
+                              metadata={coverImage.metadata}
+                              name={character.name}
+                              alt={character.name}
+                              width={80}
+                              style={{
+                                maxWidth: '100%',
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                objectPosition: 'top center',
+                                display: 'block',
+                              }}
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <IconUser size={18} style={{ color: 'var(--mantine-color-dark-3)' }} />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Name + status */}
+                        <div className="flex-1 min-w-0">
+                          <Text size="sm" fw={500} c="white" truncate>
+                            {character.name}
+                          </Text>
+                          <Badge
+                            size="xs"
+                            variant="light"
+                            color={
+                              character.status === 'Ready'
+                                ? 'green'
+                                : character.status === 'Processing'
+                                  ? 'yellow'
+                                  : character.status === 'Failed'
+                                    ? 'red'
+                                    : 'gray'
+                            }
+                          >
+                            {character.status}
+                          </Badge>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </Stack>
             </Grid.Col>
 
             {/* Main - Panels */}
@@ -171,13 +249,13 @@ function ProjectWorkspace() {
                     size="sm"
                     leftSection={<IconPlus size={14} />}
                     onClick={openPanelModal}
-                    disabled={!readyCharacter}
+                    disabled={!activeCharacter}
                   >
                     Add Panel
                   </Button>
                 </Group>
 
-                {!readyCharacter && project.characters.length === 0 && (
+                {!activeCharacter && project.characters.length === 0 && (
                   <Card withBorder p="xl" className="text-center">
                     <Stack align="center" gap="md">
                       <Text c="dimmed">Add a character first to start generating panels</Text>
@@ -188,7 +266,7 @@ function ProjectWorkspace() {
                   </Card>
                 )}
 
-                {!readyCharacter && project.characters.length > 0 && (
+                {!activeCharacter && project.characters.length > 0 && (
                   <Card withBorder p="md">
                     <Text c="dimmed" size="sm">
                       Wait for your character to finish processing before generating panels.
@@ -196,7 +274,7 @@ function ProjectWorkspace() {
                   </Card>
                 )}
 
-                {project.panels.length === 0 && readyCharacter && (
+                {project.panels.length === 0 && activeCharacter && (
                   <Card withBorder p="xl" className="text-center">
                     <Stack align="center" gap="md">
                       <IconPhoto size={48} className="text-gray-500" />
@@ -227,12 +305,12 @@ function ProjectWorkspace() {
       {/* Generate Panel Modal */}
       <Modal opened={panelModalOpened} onClose={closePanelModal} title="Generate Panel" size="lg">
         <Stack gap="md">
-          {readyCharacter && (
+          {activeCharacter && (
             <Group>
               <Text size="sm" c="dimmed">
                 Character:
               </Text>
-              <Badge>{readyCharacter.name}</Badge>
+              <Badge>{activeCharacter.name}</Badge>
             </Group>
           )}
 
