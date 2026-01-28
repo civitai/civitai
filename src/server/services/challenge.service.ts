@@ -759,7 +759,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   if (challenge.status !== ChallengeStatus.Active) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: `Cannot end challenge with status "${String(challenge.status)}". Challenge must be Active.`,
+      message: `Cannot end challenge with status "${String(
+        challenge.status
+      )}". Challenge must be Active.`,
     });
   }
 
@@ -962,7 +964,9 @@ export async function voidChallenge(challengeId: number) {
   ) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: `Cannot void challenge with status "${String(challenge.status)}". Challenge must be Active or Scheduled.`,
+      message: `Cannot void challenge with status "${String(
+        challenge.status
+      )}". Challenge must be Active or Scheduled.`,
     });
   }
 
