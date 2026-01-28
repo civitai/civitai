@@ -6,6 +6,20 @@
 
 ---
 
+## Development Session
+
+**Claude Session ID:** `b4855a0b-40e3-4170-899d-7a76c92bc1b8`
+
+To continue this work, reference the session above or point Claude to this document and the codebase at `apps/comics` (now integrated into main codebase under `src/pages/comics/`).
+
+**Key files:**
+- Pages: `src/pages/comics/`
+- Router: `src/server/routers/comics.router.ts`
+- Schema: `prisma/schema.full.prisma` (search for "ComicProject")
+- Migrations: `prisma/migrations/20260127*`
+
+---
+
 ## Executive Summary
 
 Build a minimal working prototype that demonstrates the core magic of Civitai Comics:
