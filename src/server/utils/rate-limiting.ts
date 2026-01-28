@@ -72,10 +72,16 @@ export function createLimiter({
     return new Date(Number(limitHitTime));
   }
 
+  async function reset(userKey: string) {
+    await redis.del(`${counterKey}:${userKey}`);
+    await sysRedis.del(`${limitKey}:${userKey}`);
+  }
+
   return {
     hasExceededLimit,
     getLimitHitTime,
     increment,
     getCount,
+    reset,
   };
 }

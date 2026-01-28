@@ -782,6 +782,7 @@ export const REDIS_KEYS = {
     TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     BLOCKLIST: 'system:blocklist',
+    PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
   },

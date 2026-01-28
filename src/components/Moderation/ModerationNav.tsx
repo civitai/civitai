@@ -59,6 +59,11 @@ export function ModerationNav() {
           href: '/moderator/orchestrator/flagged',
           hidden: !features.csamReports,
         },
+        {
+          label: 'Generator Restrictions',
+          href: '/moderator/generation-restrictions',
+          hidden: !features.csamReports,
+        },
       ]
         .filter((i) => !i.hidden)
         .map((link) => (
