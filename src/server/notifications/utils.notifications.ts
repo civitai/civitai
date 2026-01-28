@@ -12,6 +12,7 @@ import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
+import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
@@ -43,6 +44,7 @@ export const notificationProcessors = {
   ...clubNotifications,
   ...creatorsProgramNotifications,
   ...followNotifications,
+  ...generationMuteNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
   ...auctionNotifications,
