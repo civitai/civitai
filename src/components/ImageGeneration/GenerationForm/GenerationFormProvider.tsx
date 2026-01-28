@@ -431,6 +431,12 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               form.setValue('cfgScale', 1);
               form.setValue('steps', 9);
             }, 0);
+          } else if (baseModel === 'ZImageBase' && prevBaseModel !== baseModel) {
+            setTimeout(() => {
+              form.setValue('cfgScale', 4);
+              form.setValue('steps', 20);
+              form.setValue('scheduler', 'karras');
+            }, 0);
           } else if (baseModel === 'LTXV2' && prevBaseModel !== baseModel) {
             setTimeout(() => {
               form.setValue('steps', 20);
@@ -439,9 +445,12 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             form.setValue('cfgScale', 2.5);
           } else if (
             baseModel !== 'ZImageTurbo' &&
+            baseModel !== 'ZImageBase' &&
             baseModel !== 'Qwen' &&
             !fluxBaseModels.includes(baseModel) &&
-            (prevBaseModel === 'ZImageTurbo' || fluxBaseModels.includes(prevBaseModel))
+            (prevBaseModel === 'ZImageTurbo' ||
+              prevBaseModel === 'ZImageBase' ||
+              fluxBaseModels.includes(prevBaseModel))
           ) {
             setTimeout(() => {
               form.setValue('cfgScale', 7);

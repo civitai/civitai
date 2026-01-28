@@ -315,7 +315,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       return false;
     }
 
-    // TODO - exclude Qwen, ZImageTurbo baseModels from being inserted as coveredCheckpoints
+    // TODO - exclude Qwen, ZImageTurbo, ZImageBase baseModels from being inserted as coveredCheckpoints
     const modelVersionData = await dbWrite.modelVersion
       .findMany({
         where: { id: { in: winnerIds } },
