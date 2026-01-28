@@ -1195,14 +1195,6 @@ export function GenerationFormContent() {
                           if (model.id !== modelVersionId) {
                             // Update baseModel for Flux2Klein since each variant has its own group
                             const kleinBaseModel = getFlux2KleinBaseModel(modelVersionId);
-                            const baseModelName = kleinBaseModel
-                              ? getBaseModelConfig(kleinBaseModel).name
-                              : model.baseModel;
-                            form.setValue('model', {
-                              ...model,
-                              id: modelVersionId,
-                              baseModel: baseModelName,
-                            });
                             if (kleinBaseModel) {
                               form.setValue('baseModel', kleinBaseModel as any);
                             }
@@ -1214,7 +1206,14 @@ export function GenerationFormContent() {
                                 getGenerationConfig(zImageEntry.baseModel).checkpoint
                               );
                             } else {
-                              form.setValue('model', { ...model, id: modelVersionId });
+                              const baseModelName = kleinBaseModel
+                                ? getBaseModelConfig(kleinBaseModel).name
+                                : model.baseModel;
+                              form.setValue('model', {
+                                ...model,
+                                id: modelVersionId,
+                                baseModel: baseModelName,
+                              });
                             }
                           }
                         }}
