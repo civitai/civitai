@@ -37,27 +37,13 @@ export function getIsZImageFromEngine(value?: string) {
   return value === engine;
 }
 
-const sdCppSampleMethods = [
-  'euler',
-  'heun',
-  'dpm2',
-  'dpm++2s_a',
-  'dpm++2m',
-  'dpm++2mv2',
-  'ipndm',
-  'ipndm_v',
-  'ddim_trailing',
-  'euler_a',
-  'lcm',
-] as const satisfies SdCppSampleMethod[];
+// ZImageBase only supports these specific samplers and schedulers
+const zImageBaseSampleMethods = ['euler', 'heun', 'lcm'] as const satisfies SdCppSampleMethod[];
+const zImageBaseSchedules = ['simple', 'discrete'] as const satisfies SdCppSchedule[];
 
-const sdCppSchedules = [
-  'simple',
-  'discrete',
-  'karras',
-  'exponential',
-  'ays',
-] as const satisfies SdCppSchedule[];
+// UI sampler names that map to the allowed SdCpp sample methods
+export const zImageBaseAllowedSamplers = ['Euler', 'Heun', 'LCM'] as const;
+export const zImageBaseAllowedSchedulers = zImageBaseSchedules;
 
 const baseSchema = z.object({
   engine: z.literal('sdcpp').catch('sdcpp'),
@@ -68,8 +54,8 @@ const baseSchema = z.object({
   height: z.number().optional(),
   cfgScale: z.number().optional(),
   steps: z.number().optional(),
-  sampleMethod: z.enum(sdCppSampleMethods).optional(),
-  schedule: z.enum(sdCppSchedules).optional(),
+  sampleMethod: z.enum(zImageBaseSampleMethods).optional(),
+  schedule: z.enum(zImageBaseSchedules).optional(),
   quantity: z.number().optional(),
   seed: seedSchema,
   loras: z.record(z.string(), z.number()).optional(),
@@ -115,7 +101,7 @@ export const zImageConfig = ImageGenConfig({
       model === 'base'
         ? {
             sampleMethod: samplersToSdCpp[params.sampler as Sampler | 'undefined']?.sampleMethod,
-            schedule: (params.scheduler as SdCppSchedule) ?? 'karras',
+            schedule: (params.scheduler as SdCppSchedule) ?? 'simple',
           }
         : undefined;
 
