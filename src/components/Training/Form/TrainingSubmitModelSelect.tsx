@@ -35,7 +35,7 @@ import {
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
-  trainingDetailsBaseModelsZImageTurbo,
+  trainingDetailsBaseModelsZImage,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { TrainingRun, TrainingRunUpdate } from '~/store/training.store';
@@ -178,8 +178,11 @@ const ModelSelector = ({
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
                   ? 'qwen'
-                  : ([...getBaseModelsByGroup('ZImageTurbo')] as string[]).includes(baseModel)
-                  ? 'zimageturbo'
+                  : ([
+                      ...getBaseModelsByGroup('ZImageTurbo'),
+                      ...getBaseModelsByGroup('ZImageBase'),
+                    ] as string[]).includes(baseModel)
+                  ? 'zimage'
                   : ([...getBaseModelsByGroup('Flux2Klein')] as string[]).includes(baseModel)
                   ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
@@ -333,9 +336,9 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
-  const baseModelZImageTurbo =
+  const baseModelZImage =
     !!formBaseModel &&
-    (trainingDetailsBaseModelsZImageTurbo as ReadonlyArray<string>).includes(formBaseModel)
+    (trainingDetailsBaseModelsZImage as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
   const baseModelFlux2Klein =
@@ -451,13 +454,13 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.zimageturboTraining && (
+                  {features.zimageTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="yellow"
                       name="Z Image"
-                      value={baseModelZImageTurbo}
-                      baseType="zimageturbo"
+                      value={baseModelZImage}
+                      baseType="zimage"
                       makeDefaultParams={makeDefaultParams}
                       isNew
                     />
