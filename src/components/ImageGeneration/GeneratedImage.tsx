@@ -88,6 +88,7 @@ import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.const
 import { getSourceImageFromUrl } from '~/utils/image-utils';
 import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
 import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
+import { getIsFlux2Klein } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -552,6 +553,7 @@ function GeneratedImageWorkflowMenuItems({
   const isSD3 = !isVideo && getIsSD3(baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
   const isZImageTurbo = !isVideo && getIsZImageTurbo(baseModel);
+  const isFlux2Klein = step.resources.some((x) => getIsFlux2Klein(x.id));
   const isZImageBase = !isVideo && getIsZImageBase(baseModel);
   const canImg2Img =
     !isQwen &&
@@ -562,9 +564,11 @@ function GeneratedImageWorkflowMenuItems({
     !isHiDream &&
     !isPonyV7 &&
     !isZImageTurbo &&
+    !isFlux2Klein &&
     !isZImageBase;
 
-  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream || isQwen;
+  const canImg2ImgNoWorkflow =
+    isOpenAI || isFluxKontext || isNanoBanana || isSeedream || isQwen || isFlux2Klein;
   const img2imgWorkflows =
     !isVideo && !isBlocked
       ? workflowDefinitions.filter(

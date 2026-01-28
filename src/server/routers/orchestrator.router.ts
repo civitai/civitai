@@ -6,7 +6,6 @@ import type {
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
-import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
@@ -25,7 +24,6 @@ import {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import {
   queryGeneratedImageWorkflows,
@@ -394,13 +392,6 @@ export const orchestratorRouter = router({
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion
-
-  reportProhibitedRequest: experimentalProcedure
-    .input(reportProhibitedRequestSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (ctx.testing) return false;
-      return await reportProhibitedRequestHandler({ ctx, input });
-    }),
 
   getFlaggedConsumers: moderatorProcedure
     .input(getFlaggedConsumersSchema)

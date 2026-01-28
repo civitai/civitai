@@ -78,10 +78,10 @@ const baseModelConfig = [
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
-  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein' },
-  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein' },
-  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein' },
-  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein' },
+  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B' },
+  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base' },
+  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B' },
+  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
@@ -163,6 +163,7 @@ type BaseModelGroupConfigEntry = {
   name: string;
   description: string;
   family?: BaseModelFamily;
+  selector?: string;
 };
 
 export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEntry> = {
@@ -198,10 +199,29 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     family: 'Flux',
     description: 'Next-generation Flux with enhanced capabilities',
   },
-  Flux2Klein: {
-    name: 'Flux.2 Klein',
+  Flux2Klein_9B: {
+    name: 'Flux.2 Klein 9B',
     family: 'Flux',
-    description: 'Distilled Flux.2 models for faster and more efficient generation',
+    description: 'Distilled 9B parameter Flux.2 model for faster generation',
+    selector: 'Flux.2 Klein',
+  },
+  Flux2Klein_9B_base: {
+    name: 'Flux.2 Klein 9B-base',
+    family: 'Flux',
+    description: 'Base 9B parameter Flux.2 Klein model',
+    selector: 'Flux.2 Klein',
+  },
+  Flux2Klein_4B: {
+    name: 'Flux.2 Klein 4B',
+    family: 'Flux',
+    description: 'Distilled 4B parameter Flux.2 model for efficient generation',
+    selector: 'Flux.2 Klein',
+  },
+  Flux2Klein_4B_base: {
+    name: 'Flux.2 Klein 4B-base',
+    family: 'Flux',
+    description: 'Base 4B parameter Flux.2 Klein model',
+    selector: 'Flux.2 Klein',
   },
   HiDream: {
     name: 'HiDream',
@@ -714,6 +734,42 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.2 D'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_9B',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_9B_base',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B-base'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_4B',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_4B_base',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B-base'],
       },
     ],
   },
