@@ -415,7 +415,7 @@ export function ModelWizard() {
                   contentSlug={['feature-introduction', 'model-upload']}
                 />
               </Group>
-              {isNew && !isTraining && currentUser && (
+              {isNew && !isTraining && currentUser?.username && (
                 <Popover
                   opened={opened}
                   width={400}
@@ -430,7 +430,7 @@ export function ModelWizard() {
                   </Popover.Target>
                   <Popover.Dropdown p={4}>
                     <TemplateSelect
-                      username={currentUser.username!}
+                      username={currentUser.username}
                       onSelect={() => setOpened(false)}
                     />
                   </Popover.Dropdown>
