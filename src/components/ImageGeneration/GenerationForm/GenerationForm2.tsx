@@ -688,7 +688,6 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isChroma ||
               isZImageTurbo ||
-              isZImageBase ||
               isFlux2 ||
               isPonyV7 ||
               isSeedream;
@@ -1707,13 +1706,38 @@ export function GenerationFormContent() {
                                     }
                                     data={samplerOptions}
                                     presets={
-                                      isFlux2Klein
+                                      isFlux2Klein || isZImageBase
                                         ? [{ label: 'Fast', value: 'Euler a' }]
                                         : [
                                             { label: 'Fast', value: 'Euler a' },
                                             { label: 'Popular', value: 'DPM++ 2M Karras' },
                                           ]
                                     }
+                                  />
+                                )}
+                                {isZImageBase && (
+                                  <InputSelect
+                                    name="scheduler"
+                                    label={
+                                      <div className="flex items-center gap-1">
+                                        <Input.Label>Scheduler</Input.Label>
+                                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                          Controls the noise schedule during generation, affecting
+                                          image quality and style.
+                                        </InfoPopover>
+                                      </div>
+                                    }
+                                    data={[
+                                      { label: 'Simple', value: 'simple' },
+                                      { label: 'Discrete', value: 'discrete' },
+                                      { label: 'Karras', value: 'karras' },
+                                      { label: 'Exponential', value: 'exponential' },
+                                      { label: 'AYS', value: 'ays' },
+                                    ]}
+                                    presets={[
+                                      { label: 'Default', value: 'karras' },
+                                      { label: 'Fast', value: 'simple' },
+                                    ]}
                                   />
                                 )}
                                 {!disableSteps && (

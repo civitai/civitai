@@ -1237,6 +1237,7 @@ export const generation = {
     cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
+    scheduler: 'karras',
     seed: null,
     clipSkip: 2,
     quantity: 2,

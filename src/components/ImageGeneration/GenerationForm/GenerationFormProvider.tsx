@@ -426,6 +426,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             setTimeout(() => {
               form.setValue('cfgScale', 4);
               form.setValue('steps', 20);
+              form.setValue('scheduler', 'karras');
             }, 0);
           } else if (baseModel === 'LTXV2' && prevBaseModel !== baseModel) {
             setTimeout(() => {

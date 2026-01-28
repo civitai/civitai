@@ -1,9 +1,13 @@
 import type {
   ZImageTurboCreateImageGenInput,
   ZImageBaseCreateImageGenInput,
+  SdCppSampleMethod,
+  SdCppSchedule,
 } from '@civitai/client';
 import * as z from 'zod';
+import type { Sampler } from '~/server/common/constants';
 import { promptSchema, seedSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import { samplersToSdCpp } from '~/shared/constants/generation.constants';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 const engine = 'zImage';
@@ -33,6 +37,28 @@ export function getIsZImageFromEngine(value?: string) {
   return value === engine;
 }
 
+const sdCppSampleMethods = [
+  'euler',
+  'heun',
+  'dpm2',
+  'dpm++2s_a',
+  'dpm++2m',
+  'dpm++2mv2',
+  'ipndm',
+  'ipndm_v',
+  'ddim_trailing',
+  'euler_a',
+  'lcm',
+] as const satisfies SdCppSampleMethod[];
+
+const sdCppSchedules = [
+  'simple',
+  'discrete',
+  'karras',
+  'exponential',
+  'ays',
+] as const satisfies SdCppSchedule[];
+
 const baseSchema = z.object({
   engine: z.literal('sdcpp').catch('sdcpp'),
   ecosystem: z.literal('zImage').catch('zImage'),
@@ -42,6 +68,8 @@ const baseSchema = z.object({
   height: z.number().optional(),
   cfgScale: z.number().optional(),
   steps: z.number().optional(),
+  sampleMethod: z.enum(sdCppSampleMethods).optional(),
+  schedule: z.enum(sdCppSchedules).optional(),
   quantity: z.number().optional(),
   seed: seedSchema,
   loras: z.record(z.string(), z.number()).optional(),
@@ -58,6 +86,8 @@ export const zImageConfig = ImageGenConfig({
       height: params.height,
       cfgScale: params.cfgScale,
       steps: params.steps,
+      sampler: params.sampler,
+      scheduler: params.scheduler,
       quantity: params.quantity,
       seed: params.seed,
     };
@@ -80,6 +110,15 @@ export const zImageConfig = ImageGenConfig({
         {}
       );
 
+    // Convert UI sampler to SdCpp sampleMethod, use scheduler from params if provided (only for 'base' model)
+    const sdCppSampler =
+      model === 'base'
+        ? {
+            sampleMethod: samplersToSdCpp[params.sampler as Sampler | 'undefined']?.sampleMethod,
+            schedule: (params.scheduler as SdCppSchedule) ?? 'karras',
+          }
+        : undefined;
+
     const schema = baseSchema.extend({
       operation: z.literal('createImage'),
     });
@@ -94,6 +133,8 @@ export const zImageConfig = ImageGenConfig({
       height: params.height,
       cfgScale: params.cfgScale,
       steps: params.steps,
+      sampleMethod: sdCppSampler?.sampleMethod,
+      schedule: sdCppSampler?.schedule,
       quantity: params.quantity,
       seed: params.seed,
       loras,
