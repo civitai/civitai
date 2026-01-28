@@ -77,7 +77,9 @@ const querySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  resolver: async ({ ctx, ssg, features }) => {
+    if (!features?.challengePlatform) return { notFound: true };
+
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 

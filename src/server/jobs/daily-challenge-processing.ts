@@ -44,6 +44,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
@@ -75,6 +76,12 @@ export const dailyChallengeJobs = [
 // Job Functions
 // ----------------------------------------------
 export async function createUpcomingChallenge() {
+  // Check if challenge platform is enabled
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
+    log('Challenge platform disabled, skipping job');
+    return;
+  }
+
   // Stop if we already have any upcoming system challenges (scheduled or active)
   // This allows user-created challenges to run without blocking system challenge creation
   const existingSystemChallenge = await getUpcomingSystemChallenge();
@@ -286,6 +293,12 @@ export async function createUpcomingChallenge() {
 }
 
 export async function reviewEntries() {
+  // Check if challenge platform is enabled
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
+    log('Challenge platform disabled, skipping job');
+    return;
+  }
+
   try {
     // Get ALL active challenges (supports multiple concurrent challenges)
     const activeChallenges = await getActiveChallenges();
@@ -646,6 +659,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 }
 
 export async function pickWinners() {
+  // Check if challenge platform is enabled
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
+    log('Challenge platform disabled, skipping job');
+    return;
+  }
+
   const config = await getChallengeConfig();
 
   // Step 1: Process ended challenges (pick winners)

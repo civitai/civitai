@@ -5,16 +5,22 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChallengeUpsertForm } from '~/components/Challenge/ChallengeUpsertForm';
 import { trpc } from '~/utils/trpc';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function EditChallengePage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const challengeId = Number(router.query.id);
 
   const { data: challenge, isLoading } = trpc.challenge.getById.useQuery(
     { id: challengeId },
     { enabled: !!challengeId && !isNaN(challengeId) }
   );
+
+  if (!features.challengePlatform) {
+    return <NotFound />;
+  }
 
   if (!currentUser?.isModerator) {
     return (

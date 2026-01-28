@@ -144,6 +144,12 @@ const featureFlags = createFeatureFlags({
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
+  challengePlatform: {
+    toggleable: false,
+    default: true,
+    displayName: 'Challenge Platform',
+    availability: ['public'],
+  },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

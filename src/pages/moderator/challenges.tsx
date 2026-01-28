@@ -34,7 +34,9 @@ import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
@@ -63,6 +65,7 @@ const statusColors: Record<ChallengeStatus, string> = {
 
 export default function ModeratorChallengesPage() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 500);
@@ -180,6 +183,10 @@ export default function ModeratorChallengesPage() {
       },
     });
   };
+
+  if (!features.challengePlatform) {
+    return <NotFound />;
+  }
 
   if (!currentUser?.isModerator) {
     return (

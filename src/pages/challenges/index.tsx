@@ -12,6 +12,14 @@ import { env } from '~/env/client';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.challengePlatform) return { notFound: true };
+    return { props: {} };
+  },
+});
 
 function ChallengesPage() {
   const router = useRouter();
