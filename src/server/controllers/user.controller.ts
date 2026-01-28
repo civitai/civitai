@@ -979,7 +979,7 @@ export const toggleMuteHandler = async ({
 
   const updatedUser = await updateUserById({
     id,
-    data: { muted: !user.muted },
+    data: { muted: !user.muted, bannedAt: !user.muted ? new Date() : null },
     updateSource: 'toggleMute',
   });
   await invalidateSession(id);
@@ -1155,60 +1155,6 @@ export const toggleBountyEngagementHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
-};
-
-export const reportProhibitedRequestHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ReportProhibitedRequestInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  await ctx.track.prohibitedRequest({
-    prompt: input.prompt ?? '{error capturing prompt}',
-    negativePrompt: input.negativePrompt ?? '{error capturing negativePrompt}',
-    source: input.source,
-  });
-  if (ctx.user.isModerator) return false;
-  if (!clickhouse) return false;
-
-  try {
-    const userId = ctx.user.id;
-    const count =
-      (
-        await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM prohibitedRequests
-      WHERE userId = ${userId} AND time > subtractHours(now(), 24);
-    `
-      )[0]?.count ?? 0;
-    const limit =
-      constants.imageGeneration.requestBlocking.muted -
-      constants.imageGeneration.requestBlocking.notified;
-    if (count >= limit) {
-      await updateUserById({
-        id: userId,
-        data: { muted: true },
-        updateSource: 'imageGenBlocking:autoMute',
-      });
-      await refreshSession(userId);
-
-      await ctx.track.userActivity({
-        type: 'Muted',
-        targetUserId: userId,
-      });
-
-      return true;
-    }
-  } catch (error) {
-    throw new TRPCError({
-      message: 'Error checking prohibited request count',
-      code: 'INTERNAL_SERVER_ERROR',
-    });
-  }
-
-  return false;
 };
 
 export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {

@@ -17,7 +17,7 @@ import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertI
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
-import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
+import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
@@ -27,10 +27,8 @@ import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { MentionNode } from '~/components/TipTap/MentionNode';
 import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
-import { YoutubeNode } from '~/components/TipTap/YoutubeNode';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 
@@ -187,16 +185,10 @@ export function RichTextEditor({
           }),
         })
       );
-    if (addVideo) {
+    if (addMedia) {
       arr.push(
-        EdgeMediaEditNode.configure({ accepts }),
-        ImageExtension.configure({ inline: true })
-      );
-    } else if (addImages) {
-      arr.push(
-        CustomImage.configure({
-          // To allow links on images
-          inline: true,
+        EdgeMediaEditNode.configure({
+          accepts,
           uploadImage: uploadToCF,
           onUploadStart: () => {
             showNotification({
@@ -204,13 +196,14 @@ export function RichTextEditor({
               loading: true,
               withCloseButton: false,
               autoClose: false,
-              message: 'Uploading images...',
+              message: 'Uploading media...',
             });
           },
           onUploadEnd: () => {
             hideNotification(UPLOAD_NOTIFICATION_ID);
           },
-        })
+        }),
+        ImageExtension.configure({ inline: true })
       );
     }
     if (addMedia) {
@@ -372,11 +365,7 @@ export function RichTextEditor({
 
             {addMedia && (
               <RTE.ControlsGroup>
-                {addVideo && addImages ? (
-                  <InsertImageControl accepts={accepts} />
-                ) : addImages ? (
-                  <InsertImageControlLegacy />
-                ) : null}
+                <InsertImageControl accepts={accepts} />
                 <InsertYoutubeVideoControl />
                 <InsertInstagramEmbedControl />
               </RTE.ControlsGroup>

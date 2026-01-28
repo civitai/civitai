@@ -39,38 +39,141 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
   return { blockedFor, success: !blockedFor.length };
 };
 
-export const auditPrompt = (prompt: string, negativePrompt?: string, checkProfanity?: boolean) => {
-  if (!prompt.trim().length) return { blockedFor: [], success: true };
-  prompt = normalizeText(prompt); // Parse HTML Entities
+// #region [enriched audit]
+// Structured trigger data for server-side tracking, moderator review, and false-positive allowlisting
+export type PromptTriggerCategory =
+  | 'minor_age'
+  | 'poi'
+  | 'inappropriate_minor'
+  | 'inappropriate_poi'
+  | 'nsfw_blocklist'
+  | 'profanity'
+  | 'harmful_combo'
+  | 'external';
+
+export interface PromptTrigger {
+  category: PromptTriggerCategory;
+  message: string;
+  matchedWord?: string;
+}
+
+export interface EnrichedAuditResult {
+  blockedFor: string[];
+  triggers: PromptTrigger[];
+  success: boolean;
+}
+
+/**
+ * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
+ * Used server-side for UserBan records, moderator UI, and the false-positive allowlist system.
+ */
+export const auditPromptEnriched = (
+  prompt: string,
+  negativePrompt?: string,
+  checkProfanity?: boolean
+): EnrichedAuditResult => {
+  if (!prompt.trim().length) return { blockedFor: [], triggers: [], success: true };
+  prompt = normalizeText(prompt);
   negativePrompt = normalizeText(negativePrompt);
+
+  // 1. Minor age check
   const { found, age } = includesMinorAge(prompt);
-  if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
-
-  if (includesPoi(prompt)) {
-    return { blockedFor: ['Prompt cannot include celebrity names'], success: false };
-  } else if (includesPoi(negativePrompt)) {
-    return { blockedFor: ['Negative prompt cannot include celebrity names'], success: false };
+  if (found && age != null) {
+    const message = `${age} year old`;
+    return {
+      blockedFor: [message],
+      triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
+      success: false,
+    };
   }
 
-  const inappropriate = includesInappropriate({ prompt, negativePrompt });
-  if (inappropriate === 'minor')
-    return { blockedFor: ['Inappropriate minor content'], success: false };
-  else if (inappropriate === 'poi')
-    return { blockedFor: ['Inappropriate real person content'], success: false };
+  // 2. POI check
+  const poiMatch = includesPoi(prompt);
+  if (poiMatch) {
+    const message = 'Prompt cannot include celebrity names';
+    return {
+      blockedFor: [message],
+      triggers: [
+        {
+          category: 'poi',
+          message,
+          matchedWord: typeof poiMatch === 'string' ? poiMatch : undefined,
+        },
+      ],
+      success: false,
+    };
+  }
+  const negPoiMatch = includesPoi(negativePrompt);
+  if (negPoiMatch) {
+    const message = 'Negative prompt cannot include celebrity names';
+    return {
+      blockedFor: [message],
+      triggers: [
+        {
+          category: 'poi',
+          message,
+          matchedWord: typeof negPoiMatch === 'string' ? negPoiMatch : undefined,
+        },
+      ],
+      success: false,
+    };
+  }
 
+  // 3. Inappropriate content check (with matched word capture)
+  const inappropriateResult = includesInappropriateEnriched({ prompt, negativePrompt });
+  if (inappropriateResult) {
+    const message =
+      inappropriateResult.type === 'minor'
+        ? 'Inappropriate minor content'
+        : 'Inappropriate real person content';
+    const category: PromptTriggerCategory =
+      inappropriateResult.type === 'minor' ? 'inappropriate_minor' : 'inappropriate_poi';
+    return {
+      blockedFor: [message],
+      triggers: [{ category, message, matchedWord: inappropriateResult.matchedWord }],
+      success: false,
+    };
+  }
+
+  // 4. NSFW blocklist check
   for (const { word, regex } of blockedNSFWRegexLazy()) {
-    if (regex.test(prompt)) return { blockedFor: [word], success: false };
+    if (regex.test(prompt)) {
+      return {
+        blockedFor: [word],
+        triggers: [{ category: 'nsfw_blocklist', message: word, matchedWord: word }],
+        success: false,
+      };
+    }
   }
 
+  // 5. Profanity check (green domain only)
   if (checkProfanity) {
     const profanityFilter = createProfanityFilter();
     const profanityResults = profanityFilter.analyze(prompt);
     if (profanityResults.isProfane) {
-      return { blockedFor: profanityResults.matches, success: false };
+      return {
+        blockedFor: profanityResults.matches,
+        triggers: profanityResults.matches.map((word: string) => ({
+          category: 'profanity' as const,
+          message: word,
+          matchedWord: word,
+        })),
+        success: false,
+      };
     }
   }
 
-  return { blockedFor: [], success: true };
+  return { blockedFor: [], triggers: [], success: true };
+};
+// #endregion [enriched audit]
+
+export const auditPrompt = (
+  prompt: string,
+  negativePrompt?: string,
+  checkProfanity?: boolean
+): { blockedFor: string[]; success: boolean } => {
+  const { blockedFor, success } = auditPromptEnriched(prompt, negativePrompt, checkProfanity);
+  return { blockedFor, success };
 };
 
 const nsfwPromptExpressions = nsfwPromptWords.map((word) => prepareWordRegex(word));
@@ -378,6 +481,23 @@ function includesHarmfulCombinations(prompt: string): 'minor' | 'poi' | false {
   return false;
 }
 
+function includesHarmfulCombinationsEnriched(
+  prompt: string
+): { type: 'minor' | 'poi'; matchedText: string } | false {
+  if (!prompt) return false;
+
+  const normalizedPrompt = normalizeText(prompt);
+
+  for (const combination of harmfulCombinations) {
+    const match = combination.pattern.exec(normalizedPrompt);
+    if (match) {
+      return { type: combination.type, matchedText: match[0] };
+    }
+  }
+
+  return false;
+}
+
 export function includesInappropriate(
   input: { prompt?: string; negativePrompt?: string },
   nsfw?: boolean
@@ -400,6 +520,49 @@ export function includesInappropriate(
 
   if (includesPoi(input.prompt)) return 'poi';
   if (includesMinor(input.prompt, input.negativePrompt)) return 'minor';
+  return false;
+}
+
+function includesInappropriateEnriched(
+  input: { prompt?: string; negativePrompt?: string },
+  nsfw?: boolean
+): { type: 'minor' | 'poi'; matchedWord?: string } | false {
+  if (!input.prompt) return false;
+  input.prompt = input.prompt.replace(/'|\.|\-/g, '');
+
+  // Harmful combinations (with matched text capture)
+  const harmfulCombo = includesHarmfulCombinationsEnriched(input.prompt);
+  if (harmfulCombo) return { type: harmfulCombo.type, matchedWord: harmfulCombo.matchedText };
+
+  if (!nsfw && !includesNsfw(input.prompt)) return false;
+
+  // Negative prompt harmful combinations
+  if (input.negativePrompt) {
+    const negativeHarmfulCombo = includesHarmfulCombinationsEnriched(input.negativePrompt);
+    if (negativeHarmfulCombo)
+      return { type: negativeHarmfulCombo.type, matchedWord: negativeHarmfulCombo.matchedText };
+  }
+
+  // POI — includesPoi returns the matched name (string) or false
+  const poiResult = includesPoi(input.prompt);
+  if (poiResult)
+    return { type: 'poi', matchedWord: typeof poiResult === 'string' ? poiResult : undefined };
+
+  // Minor — check each sub-check individually to capture the matched word
+  const ageCheck = includesMinorAge(input.prompt);
+  if (ageCheck.found && ageCheck.age != null)
+    return { type: 'minor', matchedWord: `${ageCheck.age} year old` };
+
+  const youngNoun = words.young.nouns.inPrompt(input.prompt);
+  if (youngNoun)
+    return { type: 'minor', matchedWord: typeof youngNoun === 'string' ? youngNoun : undefined };
+
+  if (input.negativePrompt) {
+    const negYoung = words.young.negativeNouns.inPrompt(input.negativePrompt);
+    if (negYoung)
+      return { type: 'minor', matchedWord: typeof negYoung === 'string' ? negYoung : undefined };
+  }
+
   return false;
 }
 

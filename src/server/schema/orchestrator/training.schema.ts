@@ -68,7 +68,11 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('zimageturbo'),
     modelVariant: z.undefined().optional(),
   }),
-  // SD3, Flux1, and Wan require modelVariant
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('ltx2'),
+    modelVariant: z.undefined().optional(),
+  }),
+  // SD3, Flux1, Flux2Klein, and Wan require modelVariant
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('sd3'),
     modelVariant: z.enum(['large', 'medium']),
@@ -80,6 +84,10 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('wan'),
     modelVariant: z.enum(['2.1', '2.2']),
+  }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('flux2klein'),
+    modelVariant: z.enum(['4b', '9b']),
   }),
 ]);
 

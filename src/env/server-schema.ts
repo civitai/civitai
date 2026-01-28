@@ -41,6 +41,9 @@ export const serverSchema = z.object({
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
     process.env.VERCEL ? z.string() : z.url()
   ),
+  // Optional cookie domain override for cross-subdomain session sharing (e.g., PR previews)
+  // When set, session cookies will use this domain (e.g., ".civitaic.com") instead of the hostname
+  NEXTAUTH_COOKIE_DOMAIN: z.string().optional(),
   CLICKHOUSE_HOST: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
@@ -95,6 +98,8 @@ export const serverSchema = z.object({
   IMAGE_SCANNER_NEW: zc.booleanString.default(false),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
+  STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
+  STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
