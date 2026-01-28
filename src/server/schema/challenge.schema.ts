@@ -137,28 +137,36 @@ export type UpcomingTheme = {
   modelCreator: string | null;
 };
 
+// Composite cursor for stable pagination across all sort types
+// Format: "sortValue:id" where sortValue depends on sort type
+export const challengeCursorSchema = z.string().optional();
+
 // Query schema for infinite challenge list
 export type GetInfiniteChallengesInput = z.infer<typeof getInfiniteChallengesSchema>;
-export const getInfiniteChallengesSchema = infiniteQuerySchema.merge(
-  z.object({
-    query: z.string().optional(),
-    status: z.enum(ChallengeStatus).array().optional(),
-    source: z.enum(ChallengeSource).array().optional(),
-    period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
-    sort: z
-      .enum([
-        ChallengeSort.Newest,
-        ChallengeSort.EndingSoon,
-        ChallengeSort.MostEntries,
-        ChallengeSort.HighestPrize,
-      ])
-      .default(ChallengeSort.Newest),
-    userId: z.number().optional(),
-    modelVersionId: z.number().optional(),
-    includeEnded: z.boolean().default(false),
-    limit: z.coerce.number().min(1).max(100).default(20),
-  })
-);
+export const getInfiniteChallengesSchema = infiniteQuerySchema
+  .omit({ cursor: true })
+  .merge(
+    z.object({
+      // Override cursor to be a string for composite cursor support
+      cursor: challengeCursorSchema,
+      query: z.string().optional(),
+      status: z.enum(ChallengeStatus).array().optional(),
+      source: z.enum(ChallengeSource).array().optional(),
+      period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
+      sort: z
+        .enum([
+          ChallengeSort.Newest,
+          ChallengeSort.EndingSoon,
+          ChallengeSort.MostEntries,
+          ChallengeSort.HighestPrize,
+        ])
+        .default(ChallengeSort.Newest),
+      userId: z.number().optional(),
+      modelVersionId: z.number().optional(),
+      includeEnded: z.boolean().default(false),
+      limit: z.coerce.number().min(1).max(100).default(20),
+    })
+  );
 
 // Note: Challenge entries are stored as CollectionItems in the challenge's collection.
 // Use collection endpoints to query entries.

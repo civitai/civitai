@@ -46,6 +46,46 @@ import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 
+// Helper to parse composite cursor (format: "sortValue:id")
+function parseChallengeCursor(
+  cursor: string | undefined,
+  sort: ChallengeSort
+): { sortValue: string | number | Date; id: number } | null {
+  if (!cursor) return null;
+  const [sortValueStr, idStr] = cursor.split(':');
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) return null;
+
+  switch (sort) {
+    case ChallengeSort.EndingSoon:
+    case ChallengeSort.Newest:
+      return { sortValue: new Date(sortValueStr), id };
+    case ChallengeSort.MostEntries:
+    case ChallengeSort.HighestPrize:
+      return { sortValue: parseInt(sortValueStr, 10), id };
+    default:
+      return { sortValue: sortValueStr, id };
+  }
+}
+
+// Helper to build composite cursor
+function buildChallengeCursor(
+  item: { id: number; startsAt: Date; endsAt: Date; prizePool: number; entryCount: number },
+  sort: ChallengeSort
+): string {
+  switch (sort) {
+    case ChallengeSort.EndingSoon:
+      return `${item.endsAt.toISOString()}:${item.id}`;
+    case ChallengeSort.MostEntries:
+      return `${item.entryCount}:${item.id}`;
+    case ChallengeSort.HighestPrize:
+      return `${item.prizePool}:${item.id}`;
+    case ChallengeSort.Newest:
+    default:
+      return `${item.startsAt.toISOString()}:${item.id}`;
+  }
+}
+
 // Service functions
 export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   const { query, status, source, sort, userId, modelVersionId, includeEnded, limit, cursor } =
@@ -63,7 +103,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     conditions.push(Prisma.sql`c.status IN (${Prisma.join(statusValues)})`);
   } else if (!includeEnded) {
     conditions.push(
-      Prisma.sql`c.status NOT IN (${ChallengeStatus.Completed}::"ChallengeStatus", ${ChallengeStatus.Cancelled}::"ChallengeStatus")`
+      Prisma.sql`c.status NOT IN ('Completed'::"ChallengeStatus", 'Cancelled'::"ChallengeStatus")`
     );
   }
 
@@ -89,14 +129,57 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     conditions.push(Prisma.sql`${modelVersionId} = ANY(c."modelVersionIds")`);
   }
 
-  // Cursor for pagination (parameterized)
-  // NOTE: Cursor pagination is stable only for Newest sort (id-based ordering).
-  // For other sorts (EndingSoon, MostEntries, HighestPrize), items may be
-  // skipped/duplicated between pages if data changes. A proper fix would require
-  // composite cursors (e.g., {endsAt, id} for EndingSoon). For now, this is
-  // acceptable since challenges change infrequently and feed refreshes are common.
-  if (cursor) {
-    conditions.push(Prisma.sql`c.id < ${cursor}`);
+  // Composite cursor for stable keyset pagination across all sort types
+  const parsedCursor = parseChallengeCursor(cursor, sort);
+  if (parsedCursor) {
+    const { sortValue, id } = parsedCursor;
+    // Keyset pagination: (sortValue > cursor) OR (sortValue = cursor AND id < cursorId)
+    // This ensures stable pagination even when sort values change
+    switch (sort) {
+      case ChallengeSort.EndingSoon:
+        // ORDER BY endsAt ASC, id DESC - so we want endsAt > cursor OR (endsAt = cursor AND id < cursorId)
+        conditions.push(
+          Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${
+            sortValue as Date
+          } AND c.id < ${id}))`
+        );
+        break;
+      case ChallengeSort.MostEntries:
+        // ORDER BY entryCount DESC, id DESC - entryCount < cursor OR (entryCount = cursor AND id < cursorId)
+        // Note: entryCount is a subquery, so we need to use a CTE or HAVING clause
+        // For simplicity, we'll filter by id only for ties and use a subquery for the count comparison
+        conditions.push(
+          Prisma.sql`(
+            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${
+              sortValue as number
+            }
+            OR (
+              (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${
+                sortValue as number
+              }
+              AND c.id < ${id}
+            )
+          )`
+        );
+        break;
+      case ChallengeSort.HighestPrize:
+        // ORDER BY prizePool DESC, id DESC
+        conditions.push(
+          Prisma.sql`(c."prizePool" < ${sortValue as number} OR (c."prizePool" = ${
+            sortValue as number
+          } AND c.id < ${id}))`
+        );
+        break;
+      case ChallengeSort.Newest:
+      default:
+        // ORDER BY startsAt DESC, id DESC
+        conditions.push(
+          Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${
+            sortValue as Date
+          } AND c.id < ${id}))`
+        );
+        break;
+    }
   }
 
   const whereClause =
@@ -169,11 +252,16 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     LIMIT ${limit + 1}
   `;
 
-  // Check if there are more results
-  let nextCursor: number | undefined;
+  // Check if there are more results and build composite cursor
+  let nextCursor: string | undefined;
   if (items.length > limit) {
     const nextItem = items.pop();
-    nextCursor = nextItem?.id;
+    if (nextItem) {
+      nextCursor = buildChallengeCursor(
+        { ...nextItem, entryCount: Number(nextItem.entryCount) },
+        sort
+      );
+    }
   }
 
   // Fetch profile pictures for all creators
@@ -671,7 +759,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   if (challenge.status !== ChallengeStatus.Active) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: `Cannot end challenge with status "${challenge.status}". Challenge must be Active.`,
+      message: `Cannot end challenge with status "${String(challenge.status)}". Challenge must be Active.`,
     });
   }
 
@@ -874,7 +962,7 @@ export async function voidChallenge(challengeId: number) {
   ) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: `Cannot void challenge with status "${challenge.status}". Challenge must be Active or Scheduled.`,
+      message: `Cannot void challenge with status "${String(challenge.status)}". Challenge must be Active or Scheduled.`,
     });
   }
 
