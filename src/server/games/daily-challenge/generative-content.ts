@@ -1,11 +1,11 @@
 import dayjs from '~/shared/utils/dayjs';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+
 import type {
   ChallengePrompts,
   Prize,
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { openai } from '~/server/services/ai/openai';
+import { openrouter, AI_MODELS } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
@@ -28,11 +28,11 @@ type CollectionDetails = {
   description: string;
 };
 export async function generateCollectionDetails(input: GenerateCollectionDetailsInput) {
-  if (!openai) throw new Error('OpenAI not connected');
+  if (!openrouter) throw new Error('OpenRouter not connected');
 
-  const results = await openai.getJsonCompletion<CollectionDetails>({
+  const results = await openrouter.getJsonCompletion<CollectionDetails>({
     retries: 3,
-    model: 'gpt-4o',
+    model: AI_MODELS.GPT_4O,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -43,14 +43,14 @@ export async function generateCollectionDetails(input: GenerateCollectionDetails
         }`
       ),
       {
-        role: 'user',
+        role: 'user' as const,
         content: [
           {
-            type: 'text',
+            type: 'text' as const,
             text: `Resource title: ${input.resource.title}\nCreator: ${input.resource.creator}`,
           },
           {
-            type: 'image_url',
+            type: 'image_url' as const,
             image_url: {
               url: input.image.url,
             },
@@ -96,11 +96,11 @@ export async function generateArticle({
   entryPrize,
   config,
 }: GenerateArticleInput) {
-  if (!openai) throw new Error('OpenAI not connected');
+  if (!openrouter) throw new Error('OpenRouter not connected');
 
-  const result = await openai.getJsonCompletion<GeneratedArticle>({
+  const result = await openrouter.getJsonCompletion<GeneratedArticle>({
     retries: 3,
-    model: 'gpt-4o',
+    model: AI_MODELS.GPT_4O,
     messages: [
       prepareSystemMessage(
         config,
@@ -113,14 +113,14 @@ export async function generateArticle({
         }`
       ),
       {
-        role: 'user',
+        role: 'user' as const,
         content: [
           {
-            type: 'text',
+            type: 'text' as const,
             text: `Resource title: ${resource.title}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`,
           },
           {
-            type: 'image_url',
+            type: 'image_url' as const,
             image_url: {
               url: image.url,
             },
@@ -205,11 +205,11 @@ type GeneratedReview = {
   summary: string;
 };
 export async function generateReview(input: GenerateReviewInput) {
-  if (!openai) throw new Error('OpenAI not connected');
+  if (!openrouter) throw new Error('OpenRouter not connected');
 
-  const result = await openai.getJsonCompletion<GeneratedReview>({
+  const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
-    model: 'gpt-4o',
+    model: AI_MODELS.GPT_4O,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -227,14 +227,14 @@ export async function generateReview(input: GenerateReviewInput) {
         }`
       ),
       {
-        role: 'user',
+        role: 'user' as const,
         content: [
           {
-            type: 'text',
+            type: 'text' as const,
             text: `Theme: ${input.theme}\nCreator: ${input.creator}`,
           },
           {
-            type: 'image_url',
+            type: 'image_url' as const,
             image_url: {
               url: input.imageUrl,
             },
@@ -267,30 +267,31 @@ type GeneratedWinners = {
   outcome: string;
 };
 export async function generateWinners(input: GenerateWinnersInput) {
-  if (!openai) throw new Error('OpenAI not connected');
+  if (!openrouter) throw new Error('OpenRouter not connected');
 
-  const result = await openai.getJsonCompletion<GeneratedWinners>({
+  const result = await openrouter.getJsonCompletion<GeneratedWinners>({
     retries: 3,
-    model: 'gpt-4o',
+    model: AI_MODELS.GPT_4O,
     messages: [
       prepareSystemMessage(
         input.config,
         'winner',
         `{
-          "winners": [{
-          "creatorId": "id of the creator",
-          "creator": "name of the creator",
-          "reason": "why you chose them and what you liked about their image"
-          }],
-          "process": "about your judging process and the challenge as markdown",
-          "outcome": "summary about the outcome of the challenge as markdown"
-        }`
+          "winners": [
+            {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 1st place>"},
+            {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 2nd place>"},
+            {"creatorId": <id from entries>, "creator": "<name from entries>", "reason": "<why they won 3rd place>"}
+          ],
+          "process": "<about your judging process and the challenge as markdown>",
+          "outcome": "<summary about the outcome of the challenge as markdown>"
+        }
+        IMPORTANT: Select exactly 3 different winners (1st, 2nd, 3rd place) using creatorId and creator values from the entries provided.`
       ),
       {
-        role: 'user',
+        role: 'user' as const,
         content: [
           {
-            type: 'text',
+            type: 'text' as const,
             text: `Theme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
               input.entries,
               null,
@@ -319,14 +320,14 @@ function prepareSystemMessage(
   const text = `${config.prompts.systemMessage}\n\n${taskSummary}\n\nReply with json\n\n${responseStructure}`;
 
   return {
-    role: 'system',
+    role: 'system' as const,
     content: [
       {
-        type: 'text',
+        type: 'text' as const,
         text,
       },
     ],
-  } as ChatCompletionMessageParam;
+  };
 }
 
 type ChallengeConfig = {

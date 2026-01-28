@@ -2,9 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead } from '~/server/db/client';
+import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
 import {
+  challengeToLegacyFormat,
   getChallengeConfig,
-  getChallengeDetails,
   getChallengeTypeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
@@ -13,17 +14,35 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
-import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  createUpcomingChallenge,
+  getCoverOfModel,
+  getJudgedEntries,
+  pickWinners,
+  reviewEntries,
+} from '~/server/jobs/daily-challenge-processing';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
   .object({
-    action: z.enum(['article', 'collection', 'review', 'winners']),
+    action: z.enum([
+      'article',
+      'collection',
+      'review',
+      'winners',
+      'complete-review',
+      'complete-challenge',
+      'create-challenge',
+    ]),
     modelId: z.coerce.number().optional(),
     type: z.string().optional(),
     imageId: z.coerce.number().optional(),
     theme: z.string().optional(),
     challengeId: z.coerce.number().optional(),
+    dryRun: z
+      .string()
+      .optional()
+      .transform((v) => v === 'true'),
   })
   .superRefine((data, ctx) => {
     if (data.action === 'review' && !data.imageId) {
@@ -114,9 +133,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     `;
 
     if (!theme) {
-      const challengeDetails = await getChallengeDetails(challengeId!);
-      if (!challengeDetails) return res.status(404).json({ error: 'Challenge not found' });
-      theme = challengeDetails.theme;
+      const challengeRecord = await getChallengeById(challengeId!);
+      if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
+      theme = challengeRecord.theme ?? '';
     }
 
     const result = await generateReview({
@@ -129,12 +148,13 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   }
 
   if (action === 'winners') {
-    const challengeDetails = await getChallengeDetails(challengeId!);
-    if (!challengeDetails) return res.status(404).json({ error: 'Challenge not found' });
+    const challengeRecord = await getChallengeById(challengeId!);
+    if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
+    const challengeDetails = challengeToLegacyFormat(challengeRecord);
     const judgedEntries = await getJudgedEntries(challengeDetails.collectionId, config);
 
     const result = await generateWinners({
-      theme: challengeDetails.theme,
+      theme: challengeRecord.theme ?? '',
       entries: judgedEntries.map((entry) => ({
         creator: entry.username,
         creatorId: entry.userId,
@@ -144,6 +164,43 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       config: challengeTypeConfig,
     });
     return res.status(200).json(result);
+  }
+
+  if (action === 'complete-review') {
+    if (payload.dryRun) {
+      return res.status(200).json({
+        action: 'complete-review',
+        dryRun: true,
+        message: 'Would execute reviewEntries() to process and review challenge entries',
+      });
+    }
+    await reviewEntries();
+    return res.status(200).json({ success: true, action: 'complete-review' });
+  }
+
+  if (action === 'complete-challenge') {
+    if (payload.dryRun) {
+      return res.status(200).json({
+        action: 'complete-challenge',
+        dryRun: true,
+        message:
+          'Would execute pickWinners() to close challenge, pick winners, send prizes, and start next challenge',
+      });
+    }
+    await pickWinners();
+    return res.status(200).json({ success: true, action: 'complete-challenge' });
+  }
+
+  if (action === 'create-challenge') {
+    if (payload.dryRun) {
+      return res.status(200).json({
+        action: 'create-challenge',
+        dryRun: true,
+        message: 'Would execute createUpcomingChallenge() to create a new scheduled challenge',
+      });
+    }
+    const challenge = await createUpcomingChallenge();
+    return res.status(200).json({ success: true, action: 'create-challenge', challenge });
   }
 
   return res.status(200).json({ how: 'did i get here?' });

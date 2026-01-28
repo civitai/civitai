@@ -1,5 +1,10 @@
+import { Prisma } from '@prisma/client';
 import { ArticleSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import {
+  getChallengeById,
+  type ChallengeDetails as NewChallengeDetails,
+} from '~/server/games/daily-challenge/challenge-helpers';
 import {
   dailyChallengeConfig,
   getCurrentChallenge,
@@ -8,6 +13,7 @@ import { articleWhereSchema } from '~/server/schema/article.schema';
 import { getArticles } from '~/server/services/article.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { isFutureDate, startOfDay } from '~/utils/date-helpers';
 
@@ -30,7 +36,10 @@ export async function getAllDailyChallenges() {
 }
 
 export type ChallengeDetails = {
-  articleId: number;
+  /** @deprecated Article IDs are no longer used for new challenges. Use challengeId instead. */
+  articleId?: number;
+  /** Challenge ID from the new Challenge table */
+  challengeId?: number;
   date: Date;
   resources?: { id: number; modelId: number }[];
   engine?: string;
@@ -42,6 +51,10 @@ export type ChallengeDetails = {
   endsToday?: boolean;
 };
 
+/**
+ * @deprecated Use trpc.challenge.getInfinite with status: [ChallengeStatus.Active] instead.
+ * This function uses the legacy Article-based system which is being phased out.
+ */
 export async function getCurrentDailyChallenge() {
   const [currentChallenge, customChallenge] = await Promise.all([
     getCurrentChallenge(),
@@ -51,6 +64,7 @@ export async function getCurrentDailyChallenge() {
   const challengeDetails: ChallengeDetails[] = [];
   if (currentChallenge)
     challengeDetails.push({
+      challengeId: currentChallenge.challengeId,
       articleId: currentChallenge.articleId,
       date: currentChallenge.date,
       resources: currentChallenge.modelVersionIds.map((id) => ({
@@ -117,3 +131,69 @@ export async function setCustomChallenge(data: Record<string, unknown>) {
 export async function deleteCustomChallenge() {
   await sysRedis.del(REDIS_SYS_KEYS.GENERATION.CUSTOM_CHALLENGE);
 }
+
+// =============================================================================
+// New Challenge Table Functions
+// =============================================================================
+
+/**
+ * Get all challenges from the new Challenge table
+ * Includes active, scheduled, and completed challenges
+ */
+export async function getAllChallengesFromDb(options?: {
+  status?: ChallengeStatus[];
+  limit?: number;
+}) {
+  const { status, limit = 100 } = options ?? {};
+
+  // Build WHERE conditions using parameterized queries (SQL injection safe)
+  const conditions: Prisma.Sql[] = [];
+
+  if (status && status.length > 0) {
+    const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
+    conditions.push(Prisma.sql`status IN (${Prisma.join(statusValues)})`);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    ${whereClause}
+    ORDER BY "startsAt" DESC
+    LIMIT ${limit}
+  `;
+
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is NewChallengeDetails => c !== null);
+}
+
+/**
+ * Get visible challenges (visible and not completed/cancelled)
+ * Used for the public challenges feed
+ */
+export async function getVisibleChallenges(limit = 30) {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE "visibleAt" <= now()
+    AND status NOT IN (${ChallengeStatus.Completed}::"ChallengeStatus", ${ChallengeStatus.Cancelled}::"ChallengeStatus")
+    ORDER BY
+      CASE
+        WHEN status = ${ChallengeStatus.Active}::"ChallengeStatus" THEN 1
+        WHEN status = ${ChallengeStatus.Scheduled}::"ChallengeStatus" THEN 2
+        ELSE 3
+      END,
+      "startsAt" DESC
+    LIMIT ${limit}
+  `;
+
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is NewChallengeDetails => c !== null);
+}
+
+/**
+ * Get a single challenge by ID with full details
+ */
+export { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';

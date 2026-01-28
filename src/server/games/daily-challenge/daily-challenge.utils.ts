@@ -3,7 +3,16 @@ import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  type ChallengeDetails,
+  getActiveChallengeFromDb,
+  getActiveChallengesFromDb,
+  getEndedActiveChallengesFromDb,
+  getScheduledChallengeFromDb,
+  getScheduledChallengesReadyToStart,
+  getUpcomingSystemChallengeFromDb,
+} from './challenge-helpers';
 
 const challengeConfigSchema = z.object({
   challengeType: z.string(),
@@ -56,7 +65,9 @@ export const dailyChallengeConfig: ChallengeConfig = {
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
   try {
-    const redisConfig = await sysRedis.packed.get<any>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG);
+    const redisConfig = await sysRedis.packed.get<Partial<ChallengeConfig>>(
+      REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG
+    );
     if (redisConfig) config = challengeConfigSchema.partial().parse(redisConfig);
   } catch (e) {
     console.error('Invalid daily challenge config in redis:', e);
@@ -140,8 +151,9 @@ export type Score = {
   aesthetic: number; // 0-10 how aesthetically pleasing it is
 };
 
-type DailyChallengeDetails = {
-  articleId: number;
+export type DailyChallengeDetails = {
+  challengeId: number; // Challenge table ID for status updates
+  articleId?: number; // Deprecated: Legacy article ID (no longer used for new challenges)
   type: string;
   date: Date;
   theme: string;
@@ -155,6 +167,36 @@ type DailyChallengeDetails = {
   entryPrizeRequirement: number;
   entryPrize: Prize;
 };
+
+/**
+ * Convert new ChallengeDetails format to legacy DailyChallengeDetails format.
+ * This adapter enables backward compatibility during the transition period.
+ */
+export function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChallengeDetails {
+  const metadata = challenge.metadata as Record<string, unknown> | null;
+  return {
+    challengeId: challenge.id,
+    articleId: (metadata?.articleId as number) ?? 0,
+    type: (metadata?.challengeType as string) ?? 'world-morph',
+    date: challenge.startsAt,
+    theme: challenge.theme ?? '',
+    modelId: (metadata?.resourceUserId as number) ?? 0,
+    modelVersionIds: challenge.modelVersionIds,
+    collectionId: challenge.collectionId!,
+    title: challenge.title,
+    invitation: challenge.invitation ?? '',
+    coverUrl: challenge.coverUrl ?? '',
+    prizes: challenge.prizes,
+    entryPrizeRequirement: challenge.entryPrizeRequirement,
+    entryPrize: challenge.entryPrize ?? { buzz: 0, points: 0 },
+  };
+}
+
+/**
+ * @deprecated Use getChallengeById from challenge-helpers.ts instead.
+ * This function looks up challenges by Article ID which is no longer used.
+ * Will be removed in a future release.
+ */
 export async function getChallengeDetails(articleId: number) {
   const db = await getDbWithoutLag('article', articleId);
   const rows = await db.$queryRaw<DailyChallengeDetails[]>`
@@ -185,55 +227,39 @@ export async function getChallengeDetails(articleId: number) {
 
   return result;
 }
-export async function setCurrentChallenge(articleId: number) {
-  const challenge = await getChallengeDetails(articleId);
-  await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
-}
-export async function getCurrentChallenge() {
-  const challenge = await redis.packed.get<DailyChallengeDetails>(
-    REDIS_KEYS.DAILY_CHALLENGE.DETAILS
-  );
-  if (!challenge) {
-    // If the challenge is not set, we need to find the most recent approved challenge
-    const [article] = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT
-        ci."articleId" as id
-      FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."articleId"
-      WHERE
-        ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
-        AND ci."status" = 'ACCEPTED'
-        AND (a.metadata->>'status') = 'active'
-      ORDER BY ci."createdAt" DESC
-      LIMIT 1
-    `;
-    if (!article) return null;
-    setCurrentChallenge(article.id);
-    return getCurrentChallenge();
-  }
-  return challenge;
-}
-export async function getUpcomingChallenge() {
-  const results = await dbRead.$queryRaw<{ articleId: number }[]>`
-    SELECT
-      ci."articleId"
-    FROM "CollectionItem" ci
-    WHERE
-      ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
-      AND ci."status" = 'REVIEW'
-    ORDER BY ci."createdAt" DESC
-    LIMIT 1
-  `;
-  if (!results.length) return null;
 
-  return await getChallengeDetails(results[0].articleId);
+/**
+ * @deprecated Challenge caching is now managed via Challenge table status.
+ * This function is a no-op and will be removed in a future release.
+ */
+export async function setCurrentChallenge(_articleId: number): Promise<void> {
+  // No-op: Challenge.status is now the source of truth
+  // Redis cache is no longer used for challenge tracking
+  return;
+}
+
+/**
+ * Gets the currently active challenge from the Challenge table.
+ */
+export async function getCurrentChallenge(): Promise<DailyChallengeDetails | null> {
+  const challenge = await getActiveChallengeFromDb();
+  if (!challenge) return null;
+  return challengeToLegacyFormat(challenge);
+}
+
+/**
+ * Gets the next scheduled challenge from the Challenge table.
+ */
+export async function getUpcomingChallenge(): Promise<DailyChallengeDetails | null> {
+  const challenge = await getScheduledChallengeFromDb();
+  if (!challenge) return null;
+  return challengeToLegacyFormat(challenge);
 }
 export async function endChallenge(challenge?: { collectionId: number } | null) {
   challenge ??= await getCurrentChallenge();
   if (!challenge) return;
 
   // Close challenge
-  // ----------------------------------------------
   await dbWrite.$executeRaw`
     UPDATE "Collection"
     SET write = 'Private'::"CollectionWriteConfiguration"
@@ -245,4 +271,44 @@ export async function endChallenge(challenge?: { collectionId: number } | null) 
     DELETE FROM "CollectionContributor"
     WHERE "collectionId" = ${challenge.collectionId}
   `;
+}
+
+// =============================================================================
+// Multi-Challenge Support Functions
+// =============================================================================
+
+/**
+ * Gets ALL active challenges in legacy format (supports multiple concurrent challenges).
+ */
+export async function getActiveChallenges(): Promise<DailyChallengeDetails[]> {
+  const challenges = await getActiveChallengesFromDb();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets active challenges that have ENDED (endsAt <= now) in legacy format.
+ * These challenges need winner picking.
+ */
+export async function getEndedActiveChallenges(): Promise<DailyChallengeDetails[]> {
+  const challenges = await getEndedActiveChallengesFromDb();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets scheduled challenges that are ready to START (startsAt <= now) in legacy format.
+ * These challenges should be activated.
+ */
+export async function getChallengesReadyToStart(): Promise<DailyChallengeDetails[]> {
+  const challenges = await getScheduledChallengesReadyToStart();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets an upcoming system-created challenge (scheduled or active) in legacy format.
+ * Returns null if no system challenge exists.
+ */
+export async function getUpcomingSystemChallenge(): Promise<DailyChallengeDetails | null> {
+  const challenge = await getUpcomingSystemChallengeFromDb();
+  if (!challenge) return null;
+  return challengeToLegacyFormat(challenge);
 }
