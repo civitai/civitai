@@ -166,11 +166,29 @@ That's Civitai Comics."
 ```
 THE MAGIC MOMENT:
 
-Upload character → Save character → Describe scene → Generate →
+Select/Create character → Describe scene → Generate →
 "Holy shit, that's actually the same person!"
 
 Everything else is polish. Ship the loop. Nail the magic.
 ```
+
+### Character Creation: Two Paths
+
+The MVP supports two ways to add a character to a project:
+
+#### Path 1: Select Existing LoRA (Recommended for Testing)
+- User searches/browses their existing character LoRAs on Civitai
+- Or selects any public character LoRA
+- Instant - no waiting for training
+- Great for testing and users who already have character models
+
+#### Path 2: Upload Images → Train LoRA
+- User uploads 3-5 reference images
+- System auto-triggers LoRA training with pre-configured settings
+- Training takes 5-10 minutes
+- Good for new characters, but slower
+
+**For hackathon demo:** Use Path 1 with pre-trained LoRAs for reliability.
 
 ### Feature Matrix
 
@@ -179,15 +197,14 @@ Everything else is polish. Ship the loop. Nail the magic.
 | **Authentication (Civitai SSO)** | ✅ YES | Need user accounts |
 | **Dashboard (project list)** | ✅ YES | Need entry point |
 | **Create project (name only)** | ✅ YES | Need container |
-| **Character upload (3-5 images)** | ✅ YES | Core value prop |
-| **Character lock processing** | ✅ YES | Core magic |
+| **Character from existing LoRA** | ✅ YES | Core - instant, testable |
+| **Character from images (train)** | ✅ YES | Core value prop for new users |
 | **Single panel generation** | ✅ YES | Core loop |
 | **Scene description input** | ✅ YES | Primary interaction |
 | **Buzz balance display** | ✅ YES | Cost awareness |
 | **Save panel to project** | ✅ YES | Need persistence |
 | --- | --- | --- |
 | Multiple results (4 variations) | ⚠️ MAYBE | Nice but adds complexity |
-| Anchor review/approval | ⚠️ MAYBE | Could auto-approve for MVP |
 | Shot type selector | ⚠️ MAYBE | Could hardcode "medium shot" |
 | --- | --- | --- |
 | Location lock | ❌ CUT | Describe in prompt |
@@ -208,8 +225,8 @@ Everything else is polish. Ship the loop. Nail the magic.
 
 | Full Product | Hackathon Version | Impact |
 |--------------|-------------------|--------|
-| 10-15 reference images | 3-5 images | Lower quality but faster |
-| LoRA training (5-10 min) | IP-Adapter embedding only (30-60s) | Less consistent but faster |
+| 10-15 reference images | 3-5 images OR existing LoRA | Flexibility over quality |
+| Custom training config | Pre-baked training settings | Less control, faster setup |
 | 20-30 anchor poses generated | No anchors | Missing core quality feature |
 | Composition layer (lighting, shadows) | Raw generation only | "Paper doll" look possible |
 | Buzz reservation pattern | Simple balance check | Race conditions possible |
@@ -274,16 +291,24 @@ CREATE TABLE projects (
 );
 
 -- Characters (one per project for MVP)
+-- Supports two creation paths:
+--   1. From existing LoRA: model_id is set, status='Ready' immediately
+--   2. From images: reference_images set, triggers training, status='Pending'→'Processing'→'Ready'
 CREATE TABLE characters (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     status VARCHAR(20) DEFAULT 'pending',   -- pending, processing, ready, failed
+    source_type VARCHAR(20) DEFAULT 'upload', -- 'upload' or 'existing_model'
+    -- For existing LoRA path:
+    model_id INTEGER,                        -- Reference to Civitai Model
+    model_version_id INTEGER,                -- Reference to specific ModelVersion
+    -- For upload/train path:
     reference_images JSONB,                  -- Array of S3 URLs
-    -- Simplified: Production has separate face/body/outfit embeddings
-    face_embedding JSONB,                    -- From face detection API
-    character_embedding JSONB,               -- From character creation API
-    civitai_job_id VARCHAR(100),             -- External job reference
+    training_job_id VARCHAR(100),            -- Training job reference
+    trained_model_id INTEGER,                -- Model ID after training completes
+    trained_model_version_id INTEGER,        -- ModelVersion ID after training
+    -- Common fields:
     error_message TEXT,                      -- If status=failed
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()

@@ -174,6 +174,14 @@ export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
 
+export type ComicProjectStatus = "Active" | "Deleted";
+
+export type ComicCharacterStatus = "Pending" | "Processing" | "Ready" | "Failed";
+
+export type ComicCharacterSourceType = "Upload" | "ExistingModel";
+
+export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
+
 export interface Account {
   id: number;
   userId: number;
@@ -438,6 +446,8 @@ export interface User {
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
+  comicProjects?: ComicProject[];
+  comicCharacters?: ComicCharacter[];
 }
 
 export interface CustomerSubscription {
@@ -3690,6 +3700,57 @@ export interface TagsOnImageDetails {
   reserved_1: boolean;
   reserved_2: boolean;
   confidence: number;
+}
+
+export interface ComicProject {
+  id: string;
+  userId: number;
+  user?: User;
+  name: string;
+  status: ComicProjectStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  characters?: ComicCharacter[];
+  panels?: ComicPanel[];
+}
+
+export interface ComicCharacter {
+  id: string;
+  projectId: string;
+  project?: ComicProject;
+  userId: number;
+  user?: User;
+  name: string;
+  status: ComicCharacterStatus;
+  sourceType: ComicCharacterSourceType;
+  modelId: number | null;
+  modelVersionId: number | null;
+  referenceImages: JsonValue | null;
+  trainingJobId: string | null;
+  trainedModelId: number | null;
+  trainedModelVersionId: number | null;
+  errorMessage: string | null;
+  buzzCost: number;
+  createdAt: Date;
+  updatedAt: Date;
+  panels?: ComicPanel[];
+}
+
+export interface ComicPanel {
+  id: string;
+  projectId: string;
+  project?: ComicProject;
+  characterId: string | null;
+  character?: ComicCharacter | null;
+  prompt: string;
+  imageUrl: string | null;
+  position: number;
+  buzzCost: number;
+  status: ComicPanelStatus;
+  civitaiJobId: string | null;
+  errorMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
