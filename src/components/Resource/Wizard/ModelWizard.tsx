@@ -65,17 +65,23 @@ const CreateSteps = ({
   const templateId = result.success ? result.data.templateId : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
 
-  const { data: templateFields, isInitialLoading } = trpc.model.getTemplateFields.useQuery(
-    // Explicit casting since we know it's a number at this point
-    { id: templateId as number },
-    { enabled: !!templateId }
-  );
-  const { data: bountyFields, isInitialLoading: isBountyFieldsInitialLoading } =
+  const { data: templateFields, isInitialLoading: isTemplateLoading } =
+    trpc.model.getTemplateFields.useQuery({ id: templateId as number }, { enabled: !!templateId });
+  const { data: bountyFields, isInitialLoading: isBountyLoading } =
     trpc.model.getModelTemplateFieldsFromBounty.useQuery(
-      // Explicit casting since we know it's a number at this point
       { id: bountyId as number },
       { enabled: !!bountyId }
     );
+
+  // Derived state for template/bounty loading
+  const isLoadingTemplateData = isTemplateLoading || isBountyLoading;
+  const modelData = model ?? templateFields ?? bountyFields;
+
+  // Form key ensures remount when template source or loading state changes
+  // See: https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes
+  const formKey = `form-${templateId ?? bountyId ?? 'new'}-${
+    isLoadingTemplateData ? 'loading' : 'ready'
+  }`;
 
   return (
     <Stepper
@@ -92,10 +98,11 @@ const CreateSteps = ({
       {/* Step 1: Model Info */}
       <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
         <div className="container relative flex max-w-sm flex-col gap-3">
-          <LoadingOverlay visible={isInitialLoading || isBountyFieldsInitialLoading} />
+          <LoadingOverlay visible={isLoadingTemplateData} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
           <ModelUpsertForm
-            model={model ?? templateFields ?? bountyFields}
+            key={formKey}
+            model={modelData}
             onSubmit={({ id }) => {
               if (editing) return goNext();
               router.replace(getWizardUrl({ id, step: 2, templateId, bountyId })).then();
@@ -422,7 +429,10 @@ export function ModelWizard() {
                     </Button>
                   </Popover.Target>
                   <Popover.Dropdown p={4}>
-                    <TemplateSelect userId={currentUser.id} onSelect={() => setOpened(false)} />
+                    <TemplateSelect
+                      username={currentUser.username!}
+                      onSelect={() => setOpened(false)}
+                    />
                   </Popover.Dropdown>
                 </Popover>
               )}
