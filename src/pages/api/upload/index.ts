@@ -6,6 +6,7 @@ import { filenamize, generateToken } from '~/utils/string-helpers';
 import { getMultipartPutUrl, getUploadS3Client, getUploadBucket } from '~/utils/s3-utils';
 import type { UploadBackend } from '~/utils/s3-utils';
 import { env } from '~/env/server';
+import { isPreview } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
@@ -31,7 +32,6 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   let backend: UploadBackend = 'default';
   if (type === UploadType.Model && env.S3_UPLOAD_B2_ENDPOINT) {
     // Force B2 on preview environments; otherwise check Flipt flag
-    const isPreview = !!env.NEXTAUTH_COOKIE_DOMAIN;
     const useB2 = isPreview || await isFlipt(
       FLIPT_FEATURE_FLAGS.B2_UPLOAD_DEFAULT,
       String(userId)
