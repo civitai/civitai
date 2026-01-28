@@ -15,7 +15,7 @@ import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal, type PendingChange } from './CompatibilityConfirmModal';
 import { FormFooter } from './FormFooter';
-import { ResourceAlerts, ExperimentalModelAlert } from './ResourceAlerts';
+import { ResourceAlerts, ExperimentalModelAlert, ReadyAlert } from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -262,6 +262,9 @@ export function GenerationForm() {
             name="baseModel"
             render={({ value }) => <ExperimentalModelAlert ecosystem={value} />}
           />
+
+          {/* Ready State Alert - Resources need downloading */}
+          <ReadyAlert />
 
           {/* Source images (img2img only) */}
           <Controller

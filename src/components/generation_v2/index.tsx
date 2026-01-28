@@ -78,3 +78,5 @@ export { GenerationFormProvider } from './GenerationFormProvider';
 export { FormFooter } from './FormFooter';
 export { AccordionLayout } from './AccordionLayout';
 export { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
+export { WhatIfProvider, useWhatIfContext } from './WhatIfProvider';
+export { ResourceAlerts, ExperimentalModelAlert, ReadyAlert } from './ResourceAlerts';

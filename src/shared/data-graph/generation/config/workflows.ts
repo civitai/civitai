@@ -17,7 +17,7 @@
  * Priority: version > ecosystem > workflow
  */
 
-import { ECO } from '~/shared/constants/basemodel.constants';
+import { ECO, ecosystemByKey, ecosystemById } from '~/shared/constants/basemodel.constants';
 import {
   parseWorkflowKey,
   type WorkflowCategory,
@@ -452,4 +452,41 @@ export function getOutputTypeForWorkflow(workflowId: string): 'image' | 'video' 
   } catch {
     return 'image'; // fallback
   }
+}
+
+/**
+ * Get all workflows that accept a given media type as input.
+ * Used to determine available actions for a generated output:
+ * - Image output → workflows with image input (img2img*, img2vid*)
+ * - Video output → workflows with video input (vid2vid*)
+ */
+export function getWorkflowsForOutputType(outputType: 'image' | 'video'): WorkflowOption[] {
+  return workflowOptions.filter((w) => w.inputType === outputType);
+}
+
+/**
+ * Get the valid ecosystem for a workflow, considering the current value.
+ * If the current ecosystem supports the workflow, returns it.
+ * Otherwise returns the default ecosystem for that workflow.
+ */
+export function getValidEcosystemForWorkflow(
+  workflowId: string,
+  currentEcosystemKey?: string
+): { id: number; key: string; displayName: string } | undefined {
+  // If current value supports the workflow, use it
+  if (currentEcosystemKey) {
+    const ecosystem = ecosystemByKey.get(currentEcosystemKey);
+    if (ecosystem && isWorkflowAvailable(workflowId, ecosystem.id)) {
+      return { id: ecosystem.id, key: ecosystem.key, displayName: ecosystem.displayName };
+    }
+  }
+  // Otherwise get the default
+  const defaultEcoId = getDefaultEcosystemForWorkflow(workflowId);
+  if (defaultEcoId) {
+    const eco = ecosystemById.get(defaultEcoId);
+    if (eco) {
+      return { id: eco.id, key: eco.key, displayName: eco.displayName };
+    }
+  }
+  return undefined;
 }

@@ -24,6 +24,10 @@ import {
   generationGraph,
   type GenerationGraphTypes,
 } from '~/shared/data-graph/generation/generation-graph';
+import {
+  getInputTypeForWorkflow,
+  workflowConfigByKey,
+} from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import {
@@ -592,6 +596,59 @@ export async function generateFromGraph({
   return formatted;
 }
 
+// =============================================================================
+// What-If Defaults
+// =============================================================================
+
+/** Placeholder image for cost estimation when source image doesn't affect cost */
+const WHATIF_PLACEHOLDER_IMAGE = {
+  url: 'https://placeholder.test/whatif.png',
+  width: 512,
+  height: 512,
+};
+
+/**
+ * Applies placeholder defaults for non-cost-affecting fields in what-if requests.
+ * This allows cost estimation before the user fills in all required fields
+ * (e.g., before typing a prompt or uploading a source image).
+ *
+ * Only fills fields that don't affect cost:
+ * - prompt: text content doesn't affect pricing
+ * - images: specific source image doesn't affect pricing for ecosystem workflows
+ *
+ * Does NOT fill placeholders for standalone enhancement workflows (upscale,
+ * remove-background, vid2vid) where source media dimensions affect cost.
+ */
+function applyWhatIfDefaults(input: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...input };
+  const workflow = result.workflow as string | undefined;
+  if (!workflow) return result;
+
+  const inputType = getInputTypeForWorkflow(workflow);
+
+  // Fill prompt for text-input workflows (prompt text doesn't affect cost)
+  if (inputType === 'text' && !result.prompt) {
+    result.prompt = 'cost estimation';
+  }
+
+  // Fill images for ecosystem image-input workflows
+  // Standalone enhancements (ecosystemIds: []) need actual dimensions, so skip those
+  if (inputType === 'image') {
+    const images = result.images as unknown[] | undefined;
+    if (!images || images.length === 0) {
+      const config = workflowConfigByKey.get(workflow);
+      if (config && config.ecosystemIds.length > 0) {
+        result.images = [WHATIF_PLACEHOLDER_IMAGE];
+      }
+    }
+  }
+
+  // Video-input workflows (vid2vid:*) are standalone and need actual video metadata
+  // for cost calculation (dimensions * scaleFactor, fps * interpolationFactor), so no defaults
+
+  return result;
+}
+
 /**
  * Submits a what-if request using generation-graph input.
  * Returns cost estimation without actually running the generation.
@@ -605,7 +662,7 @@ export async function whatIfFromGraph({
   token,
   currencies,
 }: WhatIfOptions) {
-  const data = validateInput(input, externalCtx);
+  const data = validateInput(applyWhatIfDefaults(input), externalCtx);
   const step = await createWorkflowStepFromGraph(data, true, userId ? { id: userId } : undefined);
 
   // Submit what-if request to orchestrator

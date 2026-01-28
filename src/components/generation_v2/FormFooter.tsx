@@ -28,8 +28,27 @@ import { Controller, useGraph } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { useTipStore } from '~/store/tip.store';
 import { hashify } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
-import { useWhatIfFromGraph } from './hooks/useWhatIfFromGraph';
+import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useWhatIfContext } from './WhatIfProvider';
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+interface ResourceSnapshot {
+  model?: { id: number };
+  resources?: { id: number }[];
+  vae?: { id: number };
+}
+
+/**
+ * Determines if creator tips apply based on selected resources.
+ * Creator tips apply when there are any user-created resources (model, LoRAs, VAE).
+ */
+function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
+  const { model, resources, vae } = snapshot;
+  return !!(model?.id || (resources && resources.length > 0) || vae?.id);
+}
 
 // =============================================================================
 // SubmitButton Component
@@ -41,13 +60,25 @@ interface SubmitButtonProps {
 }
 
 function SubmitButton({ isLoading, onSubmit }: SubmitButtonProps) {
+  const graph = useGraph<GenerationGraphTypes>();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  const { creatorTip, civitaiTip } = useTipStore();
 
-  // Get whatIf data for cost estimation (only fetches when graph is valid)
-  const { data, isError, isInitialLoading, isValid } = useWhatIfFromGraph({
-    enabled: features.creatorComp,
-  });
+  // Get whatIf data from context (provided by WhatIfProvider)
+  const { data, isError, isInitialLoading, isValid } = useWhatIfContext();
+
+  // Get values from graph for tip calculation
+  const snapshot = graph.getSnapshot() as ResourceSnapshot;
+  const hasCreatorTip = getHasCreatorTip(snapshot);
+
+  // Calculate tip amounts
+  const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
+  const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
+
+  const base = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
+  const totalCost = (data?.cost?.total ?? 0) + totalTip;
 
   const handleClick = () => {
     if (running) helpers?.next();
@@ -60,7 +91,7 @@ function SubmitButton({ isLoading, onSubmit }: SubmitButtonProps) {
       data-tour="gen:submit"
       className="h-full flex-1 px-2"
       loading={isInitialLoading || isLoading}
-      cost={data?.cost?.total ?? 0}
+      cost={totalCost}
       disabled={isError || !isValid}
       onClick={handleClick}
       transactions={data?.transactions}
@@ -73,7 +104,7 @@ function SubmitButton({ isLoading, onSubmit }: SubmitButtonProps) {
   return (
     <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       {generateButton}
-      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} />
+      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} hideCreatorTip={!hasCreatorTip} />
     </div>
   );
 }
@@ -101,7 +132,7 @@ export function FormFooter() {
     [status.message]
   );
 
-  const generateMutation = trpc.orchestrator.generateFromGraph.useMutation({
+  const generateMutation = useGenerateFromGraph({
     onError: (error) => {
       const isPOI =
         error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI');
@@ -132,9 +163,13 @@ export function FormFooter() {
       Object.entries(result.data).filter(([k]) => result.nodes[k]?.kind !== 'computed')
     );
 
+    // Only include creator tip if there are user-created resources
+    const snapshot = graph.getSnapshot() as ResourceSnapshot;
+    const hasCreatorTip = getHasCreatorTip(snapshot);
+
     await generateMutation.mutateAsync({
       input: inputData,
-      creatorTip,
+      creatorTip: hasCreatorTip ? creatorTip : 0,
       civitaiTip,
     });
   };

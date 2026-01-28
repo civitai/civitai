@@ -276,6 +276,29 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
   });
 }
 
+export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
+  return trpc.orchestrator.generateFromGraph.useMutation({
+    onSuccess: (data) => {
+      updateTextToImageRequests({
+        input: { ascending: false },
+        cb: (old) => {
+          old.pages[0].items.unshift(data);
+        },
+      });
+      updateTextToImageRequests({
+        input: { ascending: true },
+        cb: (old) => {
+          const index = old.pages.length - 1;
+          if (!old.pages[index].nextCursor) {
+            old.pages[index].items.push(data);
+          }
+        },
+      });
+    },
+    ...args,
+  });
+}
+
 export function useGenerateWithCost(cost = 0) {
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>

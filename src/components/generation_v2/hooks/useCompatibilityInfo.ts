@@ -11,36 +11,10 @@ import { ecosystemByKey, ecosystemById } from '~/shared/constants/basemodel.cons
 import {
   isWorkflowAvailable,
   workflowOptions,
-  getDefaultEcosystemForWorkflow,
   getOutputTypeForWorkflow,
   getEcosystemsForWorkflow,
+  getValidEcosystemForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
-
-/**
- * Get the valid ecosystem for a workflow, considering the current value.
- * This mirrors the logic in ecosystem-graph.ts getValidEcosystemForWorkflow.
- */
-function getValidEcosystemForWorkflow(
-  workflowId: string,
-  currentValue?: string
-): { id: number; key: string; displayName: string } | undefined {
-  // If current value supports the workflow, use it
-  if (currentValue) {
-    const ecosystem = ecosystemByKey.get(currentValue);
-    if (ecosystem && isWorkflowAvailable(workflowId, ecosystem.id)) {
-      return { id: ecosystem.id, key: ecosystem.key, displayName: ecosystem.displayName };
-    }
-  }
-  // Otherwise get the default
-  const defaultEcoId = getDefaultEcosystemForWorkflow(workflowId);
-  if (defaultEcoId) {
-    const eco = ecosystemById.get(defaultEcoId);
-    if (eco) {
-      return { id: eco.id, key: eco.key, displayName: eco.displayName };
-    }
-  }
-  return undefined;
-}
 
 // =============================================================================
 // Types

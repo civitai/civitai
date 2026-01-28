@@ -5,6 +5,7 @@
  * - Unstable resources (high failure rate)
  * - Content restricted resources (minor/SFW flagged)
  * - Experimental ecosystem alerts (based on baseModel config)
+ * - Ready state alerts (resources need to be downloaded)
  */
 
 import { Alert, List, Text } from '@mantine/core';
@@ -14,6 +15,7 @@ import {
   ecosystemByKey,
   isEcosystemExperimental,
 } from '~/shared/constants/basemodel.constants';
+import { useWhatIfContext } from './WhatIfProvider';
 
 // =============================================================================
 // Types
@@ -178,6 +180,31 @@ export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProp
       <Text size="xs">
         {displayName} support is currently in an experimental phase. Some features may not work as
         expected. Please report any issues you encounter.
+      </Text>
+    </Alert>
+  );
+}
+
+// =============================================================================
+// Ready Alert
+// =============================================================================
+
+/**
+ * Displays an alert when resources need to be downloaded before generation.
+ * Must be used inside a WhatIfProvider.
+ */
+export function ReadyAlert() {
+  const { data } = useWhatIfContext();
+
+  if (data?.ready !== false) {
+    return null;
+  }
+
+  return (
+    <Alert color="yellow" title="Potentially slow generation" radius="md">
+      <Text size="xs">
+        We need to download additional resources to fulfill your request. This generation may take
+        longer than usual to complete.
       </Text>
     </Alert>
   );

@@ -18,6 +18,7 @@ import {
 } from '~/store/generation.store';
 
 import { ResourceDataProvider, useResourceDataContext } from './inputs/ResourceDataProvider';
+import { WhatIfProvider } from './WhatIfProvider';
 
 // =============================================================================
 // Constants
@@ -154,7 +155,11 @@ function InnerProvider({
     return useGenerationStore.subscribe(applyStoreData);
   }, [graph]);
 
-  return <DataGraphProvider graph={graph}>{children}</DataGraphProvider>;
+  return (
+    <DataGraphProvider graph={graph}>
+      <WhatIfProvider>{children}</WhatIfProvider>
+    </DataGraphProvider>
+  );
 }
 
 // =============================================================================

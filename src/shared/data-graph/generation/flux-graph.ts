@@ -27,6 +27,7 @@ import {
   resourcesNode,
   seedNode,
   stepsNode,
+  type ResourceData,
 } from './common';
 
 // =============================================================================
@@ -98,11 +99,13 @@ const fluxGuidancePresets = [
 // Shared Subgraphs
 // =============================================================================
 
-/** Type for model value from parent context */
-type ModelValue = { id: number; baseModel: string; model: { id: number; type: string } } | undefined;
-
 /** Context shape passed to flux mode subgraphs */
-type FluxModeCtx = { baseModel: string; workflow: string; model: ModelValue; fluxMode: FluxMode };
+type FluxModeCtx = {
+  baseModel: string;
+  workflow: string;
+  model: ResourceData | undefined;
+  fluxMode: FluxMode;
+};
 
 /**
  * Subgraph with common nodes for standard-like modes.
@@ -124,9 +127,21 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
   .node('enhancedCompatibility', enhancedCompatibilityNode());
 
 /**
- * Pro mode subgraph: aspectRatio, cfgScale, steps, seed, enhancedCompatibility (no resources)
+ * Pro mode subgraph: aspectRatio, cfgScale, steps, seed (no resources, no enhancedCompatibility)
  */
-const proModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>().merge(standardModeBaseGraph);
+const proModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
+  .node('aspectRatio', aspectRatioNode({ options: fluxAspectRatios, defaultValue: '1:1' }))
+  .node(
+    'cfgScale',
+    cfgScaleNode({
+      min: 2,
+      max: 20,
+      defaultValue: 3.5,
+      presets: fluxGuidancePresets,
+    })
+  )
+  .node('steps', stepsNode({ min: 20, max: 50 }))
+  .node('seed', seedNode());
 
 /**
  * Standard/Krea mode subgraph: resources + aspectRatio, cfgScale, steps, seed, enhancedCompatibility
@@ -175,7 +190,7 @@ const ultraModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  * - draft: aspectRatio, seed, enhancedCompatibility
  * - standard: resources, aspectRatio, cfgScale, steps, seed, enhancedCompatibility
  * - krea: resources, aspectRatio, cfgScale, steps, seed, enhancedCompatibility
- * - pro: aspectRatio, cfgScale, steps, seed, enhancedCompatibility (no resources)
+ * - pro: aspectRatio, cfgScale, steps, seed (no resources, no enhancedCompatibility)
  * - ultra: aspectRatio (different options), fluxUltraRaw, seed
  *
  * Draft workflow behavior:
@@ -184,7 +199,7 @@ const ultraModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  */
 
 export const fluxGraph = new DataGraph<
-  { baseModel: string; workflow: string; model: ModelValue },
+  { baseModel: string; workflow: string; model: ResourceData | undefined },
   GenerationCtx
 >()
   // Merge checkpoint graph with dynamic modelLocked based on workflow
@@ -208,9 +223,9 @@ export const fluxGraph = new DataGraph<
       const isDraftWorkflow = ctx.workflow === 'txt2img:draft';
 
       if (isDraftWorkflow && !isDraftModel) {
-        set('model', { id: fluxVersionIds.draft } as ModelValue);
+        set('model', { id: fluxVersionIds.draft } as ResourceData);
       } else if (!isDraftWorkflow && isDraftModel) {
-        set('model', { id: fluxVersionIds.standard } as ModelValue);
+        set('model', { id: fluxVersionIds.standard } as ResourceData);
       }
     },
     ['workflow']
