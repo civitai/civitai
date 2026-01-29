@@ -60,9 +60,9 @@ export const baseModelFamilyConfig: Record<
     description: "Alibaba's multimodal model family with image generation capabilities",
     disabled: true,
   },
-  ZImageTurbo: {
-    name: 'ZImageTurbo',
-    description: 'Fast turbo-optimized image generation models',
+  ZImage: {
+    name: 'ZImage',
+    description: 'Z Image generation models',
   },
 };
 
@@ -156,6 +156,7 @@ const baseModelConfig = [
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
+  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 type BaseModelGroupConfigEntry = {
@@ -424,8 +425,13 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
   },
   ZImageTurbo: {
     name: 'ZImageTurbo',
-    family: 'ZImageTurbo',
+    family: 'ZImage',
     description: 'Fast turbo-optimized image generation model',
+  },
+  ZImageBase: {
+    name: 'ZImageBase',
+    family: 'ZImage',
+    description: 'Base image generation model',
   },
 };
 
@@ -928,6 +934,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       },
     ],
   },
+  // {
+  //   group: 'ZImageBase',
+  //   support: [
+  //     {
+  //       modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+  //       baseModels: ['ZImageBase'],
+  //     },
+  //   ],
+  // },
 ];
 
 type BaseModelSupportType = 'full' | 'partial';
@@ -1055,5 +1070,5 @@ export const DEPRECATED_BASE_MODELS = [
 export function getCanAuctionForGeneration(baseModel?: string) {
   if (!baseModel) return false;
   const group = getGenerationBaseModelGroup(baseModel);
-  return group ? !['Qwen', 'ZImageTurbo', 'Other'].includes(group.group) : false;
+  return group ? !['Qwen', 'ZImageTurbo', 'ZImageBase', 'Other'].includes(group.group) : false;
 }

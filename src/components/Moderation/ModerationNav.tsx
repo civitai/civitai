@@ -24,6 +24,11 @@ export function ModerationNav() {
         // { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
+        {
+          label: 'Cash Management',
+          href: '/moderator/cash-management',
+          hidden: !features.cashManagement,
+        },
         // { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/moderator/auditor' },
         // { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },

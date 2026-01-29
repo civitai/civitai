@@ -24,6 +24,10 @@ import {
   seedreamConfig,
   seedreamModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  zImageConfig,
+  zImageModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/zImage.config';
 
 type ImageGenConfigKey = keyof typeof imageGenConfig;
 export const imageGenConfig = {
@@ -35,6 +39,7 @@ export const imageGenConfig = {
   gemini: geminiConfig,
   qwen: qwenConfig,
   seedream: seedreamConfig,
+  zImage: zImageConfig,
 };
 
 export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
@@ -47,6 +52,7 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
     .concat([...geminiModelVersionMap.keys()].map((key) => [key, 'gemini']))
     .concat([...qwenModelVersionToModelMap.keys()].map((key) => [key, 'qwen']))
     .concat([...seedreamModelVersionToModelMap.keys()].map((key) => [key, 'seedream']))
+    .concat([...zImageModelVersionToModelMap.keys()].map((key) => [key, 'zImage']))
 );
 
 export function getModelVersionUsesImageGen(modelVersionId: number) {

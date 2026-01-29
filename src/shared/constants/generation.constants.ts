@@ -332,6 +332,11 @@ export function getIsZImageTurbo(baseModel?: string) {
   return baseModelSetType === 'ZImageTurbo';
 }
 
+export function getIsZImageBase(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'ZImageBase';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
@@ -361,6 +366,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'PonyV7')) return 'PonyV7';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageTurbo'))
     return 'ZImageTurbo';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageBase')) return 'ZImageBase';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {

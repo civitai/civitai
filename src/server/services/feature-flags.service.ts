@@ -144,6 +144,7 @@ const featureFlags = createFeatureFlags({
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
+  cashManagement: ['granted'],
   challengePlatform: {
     toggleable: false,
     default: true,

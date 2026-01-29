@@ -22,6 +22,7 @@ export const textToImageParamsSchema = z.object({
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
     error: 'Invalid sampler',
   }),
+  scheduler: z.enum(['simple', 'discrete', 'karras', 'exponential', 'ays']).optional(),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),

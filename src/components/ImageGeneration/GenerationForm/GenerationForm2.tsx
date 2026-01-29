@@ -103,6 +103,7 @@ import {
   getIsFluxKrea,
   getIsChroma,
   getIsZImageTurbo,
+  getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -110,6 +111,11 @@ import {
   getIsFluxKontext,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
+import {
+  getIsZImage,
+  zImageModelModeOptions,
+  zImageModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/zImage.config';
 import {
   flux2ModelModeOptions,
   getIsFlux2,
@@ -470,6 +476,7 @@ export function GenerationFormContent() {
   const isQwen = getIsQwen(model.id);
   const isChroma = getIsChroma(baseModel);
   const isZImageTurbo = getIsZImageTurbo(baseModel);
+  const isZImageBase = getIsZImageBase(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
@@ -491,6 +498,7 @@ export function GenerationFormContent() {
   const showImg2ImgMultiple =
     isNanoBanana || isSeedream || isFlux2 || isFlux2Klein || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
+  const isZImage = getIsZImage(model.id);
 
   const disablePriority = false;
 
@@ -500,10 +508,11 @@ export function GenerationFormContent() {
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
       { isActive: isFlux2Klein, options: flux2KleinModelVariantOptions },
+      { isActive: isZImage, options: zImageModelModeOptions },
       // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
-    [isFluxKontext, isFlux2, isFlux2Klein]
+    [isFluxKontext, isFlux2, isFlux2Klein, isZImage]
   );
 
   const activeModelMode = modelModeConfig.find((config) => config.isActive);
@@ -536,6 +545,7 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
+                !isZImageBase &&
                 !isFlux2 &&
                 !isFlux2Klein &&
                 !isPonyV7;
@@ -560,6 +570,11 @@ export function GenerationFormContent() {
               stepsMax = 15;
             }
 
+            if (isZImageBase) {
+              stepsMin = 1;
+              stepsMax = 50;
+            }
+
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
             let cfgScaleStep = 0.5;
@@ -581,6 +596,11 @@ export function GenerationFormContent() {
               cfgScaleMin = 1;
               cfgScaleMax = 2;
               cfgScaleStep = 0.1;
+            }
+
+            if (isZImageBase) {
+              cfgScaleMin = 1;
+              cfgScaleMax = 10;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -611,7 +631,8 @@ export function GenerationFormContent() {
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
               isSeedream ||
-              isZImageTurbo;
+              isZImageTurbo ||
+              isZImageBase;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -622,6 +643,7 @@ export function GenerationFormContent() {
               isNanoBanana ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isFlux2Klein ||
               isSeedream ||
@@ -638,6 +660,7 @@ export function GenerationFormContent() {
               isNanoBanana ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isFlux2Klein ||
               isSeedream ||
@@ -649,6 +672,7 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
+                !isZImageBase &&
                 !isOpenAI &&
                 !isPonyV7 &&
                 !isNanoBanana &&
@@ -669,9 +693,11 @@ export function GenerationFormContent() {
               isSeedream;
 
             // Flux2 Klein doesn't support certain samplers
-            const samplerOptions = isFlux2Klein
-              ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
-              : generation.samplers;
+            // Flux2 Klein and zImageBase share the same restricted sampler set
+            const samplerOptions =
+              isFlux2Klein || isZImageBase
+                ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
+                : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
@@ -681,6 +707,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
               isFlux2Klein ||
               isPonyV7 ||
@@ -694,7 +721,8 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isPonyV7 ||
               isSeedream ||
-              isZImageTurbo;
+              isZImageTurbo ||
+              isZImageBase;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
@@ -824,7 +852,7 @@ export function GenerationFormContent() {
                             hideVersion={
                               isFluxStandard || isFlux2 || isFlux2Klein || isHiDream || isImageGen
                             }
-                            isPreview={isZImageTurbo || isFlux2 || isFlux2Klein}
+                            isPreview={isZImageTurbo || isZImageBase || isFlux2 || isFlux2Klein}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -989,6 +1017,7 @@ export function GenerationFormContent() {
                             !isSD3 &&
                             !isChroma &&
                             !isZImageTurbo &&
+                            !isZImageBase &&
                             !isFlux2 &&
                             !isFlux2Klein &&
                             !isPonyV7 && <ReadySection />}
@@ -1167,16 +1196,25 @@ export function GenerationFormContent() {
                           if (model.id !== modelVersionId) {
                             // Update baseModel for Flux2Klein since each variant has its own group
                             const kleinBaseModel = getFlux2KleinBaseModel(modelVersionId);
-                            const baseModelName = kleinBaseModel
-                              ? getBaseModelConfig(kleinBaseModel).name
-                              : model.baseModel;
-                            form.setValue('model', {
-                              ...model,
-                              id: modelVersionId,
-                              baseModel: baseModelName,
-                            });
                             if (kleinBaseModel) {
                               form.setValue('baseModel', kleinBaseModel as any);
+                            }
+
+                            const zImageEntry = zImageModelVersionToModelMap.get(modelVersionId);
+                            if (zImageEntry) {
+                              form.setValue(
+                                'model',
+                                getGenerationConfig(zImageEntry.baseModel).checkpoint
+                              );
+                            } else {
+                              const baseModelName = kleinBaseModel
+                                ? getBaseModelConfig(kleinBaseModel).name
+                                : model.baseModel;
+                              form.setValue('model', {
+                                ...model,
+                                id: modelVersionId,
+                                baseModel: baseModelName,
+                              });
                             }
                           }
                         }}
@@ -1639,6 +1677,7 @@ export function GenerationFormContent() {
                                       isSD3 ||
                                       isChroma ||
                                       isZImageTurbo ||
+                                      isZImageBase ||
                                       isFlux2 ||
                                       isFlux2Klein ||
                                       isPonyV7
@@ -1669,13 +1708,38 @@ export function GenerationFormContent() {
                                     }
                                     data={samplerOptions}
                                     presets={
-                                      isFlux2Klein
+                                      isFlux2Klein || isZImageBase
                                         ? [{ label: 'Fast', value: 'Euler a' }]
                                         : [
                                             { label: 'Fast', value: 'Euler a' },
                                             { label: 'Popular', value: 'DPM++ 2M Karras' },
                                           ]
                                     }
+                                  />
+                                )}
+                                {isZImageBase && (
+                                  <InputSelect
+                                    name="scheduler"
+                                    label={
+                                      <div className="flex items-center gap-1">
+                                        <Input.Label>Scheduler</Input.Label>
+                                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                          Controls the noise schedule during generation, affecting
+                                          image quality and style.
+                                        </InfoPopover>
+                                      </div>
+                                    }
+                                    data={[
+                                      { label: 'Simple', value: 'simple' },
+                                      { label: 'Discrete', value: 'discrete' },
+                                      { label: 'Karras', value: 'karras' },
+                                      { label: 'Exponential', value: 'exponential' },
+                                      { label: 'AYS', value: 'ays' },
+                                    ]}
+                                    presets={[
+                                      { label: 'Default', value: 'karras' },
+                                      { label: 'Fast', value: 'simple' },
+                                    ]}
                                   />
                                 )}
                                 {!disableSteps && (
@@ -1714,6 +1778,7 @@ export function GenerationFormContent() {
                                             isSD3 ||
                                             isChroma ||
                                             isZImageTurbo ||
+                                            isZImageBase ||
                                             isFlux2 ||
                                             isFlux2Klein ||
                                             isPonyV7
