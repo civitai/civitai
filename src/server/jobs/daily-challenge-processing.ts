@@ -101,21 +101,21 @@ export async function createUpcomingChallenge() {
   // ----------------------------------------------
   // Get all users
   const users = await dbRead.$queryRaw<{ userId: number }[]>`
-      SELECT DISTINCT m."userId"
-      FROM "CollectionItem" ci
-      JOIN "Model" m ON m.id = ci."modelId"
-      WHERE "collectionId" = ${challengeTypeConfig.collectionId}
-      AND ci."status" = 'ACCEPTED'
-    `;
+    SELECT DISTINCT m."userId"
+    FROM "CollectionItem" ci
+    JOIN "Model" m ON m.id = ci."modelId"
+    WHERE "collectionId" = ${challengeTypeConfig.collectionId}
+    AND ci."status" = 'ACCEPTED'
+  `;
 
   // Get Users on cooldown (from Challenge table)
   const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
-      SELECT DISTINCT
-        cast(c.metadata->'resourceUserId' as int) as "userId"
-      FROM "Challenge" c
-      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
-      AND c."startsAt" > now() - ${config.userCooldown}::interval
-    `;
+    SELECT DISTINCT
+      cast(c.metadata->'resourceUserId' as int) as "userId"
+    FROM "Challenge" c
+    WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+    AND c."startsAt" > now() - ${config.userCooldown}::interval
+  `;
 
   // Remove users on cooldown
   const availableUsers = users.filter(
@@ -169,15 +169,15 @@ export async function createUpcomingChallenge() {
 
     // Get resource details
     [resource] = await dbRead.$queryRaw<SelectedResource[]>`
-        SELECT
-          m.id as "modelId",
-          u."username" as creator,
-          m.name as title
-        FROM "Model" m
-        JOIN "User" u ON u.id = m."userId"
-        WHERE m.id = ${randomResourceId.id}
-        LIMIT 1
-      `;
+      SELECT
+        m.id as "modelId",
+        u."username" as creator,
+        m.name as title
+      FROM "Model" m
+      JOIN "User" u ON u.id = m."userId"
+      WHERE m.id = ${randomResourceId.id}
+      LIMIT 1
+    `;
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
@@ -363,41 +363,41 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
   // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
   const reviewedCount = await dbWrite.$executeRaw`
-  WITH source AS (
-    SELECT
-    i.id,
-    (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
-    EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
-    i."createdAt" >= ${currentChallenge.date} as "isRecent"
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    WHERE ci."collectionId" = ${currentChallenge.collectionId}
-    AND ci.status = 'REVIEW'
-    AND i."nsfwLevel" != 0
-  )
-  UPDATE "CollectionItem" ci SET
-    status = CASE
-      WHEN "isSafe" AND "hasResource" AND "isRecent" THEN 'ACCEPTED'::"CollectionItemStatus"
-      ELSE 'REJECTED'::"CollectionItemStatus"
-    END,
-    "reviewedAt" = now(),
-    "reviewedById" = ${challengeTypeConfig.userId}
-  FROM source s
-  WHERE s.id = ci."imageId";
-`;
+    WITH source AS (
+      SELECT
+      i.id,
+      (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
+      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
+      i."createdAt" >= ${currentChallenge.date} as "isRecent"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+      AND ci.status = 'REVIEW'
+      AND i."nsfwLevel" != 0
+    )
+    UPDATE "CollectionItem" ci SET
+      status = CASE
+        WHEN "isSafe" AND "hasResource" AND "isRecent" THEN 'ACCEPTED'::"CollectionItemStatus"
+        ELSE 'REJECTED'::"CollectionItemStatus"
+      END,
+      "reviewedAt" = now(),
+      "reviewedById" = ${challengeTypeConfig.userId}
+    FROM source s
+    WHERE s.id = ci."imageId";
+  `;
   log('Reviewed entries:', reviewedCount);
 
   // Notify users of rejection
   const rejectedUsers = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
-  SELECT
-    i."userId",
-    CAST(COUNT(*) as int) as count
-  FROM "CollectionItem" ci
-  JOIN "Image" i ON i.id = ci."imageId"
-  WHERE ci."collectionId" = ${currentChallenge.collectionId}
-  AND ci.status = 'REJECTED'
-  GROUP BY 1;
-`;
+    SELECT
+      i."userId",
+      CAST(COUNT(*) as int) as count
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${currentChallenge.collectionId}
+    AND ci.status = 'REJECTED'
+    GROUP BY 1;
+  `;
   const processingDateStr = dayjs().utc().startOf('hour').format('HH');
   const notificationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
   const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
@@ -418,22 +418,22 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Remove rejected entries from collection
   await dbWrite.$executeRaw`
-  DELETE FROM "CollectionItem"
-  WHERE "collectionId" = ${currentChallenge.collectionId}
-  AND status = 'REJECTED';
-`;
+    DELETE FROM "CollectionItem"
+    WHERE "collectionId" = ${currentChallenge.collectionId}
+    AND status = 'REJECTED';
+  `;
 
   // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
 
   // TEMP: Remove judged tag from unjudged entries
   // Doing this because users can still manually add it
   await dbWrite.$executeRaw`
-  UPDATE "CollectionItem"
-    SET "tagId" = NULL
-  WHERE "collectionId" = ${currentChallenge.collectionId}
-  AND "tagId" = ${config.judgedTagId}
-  AND note IS NULL;
-`;
+    UPDATE "CollectionItem"
+      SET "tagId" = NULL
+    WHERE "collectionId" = ${currentChallenge.collectionId}
+    AND "tagId" = ${config.judgedTagId}
+    AND note IS NULL;
+  `;
 
   // Rate new entries
   // ----------------------------------------------
@@ -454,31 +454,31 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Get count of already-scored entries per user for this challenge (for per-user cap)
   const userScoredCounts = await dbWrite.$queryRaw<{ userId: number; count: bigint }[]>`
-  SELECT i."userId", COUNT(*) as count
-  FROM "CollectionItem" ci
-  JOIN "Image" i ON i.id = ci."imageId"
-  WHERE ci."collectionId" = ${currentChallenge.collectionId}
-  AND ci."tagId" = ${config.judgedTagId}
-  GROUP BY i."userId"
-`;
+    SELECT i."userId", COUNT(*) as count
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${currentChallenge.collectionId}
+    AND ci."tagId" = ${config.judgedTagId}
+    GROUP BY i."userId"
+  `;
   const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
   log('Users with scored entries:', scoredCountMap.size);
 
   // Get entries approved since last reviewed
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
-  SELECT
-    ci."imageId",
-    i."userId",
-    u."username",
-    i."url"
-  FROM "CollectionItem" ci
-  JOIN "Image" i ON i.id = ci."imageId"
-  JOIN "User" u ON u.id = i."userId"
-  WHERE ci."collectionId" = ${currentChallenge.collectionId}
-  AND ci.status = 'ACCEPTED'
-  AND ci."tagId" IS NULL
-  AND ci."reviewedAt" >= ${lastReviewedAt}
-`;
+    SELECT
+      ci."imageId",
+      i."userId",
+      u."username",
+      i."url"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${currentChallenge.collectionId}
+    AND ci.status = 'ACCEPTED'
+    AND ci."tagId" IS NULL
+    AND ci."reviewedAt" >= ${lastReviewedAt}
+  `;
   log('Recent entries:', recentEntries.length);
 
   // Randomly select entries to review up to the limit
@@ -500,18 +500,18 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Get forced to review entries (also respecting per-user cap)
   const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
-  SELECT
-    ci."imageId",
-    i."userId",
-    u."username",
-    i."url"
-  FROM "CollectionItem" ci
-  JOIN "Image" i ON i.id = ci."imageId"
-  JOIN "User" u ON u.id = i."userId"
-  WHERE ci."collectionId" = ${currentChallenge.collectionId}
-  AND ci.status = 'ACCEPTED'
-  AND ci."tagId" = ${config.reviewMeTagId}
-`;
+    SELECT
+      ci."imageId",
+      i."userId",
+      u."username",
+      i."url"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${currentChallenge.collectionId}
+    AND ci.status = 'ACCEPTED'
+    AND ci."tagId" = ${config.reviewMeTagId}
+  `;
   log('Requested review:', requestReview.length);
   // Filter reviewMe entries to also respect per-user cap
   for (const entry of requestReview) {
@@ -540,12 +540,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         summary: review.summary,
       });
       await dbWrite.$executeRaw`
-      UPDATE "CollectionItem"
-      SET "tagId" = ${config.judgedTagId}, note = ${note}
-      WHERE
-        "collectionId" = ${currentChallenge.collectionId}
-        AND "imageId" = ${entry.imageId};
-    `;
+        UPDATE "CollectionItem"
+        SET "tagId" = ${config.judgedTagId}, note = ${note}
+        WHERE
+          "collectionId" = ${currentChallenge.collectionId}
+          AND "imageId" = ${entry.imageId};
+      `;
       log('Tag and note added', entry.imageId);
 
       // Send comment
@@ -597,18 +597,18 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
     // Send prizes to users that have met the entry requirement
     const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
-    SELECT
-    i."userId",
-    COUNT(*) as count
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    WHERE
-      ci."collectionId" = ${currentChallenge.collectionId}
-      AND ci.status = 'ACCEPTED'
-      AND i."userId" IN (${Prisma.join(userIds)})
-    GROUP BY 1
-    HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
-  `;
+      SELECT
+      i."userId",
+      COUNT(*) as count
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE
+        ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+        AND i."userId" IN (${Prisma.join(userIds)})
+      GROUP BY 1
+      HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
+    `;
     log('Earned prizes:', earnedPrizes.length);
 
     if (earnedPrizes.length > 0) {
