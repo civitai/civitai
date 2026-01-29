@@ -22,8 +22,11 @@ import {
   getBaseModelSetType,
   getClosestAspectRatio,
   getIsFluxUltra,
+  getIsZImageBase,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
+  isValidZImageSampler,
+  isValidZImageScheduler,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import {
@@ -201,6 +204,13 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     flux2KleinDisabledSamplers.includes(params.sampler)
   )
     params.sampler = 'Euler a';
+
+  // ZImageBase only supports euler, heun, lcm sample methods
+  if (getIsZImageBase(baseModel) && params.sampler && !isValidZImageSampler(params.sampler))
+    params.sampler = 'Euler';
+
+  // ZImageBase needs a default scheduler
+  if (getIsZImageBase(baseModel) && !params.scheduler) params.scheduler = 'simple';
 
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
@@ -435,7 +445,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             setTimeout(() => {
               form.setValue('cfgScale', 4);
               form.setValue('steps', 20);
-              form.setValue('scheduler', 'karras');
+              form.setValue('scheduler', 'simple');
             }, 0);
           } else if (baseModel === 'LTXV2' && prevBaseModel !== baseModel) {
             setTimeout(() => {
@@ -487,6 +497,25 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           flux2KleinDisabledSamplers.includes(watchedValues.sampler)
         ) {
           form.setValue('sampler', 'Euler a');
+        }
+
+        // ZImageBase only supports euler, heun, lcm sample methods
+        if (
+          baseModel &&
+          watchedValues.sampler &&
+          getIsZImageBase(baseModel) &&
+          !isValidZImageSampler(watchedValues.sampler)
+        ) {
+          form.setValue('sampler', 'Euler');
+        }
+
+        // ZImageBase needs a default scheduler
+        if (
+          baseModel &&
+          getIsZImageBase(baseModel) &&
+          !isValidZImageScheduler(watchedValues.scheduler)
+        ) {
+          form.setValue('scheduler', 'simple');
         }
 
         prevBaseModelRef.current = watchedValues.baseModel;

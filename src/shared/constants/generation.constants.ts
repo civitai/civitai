@@ -2,6 +2,7 @@ import type { SdCppSampleMethod, SdCppSchedule, WorkflowStatus } from '@civitai/
 import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
+import { zImageSampleMethods, zImageSchedules } from '~/shared/orchestrator/ImageGen/zImage.config';
 import {
   generation,
   generationConfig,
@@ -281,6 +282,40 @@ export function samplerToSdCpp(sampler: Sampler | undefined): {
   schedule: SdCppSchedule;
 } {
   return samplersToSdCpp[sampler ?? 'Euler'];
+}
+
+/**
+ * Valid UI sampler names for ZImageBase (maps to zImageSampleMethods: euler, heun, lcm)
+ */
+export const zImageValidSamplers = (
+  Object.keys(samplersToSdCpp) as (Sampler | 'undefined')[]
+).filter(
+  (sampler) =>
+    sampler !== 'undefined' &&
+    zImageSampleMethods.includes(
+      samplersToSdCpp[sampler].sampleMethod as (typeof zImageSampleMethods)[number]
+    )
+) as Sampler[];
+
+/**
+ * Valid scheduler options for ZImageBase
+ */
+export const zImageValidSchedulers = zImageSchedules.map((s) => ({
+  label: s.charAt(0).toUpperCase() + s.slice(1),
+  value: s,
+}));
+
+/**
+ * Check if a sampler is valid for ZImageBase
+ */
+export function isValidZImageSampler(sampler: string | undefined): boolean {
+  if (!sampler) return false;
+  return zImageValidSamplers.includes(sampler as Sampler);
+}
+
+export function isValidZImageScheduler(scheduler: string | undefined): boolean {
+  if (!scheduler) return false;
+  return zImageSchedules.includes(scheduler as (typeof zImageSchedules)[number]);
 }
 
 // #region [utils]

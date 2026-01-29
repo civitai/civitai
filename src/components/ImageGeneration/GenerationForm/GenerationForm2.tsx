@@ -105,6 +105,8 @@ import {
   getIsZImageTurbo,
   getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  zImageValidSamplers,
+  zImageValidSchedulers,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -694,11 +696,11 @@ export function GenerationFormContent() {
               isFlux2KleinDistilled;
 
             // Flux2 Klein doesn't support certain samplers
-            // Flux2 Klein and zImageBase share the same restricted sampler set
-            const samplerOptions =
-              isFlux2Klein || isZImageBase
-                ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
-                : generation.samplers;
+            const samplerOptions = isZImageBase
+              ? zImageValidSamplers
+              : isFlux2Klein
+              ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
+              : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
@@ -1709,7 +1711,9 @@ export function GenerationFormContent() {
                                     }
                                     data={samplerOptions}
                                     presets={
-                                      isFlux2Klein || isZImageBase
+                                      isZImageBase
+                                        ? [{ label: 'Fast', value: 'Euler' }]
+                                        : isFlux2Klein
                                         ? [{ label: 'Fast', value: 'Euler a' }]
                                         : [
                                             { label: 'Fast', value: 'Euler a' },
@@ -1730,17 +1734,8 @@ export function GenerationFormContent() {
                                         </InfoPopover>
                                       </div>
                                     }
-                                    data={[
-                                      { label: 'Simple', value: 'simple' },
-                                      { label: 'Discrete', value: 'discrete' },
-                                      { label: 'Karras', value: 'karras' },
-                                      { label: 'Exponential', value: 'exponential' },
-                                      { label: 'AYS', value: 'ays' },
-                                    ]}
-                                    presets={[
-                                      { label: 'Default', value: 'karras' },
-                                      { label: 'Fast', value: 'simple' },
-                                    ]}
+                                    data={zImageValidSchedulers}
+                                    presets={[{ label: 'Default', value: 'simple' }]}
                                   />
                                 )}
                                 {!disableSteps && (

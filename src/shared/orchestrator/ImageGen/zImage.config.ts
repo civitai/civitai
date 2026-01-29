@@ -37,27 +37,9 @@ export function getIsZImageFromEngine(value?: string) {
   return value === engine;
 }
 
-const sdCppSampleMethods = [
-  'euler',
-  'heun',
-  'dpm2',
-  'dpm++2s_a',
-  'dpm++2m',
-  'dpm++2mv2',
-  'ipndm',
-  'ipndm_v',
-  'ddim_trailing',
-  'euler_a',
-  'lcm',
-] as const satisfies SdCppSampleMethod[];
+export const zImageSampleMethods = ['euler', 'heun', 'lcm'] as const satisfies SdCppSampleMethod[];
 
-const sdCppSchedules = [
-  'simple',
-  'discrete',
-  'karras',
-  'exponential',
-  'ays',
-] as const satisfies SdCppSchedule[];
+export const zImageSchedules = ['simple', 'discrete'] as const satisfies SdCppSchedule[];
 
 const baseSchema = z.object({
   engine: z.literal('sdcpp').catch('sdcpp'),
@@ -68,8 +50,8 @@ const baseSchema = z.object({
   height: z.number().optional(),
   cfgScale: z.number().optional(),
   steps: z.number().optional(),
-  sampleMethod: z.enum(sdCppSampleMethods).optional(),
-  schedule: z.enum(sdCppSchedules).optional(),
+  sampleMethod: z.enum(zImageSampleMethods).optional(),
+  schedule: z.enum(zImageSchedules).optional(),
   quantity: z.number().optional(),
   seed: seedSchema,
   loras: z.record(z.string(), z.number()).optional(),
@@ -110,17 +92,27 @@ export const zImageConfig = ImageGenConfig({
         {}
       );
 
-    // Convert UI sampler to SdCpp sampleMethod, use scheduler from params if provided (only for 'base' model)
-    const sdCppSampler =
-      model === 'base'
-        ? {
-            sampleMethod: samplersToSdCpp[params.sampler as Sampler | 'undefined']?.sampleMethod,
-            schedule: (params.scheduler as SdCppSchedule) ?? 'karras',
-          }
-        : undefined;
-
     const schema = baseSchema.extend({
       operation: z.literal('createImage'),
+    });
+
+    console.log({
+      engine: 'sdcpp',
+      ecosystem: 'zImage',
+      model,
+      operation: 'createImage',
+      prompt: params.prompt,
+      width: params.width,
+      height: params.height,
+      cfgScale: params.cfgScale,
+      steps: params.steps,
+      sampleMethod: params.sampler
+        ? samplersToSdCpp[params.sampler as keyof typeof samplersToSdCpp].sampleMethod
+        : 'euler',
+      schedule: params?.scheduler,
+      quantity: params.quantity,
+      seed: params.seed,
+      loras,
     });
 
     return schema.parse({
@@ -133,8 +125,10 @@ export const zImageConfig = ImageGenConfig({
       height: params.height,
       cfgScale: params.cfgScale,
       steps: params.steps,
-      sampleMethod: sdCppSampler?.sampleMethod,
-      schedule: sdCppSampler?.schedule,
+      sampleMethod: params.sampler
+        ? samplersToSdCpp[params.sampler as keyof typeof samplersToSdCpp].sampleMethod
+        : 'euler',
+      schedule: params?.scheduler,
       quantity: params.quantity,
       seed: params.seed,
       loras,
