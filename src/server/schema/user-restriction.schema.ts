@@ -35,3 +35,32 @@ export const addToAllowlistSchema = z.object({
   userRestrictionId: z.number().optional(),
 });
 export type AddToAllowlistInput = z.infer<typeof addToAllowlistSchema>;
+
+export const debugAuditPromptSchema = z.object({
+  prompt: z.string().min(1).max(10000),
+  negativePrompt: z.string().max(10000).optional(),
+});
+export type DebugAuditPromptInput = z.infer<typeof debugAuditPromptSchema>;
+
+export const saveSuspiciousMatchSchema = z.object({
+  matches: z.array(
+    z.object({
+      odometer: z.number(),
+      userId: z.number(),
+      prompt: z.string(),
+      negativePrompt: z.string().optional(),
+      check: z.string(),
+      matchedText: z.string(),
+      regex: z.string().optional(),
+      context: z.string().optional(),
+    })
+  ),
+});
+export type SaveSuspiciousMatchInput = z.infer<typeof saveSuspiciousMatchSchema>;
+
+export const backfillRestrictionTriggersSchema = z.object({
+  userRestrictionId: z.number().optional(),
+  limit: z.number().min(1).max(100).default(10),
+  force: z.boolean().default(false),
+});
+export type BackfillRestrictionTriggersInput = z.infer<typeof backfillRestrictionTriggersSchema>;

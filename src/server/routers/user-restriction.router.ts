@@ -1,12 +1,19 @@
 import { NotificationCategory } from '~/server/common/enums';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import {
   addToAllowlistSchema,
+  backfillRestrictionTriggersSchema,
+  debugAuditPromptSchema,
   getGenerationRestrictionsSchema,
   resolveRestrictionSchema,
+  saveSuspiciousMatchSchema,
   submitRestrictionContextSchema,
 } from '~/server/schema/user-restriction.schema';
+import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
+import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
 import { createNotification } from '~/server/services/notification.service';
 import {
   bustPromptAllowlistCache,
@@ -182,5 +189,223 @@ export const userRestrictionRouter = router({
       });
 
       return { success: true };
+    }),
+
+  /** Debug endpoint to test prompt auditing without triggering any actions. */
+  debugAudit: moderatorProcedure.input(debugAuditPromptSchema).mutation(async ({ input }) => {
+    const { prompt, negativePrompt } = input;
+    return debugAuditPrompt(prompt, negativePrompt);
+  }),
+
+  /** Get today's prohibited prompts from ClickHouse and run them through audit. */
+  getTodaysAuditResults: moderatorProcedure.query(async () => {
+    if (!clickhouse) return { results: [] };
+
+    // Fetch today's prohibited requests from ClickHouse
+    const queryResult = await clickhouse.query({
+      query: `
+        SELECT userId, prompt, negativePrompt, source, createdDate
+        FROM prohibitedRequests
+        WHERE toDate(createdDate) = today()
+        ORDER BY createdDate DESC
+        LIMIT 500
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const rows = (await queryResult.json()) as Array<{
+      odometer: number;
+      userId: number;
+      prompt: string;
+      negativePrompt: string;
+      source: string;
+      createdDate: string;
+    }>;
+
+    // Run each prompt through the audit system
+    const results = rows.map((row) => {
+      const auditResult = debugAuditPrompt(row.prompt, row.negativePrompt || undefined);
+      return {
+        userId: row.userId,
+        prompt: row.prompt,
+        negativePrompt: row.negativePrompt,
+        source: row.source,
+        createdDate: row.createdDate,
+        matches: auditResult.matches,
+        wouldBlock: auditResult.wouldBlock,
+        blockReason: auditResult.blockReason,
+      };
+    });
+
+    return { results };
+  }),
+
+  /** Save suspicious audit matches to Redis for later review. */
+  saveSuspiciousMatches: moderatorProcedure
+    .input(saveSuspiciousMatchSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { matches } = input;
+      const moderatorId = ctx.user.id;
+
+      // Add each match to a Redis list with timestamp and moderator info
+      const entries = matches.map((match) => ({
+        ...match,
+        flaggedBy: moderatorId,
+        flaggedAt: new Date().toISOString(),
+      }));
+
+      for (const entry of entries) {
+        await redis.lPush(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, JSON.stringify(entry));
+      }
+
+      // Keep only the last 1000 entries
+      await redis.lTrim(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, 999);
+
+      return { success: true, savedCount: entries.length };
+    }),
+
+  /** Get suspicious audit matches from Redis. */
+  getSuspiciousMatches: moderatorProcedure.query(async () => {
+    const entries = await redis.lRange(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, -1);
+    const matches = entries.map((entry) => JSON.parse(entry));
+    return { matches };
+  }),
+
+  /** Clear all suspicious matches from Redis. */
+  clearSuspiciousMatches: moderatorProcedure.mutation(async () => {
+    await redis.del(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES);
+    return { success: true };
+  }),
+
+  /** Backfill UserRestriction records with historical prohibited prompts from ClickHouse. */
+  backfillTriggers: moderatorProcedure
+    .input(backfillRestrictionTriggersSchema)
+    .mutation(async ({ input }) => {
+      if (!clickhouse) throw new Error('ClickHouse is not available');
+
+      const { userRestrictionId, limit, force } = input;
+
+      // Find restrictions that need backfilling (have 1 or fewer triggers)
+      const restrictions = await dbRead.userRestriction.findMany({
+        where: {
+          type: 'generation',
+          ...(userRestrictionId && { id: userRestrictionId }),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          userId: true,
+          triggers: true,
+          createdAt: true,
+        },
+      });
+
+      const results: { id: number; userId: number; beforeCount: number; afterCount: number }[] = [];
+
+      for (const restriction of restrictions) {
+        // Skip if triggers is already an array (already backfilled) unless force is true
+        if (!force && Array.isArray(restriction.triggers) && restriction.triggers.length > 1) {
+          results.push({
+            id: restriction.id,
+            userId: restriction.userId,
+            beforeCount: restriction.triggers.length,
+            afterCount: restriction.triggers.length,
+          });
+          continue;
+        }
+
+        // When forcing, start fresh; otherwise preserve existing triggers
+        const existingTriggers = force
+          ? []
+          : Array.isArray(restriction.triggers)
+          ? (restriction.triggers as unknown as BlockedPromptEntry[])
+          : restriction.triggers
+          ? [restriction.triggers as unknown as BlockedPromptEntry]
+          : [];
+
+        // Query ClickHouse for prohibited prompts in the 24h before the restriction was created
+        const restrictionDate = new Date(restriction.createdAt);
+        const startDate = new Date(restrictionDate.getTime() - 24 * 60 * 60 * 1000);
+
+        // Format dates for ClickHouse (YYYY-MM-DD HH:MM:SS)
+        const formatForClickHouse = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+
+        const queryResult = await clickhouse.query({
+          query: `
+            SELECT prompt, negativePrompt, source, createdDate
+            FROM prohibitedRequests
+            WHERE userId = {userId:Int32}
+              AND createdDate >= {startDate:DateTime}
+              AND createdDate <= {endDate:DateTime}
+            ORDER BY createdDate DESC
+            LIMIT 8
+          `,
+          query_params: {
+            userId: restriction.userId,
+            startDate: formatForClickHouse(startDate),
+            endDate: formatForClickHouse(restrictionDate),
+          },
+          format: 'JSONEachRow',
+        });
+
+        const rows = (await queryResult.json()) as Array<{
+          prompt: string;
+          negativePrompt: string;
+          source: string;
+          createdDate: string;
+        }>;
+
+        // Convert ClickHouse rows to BlockedPromptEntry format, running audit to get match details
+        const historicalTriggers: BlockedPromptEntry[] = rows.map((row) => {
+          // Run the audit to get the matched regex and word
+          const auditResult = debugAuditPrompt(row.prompt, row.negativePrompt || undefined);
+          const firstMatch = auditResult.matches.find((m) => m.matched);
+
+          return {
+            prompt: row.prompt,
+            negativePrompt: row.negativePrompt ?? '',
+            source: row.source,
+            category: firstMatch?.check as BlockedPromptEntry['category'],
+            matchedWord: firstMatch?.matchedText,
+            matchedRegex: firstMatch?.regex,
+            imageId: null,
+            time: row.createdDate,
+          };
+        });
+
+        // Merge with existing triggers (avoid duplicates by checking prompt + time)
+        const existingKeys = new Set(existingTriggers.map((t) => `${t.prompt}:${t.time}`));
+        const newTriggers = historicalTriggers.filter(
+          (t) => !existingKeys.has(`${t.prompt}:${t.time}`)
+        );
+        const mergedTriggers = [...existingTriggers, ...newTriggers];
+
+        // Update the restriction if we found new triggers
+        if (newTriggers.length > 0) {
+          await dbWrite.userRestriction.update({
+            where: { id: restriction.id },
+            data: {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              triggers: mergedTriggers as any,
+            },
+          });
+        }
+
+        results.push({
+          id: restriction.id,
+          userId: restriction.userId,
+          beforeCount: existingTriggers.length,
+          afterCount: mergedTriggers.length,
+        });
+      }
+
+      logToAxiom({
+        name: 'user-restriction-backfill',
+        type: 'info',
+        details: { results },
+      });
+
+      return { success: true, results };
     }),
 });

@@ -773,6 +773,7 @@ export const REDIS_KEYS = {
     RESOURCE_DATA: 'packed:generation:resource-data-3',
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
@@ -783,6 +784,7 @@ export const REDIS_KEYS = {
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
+    SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
   },

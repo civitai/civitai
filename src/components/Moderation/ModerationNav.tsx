@@ -69,6 +69,11 @@ export function ModerationNav() {
           href: '/moderator/generation-restrictions',
           hidden: !features.csamReports,
         },
+        {
+          label: 'Prompt Audit Test',
+          href: '/moderator/prompt-audit-test',
+          hidden: !features.csamReports,
+        },
       ]
         .filter((i) => !i.hidden)
         .map((link) => (

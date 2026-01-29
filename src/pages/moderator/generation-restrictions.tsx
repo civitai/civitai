@@ -2,32 +2,28 @@ import {
   Anchor,
   Badge,
   Button,
+  Checkbox,
   Code,
-  Container,
   Divider,
-  Drawer,
-  Group,
   Loader,
   Pagination,
-  ScrollArea,
   Select,
-  Stack,
   Table,
   Text,
   TextInput,
-  Textarea,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconBan, IconCheck, IconGavel, IconSearch, IconShieldCheck } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBan, IconCheck, IconGavel, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Meta } from '~/components/Meta/Meta';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
+import { createSelectStore } from '~/store/select.store';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -47,24 +43,62 @@ type RestrictionTrigger = {
   source?: string;
   category?: string;
   matchedWord?: string;
+  matchedRegex?: string;
   imageId?: number | null;
   time?: string;
 };
 
-function HighlightedCode({ text, highlight }: { text: string; highlight?: string }) {
-  if (!highlight) {
-    return <Code block>{text}</Code>;
+const { useSelection, useIsSelected, toggle, setSelected, useIsSelecting } =
+  createSelectStore<string>('generation-restriction-selection');
+
+function HighlightedPrompt({
+  text,
+  highlight,
+  regexPattern,
+}: {
+  text: string;
+  highlight?: string;
+  regexPattern?: string;
+}) {
+  if (!text) {
+    return (
+      <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
+        {text}
+      </Code>
+    );
   }
 
-  // Escape special regex characters in the highlight string
-  const escapedHighlight = highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(${escapedHighlight})`, 'gi');
-  const parts = text.split(regex);
+  let matchedText: string | null = null;
+
+  if (highlight && text.toLowerCase().includes(highlight.toLowerCase())) {
+    matchedText = highlight;
+  }
+
+  if (!matchedText && regexPattern) {
+    try {
+      const patternRegex = new RegExp(regexPattern, 'gi');
+      const match = patternRegex.exec(text);
+      if (match) matchedText = match[0];
+    } catch {
+      // Invalid regex
+    }
+  }
+
+  if (!matchedText) {
+    return (
+      <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
+        {text}
+      </Code>
+    );
+  }
+
+  const escapedMatch = matchedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escapedMatch})`, 'gi'));
 
   return (
-    <Code block className="whitespace-pre-wrap">
+    <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
       {parts.map((part, i) =>
-        regex.test(part) ? (
+        i % 2 === 1 ? (
           <mark key={i} className="rounded bg-yellow-3 px-0.5 text-black dark:bg-yellow-5">
             {part}
           </mark>
@@ -96,23 +130,115 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function TriggerCard({
+  trigger,
+  triggerKey,
+}: {
+  trigger: RestrictionTrigger;
+  triggerKey: string;
+}) {
+  const isSelected = useIsSelected(triggerKey);
+
+  return (
+    <div
+      className={clsx(
+        'rounded border border-solid p-4',
+        isSelected
+          ? 'border-yellow-5 bg-yellow-1 dark:border-yellow-7 dark:bg-yellow-9/20'
+          : 'border-gray-3 dark:border-dark-4'
+      )}
+    >
+      <div className="grid grid-cols-[280px_1fr] gap-4">
+        <div className="flex flex-col gap-2">
+          <Checkbox
+            checked={isSelected}
+            onChange={() => toggle(triggerKey)}
+            label="Flag as suspicious"
+          />
+          <div className="flex items-center gap-2">
+            {trigger.source && (
+              <Badge size="sm" variant="light">
+                {trigger.source}
+              </Badge>
+            )}
+            {trigger.category && (
+              <Badge size="sm" variant="light" color="red">
+                {trigger.category}
+              </Badge>
+            )}
+          </div>
+          {trigger.matchedWord && (
+            <div>
+              <Text size="xs" fw={500} c="dimmed">
+                Matched Text
+              </Text>
+              <Code className="text-sm">{trigger.matchedWord}</Code>
+            </div>
+          )}
+          {trigger.matchedRegex && (
+            <div>
+              <Text size="xs" fw={500} c="dimmed">
+                Regex Pattern
+              </Text>
+              <Tooltip label={trigger.matchedRegex} multiline w={500}>
+                <Code className="block max-w-[250px] truncate text-xs">
+                  {trigger.matchedRegex.length > 50
+                    ? trigger.matchedRegex.substring(0, 50) + '...'
+                    : trigger.matchedRegex}
+                </Code>
+              </Tooltip>
+            </div>
+          )}
+          {trigger.time && (
+            <div>
+              <Text size="xs" fw={500} c="dimmed">
+                Time
+              </Text>
+              <Text size="xs">{formatDate(new Date(trigger.time))}</Text>
+            </div>
+          )}
+        </div>
+        <div className="min-w-0">
+          {trigger.prompt && (
+            <div className="mb-2">
+              <Text size="xs" fw={500} c="dimmed" mb={4}>
+                Prompt
+              </Text>
+              <HighlightedPrompt
+                text={trigger.prompt}
+                highlight={trigger.matchedWord}
+                regexPattern={trigger.matchedRegex}
+              />
+            </div>
+          )}
+          {trigger.negativePrompt && (
+            <div>
+              <Text size="xs" fw={500} c="dimmed" mb={4}>
+                Negative Prompt
+              </Text>
+              <HighlightedPrompt
+                text={trigger.negativePrompt}
+                highlight={trigger.matchedWord}
+                regexPattern={trigger.matchedRegex}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function GenerationRestrictionsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string | null>('Pending');
   const [usernameSearch, setUsernameSearch] = useState('');
   const [debouncedUsername] = useDebouncedValue(usernameSearch, 300);
   const [selectedRestriction, setSelectedRestriction] = useState<any | null>(null);
-  const [resolveStatus, setResolveStatus] = useState<string | null>(null);
-  const [resolveMessage, setResolveMessage] = useState('');
 
-  const mobile = useIsMobile();
+  const selectedKeys = useSelection();
+  const isSelecting = useIsSelecting();
   const queryUtils = trpc.useUtils();
-
-  const handleCloseDrawer = () => {
-    setSelectedRestriction(null);
-    setResolveStatus(null);
-    setResolveMessage('');
-  };
 
   const parsedUserId = debouncedUsername ? Number(debouncedUsername) : NaN;
   const isUserIdSearch =
@@ -128,51 +254,88 @@ export default function GenerationRestrictionsPage() {
     userId: isUserIdSearch ? parsedUserId : undefined,
   });
 
+  const selectNextRestriction = () => {
+    if (!data?.items || !selectedRestriction) {
+      setSelectedRestriction(null);
+      return;
+    }
+    const currentIndex = data.items.findIndex((r) => r.id === selectedRestriction.id);
+    const nextItem = data.items[currentIndex + 1] ?? data.items[currentIndex - 1] ?? null;
+    setSelectedRestriction(nextItem);
+    setSelected([]);
+  };
+
+  const handleActionComplete = () => {
+    selectNextRestriction();
+    queryUtils.userRestriction.getAll.invalidate();
+  };
+
   const resolveMutation = trpc.userRestriction.resolve.useMutation({
     onSuccess: () => {
       showSuccessNotification({
         title: 'Restriction resolved',
         message: 'The restriction has been resolved.',
       });
-      queryUtils.userRestriction.getAll.invalidate();
-      handleCloseDrawer();
+      handleActionComplete();
     },
-    onError: (err) => {
-      showErrorNotification({ title: 'Error', error: new Error(err.message) });
-    },
+    onError: (err) => showErrorNotification({ title: 'Error', error: new Error(err.message) }),
   });
 
-  const allowlistMutation = trpc.userRestriction.addToAllowlist.useMutation({
-    onSuccess: () => {
+  const saveSuspiciousMutation = trpc.userRestriction.saveSuspiciousMatches.useMutation({
+    onSuccess: (data) => {
       showSuccessNotification({
-        title: 'Added to allowlist',
-        message: 'The trigger has been marked as benign.',
+        title: 'Saved',
+        message: `${data.savedCount} suspicious matches saved for review.`,
       });
+      setSelected([]);
     },
-    onError: (err) => {
-      showErrorNotification({ title: 'Error', error: new Error(err.message) });
-    },
+    onError: (err) => showErrorNotification({ title: 'Error', error: new Error(err.message) }),
   });
 
-  const handleResolve = () => {
-    if (!selectedRestriction || !resolveStatus) return;
+  const handleUphold = () => {
+    if (!selectedRestriction) return;
     resolveMutation.mutate({
       userRestrictionId: selectedRestriction.id,
-      status: resolveStatus as
-        | typeof UserRestrictionStatus.Upheld
-        | typeof UserRestrictionStatus.Overturned,
-      resolvedMessage: resolveMessage || undefined,
+      status: UserRestrictionStatus.Upheld,
     });
   };
 
-  const handleAddToAllowlist = (trigger: RestrictionTrigger, restrictionId: number) => {
-    if (!trigger.matchedWord || !trigger.category) return;
-    allowlistMutation.mutate({
-      trigger: trigger.matchedWord,
-      category: trigger.category,
-      reason: `Marked benign from restriction #${restrictionId}`,
-      userRestrictionId: restrictionId,
+  const handleRemoveMute = () => {
+    if (!selectedRestriction) return;
+    resolveMutation.mutate({
+      userRestrictionId: selectedRestriction.id,
+      status: UserRestrictionStatus.Overturned,
     });
+  };
+
+  const triggersWithKeys = useMemo(() => {
+    if (!selectedRestriction) return [];
+    const triggers = (selectedRestriction.triggers as RestrictionTrigger[]) ?? [];
+    return triggers.map((trigger, index) => ({
+      trigger,
+      key: `${selectedRestriction.id}-${index}`,
+    }));
+  }, [selectedRestriction]);
+
+  const handleSaveSuspicious = () => {
+    if (!selectedRestriction) return;
+    const matches = selectedKeys
+      .map((key) => {
+        const item = triggersWithKeys.find((t) => t.key === key);
+        if (!item) return null;
+        return {
+          odometer: selectedRestriction.id,
+          userId: selectedRestriction.userId,
+          prompt: item.trigger.prompt ?? '',
+          negativePrompt: item.trigger.negativePrompt,
+          check: item.trigger.category ?? 'unknown',
+          matchedText: item.trigger.matchedWord ?? '',
+          regex: item.trigger.matchedRegex,
+          context: undefined,
+        };
+      })
+      .filter((m): m is NonNullable<typeof m> => m !== null);
+    if (matches.length > 0) saveSuspiciousMutation.mutate({ matches });
   };
 
   const totalPages = data ? Math.ceil(data.totalCount / 20) : 0;
@@ -180,154 +343,123 @@ export default function GenerationRestrictionsPage() {
   return (
     <>
       <Meta title="Generation Restrictions" deIndex />
-      <Container size="xl">
-        <Stack gap="lg">
-          <Title order={1}>Generation Restrictions</Title>
-          <Text size="sm" c="dimmed">
-            Review generation restrictions triggered by the prompt auditing system. Overturn false
-            positives and mark triggers as benign to reduce future false positives.
-          </Text>
+      <div className="flex gap-6 overflow-hidden p-4" style={{ height: 'calc(100vh - 80px)' }}>
+        {/* Left Side */}
+        <div className="flex w-[500px] flex-col">
+          {/* Fixed Header */}
+          <div className="flex flex-col gap-4 pb-4">
+            <Title order={1}>Generation Restrictions</Title>
+            <Text size="sm" c="dimmed">
+              Review generation restrictions triggered by the prompt auditing system.
+            </Text>
+            <div className="flex items-center gap-2">
+              <TextInput
+                placeholder="Search by username or user ID..."
+                leftSection={<IconSearch size={16} />}
+                value={usernameSearch}
+                onChange={(e) => {
+                  setUsernameSearch(e.currentTarget.value);
+                  setPage(1);
+                  setSelectedRestriction(null);
+                  setSelected([]);
+                }}
+                className="flex-1"
+              />
+              <Select
+                placeholder="Status"
+                data={[
+                  { value: UserRestrictionStatus.Pending, label: 'Pending' },
+                  { value: UserRestrictionStatus.Upheld, label: 'Upheld' },
+                  { value: UserRestrictionStatus.Overturned, label: 'Overturned' },
+                ]}
+                value={statusFilter}
+                onChange={(val) => {
+                  setStatusFilter(val);
+                  setPage(1);
+                  setSelectedRestriction(null);
+                  setSelected([]);
+                }}
+                clearable
+                w={120}
+              />
+            </div>
+            <Divider />
+          </div>
 
-          {/* Filters */}
-          <Group>
-            <TextInput
-              placeholder="Search by username or user ID..."
-              leftSection={<IconSearch size={16} />}
-              value={usernameSearch}
-              onChange={(e) => {
-                setUsernameSearch(e.currentTarget.value);
-                setPage(1);
-                setSelectedRestriction(null);
-              }}
-              w={250}
-            />
-            <Select
-              placeholder="All statuses"
-              data={[
-                { value: UserRestrictionStatus.Pending, label: 'Pending' },
-                { value: UserRestrictionStatus.Upheld, label: 'Upheld' },
-                { value: UserRestrictionStatus.Overturned, label: 'Overturned' },
-              ]}
-              value={statusFilter}
-              onChange={(val) => {
-                setStatusFilter(val);
-                setPage(1);
-                setSelectedRestriction(null);
-              }}
-              clearable
-              w={180}
-            />
-          </Group>
-
-          <Divider />
-
-          {/* Table */}
+          {/* Scrollable Table */}
           {isLoading ? (
-            <Group justify="center" py="xl">
+            <div className="flex justify-center py-8">
               <Loader />
-            </Group>
+            </div>
           ) : !data?.items.length ? (
             <Text c="dimmed" ta="center" py="xl">
               No generation restrictions found.
             </Text>
           ) : (
             <>
-              <Table highlightOnHover withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>User</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                    <Table.Th>Triggers</Table.Th>
-                    <Table.Th>Created</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {data.items.map((restriction) => {
-                    const triggers = (restriction.triggers as RestrictionTrigger[]) ?? [];
-                    const categories = [
-                      ...new Set(triggers.map((t) => t.category).filter(Boolean)),
-                    ];
-                    return (
+              <div className="min-h-0 flex-1 overflow-auto">
+                <Table highlightOnHover withTableBorder>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>User</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Created</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {data.items.map((restriction) => (
                       <Table.Tr
                         key={restriction.id}
-                        onClick={() => setSelectedRestriction(restriction)}
+                        onClick={() => {
+                          setSelectedRestriction(restriction);
+                          setSelected([]);
+                        }}
                         className={clsx(
                           'cursor-pointer',
-                          selectedRestriction?.id === restriction.id &&
-                            'bg-blue-1 dark:bg-dark-5'
+                          selectedRestriction?.id === restriction.id && 'bg-blue-1 dark:bg-dark-5'
                         )}
                       >
                         <Table.Td>
-                          {restriction.user?.username ? (
-                            <Text size="sm" fw={500}>
-                              {restriction.user.username}
-                            </Text>
-                          ) : (
-                            <Text size="sm" fw={500}>
-                              User #{restriction.userId}
-                            </Text>
-                          )}
+                          <Text size="sm" fw={500}>
+                            {restriction.user?.username ?? `User #${restriction.userId}`}
+                          </Text>
                         </Table.Td>
                         <Table.Td>
                           <StatusBadge status={restriction.status} />
                         </Table.Td>
                         <Table.Td>
-                          <Text size="sm">
-                            {triggers.length} trigger{triggers.length !== 1 ? 's' : ''}
-                          </Text>
-                          {categories.length > 0 && (
-                            <Text size="xs" c="dimmed" lineClamp={1}>
-                              {categories.join(', ')}
-                            </Text>
-                          )}
-                        </Table.Td>
-                        <Table.Td>
                           <Text size="sm">{formatDate(restriction.createdAt)}</Text>
                         </Table.Td>
                       </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </div>
               {totalPages > 1 && (
-                <Group justify="center">
+                <div className="flex justify-center pt-4">
                   <Pagination
                     value={page}
                     onChange={(p) => {
                       setPage(p);
                       setSelectedRestriction(null);
+                      setSelected([]);
                     }}
                     total={totalPages}
+                    size="sm"
                   />
-                </Group>
+                </div>
               )}
             </>
           )}
-        </Stack>
-      </Container>
+        </div>
 
-      {/* Detail Drawer */}
-      <Drawer
-        withOverlay={false}
-        opened={!!selectedRestriction}
-        onClose={handleCloseDrawer}
-        position={mobile ? 'bottom' : 'right'}
-        size={mobile ? '100%' : 'xl'}
-        padding="md"
-        shadow="sm"
-        zIndex={500}
-        title={<Text fw={600}>Restriction #{selectedRestriction?.id}</Text>}
-        classNames={{
-          content: 'border-l border-l-gray-3 dark:border-l-dark-4',
-        }}
-      >
-        {selectedRestriction && (
-          <ScrollArea h="calc(100vh - 80px)" offsetScrollbars>
-            <Stack gap="md">
-              {/* User Header */}
-              <Group justify="space-between">
-                <Group>
+        {/* Right Side */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          {selectedRestriction ? (
+            <>
+              {/* Fixed Header */}
+              <div className="flex flex-col gap-4 pb-4">
+                <div className="flex items-center gap-2">
                   <Text size="sm" fw={500}>
                     User:
                   </Text>
@@ -338,208 +470,111 @@ export default function GenerationRestrictionsPage() {
                   ) : (
                     <Text size="sm">User #{selectedRestriction.userId}</Text>
                   )}
-                </Group>
-                {selectedRestriction.user?.username && (
-                  <Button
-                    size="xs"
-                    variant="light"
-                    color="red"
-                    leftSection={<IconBan size={14} />}
-                    onClick={() =>
-                      dialogStore.trigger({
-                        component: UserBanModal,
-                        props: {
-                          userId: selectedRestriction.userId,
-                          username: selectedRestriction.user.username as string,
-                        },
-                      })
-                    }
-                  >
-                    Ban User
-                  </Button>
-                )}
-              </Group>
+                  <StatusBadge status={selectedRestriction.status} />
+                  <Text size="sm" c="dimmed">
+                    {formatDate(selectedRestriction.createdAt)}
+                  </Text>
+                </div>
 
-              <Group>
-                <Text size="sm" fw={500}>
-                  Status:
-                </Text>
-                <StatusBadge status={selectedRestriction.status} />
-                <Text size="sm" c="dimmed" ml="md">
-                  {formatDate(selectedRestriction.createdAt)}
-                </Text>
-              </Group>
-
-              {/* Trigger Details */}
-              <Divider label="Trigger Details" />
-              {((selectedRestriction.triggers as RestrictionTrigger[]) ?? []).map(
-                (trigger: RestrictionTrigger, i: number) => (
-                  <Stack
-                    key={i}
-                    gap="xs"
-                    className="rounded border border-solid border-gray-3 p-3 dark:border-dark-4"
-                  >
-                    {trigger.prompt && (
-                      <div>
-                        <Text size="xs" fw={500} c="dimmed">
-                          Prompt
-                        </Text>
-                        <HighlightedCode text={trigger.prompt} highlight={trigger.matchedWord} />
-                      </div>
-                    )}
-                    {trigger.negativePrompt && (
-                      <div>
-                        <Text size="xs" fw={500} c="dimmed">
-                          Negative Prompt
-                        </Text>
-                        <HighlightedCode
-                          text={trigger.negativePrompt}
-                          highlight={trigger.matchedWord}
-                        />
-                      </div>
-                    )}
-                    <Group>
-                      {trigger.source && (
-                        <div>
-                          <Text size="xs" fw={500} c="dimmed">
-                            Source
-                          </Text>
-                          <Text size="sm">{trigger.source}</Text>
-                        </div>
-                      )}
-                      {trigger.category && (
-                        <div>
-                          <Text size="xs" fw={500} c="dimmed">
-                            Category
-                          </Text>
-                          <Text size="sm">{trigger.category}</Text>
-                        </div>
-                      )}
-                      {trigger.matchedWord && (
-                        <div>
-                          <Text size="xs" fw={500} c="dimmed">
-                            Matched Word
-                          </Text>
-                          <Code>{trigger.matchedWord}</Code>
-                        </div>
-                      )}
-                      {trigger.time && (
-                        <div>
-                          <Text size="xs" fw={500} c="dimmed">
-                            Time
-                          </Text>
-                          <Text size="sm">{formatDate(new Date(trigger.time))}</Text>
-                        </div>
-                      )}
-                    </Group>
-                    {trigger.matchedWord && trigger.category && (
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="green"
-                        leftSection={<IconShieldCheck size={14} />}
-                        onClick={() => handleAddToAllowlist(trigger, selectedRestriction.id)}
-                        loading={allowlistMutation.isLoading}
-                      >
-                        Mark as Benign
-                      </Button>
-                    )}
-                  </Stack>
-                )
-              )}
-
-              {/* User Context */}
-              {selectedRestriction.userMessage && (
-                <>
-                  <Divider label="User Context" />
-                  <Stack
-                    gap="xs"
-                    className="rounded border border-solid border-blue-3 bg-blue-0 p-3 dark:border-dark-4 dark:bg-dark-6"
-                  >
-                    <Text size="xs" c="dimmed">
-                      Submitted{' '}
-                      {selectedRestriction.userMessageAt
-                        ? formatDate(selectedRestriction.userMessageAt)
-                        : ''}
-                    </Text>
-                    <Text size="sm">{selectedRestriction.userMessage}</Text>
-                  </Stack>
-                </>
-              )}
-
-              {/* Resolution */}
-              {selectedRestriction.resolvedAt && (
-                <>
-                  <Divider label="Resolution" />
-                  <Stack gap="xs">
-                    <Group>
-                      <Text size="sm" fw={500}>
-                        Resolved:
-                      </Text>
-                      <Text size="sm">{formatDate(selectedRestriction.resolvedAt)}</Text>
-                    </Group>
-                    {selectedRestriction.resolvedMessage && (
-                      <Text size="sm">{selectedRestriction.resolvedMessage}</Text>
-                    )}
-                  </Stack>
-                </>
-              )}
-
-              {/* Resolve Actions */}
-              {selectedRestriction.status === UserRestrictionStatus.Pending && (
-                <>
-                  <Divider label="Resolve" />
-                  <Select
-                    label="Decision"
-                    placeholder="Select decision..."
-                    data={[
-                      {
-                        value: UserRestrictionStatus.Overturned,
-                        label: 'Overturn (unmute user)',
-                      },
-                      { value: UserRestrictionStatus.Upheld, label: 'Uphold (keep muted)' },
-                    ]}
-                    value={resolveStatus}
-                    onChange={setResolveStatus}
-                  />
-                  <Textarea
-                    label="Message to user (optional)"
-                    placeholder="Provide context for your decision..."
-                    value={resolveMessage}
-                    onChange={(e) => setResolveMessage(e.currentTarget.value)}
-                    maxLength={1000}
-                    minRows={2}
-                    maxRows={4}
-                    autosize
-                  />
-                  <Group justify="flex-end">
-                    <Button variant="default" onClick={handleCloseDrawer}>
-                      Cancel
+                {selectedRestriction.status === UserRestrictionStatus.Pending && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      color="red"
+                      leftSection={<IconGavel size={16} />}
+                      loading={resolveMutation.isPending}
+                      onClick={handleUphold}
+                    >
+                      Uphold Mute
                     </Button>
                     <Button
-                      color={resolveStatus === UserRestrictionStatus.Upheld ? 'red' : 'green'}
-                      leftSection={
-                        resolveStatus === UserRestrictionStatus.Upheld ? (
-                          <IconGavel size={16} />
-                        ) : (
-                          <IconCheck size={16} />
-                        )
-                      }
-                      disabled={!resolveStatus}
-                      loading={resolveMutation.isLoading}
-                      onClick={handleResolve}
+                      color="green"
+                      leftSection={<IconCheck size={16} />}
+                      loading={resolveMutation.isPending}
+                      onClick={handleRemoveMute}
                     >
-                      {resolveStatus === UserRestrictionStatus.Upheld
-                        ? 'Uphold Restriction'
-                        : 'Overturn Restriction'}
+                      Remove Mute
                     </Button>
-                  </Group>
-                </>
-              )}
-            </Stack>
-          </ScrollArea>
-        )}
-      </Drawer>
+                    {selectedRestriction.user?.username && (
+                      <Button
+                        color="red"
+                        variant="light"
+                        leftSection={<IconBan size={16} />}
+                        onClick={() =>
+                          dialogStore.trigger({
+                            component: UserBanModal,
+                            props: {
+                              userId: selectedRestriction.userId,
+                              username: selectedRestriction.user.username as string,
+                              onSuccess: handleActionComplete,
+                            },
+                          })
+                        }
+                      >
+                        Ban User
+                      </Button>
+                    )}
+                    {isSelecting && (
+                      <Button
+                        color="yellow"
+                        leftSection={<IconAlertTriangle size={16} />}
+                        loading={saveSuspiciousMutation.isPending}
+                        onClick={handleSaveSuspicious}
+                      >
+                        Flag {selectedKeys.length} Suspicious
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                <Divider label={`${triggersWithKeys.length} Triggers`} />
+              </div>
+
+              {/* Scrollable Content */}
+              <div className="min-h-0 flex-1 overflow-auto">
+                <div className="flex flex-col gap-4">
+                  {triggersWithKeys.map(({ trigger, key }) => (
+                    <TriggerCard key={key} trigger={trigger} triggerKey={key} />
+                  ))}
+
+                  {selectedRestriction.userMessage && (
+                    <>
+                      <Divider label="User Context" />
+                      <div className="rounded border border-solid border-blue-3 bg-blue-0 p-3 dark:border-dark-4 dark:bg-dark-6">
+                        <Text size="xs" c="dimmed">
+                          Submitted{' '}
+                          {selectedRestriction.userMessageAt
+                            ? formatDate(selectedRestriction.userMessageAt)
+                            : ''}
+                        </Text>
+                        <Text size="sm">{selectedRestriction.userMessage}</Text>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedRestriction.resolvedAt && (
+                    <>
+                      <Divider label="Resolution" />
+                      <div className="flex items-center gap-2">
+                        <Text size="sm" fw={500}>
+                          Resolved:
+                        </Text>
+                        <Text size="sm">{formatDate(selectedRestriction.resolvedAt)}</Text>
+                      </div>
+                      {selectedRestriction.resolvedMessage && (
+                        <Text size="sm">{selectedRestriction.resolvedMessage}</Text>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <Text c="dimmed">Select a restriction to view details</Text>
+            </div>
+          )}
+        </div>
+      </div>
     </>
   );
 }
