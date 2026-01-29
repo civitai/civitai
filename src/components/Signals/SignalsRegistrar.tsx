@@ -4,6 +4,7 @@ import { useChatNewMessageSignal, useChatNewRoomSignal } from '~/components/Chat
 import { useTextToImageSignalUpdate } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 import { useNotificationSignal } from '~/components/Notifications/notifications.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useMetricSignalsListener } from '~/components/Signals/MetricSignalsRegistrar';
 import {
   useOrchestratorUpdateSignal,
   useTrainingSignals,
@@ -23,6 +24,8 @@ export function SignalsRegistrar() {
 
   useChatNewMessageSignal();
   useChatNewRoomSignal();
+
+  useMetricSignalsListener();
 
   useSignalConnection(
     SignalMessages.ImageIngestionStatus,
