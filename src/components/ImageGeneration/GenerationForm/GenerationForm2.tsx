@@ -508,7 +508,7 @@ export function GenerationFormContent() {
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
       { isActive: isFlux2Klein, options: flux2KleinModelVariantOptions },
-      { isActive: isZImage, options: zImageModelModeOptions },
+      // { isActive: isZImage, options: zImageModelModeOptions },
       // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
