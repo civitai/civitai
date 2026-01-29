@@ -1860,6 +1860,7 @@ export const publishModelById = async ({
             modelVersionIds: versionIds,
             publishedAt: !republishing ? publishedAt : undefined,
             tx,
+            republishing,
           });
         } else if (status === ModelStatus.Scheduled) {
           // Schedule model versions:
@@ -1873,7 +1874,7 @@ export const publishModelById = async ({
           UPDATE "Post"
           SET "publishedAt" = CASE
                                 WHEN "metadata" ->> 'prevPublishedAt' IS NOT NULL
-                                  THEN to_timestamp("metadata" ->> 'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+                                  THEN ("metadata" ->> 'prevPublishedAt')::timestamptz
                                 ELSE ${publishedAt}
             END,
               "metadata"    = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
