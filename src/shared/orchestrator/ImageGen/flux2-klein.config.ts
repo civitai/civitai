@@ -98,6 +98,7 @@ export function getIsFlux2KleinGroup(baseModel: string) {
 }
 
 export const flux2KleinDisabledSamplers = [
+  'Euler A',
   'DPM++ 2M Karras',
   'DDIM',
   'DPM2',
