@@ -393,6 +393,22 @@ export const orchestratorRouter = router({
     }),
   // #endregion
 
+  // #region [moderator]
+  /** Query another user's generated images (moderator only) */
+  queryUserGeneratedImages: moderatorProcedure
+    .input(workflowQuerySchema.extend({ userId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const { userId, ...query } = input;
+      // Get token for the target user, not the moderator
+      const targetToken = await getOrchestratorToken(userId, ctx);
+      return queryGeneratedImageWorkflows({
+        ...query,
+        token: targetToken,
+        user: ctx.user,
+        hideMatureContent: false, // Moderators should see all content
+      });
+    }),
+
   getFlaggedConsumers: moderatorProcedure
     .input(getFlaggedConsumersSchema)
     .query(({ input }) => getFlagged(input)),

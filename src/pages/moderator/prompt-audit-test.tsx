@@ -71,12 +71,11 @@ function HighlightedPrompt({
   highlight?: string;
   regexPattern?: string;
 }) {
+  const containerClass =
+    'max-h-48 overflow-auto whitespace-pre-wrap rounded border border-solid border-gray-3 bg-gray-0 p-2 text-sm dark:border-dark-4 dark:bg-dark-6';
+
   if (!text) {
-    return (
-      <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
-        {text}
-      </Code>
-    );
+    return <div className={containerClass}>{text}</div>;
   }
 
   // Find the actual matched text to highlight
@@ -102,11 +101,7 @@ function HighlightedPrompt({
 
   // If nothing matched, just render plain text
   if (!matchedText) {
-    return (
-      <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
-        {text}
-      </Code>
-    );
+    return <div className={containerClass}>{text}</div>;
   }
 
   // Now split using the literal matched text (escaped for regex)
@@ -115,7 +110,7 @@ function HighlightedPrompt({
   const parts = text.split(splitRegex);
 
   return (
-    <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
+    <div className={containerClass}>
       {parts.map((part, i) =>
         // When splitting with a single capturing group, matched parts are at odd indices
         i % 2 === 1 ? (
@@ -126,7 +121,7 @@ function HighlightedPrompt({
           part
         )
       )}
-    </Code>
+    </div>
   );
 }
 

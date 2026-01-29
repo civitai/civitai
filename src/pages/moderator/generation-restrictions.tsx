@@ -14,10 +14,18 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
-import { IconAlertTriangle, IconBan, IconCheck, IconGavel, IconSearch } from '@tabler/icons-react';
+import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
+import {
+  IconAlertTriangle,
+  IconBan,
+  IconCheck,
+  IconGavel,
+  IconPhoto,
+  IconSearch,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
+import { UserGenerationsDrawer } from '~/components/Moderation/UserGenerationsDrawer';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Meta } from '~/components/Meta/Meta';
 import UserBanModal from '~/components/Profile/UserBanModal';
@@ -60,12 +68,11 @@ function HighlightedPrompt({
   highlight?: string;
   regexPattern?: string;
 }) {
+  const containerClass =
+    'max-h-48 overflow-auto whitespace-pre-wrap rounded border border-solid border-gray-3 bg-gray-0 p-2 text-sm dark:border-dark-4 dark:bg-dark-6';
+
   if (!text) {
-    return (
-      <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
-        {text}
-      </Code>
-    );
+    return <div className={containerClass}>{text}</div>;
   }
 
   let matchedText: string | null = null;
@@ -85,18 +92,14 @@ function HighlightedPrompt({
   }
 
   if (!matchedText) {
-    return (
-      <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
-        {text}
-      </Code>
-    );
+    return <div className={containerClass}>{text}</div>;
   }
 
   const escapedMatch = matchedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const parts = text.split(new RegExp(`(${escapedMatch})`, 'gi'));
 
   return (
-    <Code block className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
+    <div className={containerClass}>
       {parts.map((part, i) =>
         i % 2 === 1 ? (
           <mark key={i} className="rounded bg-yellow-3 px-0.5 text-black dark:bg-yellow-5">
@@ -106,7 +109,7 @@ function HighlightedPrompt({
           part
         )
       )}
-    </Code>
+    </div>
   );
 }
 
@@ -229,6 +232,8 @@ export default function GenerationRestrictionsPage() {
   const [usernameSearch, setUsernameSearch] = useState('');
   const [debouncedUsername] = useDebouncedValue(usernameSearch, 300);
   const [selectedRestriction, setSelectedRestriction] = useState<any | null>(null);
+  const [generationsDrawerOpened, { open: openGenerationsDrawer, close: closeGenerationsDrawer }] =
+    useDisclosure(false);
 
   const selectedKeys = useSelection();
   const isSelecting = useIsSelecting();
@@ -472,25 +477,35 @@ export default function GenerationRestrictionsPage() {
             <>
               {/* Fixed Header */}
               <div className="flex flex-col gap-4 pb-4">
-                <div className="flex items-center gap-2">
-                  <Text size="sm" fw={500}>
-                    User:
-                  </Text>
-                  {selectedRestriction.user?.username ? (
-                    <Anchor
-                      href={`/user/${selectedRestriction.user.username}`}
-                      size="sm"
-                      target="_blank"
-                    >
-                      {selectedRestriction.user.username}
-                    </Anchor>
-                  ) : (
-                    <Text size="sm">User #{selectedRestriction.userId}</Text>
-                  )}
-                  <StatusBadge status={selectedRestriction.status} />
-                  <Text size="sm" c="dimmed">
-                    {formatDate(selectedRestriction.createdAt)}
-                  </Text>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Text size="sm" fw={500}>
+                      User:
+                    </Text>
+                    {selectedRestriction.user?.username ? (
+                      <Anchor
+                        href={`/user/${selectedRestriction.user.username}`}
+                        size="sm"
+                        target="_blank"
+                      >
+                        {selectedRestriction.user.username}
+                      </Anchor>
+                    ) : (
+                      <Text size="sm">User #{selectedRestriction.userId}</Text>
+                    )}
+                    <StatusBadge status={selectedRestriction.status} />
+                    <Text size="sm" c="dimmed">
+                      {formatDate(selectedRestriction.createdAt)}
+                    </Text>
+                  </div>
+                  <Button
+                    variant="light"
+                    size="xs"
+                    leftSection={<IconPhoto size={14} />}
+                    onClick={openGenerationsDrawer}
+                  >
+                    View Generations
+                  </Button>
                 </div>
 
                 {selectedRestriction.status === UserRestrictionStatus.Pending && (
@@ -583,6 +598,15 @@ export default function GenerationRestrictionsPage() {
           )}
         </div>
       </div>
+
+      {selectedRestriction && (
+        <UserGenerationsDrawer
+          opened={generationsDrawerOpened}
+          onClose={closeGenerationsDrawer}
+          userId={selectedRestriction.userId}
+          username={selectedRestriction.user?.username}
+        />
+      )}
     </>
   );
 }
