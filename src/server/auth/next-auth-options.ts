@@ -496,8 +496,10 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   const { hostname: reqHostname } = new URL(req.headers.origin);
 
   // Handle domain-specific cookie
+  // Skip domain color override when NEXTAUTH_COOKIE_DOMAIN is explicitly set
+  // (needed for PR preview cross-subdomain cookie sharing via auth.civitaic.com)
   const domainColor = getRequestDomainColor(req);
-  if (domainColor && !!options.cookies?.sessionToken?.options?.domain) {
+  if (domainColor && !!options.cookies?.sessionToken?.options?.domain && !env.NEXTAUTH_COOKIE_DOMAIN) {
     options.cookies.sessionToken.options.domain =
       (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }
