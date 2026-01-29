@@ -130,13 +130,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function TriggerCard({
-  trigger,
-  triggerKey,
-}: {
-  trigger: RestrictionTrigger;
-  triggerKey: string;
-}) {
+function TriggerCard({ trigger, triggerKey }: { trigger: RestrictionTrigger; triggerKey: string }) {
   const isSelected = useIsSelected(triggerKey);
 
   return (
@@ -308,6 +302,25 @@ export default function GenerationRestrictionsPage() {
     });
   };
 
+  const handleBanUser = () => {
+    if (!selectedRestriction?.user?.username) return;
+    const restrictionId = selectedRestriction.id;
+    dialogStore.trigger({
+      component: UserBanModal,
+      props: {
+        userId: selectedRestriction.userId,
+        username: selectedRestriction.user.username,
+        onSuccess: () => {
+          // Also resolve the restriction as Upheld when banning
+          resolveMutation.mutate({
+            userRestrictionId: restrictionId,
+            status: UserRestrictionStatus.Upheld,
+          });
+        },
+      },
+    });
+  };
+
   const triggersWithKeys = useMemo(() => {
     if (!selectedRestriction) return [];
     const triggers = (selectedRestriction.triggers as RestrictionTrigger[]) ?? [];
@@ -464,7 +477,11 @@ export default function GenerationRestrictionsPage() {
                     User:
                   </Text>
                   {selectedRestriction.user?.username ? (
-                    <Anchor href={`/user/${selectedRestriction.user.username}`} size="sm">
+                    <Anchor
+                      href={`/user/${selectedRestriction.user.username}`}
+                      size="sm"
+                      target="_blank"
+                    >
                       {selectedRestriction.user.username}
                     </Anchor>
                   ) : (
@@ -499,16 +516,7 @@ export default function GenerationRestrictionsPage() {
                         color="red"
                         variant="light"
                         leftSection={<IconBan size={16} />}
-                        onClick={() =>
-                          dialogStore.trigger({
-                            component: UserBanModal,
-                            props: {
-                              userId: selectedRestriction.userId,
-                              username: selectedRestriction.user.username as string,
-                              onSuccess: handleActionComplete,
-                            },
-                          })
-                        }
+                        onClick={handleBanUser}
                       >
                         Ban User
                       </Button>
