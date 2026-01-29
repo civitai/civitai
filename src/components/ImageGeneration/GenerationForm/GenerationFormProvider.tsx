@@ -22,6 +22,7 @@ import {
   getBaseModelSetType,
   getClosestAspectRatio,
   getIsFluxUltra,
+  getIsZImageBase,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
@@ -44,6 +45,7 @@ import {
   flux2KleinDisabledSamplers,
   getIsFlux2KleinGroup,
 } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import { zImageBaseAllowedSamplers } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
@@ -192,6 +194,14 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     flux2KleinDisabledSamplers.includes(params.sampler)
   )
     params.sampler = 'Euler a';
+
+  // ZImageBase only supports specific samplers
+  if (
+    getIsZImageBase(baseModel) &&
+    params.sampler &&
+    !(zImageBaseAllowedSamplers as readonly string[]).includes(params.sampler)
+  )
+    params.sampler = 'Euler';
 
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
