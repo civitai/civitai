@@ -5,9 +5,7 @@ import type {
   SdCppSchedule,
 } from '@civitai/client';
 import * as z from 'zod';
-import type { Sampler } from '~/server/common/constants';
 import { promptSchema, seedSchema } from '~/server/orchestrator/infrastructure/base.schema';
-import { samplersToSdCpp } from '~/shared/constants/generation.constants';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 const engine = 'zImage';
@@ -96,25 +94,6 @@ export const zImageConfig = ImageGenConfig({
       operation: z.literal('createImage'),
     });
 
-    console.log({
-      engine: 'sdcpp',
-      ecosystem: 'zImage',
-      model,
-      operation: 'createImage',
-      prompt: params.prompt,
-      width: params.width,
-      height: params.height,
-      cfgScale: params.cfgScale,
-      steps: params.steps,
-      sampleMethod: params.sampler
-        ? samplersToSdCpp[params.sampler as keyof typeof samplersToSdCpp].sampleMethod
-        : 'euler',
-      schedule: params?.scheduler,
-      quantity: params.quantity,
-      seed: params.seed,
-      loras,
-    });
-
     return schema.parse({
       engine: 'sdcpp',
       ecosystem: 'zImage',
@@ -125,9 +104,7 @@ export const zImageConfig = ImageGenConfig({
       height: params.height,
       cfgScale: params.cfgScale,
       steps: params.steps,
-      sampleMethod: params.sampler
-        ? samplersToSdCpp[params.sampler as keyof typeof samplersToSdCpp].sampleMethod
-        : 'euler',
+      sampleMethod: params.sampler ?? 'euler',
       schedule: params?.scheduler,
       quantity: params.quantity,
       seed: params.seed,

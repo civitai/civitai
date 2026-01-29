@@ -105,8 +105,6 @@ import {
   getIsZImageTurbo,
   getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
-  zImageValidSamplers,
-  zImageValidSchedulers,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -117,6 +115,8 @@ import {
   getIsZImage,
   zImageModelModeOptions,
   zImageModelVersionToModelMap,
+  zImageSampleMethods,
+  zImageSchedules,
 } from '~/shared/orchestrator/ImageGen/zImage.config';
 import {
   flux2ModelModeOptions,
@@ -125,7 +125,8 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   flux2KleinModelVariantOptions,
-  flux2KleinDisabledSamplers,
+  flux2KleinSampleMethods,
+  flux2KleinSchedules,
   getFlux2KleinBaseModel,
   getFlux2KleinDefaults,
   getIsFlux2Klein,
@@ -695,11 +696,11 @@ export function GenerationFormContent() {
               isSeedream ||
               isFlux2KleinDistilled;
 
-            // Flux2 Klein doesn't support certain samplers
+            // ZImageBase and Flux2Klein use sdcpp samplers directly
             const samplerOptions = isZImageBase
-              ? zImageValidSamplers
+              ? [...zImageSampleMethods]
               : isFlux2Klein
-              ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
+              ? [...flux2KleinSampleMethods]
               : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
@@ -1711,10 +1712,8 @@ export function GenerationFormContent() {
                                     }
                                     data={samplerOptions}
                                     presets={
-                                      isZImageBase
-                                        ? [{ label: 'Fast', value: 'Euler' }]
-                                        : isFlux2Klein
-                                        ? [{ label: 'Fast', value: 'Euler a' }]
+                                      isZImageBase || isFlux2Klein
+                                        ? [{ label: 'Fast', value: 'euler' }]
                                         : [
                                             { label: 'Fast', value: 'Euler a' },
                                             { label: 'Popular', value: 'DPM++ 2M Karras' },
@@ -1722,7 +1721,7 @@ export function GenerationFormContent() {
                                     }
                                   />
                                 )}
-                                {isZImageBase && (
+                                {(isZImageBase || isFlux2Klein) && (
                                   <InputSelect
                                     name="scheduler"
                                     label={
@@ -1734,7 +1733,11 @@ export function GenerationFormContent() {
                                         </InfoPopover>
                                       </div>
                                     }
-                                    data={zImageValidSchedulers}
+                                    data={
+                                      isZImageBase
+                                        ? [...zImageSchedules]
+                                        : [...flux2KleinSchedules]
+                                    }
                                     presets={[{ label: 'Default', value: 'simple' }]}
                                   />
                                 )}
