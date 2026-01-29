@@ -4804,11 +4804,27 @@ model ComicProject {
   updatedAt DateTime           @updatedAt
 
   characters ComicCharacter[]
-  panels     ComicPanel[]
+  chapters   ComicChapter[]
 
   @@index([userId])
   @@index([status])
   @@map("comic_projects")
+}
+
+model ComicChapter {
+  id        String       @id @default(cuid())
+  projectId String
+  project   ComicProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String       @db.VarChar(255) @default("Chapter 1")
+  position  Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  panels ComicPanel[]
+
+  @@index([projectId])
+  @@index([projectId, position])
+  @@map("comic_chapters")
 }
 
 model ComicCharacter {
@@ -4831,6 +4847,10 @@ model ComicCharacter {
   trainedModelId         Int?    // Model ID created after training
   trainedModelVersionId  Int?    // ModelVersion ID created after training
 
+  // Generated reference images (front/side/back views from LoRA)
+  generatedReferenceImages   Json?   // Array of { url, width, height, view } objects
+  referenceImageWorkflowIds  Json?   // Orchestrator workflow IDs for polling
+
   // Common fields
   errorMessage String?  @db.Text
   buzzCost     Int      @default(50)
@@ -4848,8 +4868,8 @@ model ComicCharacter {
 
 model ComicPanel {
   id           String           @id @default(cuid())
-  projectId    String
-  project      ComicProject     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  chapterId    String
+  chapter      ComicChapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
   characterId  String?
   character    ComicCharacter?  @relation(fields: [characterId], references: [id], onDelete: SetNull)
   prompt          String           @db.Text
@@ -4864,7 +4884,7 @@ model ComicPanel {
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
-  @@index([projectId, position])
+  @@index([chapterId, position])
   @@index([characterId])
   @@index([status])
   @@map("comic_panels")

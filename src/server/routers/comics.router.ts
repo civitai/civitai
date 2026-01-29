@@ -17,8 +17,23 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getGenerationConfig } from '~/server/common/constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { createTextToImage } from '~/server/services/orchestrator/textToImage/textToImage';
+import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+
+// Constants
+const NANOBANANA_VERSION_ID = 2154472;
+const PANEL_WIDTH = 1728;
+const PANEL_HEIGHT = 2304;
+
+const REFERENCE_IMAGE_PROMPTS: Record<string, string> = {
+  front:
+    'portrait, front view, facing the camera, detailed face, full upper body, neutral pose, clean background, high quality, sharp focus',
+  side:
+    'portrait, left side profile view, detailed face, full upper body, neutral pose, clean background, high quality, sharp focus',
+  back:
+    'portrait, back view, showing back of head and upper body, neutral pose, clean background, high quality, sharp focus',
+};
 
 // Middleware to check project ownership
 const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
@@ -31,6 +46,24 @@ const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
       select: { userId: true },
     });
     if (!project || project.userId !== ctx.user.id) {
+      throw throwAuthorizationError();
+    }
+  }
+
+  return next({ ctx });
+});
+
+// Middleware to check chapter ownership (chapter -> project -> user)
+const isChapterOwner = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.user) throw throwAuthorizationError();
+
+  const { chapterId } = input as { chapterId?: string };
+  if (chapterId) {
+    const chapter = await dbRead.comicChapter.findUnique({
+      where: { id: chapterId },
+      include: { project: { select: { userId: true } } },
+    });
+    if (!chapter || chapter.project.userId !== ctx.user.id) {
       throw throwAuthorizationError();
     }
   }
@@ -72,7 +105,7 @@ const updateCharacterStatusSchema = z.object({
 });
 
 const createPanelSchema = z.object({
-  projectId: z.string(),
+  chapterId: z.string(),
   characterId: z.string().optional(),
   prompt: z.string().min(1).max(2000),
   enhance: z.boolean().default(true),
@@ -91,8 +124,28 @@ const deletePanelSchema = z.object({
 });
 
 const reorderPanelsSchema = z.object({
-  projectId: z.string(),
+  chapterId: z.string(),
   panelIds: z.array(z.string()),
+});
+
+// Chapter schemas
+const createChapterSchema = z.object({
+  projectId: z.string(),
+  name: z.string().min(1).max(255).default('New Chapter'),
+});
+
+const updateChapterSchema = z.object({
+  chapterId: z.string(),
+  name: z.string().min(1).max(255),
+});
+
+const deleteChapterSchema = z.object({
+  chapterId: z.string(),
+});
+
+const reorderChaptersSchema = z.object({
+  projectId: z.string(),
+  chapterIds: z.array(z.string()),
 });
 
 export const comicsRouter = router({
@@ -104,26 +157,35 @@ export const comicsRouter = router({
         status: ComicProjectStatus.Active,
       },
       include: {
-        _count: {
-          select: { panels: true },
-        },
-        panels: {
-          take: 1,
+        chapters: {
+          include: {
+            _count: { select: { panels: true } },
+            panels: {
+              take: 1,
+              orderBy: { position: 'asc' },
+              select: { imageUrl: true },
+            },
+          },
           orderBy: { position: 'asc' },
-          select: { imageUrl: true },
         },
       },
       orderBy: { updatedAt: 'desc' },
     });
 
-    return projects.map((p) => ({
-      id: p.id,
-      name: p.name,
-      panelCount: p._count.panels,
-      thumbnailUrl: p.panels[0]?.imageUrl ?? null,
-      createdAt: p.createdAt,
-      updatedAt: p.updatedAt,
-    }));
+    return projects.map((p) => {
+      const panelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
+      const thumbnailUrl = p.chapters
+        .flatMap((ch) => ch.panels)
+        .find((panel) => panel.imageUrl)?.imageUrl ?? null;
+      return {
+        id: p.id,
+        name: p.name,
+        panelCount,
+        thumbnailUrl,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      };
+    });
   }),
 
   getProject: protectedProcedure
@@ -135,8 +197,13 @@ export const comicsRouter = router({
           characters: {
             orderBy: { createdAt: 'asc' },
           },
-          panels: {
+          chapters: {
             orderBy: { position: 'asc' },
+            include: {
+              panels: {
+                orderBy: { position: 'asc' },
+              },
+            },
           },
         },
       });
@@ -155,6 +222,15 @@ export const comicsRouter = router({
         data: {
           userId: ctx.user.id,
           name: input.name,
+          chapters: {
+            create: {
+              name: 'Chapter 1',
+              position: 0,
+            },
+          },
+        },
+        include: {
+          chapters: true,
         },
       });
 
@@ -176,6 +252,94 @@ export const comicsRouter = router({
         where: { id: input.id },
         data: { status: ComicProjectStatus.Deleted },
       });
+
+      return { success: true };
+    }),
+
+  // Chapters
+  createChapter: protectedProcedure
+    .input(createChapterSchema)
+    .use(isProjectOwner)
+    .mutation(async ({ input }) => {
+      // Auto-increment position
+      const lastChapter = await dbRead.comicChapter.findFirst({
+        where: { projectId: input.projectId },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      });
+      const nextPosition = (lastChapter?.position ?? -1) + 1;
+
+      const chapter = await dbWrite.comicChapter.create({
+        data: {
+          projectId: input.projectId,
+          name: input.name,
+          position: nextPosition,
+        },
+      });
+
+      return chapter;
+    }),
+
+  updateChapter: protectedProcedure
+    .input(updateChapterSchema)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        include: { project: { select: { userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      const updated = await dbWrite.comicChapter.update({
+        where: { id: input.chapterId },
+        data: { name: input.name },
+      });
+
+      return updated;
+    }),
+
+  deleteChapter: protectedProcedure
+    .input(deleteChapterSchema)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        include: { project: { select: { userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      await dbWrite.comicChapter.delete({
+        where: { id: input.chapterId },
+      });
+
+      return { success: true };
+    }),
+
+  reorderChapters: protectedProcedure
+    .input(reorderChaptersSchema)
+    .use(isProjectOwner)
+    .mutation(async ({ input }) => {
+      const chapters = await dbRead.comicChapter.findMany({
+        where: { projectId: input.projectId },
+        select: { id: true },
+      });
+      const projectChapterIds = new Set(chapters.map((c) => c.id));
+      for (const id of input.chapterIds) {
+        if (!projectChapterIds.has(id)) {
+          throw throwBadRequestError('Chapter does not belong to this project');
+        }
+      }
+
+      await dbWrite.$transaction(
+        input.chapterIds.map((id, index) =>
+          dbWrite.comicChapter.update({
+            where: { id },
+            data: { position: index },
+          })
+        )
+      );
 
       return { success: true };
     }),
@@ -206,7 +370,8 @@ export const comicsRouter = router({
       return character;
     }),
 
-  // Path 2: Create character from existing LoRA model (instant)
+  // Path 2: Create character from existing LoRA model
+  // Generates front/side/back reference images using the LoRA
   createCharacterFromModel: protectedProcedure
     .input(createCharacterFromModelSchema)
     .use(isProjectOwner)
@@ -219,6 +384,7 @@ export const comicsRouter = router({
           modelId: true,
           status: true,
           baseModel: true,
+          trainedWords: true,
           model: {
             select: {
               id: true,
@@ -255,6 +421,7 @@ export const comicsRouter = router({
         });
       }
 
+      // Create character as Pending (reference images need to be generated)
       const character = await dbWrite.comicCharacter.create({
         data: {
           projectId: input.projectId,
@@ -263,11 +430,195 @@ export const comicsRouter = router({
           sourceType: ComicCharacterSourceType.ExistingModel,
           modelId: input.modelId,
           modelVersionId: input.modelVersionId,
-          status: ComicCharacterStatus.Ready, // Instant - no training needed
+          status: ComicCharacterStatus.Pending,
         },
       });
 
-      return character;
+      // Generate 3 reference images (front/side/back) using the LoRA
+      try {
+        const token = await getOrchestratorToken(ctx.user.id, ctx);
+        const config = getGenerationConfig(baseModelGroup);
+        const checkpointVersionId = config.checkpoint.id;
+        const trainedWords = (modelVersion.trainedWords ?? []) as string[];
+        const triggerPrefix = trainedWords.length > 0 ? `${trainedWords.join(', ')}, ` : '';
+
+        const workflowIds: Record<string, string> = {};
+
+        for (const [view, viewPrompt] of Object.entries(REFERENCE_IMAGE_PROMPTS)) {
+          const fullPrompt = `${triggerPrefix}${viewPrompt}`;
+
+          const result = await createTextToImage({
+            params: {
+              prompt: fullPrompt,
+              negativePrompt:
+                'blurry, low quality, deformed, bad anatomy, bad hands, extra fingers, missing fingers, text, watermark, signature, jpeg artifacts, ugly, duplicate, morbid, mutilated, poorly drawn face, poorly drawn hands, out of frame',
+              baseModel: baseModelGroup as any,
+              width: 832,
+              height: 1216,
+              workflow: 'txt2img',
+              sampler: 'Euler',
+              steps: 25,
+              cfgScale: 7,
+              quantity: 1,
+              draft: false,
+              disablePoi: false,
+              priority: 'low',
+              sourceImage: null,
+              images: null,
+            },
+            resources: [
+              { id: checkpointVersionId, strength: 1 },
+              { id: input.modelVersionId, strength: 1 },
+            ],
+            tags: ['comics', 'character-ref'],
+            tips: { creators: 0, civitai: 0 },
+            user: ctx.user! as SessionUser,
+            token,
+            currencies: ['yellow'],
+          });
+
+          workflowIds[view] = result.id;
+        }
+
+        // Update character with workflow IDs and set to Processing
+        await dbWrite.comicCharacter.update({
+          where: { id: character.id },
+          data: {
+            referenceImageWorkflowIds: workflowIds,
+            status: ComicCharacterStatus.Processing,
+          },
+        });
+
+        return { ...character, status: ComicCharacterStatus.Processing };
+      } catch (error: any) {
+        console.error('Failed to generate character reference images:', error);
+        await dbWrite.comicCharacter.update({
+          where: { id: character.id },
+          data: {
+            status: ComicCharacterStatus.Failed,
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+          },
+        });
+        return {
+          ...character,
+          status: ComicCharacterStatus.Failed,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+
+  // Poll character reference image generation status
+  pollCharacterStatus: protectedProcedure
+    .input(z.object({ characterId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const character = await dbRead.comicCharacter.findUnique({
+        where: { id: input.characterId },
+      });
+
+      if (!character || character.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      // Only poll if character is actively processing
+      if (
+        character.status === ComicCharacterStatus.Ready ||
+        character.status === ComicCharacterStatus.Failed
+      ) {
+        return {
+          id: character.id,
+          status: character.status,
+          generatedReferenceImages: character.generatedReferenceImages,
+        };
+      }
+
+      const workflowIds = character.referenceImageWorkflowIds as Record<string, string> | null;
+      if (!workflowIds || Object.keys(workflowIds).length === 0) {
+        return {
+          id: character.id,
+          status: character.status,
+          generatedReferenceImages: character.generatedReferenceImages,
+        };
+      }
+
+      try {
+        const token = await getOrchestratorToken(ctx.user.id, ctx);
+        const results: { view: string; url: string; width: number; height: number }[] = [];
+        let allComplete = true;
+        let anyFailed = false;
+
+        for (const [view, workflowId] of Object.entries(workflowIds)) {
+          const workflow = await getWorkflow({
+            token,
+            path: { workflowId },
+          });
+
+          const steps = workflow.steps ?? [];
+          const firstStep = steps[0] as any;
+          const imageUrl =
+            firstStep?.output?.images?.[0]?.url ??
+            firstStep?.output?.blobs?.[0]?.url ??
+            null;
+
+          if (imageUrl) {
+            results.push({
+              view,
+              url: imageUrl,
+              width: 832,
+              height: 1216,
+            });
+          } else if (workflow.status === 'failed' || workflow.status === 'canceled') {
+            anyFailed = true;
+          } else {
+            allComplete = false;
+          }
+        }
+
+        if (anyFailed) {
+          const updated = await dbWrite.comicCharacter.update({
+            where: { id: character.id },
+            data: {
+              status: ComicCharacterStatus.Failed,
+              errorMessage: 'Reference image generation failed',
+              generatedReferenceImages: results.length > 0 ? results : undefined,
+            },
+          });
+          return {
+            id: updated.id,
+            status: updated.status,
+            generatedReferenceImages: updated.generatedReferenceImages,
+          };
+        }
+
+        if (allComplete && results.length === Object.keys(workflowIds).length) {
+          const updated = await dbWrite.comicCharacter.update({
+            where: { id: character.id },
+            data: {
+              status: ComicCharacterStatus.Ready,
+              generatedReferenceImages: results,
+            },
+          });
+          return {
+            id: updated.id,
+            status: updated.status,
+            generatedReferenceImages: updated.generatedReferenceImages,
+          };
+        }
+
+        // Still processing
+        return {
+          id: character.id,
+          status: character.status,
+          generatedReferenceImages: character.generatedReferenceImages,
+        };
+      } catch (error) {
+        console.error('Failed to poll character workflows:', error);
+        return {
+          id: character.id,
+          status: character.status,
+          generatedReferenceImages: character.generatedReferenceImages,
+        };
+      }
     }),
 
   // Legacy endpoint - routes to upload flow (for backwards compatibility)
@@ -304,7 +655,7 @@ export const comicsRouter = router({
       }
 
       // Only allow valid status transitions for Upload characters
-      // ExistingModel characters are set to Ready on creation and shouldn't change
+      // ExistingModel characters are managed by pollCharacterStatus
       if (character.sourceType === ComicCharacterSourceType.ExistingModel) {
         throw throwBadRequestError('Cannot change status of a model-linked character');
       }
@@ -406,78 +757,93 @@ export const comicsRouter = router({
         .filter((m) => m.versionId);
     }),
 
-  // Panels
+  // Panels — NanoBanana generation via createImageGen
   createPanel: protectedProcedure
     .input(createPanelSchema)
-    .use(isProjectOwner)
+    .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
-      // Get the next position
+      // Verify chapter ownership and get project info
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        include: { project: { select: { id: true, userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      // Get the previous panel (last by position) for context and next position
       const lastPanel = await dbRead.comicPanel.findFirst({
-        where: { projectId: input.projectId },
+        where: { chapterId: input.chapterId },
         orderBy: { position: 'desc' },
-        select: { position: true },
+        select: { position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
       });
 
       const nextPosition = (lastPanel?.position ?? -1) + 1;
 
-      // Get character's model version for generation
-      let modelVersionId: number | null = null;
+      // Get character's reference images for generation
       let characterName = '';
+      let characterRefImages: { url: string; width: number; height: number }[] = [];
       if (input.characterId) {
         const character = await dbRead.comicCharacter.findUnique({
           where: { id: input.characterId },
           select: {
             name: true,
-            modelVersionId: true,
-            trainedModelVersionId: true,
+            generatedReferenceImages: true,
+            referenceImages: true,
             sourceType: true,
+            status: true,
           },
         });
 
         if (character) {
           characterName = character.name;
-          modelVersionId = character.sourceType === ComicCharacterSourceType.ExistingModel
-            ? character.modelVersionId
-            : character.trainedModelVersionId;
+
+          // Use generated reference images (from LoRA generation)
+          if (character.generatedReferenceImages) {
+            const genRefs = character.generatedReferenceImages as {
+              url: string;
+              width: number;
+              height: number;
+              view: string;
+            }[];
+            characterRefImages = genRefs.map((r) => ({
+              url: r.url,
+              width: r.width,
+              height: r.height,
+            }));
+          }
+          // Fallback: use uploaded reference images
+          else if (character.referenceImages) {
+            const uploadedRefs = character.referenceImages as string[];
+            characterRefImages = uploadedRefs.map((url) => ({
+              url,
+              width: 512,
+              height: 512,
+            }));
+          }
         }
       }
 
-      if (!modelVersionId) {
-        throw throwBadRequestError('Character has no model version');
+      if (characterRefImages.length === 0) {
+        throw throwBadRequestError('Character has no reference images');
       }
-
-      // Get the LoRA's baseModel to determine compatible checkpoint
-      const modelVersion = await dbRead.modelVersion.findUnique({
-        where: { id: modelVersionId },
-        select: { baseModel: true, trainedWords: true },
-      });
-      if (!modelVersion) {
-        throw throwBadRequestError('Model version not found');
-      }
-
-      const baseModelGroup = getBaseModelSetType(modelVersion.baseModel);
-      const config = getGenerationConfig(baseModelGroup);
-      const checkpointVersionId = config.checkpoint.id;
 
       // Build prompt — optionally enhance via LLM
-      const trainedWords = (modelVersion.trainedWords ?? []) as string[];
       let fullPrompt: string;
       if (input.enhance) {
         fullPrompt = await enhanceComicPrompt({
           userPrompt: input.prompt,
           characterName,
-          trainedWords,
+          previousPanel: lastPanel ?? undefined,
         });
       } else {
-        fullPrompt = trainedWords.length > 0
-          ? `${trainedWords.join(', ')}, ${input.prompt}`
-          : input.prompt;
+        fullPrompt = input.prompt;
       }
 
       // Create panel record as Pending (not yet submitted to orchestrator)
       const panel = await dbWrite.comicPanel.create({
         data: {
-          projectId: input.projectId,
+          chapterId: input.chapterId,
           characterId: input.characterId,
           prompt: input.prompt,
           enhancedPrompt: input.enhance ? fullPrompt : null,
@@ -486,31 +852,28 @@ export const comicsRouter = router({
         },
       });
 
-      // Submit generation workflow
+      // Submit NanoBanana generation workflow
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
-        const result = await createTextToImage({
+        const result = await createImageGen({
           params: {
             prompt: fullPrompt,
-            negativePrompt: 'blurry, low quality, deformed, bad anatomy, bad hands, extra fingers, missing fingers, text, watermark, signature, jpeg artifacts, ugly, duplicate, morbid, mutilated, poorly drawn face, poorly drawn hands, out of frame',
-            baseModel: baseModelGroup as any,
-            width: 832,
-            height: 1216,
+            negativePrompt: '',
+            engine: 'gemini',
+            baseModel: 'NanoBanana' as any,
+            width: PANEL_WIDTH,
+            height: PANEL_HEIGHT,
             workflow: 'txt2img',
             sampler: 'Euler',
             steps: 25,
-            cfgScale: 7,
             quantity: 1,
             draft: false,
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: null,
+            images: characterRefImages,
           },
-          resources: [
-            { id: checkpointVersionId, strength: 1 },
-            { id: modelVersionId, strength: 1 },
-          ],
+          resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
           tags: ['comics'],
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
@@ -544,9 +907,6 @@ export const comicsRouter = router({
         const errorMessage = errorDetails.join(' | ');
         console.error('Comics createPanel generation failed:', {
           panelId: panel.id,
-          modelVersionId,
-          baseModelGroup,
-          checkpointVersionId,
           error: errorMessage,
           stack: error instanceof Error ? error.stack : undefined,
         });
@@ -565,13 +925,13 @@ export const comicsRouter = router({
   updatePanel: protectedProcedure
     .input(updatePanelSchema)
     .mutation(async ({ ctx, input }) => {
-      // Verify ownership via project
+      // Verify ownership via chapter -> project
       const panel = await dbRead.comicPanel.findUnique({
         where: { id: input.panelId },
-        include: { project: { select: { userId: true } } },
+        include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
 
-      if (!panel || panel.project.userId !== ctx.user.id) {
+      if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
 
@@ -591,13 +951,13 @@ export const comicsRouter = router({
   deletePanel: protectedProcedure
     .input(deletePanelSchema)
     .mutation(async ({ ctx, input }) => {
-      // Verify ownership via project
+      // Verify ownership via chapter -> project
       const panel = await dbRead.comicPanel.findUnique({
         where: { id: input.panelId },
-        include: { project: { select: { userId: true } } },
+        include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
 
-      if (!panel || panel.project.userId !== ctx.user.id) {
+      if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
 
@@ -610,17 +970,17 @@ export const comicsRouter = router({
 
   reorderPanels: protectedProcedure
     .input(reorderPanelsSchema)
-    .use(isProjectOwner)
+    .use(isChapterOwner)
     .mutation(async ({ input }) => {
-      // Verify all panels belong to this project
+      // Verify all panels belong to this chapter
       const panels = await dbRead.comicPanel.findMany({
-        where: { projectId: input.projectId },
+        where: { chapterId: input.chapterId },
         select: { id: true },
       });
-      const projectPanelIds = new Set(panels.map((p) => p.id));
+      const chapterPanelIds = new Set(panels.map((p) => p.id));
       for (const id of input.panelIds) {
-        if (!projectPanelIds.has(id)) {
-          throw throwBadRequestError('Panel does not belong to this project');
+        if (!chapterPanelIds.has(id)) {
+          throw throwBadRequestError('Panel does not belong to this chapter');
         }
       }
 
@@ -644,7 +1004,11 @@ export const comicsRouter = router({
       const panel = await dbRead.comicPanel.findUnique({
         where: { id: input.panelId },
         include: {
-          project: { select: { userId: true, baseModel: true } },
+          chapter: {
+            include: {
+              project: { select: { userId: true, baseModel: true } },
+            },
+          },
           character: {
             select: {
               id: true,
@@ -653,12 +1017,13 @@ export const comicsRouter = router({
               modelId: true,
               modelVersionId: true,
               trainedModelVersionId: true,
+              generatedReferenceImages: true,
             },
           },
         },
       });
 
-      if (!panel || panel.project.userId !== ctx.user!.id) {
+      if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
 
@@ -700,42 +1065,8 @@ export const comicsRouter = router({
         }
       }
 
-      // Get model version info if character is linked
-      let modelVersionInfo: any = null;
+      // Get character reference images info
       const character = panel.character;
-      if (character) {
-        const mvId = character.sourceType === 'ExistingModel'
-          ? character.modelVersionId
-          : character.trainedModelVersionId;
-        if (mvId) {
-          const mv = await dbRead.modelVersion.findUnique({
-            where: { id: mvId },
-            select: {
-              id: true,
-              baseModel: true,
-              trainedWords: true,
-              status: true,
-              model: { select: { id: true, name: true, type: true, status: true } },
-            },
-          });
-          if (mv) {
-            const baseModelGroup = getBaseModelSetType(mv.baseModel);
-            const config = getGenerationConfig(baseModelGroup);
-            modelVersionInfo = {
-              versionId: mv.id,
-              baseModel: mv.baseModel,
-              baseModelGroup,
-              trainedWords: mv.trainedWords,
-              status: mv.status,
-              model: mv.model,
-              checkpoint: {
-                id: config.checkpoint.id,
-                name: config.checkpoint.model?.name,
-              },
-            };
-          }
-        }
-      }
 
       return {
         panel: {
@@ -750,12 +1081,22 @@ export const comicsRouter = router({
           updatedAt: panel.updatedAt,
         },
         project: {
-          baseModel: panel.project.baseModel,
+          baseModel: panel.chapter.project.baseModel,
         },
         character: character
-          ? { id: character.id, name: character.name, sourceType: character.sourceType }
+          ? {
+              id: character.id,
+              name: character.name,
+              sourceType: character.sourceType,
+              generatedReferenceImages: character.generatedReferenceImages,
+            }
           : null,
-        modelVersion: modelVersionInfo,
+        generation: {
+          engine: 'gemini',
+          baseModel: 'NanoBanana',
+          checkpointVersionId: NANOBANANA_VERSION_ID,
+          dimensions: { width: PANEL_WIDTH, height: PANEL_HEIGHT },
+        },
         workflow: workflowInfo,
       };
     }),
@@ -766,10 +1107,10 @@ export const comicsRouter = router({
     .query(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
         where: { id: input.panelId },
-        include: { project: { select: { userId: true } } },
+        include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
 
-      if (!panel || panel.project.userId !== ctx.user!.id) {
+      if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
 
@@ -805,7 +1146,6 @@ export const comicsRouter = router({
 
         // Extract image URL from first step output if present.
         // Images can appear before the workflow status transitions to 'succeeded'
-        // (e.g. status may still be 'scheduled' when output images are already available).
         const steps = workflow.steps ?? [];
         const firstStep = steps[0] as any;
         const imageUrl =
@@ -826,7 +1166,6 @@ export const comicsRouter = router({
 
         // No images yet — check terminal statuses
         if (workflow.status === 'succeeded') {
-          // Workflow done but no image URL — unusual, mark ready anyway
           console.warn(
             `Panel ${panel.id}: workflow succeeded but no image URL found in step output`,
             JSON.stringify(firstStep?.output ?? null)

@@ -14,6 +14,7 @@ import {
   ScrollArea,
   Stack,
   Switch,
+  Tabs,
   Text,
   Textarea,
   Title,
@@ -66,11 +67,19 @@ function ProjectWorkspace() {
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
+  const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
 
   const { data: project, isLoading, refetch } = trpc.comics.getProject.useQuery(
     { id: projectId },
     { enabled: !!projectId }
   );
+
+  // Set active chapter to first chapter on load
+  useEffect(() => {
+    if (project?.chapters?.length && !activeChapterId) {
+      setActiveChapterId(project.chapters[0].id);
+    }
+  }, [project?.chapters, activeChapterId]);
 
   // Fetch cover images for characters that have a linked model
   const characterModelEntities = useMemo(
@@ -106,15 +115,28 @@ function ProjectWorkspace() {
     onSuccess: () => refetch(),
   });
 
+  const createChapterMutation = trpc.comics.createChapter.useMutation({
+    onSuccess: (data) => {
+      setActiveChapterId(data.id);
+      refetch();
+    },
+  });
+
   const utils = trpc.useUtils();
 
-  // Poll for panels actively generating (have a workflowId)
+  // Get active chapter's panels
+  const activeChapter = useMemo(
+    () => project?.chapters?.find((ch) => ch.id === activeChapterId) ?? project?.chapters?.[0],
+    [project?.chapters, activeChapterId]
+  );
+
+  // Poll for panels actively generating
   const generatingPanelIds = useMemo(
     () =>
-      (project?.panels ?? [])
+      (activeChapter?.panels ?? [])
         .filter((p) => p.status === 'Generating')
         .map((p) => p.id),
-    [project?.panels]
+    [activeChapter?.panels]
   );
 
   useEffect(() => {
@@ -140,6 +162,37 @@ function ProjectWorkspace() {
     return () => clearInterval(interval);
   }, [generatingPanelIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll for characters in Pending/Processing state
+  const processingCharacterIds = useMemo(
+    () =>
+      (project?.characters ?? [])
+        .filter((c) => c.status === 'Pending' || c.status === 'Processing')
+        .map((c) => c.id),
+    [project?.characters]
+  );
+
+  useEffect(() => {
+    if (processingCharacterIds.length === 0) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const results = await Promise.all(
+          processingCharacterIds.map((characterId) =>
+            utils.comics.pollCharacterStatus.fetch({ characterId })
+          )
+        );
+        const changed = results.some(
+          (r) => r.status === 'Ready' || r.status === 'Failed'
+        );
+        if (changed) refetch();
+      } catch {
+        // Silently ignore poll errors
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [processingCharacterIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (isLoading || !project) {
     return (
       <Container size="xl" py="xl">
@@ -154,9 +207,9 @@ function ProjectWorkspace() {
     ?? null;
 
   const handleGeneratePanel = () => {
-    if (!prompt.trim() || !activeCharacter) return;
+    if (!prompt.trim() || !activeCharacter || !activeChapter) return;
     createPanelMutation.mutate({
-      projectId,
+      chapterId: activeChapter.id,
       characterId: activeCharacter.id,
       prompt: prompt.trim(),
       enhance: enhancePrompt,
@@ -274,7 +327,9 @@ function ProjectWorkspace() {
                                     : 'gray'
                             }
                           >
-                            {character.status}
+                            {character.status === 'Processing'
+                              ? 'Generating refs...'
+                              : character.status}
                           </Badge>
                         </div>
                       </div>
@@ -287,13 +342,45 @@ function ProjectWorkspace() {
             {/* Main - Panels */}
             <Grid.Col span={{ base: 12, md: 9 }}>
               <Stack gap="md">
+                {/* Chapter tabs */}
+                {project.chapters.length > 0 && (
+                  <Group justify="space-between">
+                    <Tabs
+                      value={activeChapterId ?? project.chapters[0]?.id}
+                      onChange={(v) => setActiveChapterId(v)}
+                      variant="outline"
+                    >
+                      <Tabs.List>
+                        {project.chapters.map((chapter) => (
+                          <Tabs.Tab key={chapter.id} value={chapter.id}>
+                            {chapter.name}
+                          </Tabs.Tab>
+                        ))}
+                      </Tabs.List>
+                    </Tabs>
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        leftSection={<IconPlus size={14} />}
+                        onClick={() =>
+                          createChapterMutation.mutate({ projectId })
+                        }
+                        loading={createChapterMutation.isPending}
+                      >
+                        Add Chapter
+                      </Button>
+                    </Group>
+                  </Group>
+                )}
+
                 <Group justify="space-between">
                   <Text fw={500}>Panels</Text>
                   <Button
                     size="sm"
                     leftSection={<IconPlus size={14} />}
                     onClick={openPanelModal}
-                    disabled={!activeCharacter}
+                    disabled={!activeCharacter || !activeChapter}
                   >
                     Add Panel
                   </Button>
@@ -318,7 +405,7 @@ function ProjectWorkspace() {
                   </Card>
                 )}
 
-                {project.panels.length === 0 && activeCharacter && (
+                {activeChapter && activeChapter.panels.length === 0 && activeCharacter && (
                   <Card withBorder p="xl" className="text-center">
                     <Stack align="center" gap="md">
                       <IconPhoto size={48} className="text-gray-500" />
@@ -328,7 +415,7 @@ function ProjectWorkspace() {
                 )}
 
                 <Grid>
-                  {project.panels.map((panel) => (
+                  {(activeChapter?.panels ?? []).map((panel) => (
                     <Grid.Col key={panel.id} span={{ base: 6, sm: 4, lg: 3 }}>
                       <PanelCard
                         id={panel.id}
@@ -531,11 +618,19 @@ function PanelDebugModal({
             </div>
           )}
 
-          {/* Character & Model version info */}
-          {data.modelVersion && (
+          {/* Character & Reference images */}
+          {data.character && (
             <div>
-              <Text fw={600} size="sm" mb={4}>Model Version</Text>
-              <Code block>{JSON.stringify(data.modelVersion, null, 2)}</Code>
+              <Text fw={600} size="sm" mb={4}>Character</Text>
+              <Code block>{JSON.stringify(data.character, null, 2)}</Code>
+            </div>
+          )}
+
+          {/* Generation config */}
+          {data.generation && (
+            <div>
+              <Text fw={600} size="sm" mb={4}>Generation Config</Text>
+              <Code block>{JSON.stringify(data.generation, null, 2)}</Code>
             </div>
           )}
 

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Button,
   Card,
   Container,
@@ -17,7 +18,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconArrowLeft, IconCheck, IconPhoto, IconSearch, IconUpload, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
@@ -63,7 +64,7 @@ function CharacterUpload() {
     versionId: number;
   } | null>(null);
 
-  const { data: project } = trpc.comics.getProject.useQuery(
+  const { data: project, refetch: refetchProject } = trpc.comics.getProject.useQuery(
     { id: projectId },
     { enabled: !!projectId }
   );
@@ -100,9 +101,11 @@ function CharacterUpload() {
 
   const createFromModelMutation = trpc.comics.createCharacterFromModel.useMutation({
     onSuccess: () => {
-      router.push(`/comics/project/${projectId}`);
+      refetchProject();
     },
   });
+
+  const utils = trpc.useUtils();
 
   const handleDrop = (files: File[]) => {
     const newImages = files.map((file) => ({
@@ -164,8 +167,38 @@ function CharacterUpload() {
 
   const existingCharacter = project?.characters?.[0];
 
+  // Poll for character status when in Pending/Processing state
+  useEffect(() => {
+    if (
+      !existingCharacter ||
+      (existingCharacter.status !== 'Pending' && existingCharacter.status !== 'Processing')
+    ) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await utils.comics.pollCharacterStatus.fetch({
+          characterId: existingCharacter.id,
+        });
+        if (result.status === 'Ready' || result.status === 'Failed') {
+          refetchProject();
+        }
+      } catch {
+        // Silently ignore poll errors
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [existingCharacter?.id, existingCharacter?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // If character already exists, show status
   if (existingCharacter && existingCharacter.status !== 'Failed') {
+    const isExistingModel = existingCharacter.sourceType === 'ExistingModel';
+    const generatedRefs = existingCharacter.generatedReferenceImages as
+      | { url: string; width: number; height: number; view: string }[]
+      | null;
+
     return (
       <>
         <Meta title={`Character - ${project?.name} - Civitai Comics`} />
@@ -193,7 +226,9 @@ function CharacterUpload() {
                     {existingCharacter.status === 'Ready'
                       ? 'Ready to use'
                       : existingCharacter.status === 'Processing'
-                        ? 'Training your character...'
+                        ? isExistingModel
+                          ? 'Generating reference images...'
+                          : 'Training your character...'
                         : 'Queued for processing'}
                   </Text>
                 </div>
@@ -202,8 +237,44 @@ function CharacterUpload() {
                   <Stack gap="xs" w="100%" maw={300}>
                     <Progress value={55} animated />
                     <Text size="xs" c="dimmed" ta="center">
-                      Training usually takes 5-10 minutes
+                      {isExistingModel
+                        ? 'Generating front, side, and back reference views'
+                        : 'Training usually takes 5-10 minutes'}
                     </Text>
+                  </Stack>
+                )}
+
+                {/* Display generated reference images when ready */}
+                {existingCharacter.status === 'Ready' && generatedRefs && generatedRefs.length > 0 && (
+                  <Stack gap="sm" w="100%">
+                    <Text fw={500} size="sm" ta="center">
+                      Generated Reference Images
+                    </Text>
+                    <Group justify="center" gap="md">
+                      {generatedRefs.map((ref, i) => (
+                        <Stack key={i} gap={4} align="center">
+                          <div
+                            className="rounded-lg overflow-hidden"
+                            style={{
+                              width: 120,
+                              height: 160,
+                              background: 'var(--mantine-color-dark-7)',
+                            }}
+                          >
+                            <Image
+                              src={ref.url}
+                              alt={`${ref.view} view`}
+                              w={120}
+                              h={160}
+                              fit="cover"
+                            />
+                          </div>
+                          <Badge size="xs" variant="light">
+                            {ref.view}
+                          </Badge>
+                        </Stack>
+                      ))}
+                    </Group>
                   </Stack>
                 )}
 
@@ -248,7 +319,7 @@ function CharacterUpload() {
                   <Stack gap="md">
                     <Text fw={500}>Select a Character LoRA</Text>
                     <Text size="sm" c="dimmed">
-                      Choose from your existing LoRA models. The character will be ready instantly.
+                      Choose from your existing LoRA models. Reference images will be auto-generated.
                     </Text>
 
                     <TextInput
@@ -377,7 +448,7 @@ function CharacterUpload() {
 
                 <Group justify="space-between">
                   <Text c="dimmed" size="sm">
-                    Free - uses your existing model
+                    Cost: 50 Buzz (reference image generation)
                   </Text>
                   <Group>
                     <Button

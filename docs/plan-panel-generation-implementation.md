@@ -1,120 +1,146 @@
 # Panel Generation Implementation Plan
 
 ## Goal
-Wire up the comics `createPanel` mutation to actually generate images via the Civitai orchestrator API, so panels progress from "Queued" to showing a generated image.
+Wire up the comics `createPanel` mutation to generate images via the Civitai orchestrator API using NanoBanana (Gemini) with character reference images for consistency.
 
 ## Architecture Overview
 
 ```
 createPanel (comics router)
-  -> lookup character's modelVersion (get baseModel, trained words)
-  -> determine compatible checkpoint via getGenerationConfig(baseModel)
-  -> if enhance=true: call enhanceComicPrompt() via GPT-4o-mini
-  -> else: prepend trained words to user prompt (original behavior)
+  -> verify chapter ownership (chapter -> project -> userId)
+  -> get character's generated reference images
+  -> if enhance=true: call enhanceComicPrompt() via GPT-4o-mini (no trigger words, scene-focused)
+  -> else: use raw user prompt
   -> get orchestrator token for user
-  -> build resources array (checkpoint + LoRA)
-  -> call orchestrator.generateImage with enhanced prompt + negative prompt
+  -> call createImageGen() with:
+     - engine: 'gemini', baseModel: 'NanoBanana'
+     - resources: [{ id: 2154472, strength: 1 }] (NanoBanana checkpoint)
+     - images: character reference images (editImage mode)
+     - width: 1728, height: 2304 (3:4 portrait)
   -> store workflowId + enhancedPrompt on panel, set status=Generating
   -> return panel
 
-pollPanelStatus (new endpoint)
+pollPanelStatus (existing endpoint, updated for chapter-based panels)
   -> read panel's workflowId
+  -> verify ownership via panel.chapter.project.userId
   -> call getWorkflow() to check orchestrator status
   -> if succeeded: extract image URL, update panel status + imageUrl
   -> if failed: update panel status + errorMessage
   -> return updated panel
 ```
 
-Frontend polls `pollPanelStatus` every 3s for panels in Pending/Generating state.
+Frontend polls `pollPanelStatus` every 3s for panels in Generating state.
+
+## Character Reference Image Generation
+
+When a user selects an existing LoRA model, the system auto-generates 3 reference images:
+
+```
+createCharacterFromModel
+  -> create character as Pending
+  -> for each view (front, side, back):
+     -> call createTextToImage() with LoRA + checkpoint
+     -> store workflow ID
+  -> set status to Processing, store all workflow IDs
+
+pollCharacterStatus (new endpoint)
+  -> check each workflow via getWorkflow()
+  -> when all 3 complete: extract URLs, store in generatedReferenceImages, set Ready
+  -> if any fail: set Failed
+```
+
+Frontend polls `pollCharacterStatus` every 5s for characters in Pending/Processing state.
+
+## Schema Changes
+
+### New: ComicChapter model
+Projects now have Chapters, and Chapters contain Panels (Project -> Chapter -> Panel).
+
+### Modified: ComicPanel
+- `projectId` -> `chapterId` (FK to ComicChapter instead of ComicProject)
+- Index: `@@index([chapterId, position])` instead of `@@index([projectId, position])`
+
+### Modified: ComicCharacter
+- Added `generatedReferenceImages Json?` — Array of { url, width, height, view } objects
+- Added `referenceImageWorkflowIds Json?` — Orchestrator workflow IDs for polling
+
+### Migration
+Destructive migration (dev phase): drops and recreates all comic tables with new structure.
 
 ## Files Modified
 
-### 1. `prisma/schema.full.prisma`
-- Added `workflowId String?` to `ComicPanel` model
-- Added `baseModel String? @db.VarChar(50)` to `ComicProject` model
+### 1. `prisma/schema.full.prisma` & `prisma/schema.prisma`
+- Added `ComicChapter` model
+- Changed `ComicProject.panels` to `ComicProject.chapters`
+- Changed `ComicPanel.projectId` to `ComicPanel.chapterId`
+- Added `generatedReferenceImages` and `referenceImageWorkflowIds` to `ComicCharacter`
 
-### 2. `prisma/migrations/20260128200053_add_comic_panel_workflowid_and_project_basemodel/migration.sql`
-- Migration to add both columns
+### 2. Migration SQL
+- Destructive migration: DROP all comic tables, recreate with new structure
 
-### 3. `src/server/services/comics/prompt-enhance.ts` (new)
-- `enhanceComicPrompt()` function that optionally rewrites the user's simple prompt into a detailed, comic-optimized image generation prompt via GPT-4o-mini
-- System prompt instructs the LLM to start with trigger words, add visual details, compositional terms, and quality terms
-- Output capped at 1500 characters (our prompt length limit)
-- Falls back to `trainedWords + userPrompt` if OpenAI is unavailable or the call fails
+### 3. `src/server/services/comics/prompt-enhance.ts`
+- Updated system prompt for reference-image-based generation
+- Removed instructions about trigger words / physical appearance
+- Focus on pose, expression, action, scene composition
+- Made `trainedWords` parameter optional
 
 ### 4. `src/server/routers/comics.router.ts`
-**Changes:**
-- **`createPanel`** rewritten to submit an actual generation workflow:
-  1. Looks up character's model version to get `baseModel` and `trainedWords`, plus character `name`
-  2. Uses `getBaseModelSetType(baseModel)` to map raw baseModel string (e.g. "Flux.1 D") to BaseModelGroup (e.g. "Flux1")
-  3. Uses `getGenerationConfig(baseModelGroup)` to get the default checkpoint
-  4. If `input.enhance` is true (default), calls `enhanceComicPrompt()` to rewrite the user's prompt via GPT-4o-mini; otherwise prepends trained words to the user prompt
-  5. Gets orchestrator token via `getOrchestratorToken(ctx.user.id, ctx)`
-  6. Builds resources array: `[{ id: checkpointVersionId, strength: 1 }, { id: loraVersionId, strength: 1 }]`
-  7. Calls `createTextToImage()` with params: enhanced prompt, hardcoded negative prompt, baseModel, 832x1216 portrait, workflow "txt2img", quantity 1, sampler "Euler", 25 steps, cfgScale 7
-  8. Stores `workflowId` and `enhancedPrompt` on the panel record, sets status to `Generating`
-
-- **`pollPanelStatus` query added:**
-  1. Takes `panelId` as input
-  2. Verifies ownership via project
-  3. If no workflowId or already Ready/Failed, returns panel as-is
-  4. Gets orchestrator token, calls `getWorkflow({ token, path: { workflowId } })`
-  5. If workflow status === 'succeeded': extracts image URL from step output, updates panel with imageUrl + status=Ready
-  6. If workflow status === 'failed'/'canceled': updates panel with status=Failed + errorMessage
-  7. Returns updated panel
-
-- **`createCharacterFromModel`** updated:
-  1. Now also reads `baseModel` from the model version
-  2. Converts to BaseModelGroup via `getBaseModelSetType()`
-  3. Stores on the project if not already set
+**Major rewrite:**
+- **`createPanel`** uses `createImageGen()` (NanoBanana/Gemini) instead of `createTextToImage()` with LoRA
+  - engine: 'gemini', baseModel: 'NanoBanana'
+  - resources: NanoBanana checkpoint (version ID 2154472)
+  - images: character reference images from `generatedReferenceImages`
+  - 1728x2304 portrait dimensions
+- **`createCharacterFromModel`** generates 3 reference images (front/side/back) via `createTextToImage()` with the LoRA
+- **`pollCharacterStatus`** new endpoint to check reference image generation progress
+- **Chapter CRUD**: `createChapter`, `updateChapter`, `deleteChapter`, `reorderChapters`
+- **`createProject`** auto-creates "Chapter 1" via nested Prisma create
+- **`getProject`** includes chapters with nested panels
+- **`getMyProjects`** aggregates panel count across chapters
+- All panel ownership checks updated: `panel.chapter.project.userId`
 
 **New imports:**
 ```typescript
-import type { SessionUser } from 'next-auth';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { getGenerationConfig } from '~/server/common/constants';
-import { getBaseModelSetType } from '~/shared/constants/generation.constants';
-import { createTextToImage } from '~/server/services/orchestrator/textToImage/textToImage';
-import { getWorkflow } from '~/server/services/orchestrator/workflows';
-import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
 ```
 
 ### 5. `src/pages/comics/project/[id]/index.tsx`
-**Changes:**
-- Added `useEffect` polling that calls `pollPanelStatus` every 3s for panels in Pending/Generating state
-- Uses `trpc.useUtils()` to access `utils.comics.pollPanelStatus.fetch()`
-- When any panel transitions to Ready or Failed, refetches the full project data
-- Added "Enhance prompt" toggle (`Switch`) in the panel creation modal — on by default, can be turned off by users who want full control over their prompts
-- Debug modal now shows `enhancedPrompt` separately when available
+- Added chapter tabs (Mantine Tabs) above panel grid
+- Track `activeChapterId` state, default to first chapter
+- Panel grid renders `activeChapter.panels`
+- Generate panel passes `chapterId` instead of `projectId`
+- Added character status polling (every 5s for Pending/Processing characters)
+- "Add Chapter" button creates new chapters
 
-### 6. `docs/plan-webtoon-hackathon-mvp.md`
-- Updated pipeline dependencies table to mark panel generation, character creation, and polling as implemented
-- Updated key files section with generation service integration details
-- Updated hardcoded defaults table with actual generation parameters
+### 6. `src/pages/comics/project/[id]/character.tsx`
+- For ExistingModel characters in Processing: shows "Generating reference images..."
+- Added polling via `pollCharacterStatus` (every 5s)
+- Displays generated front/side/back reference images when Ready
+- Updated cost label: "Cost: 50 Buzz (reference image generation)"
 
-## Key Considerations
+## Key Constants
 
-### BaseModel Parameter Handling
-Different base models need different generation parameters:
-- **Flux1**: No negative prompt, sampler="undefined", no clipSkip
-- **SDXL/Pony**: Standard params with cfgScale, steps, sampler
-- **SD1.5**: Lower resolution (512x768 instead of 832x1216)
+```typescript
+const NANOBANANA_VERSION_ID = 2154472;  // Standard NanoBanana checkpoint
+const PANEL_WIDTH = 1728;
+const PANEL_HEIGHT = 2304;
+```
 
-The `createTextToImage` and `parseGenerateImageInput` functions handle these differences internally based on the `baseModel` param.
+## Generation Defaults
 
-### Orchestrator Token
-`getOrchestratorToken(userId, ctx)` requires `ctx` to have `req` and `res` (NextApiRequest/Response). The tRPC context provides these.
+| Setting | Value |
+|---------|-------|
+| Engine | gemini |
+| Base Model | NanoBanana |
+| Checkpoint | Version ID 2154472 |
+| Width | 1728 |
+| Height | 2304 |
+| Quantity | 1 |
+| Priority | low |
+| Prompt | Enhanced via GPT-4o-mini (scene-focused, no appearance details) |
+| Character Reference | Generated front/side/back images passed as `images` param |
 
-### Image URL Extraction
-The orchestrator returns images in `workflow.steps[0].output.images[0].url`. This URL is from the orchestrator. For production, we'd want to copy it to our CDN, but for the MVP, using the orchestrator URL directly works.
-
-### Error Handling
-- If orchestrator submission fails -> panel marked as Failed immediately
-- If orchestrator workflow fails -> caught during polling, panel marked Failed
-- If user doesn't have enough Buzz -> orchestrator returns 403 (insufficient funds)
-- If poll request fails -> silently ignored, retried next interval
-
-## Generation Defaults (Hardcoded for MVP)
+## Reference Image Generation Defaults
 
 | Setting | Value |
 |---------|-------|
@@ -123,18 +149,15 @@ The orchestrator returns images in `workflow.steps[0].output.images[0].url`. Thi
 | Sampler | Euler |
 | Steps | 25 |
 | CFG Scale | 7 |
-| Quantity | 1 |
-| Workflow | txt2img |
-| Priority | low |
-| Prompt | Enhanced via GPT-4o-mini (optional, on by default) or trainedWords + user prompt |
-| Negative Prompt | Hardcoded quality filter (blurry, deformed, bad anatomy, etc.) |
-| Prompt Enhancement | GPT-4o-mini rewrites user prompt with visual details, composition, and quality terms (max 1500 chars). Toggle available in UI. |
-| Checkpoint | Auto-selected via getGenerationConfig(baseModelGroup) |
+| Views | front, side, back |
+| Method | createTextToImage with LoRA + checkpoint |
 
 ## Verification Steps
-1. Create a project, add a character from an existing Flux1 LoRA
-2. Click "Add Panel", enter a prompt, click Generate
-3. Panel should show "Generating..." status
-4. After ~10-30 seconds, panel should show the generated image
-5. Verify the character is recognizable in the generated image
-6. Test error cases: invalid model version, no Buzz, etc.
+1. Create a project → verify "Chapter 1" auto-created
+2. Create a character from existing LoRA → verify status goes Pending → Processing → Ready
+3. Check character page → verify 3 reference images (front/side/back) are visible
+4. Create panel → verify NanoBanana generation fires with character reference images
+5. Check debug modal → verify enhanced prompt, NanoBanana workflow info, reference images
+6. Create second panel → verify previous panel context in prompt enhancement
+7. Create second chapter → verify panels are scoped to chapters
+8. Enhance toggle off → verify raw prompt used without LLM enhancement

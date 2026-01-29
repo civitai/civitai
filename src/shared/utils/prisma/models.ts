@@ -3712,6 +3712,17 @@ export interface ComicProject {
   createdAt: Date;
   updatedAt: Date;
   characters?: ComicCharacter[];
+  chapters?: ComicChapter[];
+}
+
+export interface ComicChapter {
+  id: string;
+  projectId: string;
+  project?: ComicProject;
+  name: string;
+  position: number;
+  createdAt: Date;
+  updatedAt: Date;
   panels?: ComicPanel[];
 }
 
@@ -3730,6 +3741,8 @@ export interface ComicCharacter {
   trainingJobId: string | null;
   trainedModelId: number | null;
   trainedModelVersionId: number | null;
+  generatedReferenceImages: JsonValue | null;
+  referenceImageWorkflowIds: JsonValue | null;
   errorMessage: string | null;
   buzzCost: number;
   createdAt: Date;
@@ -3739,8 +3752,8 @@ export interface ComicCharacter {
 
 export interface ComicPanel {
   id: string;
-  projectId: string;
-  project?: ComicProject;
+  chapterId: string;
+  chapter?: ComicChapter;
   characterId: string | null;
   character?: ComicCharacter | null;
   prompt: string;

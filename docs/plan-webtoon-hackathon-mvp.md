@@ -15,12 +15,13 @@ To continue this work, reference the session above or point Claude to this docum
 **Key files:**
 - Pages: `src/pages/comics/`
 - Router: `src/server/routers/comics.router.ts`
-- Schema: `prisma/schema.full.prisma` (search for "ComicProject")
-- Migrations: `prisma/migrations/20260127*`, `prisma/migrations/20260128*`
-- Generation integration: Uses `createTextToImage()` from `src/server/services/orchestrator/textToImage/textToImage.ts`
-- Prompt enhancement: `src/server/services/comics/prompt-enhance.ts` — GPT-4o-mini rewrites user prompts (optional toggle, on by default)
+- Schema: `prisma/schema.full.prisma` (search for "ComicProject", "ComicChapter")
+- Migrations: `prisma/migrations/20260127*`, `prisma/migrations/20260128*`, `prisma/migrations/20260129*`
+- Panel generation: Uses `createImageGen()` from `src/server/services/orchestrator/imageGen/imageGen.ts` (NanoBanana/Gemini engine)
+- Ref image generation: Uses `createTextToImage()` from `src/server/services/orchestrator/textToImage/textToImage.ts` (LoRA-based, for character front/side/back views)
+- Prompt enhancement: `src/server/services/comics/prompt-enhance.ts` — GPT-4o-mini rewrites user prompts (scene-focused, no appearance details)
 - Workflow polling: Uses `getWorkflow()` from `src/server/services/orchestrator/workflows.ts`
-- Base model mapping: Uses `getBaseModelSetType()` + `getGenerationConfig()` for checkpoint selection
+- Base model mapping: Uses `getBaseModelSetType()` + `getGenerationConfig()` for ref image checkpoint selection
 
 ---
 
@@ -48,9 +49,11 @@ This hackathon is about proving the concept works, not building a full product.
 | Pipeline | Required | Status | Endpoint (Confirm with Backend) | Notes |
 |----------|----------|--------|--------------------------------|-------|
 | Face embedding extraction | YES | ⬜ TBD | TBD - may be `POST /api/face/embed` or part of character creation | Input: images, Output: embedding vector |
-| Character creation | YES | ✅ Implemented | `comics.createCharacterFromModel` (tRPC) | Uses existing Civitai LoRA models; sets project baseModel automatically |
-| Panel generation with character ref | YES | ✅ Implemented | `comics.createPanel` (tRPC) → `createTextToImage()` server-side | Uses orchestrator API; checkpoint auto-selected via `getGenerationConfig(baseModel)` |
+| Character creation | YES | ✅ Implemented | `comics.createCharacterFromModel` (tRPC) | Uses existing LoRA; auto-generates front/side/back ref images; sets project baseModel |
+| Character ref polling | YES | ✅ Implemented | `comics.pollCharacterStatus` (tRPC query) | Polls 3 ref image workflows every 5s; stores generated images when Ready |
+| Panel generation with character ref | YES | ✅ Implemented | `comics.createPanel` (tRPC) → `createImageGen()` server-side | NanoBanana/Gemini engine; character ref images passed as `images` param; 1728x2304 |
 | Panel status polling | YES | ✅ Implemented | `comics.pollPanelStatus` (tRPC query) | Polls orchestrator `getWorkflow()` every 3s; extracts image URL on success |
+| Chapter management | YES | ✅ Implemented | `comics.createChapter`, `updateChapter`, `deleteChapter`, `reorderChapters` | Auto-creates "Chapter 1" on project creation |
 | Civitai SSO (test environment) | YES | ✅ Works | NextAuth (main app integration) | Running inside main Civitai app, auth is built-in |
 | Buzz reservation (if charging) | CONDITIONAL | ⬜ TBD | `POST /buzz/reserve`, `POST /buzz/commit` | Required for atomic transactions |
 | Buzz balance read | NICE TO HAVE | ⬜ TBD | `GET /users/{id}/buzz` | For display only |
@@ -900,17 +903,22 @@ If generation fails during demo:
 |---------|-----------------|
 | Style | Default/anime |
 | Shot type | Medium shot |
-| Aspect ratio | 832x1216 portrait (roughly 2:3) |
+| Panel dimensions | 1728x2304 portrait (3:4) via NanoBanana/Gemini |
+| Ref image dimensions | 832x1216 portrait (generated via LoRA + checkpoint) |
+| Generation engine | gemini (NanoBanana, checkpoint version 2154472) |
 | Generation count | 1 (not 4) |
-| Max character refs | 5 images |
-| Min character refs | 3 images |
-| Sampler | Euler |
-| Steps | 25 |
-| CFG Scale | 7 |
-| BaseModel matching | Auto-detected from LoRA's baseModel via `getBaseModelSetType()` |
-| Checkpoint | Auto-selected via `getGenerationConfig(baseModelGroup)` |
-| Prompt enhancement | GPT-4o-mini rewrite (optional, on by default). Max 1500 chars. |
-| Negative prompt | Hardcoded quality filter (blurry, deformed, bad anatomy, etc.) |
+| Character ref views | 3 auto-generated (front, side, back) from LoRA |
+| Max uploaded refs | 5 images |
+| Min uploaded refs | 3 images |
+| Ref gen sampler | Euler |
+| Ref gen steps | 25 |
+| Ref gen CFG Scale | 7 |
+| BaseModel matching | Auto-detected from LoRA's baseModel via `getBaseModelSetType()` (for ref gen only) |
+| Checkpoint (ref gen) | Auto-selected via `getGenerationConfig(baseModelGroup)` |
+| Checkpoint (panels) | NanoBanana (version ID 2154472) |
+| Prompt enhancement | GPT-4o-mini rewrite (scene-focused, no appearance details). Max 1500 chars. |
+| Negative prompt | Empty (NanoBanana handles quality internally) |
+| Project structure | Project -> Chapters -> Panels (auto-creates "Chapter 1") |
 
 ### API Response Times (Target)
 
