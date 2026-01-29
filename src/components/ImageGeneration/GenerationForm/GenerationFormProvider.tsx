@@ -206,7 +206,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     params.sampler = 'Euler a';
 
   // ZImageBase only supports euler, heun, lcm sample methods
-  if (getIsZImageBase(baseModel) && params.sampler && !isValidZImageSampler(params.sampler))
+  if (getIsZImageBase(baseModel) && (!params.sampler || !isValidZImageSampler(params.sampler)))
     params.sampler = 'Euler';
 
   // ZImageBase needs a default scheduler
@@ -502,9 +502,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         // ZImageBase only supports euler, heun, lcm sample methods
         if (
           baseModel &&
-          watchedValues.sampler &&
           getIsZImageBase(baseModel) &&
-          !isValidZImageSampler(watchedValues.sampler)
+          (!watchedValues.sampler || !isValidZImageSampler(watchedValues.sampler))
         ) {
           form.setValue('sampler', 'Euler');
         }
