@@ -5,8 +5,11 @@
  * Handles workflow/ecosystem selection with compatibility checks.
  */
 
-import { Checkbox, Group, Input, Radio, SegmentedControl, Stack } from '@mantine/core';
+import { Button, Checkbox, Divider, Group, Input, Radio, SegmentedControl, Stack, Text } from '@mantine/core';
 import React, { useCallback, useState, useRef, useEffect } from 'react';
+
+import { CopyButton } from '~/components/CopyButton/CopyButton';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 
 import { Controller, MultiController, useGraph } from '~/libs/data-graph/react';
 import { type GenerationGraphTypes, type VideoValue } from '~/shared/data-graph/generation';
@@ -348,6 +351,50 @@ export function GenerationForm() {
                 error={error?.message}
               />
             )}
+          />
+
+          {/* Trigger Words - shown when resources have trained words */}
+          <Controller
+            graph={graph}
+            name="triggerWords"
+            render={({ value: triggerWords }) => {
+              if (!triggerWords || triggerWords.length === 0) return null;
+
+              return (
+                <div className="flex flex-col gap-2">
+                  <Divider />
+                  <Text c="dimmed" className="text-xs font-semibold">
+                    Trigger words
+                  </Text>
+                  <div className="mb-2 flex flex-wrap items-center gap-1">
+                    <TrainedWords
+                      type="LORA"
+                      trainedWords={triggerWords}
+                      badgeProps={{
+                        style: {
+                          textTransform: 'none',
+                          height: 'auto',
+                          cursor: 'pointer',
+                        },
+                      }}
+                    />
+                    <CopyButton value={triggerWords.join(', ')}>
+                      {({ copied, copy, Icon, color }) => (
+                        <Button
+                          variant="subtle"
+                          color={color ?? 'blue.5'}
+                          onClick={copy}
+                          size="compact-xs"
+                          classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
+                        >
+                          {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
+                        </Button>
+                      )}
+                    </CopyButton>
+                  </div>
+                </div>
+              );
+            }}
           />
 
           {/* Negative prompt (SD only) */}
