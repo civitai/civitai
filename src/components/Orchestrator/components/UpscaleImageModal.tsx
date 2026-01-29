@@ -14,7 +14,7 @@ import { generationConfig, maxUpscaleSize } from '~/server/common/constants';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';

@@ -45,7 +45,7 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,

@@ -53,7 +53,7 @@ import type {
   GetMyBidsReturn,
   GetMyRecurringBidsReturn,
 } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getHasExplicitBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Currency } from '~/shared/utils/prisma/enums';

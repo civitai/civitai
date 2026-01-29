@@ -1,3 +1,5 @@
+import { ResourceData } from '~/components/generation_v2/inputs/ResourceDataProvider';
+
 export type GenerationCtx = {
   /** User's generation limits based on their tier */
   limits: {
@@ -10,5 +12,5 @@ export type GenerationCtx = {
     tier: 'free' | 'founder' | 'bronze' | 'silver' | 'gold';
   };
   /** All fetched resources from ResourceDataProvider */
-  resources?: { id: number; baseModel: string; modelType: string }[];
+  resources?: ResourceData[];
 };

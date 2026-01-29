@@ -16,7 +16,7 @@ import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-
 import type { ReactNode } from 'react';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 // =============================================================================

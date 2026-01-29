@@ -7,7 +7,7 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 type GenerationResourceWithImage = GenerationResource & {
   image: SearchIndexDataMap['models'][number]['images'][number];

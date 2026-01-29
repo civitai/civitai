@@ -9,10 +9,8 @@ import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import type {
-  GenerationData,
-  GenerationResource,
-} from '~/server/services/generation/generation.service';
+import type { GenerationData } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   fluxKreaAir,
   fluxModeOptions,

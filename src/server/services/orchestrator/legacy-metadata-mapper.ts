@@ -19,7 +19,7 @@
  */
 
 import type { WorkflowStep } from '@civitai/client';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import {

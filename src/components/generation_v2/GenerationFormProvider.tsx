@@ -83,17 +83,6 @@ function InnerProvider({
   const status = useGenerationStatus();
   const { resources } = useResourceDataContext();
 
-  // Map resources to the expected format for GenerationCtx
-  const mappedResources = useMemo(
-    () =>
-      resources.map((r) => ({
-        id: r.id,
-        baseModel: r.baseModel,
-        modelType: r.model.type,
-      })),
-    [resources]
-  );
-
   // Build external context from generation status and resource data
   const externalContext = useMemo<GenerationCtx>(
     () => ({
@@ -105,9 +94,9 @@ function InnerProvider({
         isMember: status.tier !== 'free',
         tier: status.tier,
       },
-      resources: mappedResources,
+      resources,
     }),
-    [status.limits.quantity, status.limits.resources, status.tier, mappedResources]
+    [status.limits.quantity, status.limits.resources, status.tier, resources]
   );
 
   // Initialize the DataGraph (clone, attach storage, init once)

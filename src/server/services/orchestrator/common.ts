@@ -26,7 +26,7 @@ import type {
   generateImageSchema,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import type {
   GeneratedImageWorkflow,

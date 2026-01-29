@@ -28,7 +28,7 @@ import {
   getStatusClasses,
   isResourceDisabled,
 } from './ResourceItemContent';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 /** Resource data as returned by ResourceDataProvider (GenerationResource with air field) */
 type ResourceData = GenerationResource & { air: string };

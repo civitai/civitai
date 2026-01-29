@@ -43,6 +43,7 @@ import { hunyuanGraph } from './hunyuan-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
+import { isDefined } from '~/utils/type-guards';
 
 // =============================================================================
 // Helper Functions
@@ -144,6 +145,7 @@ export const ecosystemGraph = new DataGraph<
     ['workflow']
   )
   .node('prompt', (ctx) => promptNode({ required: ctx.input === 'text' }), ['input'])
+  .computed('triggerWords', (ctx, ext) => ext.resources?.flatMap((r) => r.trainedWords).filter(isDefined), [])
   .node(
     'images',
     (ctx) => {

@@ -18,7 +18,6 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
@@ -41,7 +40,8 @@ import {
   getBaseModelSetType,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
-import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
@@ -500,50 +500,6 @@ export async function getShouldChargeForResources(
   );
 }
 
-type GenerationResourceBase = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  vaeId?: number;
-  baseModel: string;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig;
-  canGenerate: boolean;
-  hasAccess: boolean;
-  air?: string;
-  // covered: boolean;
-  additionalResourceCost?: boolean;
-  availability?: Availability;
-  epochNumber?: number;
-  // settings
-  clipSkip?: number;
-  minStrength: number;
-  maxStrength: number;
-  strength: number;
-  /** Whether the current user owns the model this resource belongs to (computed by server) */
-  isOwnedByUser?: boolean;
-  /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
-  isPrivate?: boolean;
-};
-
-export type GenerationResource = GenerationResourceBase & {
-  model: {
-    id: number;
-    name: string;
-    type: ModelType;
-    nsfw?: boolean;
-    poi?: boolean;
-    minor?: boolean;
-    sfwOnly?: boolean;
-    userId?: number;
-  };
-  epochDetails?: {
-    jobId: string;
-    fileName: string;
-    epochNumber: number;
-    isExpired: boolean;
-  };
-  substitute?: GenerationResourceBase;
-};
 
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);

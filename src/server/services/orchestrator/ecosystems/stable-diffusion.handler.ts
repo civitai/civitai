@@ -12,6 +12,7 @@ import type {
   ComfyStepTemplate,
   ImageJobNetworkParams,
   Scheduler,
+  TextToImageStep,
   TextToImageStepTemplate,
 } from '@civitai/client';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
@@ -120,8 +121,8 @@ function createTextToImageInput(
       model: ctx.airs.getOrThrow(model.id),
       additionalNetworks,
       ...rest,
-    },
-  };
+    } ,
+  } as TextToImageStepTemplate;
 }
 
 // =============================================================================

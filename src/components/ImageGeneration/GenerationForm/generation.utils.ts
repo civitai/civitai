@@ -10,7 +10,7 @@ import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type {
   ResourceSelectOptions,
   ResourceSelectSource,

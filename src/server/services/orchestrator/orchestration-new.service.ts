@@ -29,10 +29,8 @@ import {
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import {
-  getResourceData,
-  type GenerationResource,
-} from '~/server/services/generation/generation.service';
+import { getResourceData } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   formatGenerationResponse,
   getGenerationStatus,

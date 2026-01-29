@@ -2,11 +2,8 @@ import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import type {
-  GenerationData,
-  GenerationResource,
-  RemixOfProps,
-} from '~/server/services/generation/generation.service';
+import type { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { isMobileDevice } from '~/hooks/useIsMobile';

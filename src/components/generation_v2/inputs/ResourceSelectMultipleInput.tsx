@@ -39,7 +39,7 @@ import {
   getStatusClasses,
   isResourceDisabled,
 } from './ResourceItemContent';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
 
 /**
@@ -291,6 +291,12 @@ export function ResourceSelectMultipleInput({
       ? { ...options, resources: [{ type: resourceType }] }
       : options;
 
+  // Get ordered types from options.resources (for sorting groups)
+  const optionTypes = useMemo(
+    () => (resolvedOptions?.resources ?? []).map((x) => x.type),
+    [resolvedOptions]
+  );
+
   // Group resources by type and sort disabled resources to the end
   const { groups, disabledCount } = useMemo(() => {
     const groupMap = new Map<
@@ -320,29 +326,44 @@ export function ResourceSelectMultipleInput({
     }
 
     // Sort each group so disabled resources are at the end
-    const sortedGroups = Array.from(groupMap.entries()).map(([type, items]) => {
-      const sortedItems = [...items].sort((a, b) => {
-        const aResource = a.resource ?? (isFullyHydrated(a.value) ? a.value : undefined);
-        const bResource = b.resource ?? (isFullyHydrated(b.value) ? b.value : undefined);
+    const sortedGroups = Array.from(groupMap.entries())
+      .map(([type, items]) => {
+        const sortedItems = [...items].sort((a, b) => {
+          const aResource = a.resource ?? (isFullyHydrated(a.value) ? a.value : undefined);
+          const bResource = b.resource ?? (isFullyHydrated(b.value) ? b.value : undefined);
 
-        const aDisabled = aResource ? isResourceDisabled(getResourceStatus(aResource, options)) : false;
-        const bDisabled = bResource ? isResourceDisabled(getResourceStatus(bResource, options)) : false;
+          const aDisabled = aResource
+            ? isResourceDisabled(getResourceStatus(aResource, options))
+            : false;
+          const bDisabled = bResource
+            ? isResourceDisabled(getResourceStatus(bResource, options))
+            : false;
 
-        // Disabled resources go to the end
-        if (aDisabled && !bDisabled) return 1;
-        if (!aDisabled && bDisabled) return -1;
-        return 0;
+          // Disabled resources go to the end
+          if (aDisabled && !bDisabled) return 1;
+          if (!aDisabled && bDisabled) return -1;
+          return 0;
+        });
+
+        return {
+          type,
+          label: getDisplayName(type),
+          items: sortedItems,
+        };
+      })
+      // Sort groups by the order of types in options.resources
+      .sort((a, b) => {
+        const aIndex = optionTypes.indexOf(a.type);
+        const bIndex = optionTypes.indexOf(b.type);
+        // Types not in optionTypes go to the end
+        if (aIndex === -1 && bIndex === -1) return 0;
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
       });
 
-      return {
-        type,
-        label: getDisplayName(type),
-        items: sortedItems,
-      };
-    });
-
     return { groups: sortedGroups, disabledCount: disabled };
-  }, [value, resources, options]);
+  }, [value, resources, options, optionTypes]);
 
   const canAdd = !limit || value.length < limit;
 
