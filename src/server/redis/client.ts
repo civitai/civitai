@@ -640,6 +640,7 @@ export const REDIS_SYS_KEYS = {
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
+    SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -784,7 +785,6 @@ export const REDIS_KEYS = {
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
-    SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
   },

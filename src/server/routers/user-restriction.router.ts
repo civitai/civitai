@@ -2,7 +2,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   addToAllowlistSchema,
   backfillRestrictionTriggersSchema,
@@ -255,25 +255,25 @@ export const userRestrictionRouter = router({
       }));
 
       for (const entry of entries) {
-        await redis.lPush(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, JSON.stringify(entry));
+        await sysRedis.lPush(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, JSON.stringify(entry));
       }
 
       // Keep only the last 1000 entries
-      await redis.lTrim(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, 999);
+      await sysRedis.lTrim(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, 999);
 
       return { success: true, savedCount: entries.length };
     }),
 
   /** Get suspicious audit matches from Redis. */
   getSuspiciousMatches: moderatorProcedure.query(async () => {
-    const entries = await redis.lRange(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, -1);
+    const entries = await sysRedis.lRange(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, -1);
     const matches = entries.map((entry) => JSON.parse(entry));
     return { matches };
   }),
 
   /** Clear all suspicious matches from Redis. */
   clearSuspiciousMatches: moderatorProcedure.mutation(async () => {
-    await redis.del(REDIS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES);
+    await sysRedis.del(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES);
     return { success: true };
   }),
 
