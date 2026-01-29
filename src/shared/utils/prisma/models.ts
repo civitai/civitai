@@ -3744,6 +3744,7 @@ export interface ComicPanel {
   characterId: string | null;
   character?: ComicCharacter | null;
   prompt: string;
+  enhancedPrompt: string | null;
   imageUrl: string | null;
   position: number;
   buzzCost: number;

@@ -4852,8 +4852,9 @@ model ComicPanel {
   project      ComicProject     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   characterId  String?
   character    ComicCharacter?  @relation(fields: [characterId], references: [id], onDelete: SetNull)
-  prompt       String           @db.Text
-  imageUrl     String?          @db.VarChar(500)
+  prompt          String           @db.Text
+  enhancedPrompt  String?          @db.Text
+  imageUrl        String?          @db.VarChar(500)
   position     Int              @default(0)
   buzzCost     Int              @default(25)
   status       ComicPanelStatus @default(Pending)

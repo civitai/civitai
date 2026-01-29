@@ -18,6 +18,7 @@ import { getGenerationConfig } from '~/server/common/constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { createTextToImage } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 
 // Middleware to check project ownership
 const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
@@ -74,6 +75,7 @@ const createPanelSchema = z.object({
   projectId: z.string(),
   characterId: z.string().optional(),
   prompt: z.string().min(1).max(2000),
+  enhance: z.boolean().default(true),
 });
 
 const updatePanelSchema = z.object({
@@ -420,10 +422,12 @@ export const comicsRouter = router({
 
       // Get character's model version for generation
       let modelVersionId: number | null = null;
+      let characterName = '';
       if (input.characterId) {
         const character = await dbRead.comicCharacter.findUnique({
           where: { id: input.characterId },
           select: {
+            name: true,
             modelVersionId: true,
             trainedModelVersionId: true,
             sourceType: true,
@@ -431,6 +435,7 @@ export const comicsRouter = router({
         });
 
         if (character) {
+          characterName = character.name;
           modelVersionId = character.sourceType === ComicCharacterSourceType.ExistingModel
             ? character.modelVersionId
             : character.trainedModelVersionId;
@@ -454,11 +459,20 @@ export const comicsRouter = router({
       const config = getGenerationConfig(baseModelGroup);
       const checkpointVersionId = config.checkpoint.id;
 
-      // Build prompt with trained words if available
-      const trainedWords = modelVersion.trainedWords ?? [];
-      const fullPrompt = trainedWords.length > 0
-        ? `${trainedWords.join(', ')}, ${input.prompt}`
-        : input.prompt;
+      // Build prompt — optionally enhance via LLM
+      const trainedWords = (modelVersion.trainedWords ?? []) as string[];
+      let fullPrompt: string;
+      if (input.enhance) {
+        fullPrompt = await enhanceComicPrompt({
+          userPrompt: input.prompt,
+          characterName,
+          trainedWords,
+        });
+      } else {
+        fullPrompt = trainedWords.length > 0
+          ? `${trainedWords.join(', ')}, ${input.prompt}`
+          : input.prompt;
+      }
 
       // Create panel record as Pending (not yet submitted to orchestrator)
       const panel = await dbWrite.comicPanel.create({
@@ -466,6 +480,7 @@ export const comicsRouter = router({
           projectId: input.projectId,
           characterId: input.characterId,
           prompt: input.prompt,
+          enhancedPrompt: input.enhance ? fullPrompt : null,
           position: nextPosition,
           status: ComicPanelStatus.Pending,
         },
@@ -477,7 +492,7 @@ export const comicsRouter = router({
         const result = await createTextToImage({
           params: {
             prompt: fullPrompt,
-            negativePrompt: '',
+            negativePrompt: 'blurry, low quality, deformed, bad anatomy, bad hands, extra fingers, missing fingers, text, watermark, signature, jpeg artifacts, ugly, duplicate, morbid, mutilated, poorly drawn face, poorly drawn hands, out of frame',
             baseModel: baseModelGroup as any,
             width: 832,
             height: 1216,
@@ -727,6 +742,7 @@ export const comicsRouter = router({
           id: panel.id,
           status: panel.status,
           prompt: panel.prompt,
+          enhancedPrompt: panel.enhancedPrompt,
           imageUrl: panel.imageUrl,
           workflowId: panel.workflowId,
           errorMessage: panel.errorMessage,

@@ -13,6 +13,7 @@ import {
   Modal,
   ScrollArea,
   Stack,
+  Switch,
   Text,
   Textarea,
   Title,
@@ -63,6 +64,7 @@ function ProjectWorkspace() {
   const [debugModalOpened, { open: openDebugModal, close: closeDebugModal }] = useDisclosure(false);
   const [debugPanelId, setDebugPanelId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
+  const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
   const { data: project, isLoading, refetch } = trpc.comics.getProject.useQuery(
@@ -157,6 +159,7 @@ function ProjectWorkspace() {
       projectId,
       characterId: activeCharacter.id,
       prompt: prompt.trim(),
+      enhance: enhancePrompt,
     });
   };
 
@@ -368,6 +371,13 @@ function ProjectWorkspace() {
             onChange={(e) => setPrompt(e.target.value)}
           />
 
+          <Switch
+            label="Enhance prompt"
+            description="Use AI to add detail and composition to your prompt"
+            checked={enhancePrompt}
+            onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
+          />
+
           <Group justify="space-between">
             <Text size="sm" c="dimmed">
               Cost: 25 Buzz
@@ -504,6 +514,14 @@ function PanelDebugModal({
             <Text fw={600} size="sm" mb={4}>Panel</Text>
             <Code block>{JSON.stringify(data.panel, null, 2)}</Code>
           </div>
+
+          {/* Enhanced prompt */}
+          {data.panel.enhancedPrompt && (
+            <div>
+              <Text fw={600} size="sm" mb={4}>Enhanced Prompt</Text>
+              <Code block>{data.panel.enhancedPrompt}</Code>
+            </div>
+          )}
 
           {/* Error message */}
           {data.panel.errorMessage && (
