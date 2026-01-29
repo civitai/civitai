@@ -934,15 +934,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       },
     ],
   },
-  // {
-  //   group: 'ZImageBase',
-  //   support: [
-  //     {
-  //       modelTypes: [ModelType.Checkpoint, ModelType.LORA],
-  //       baseModels: ['ZImageBase'],
-  //     },
-  //   ],
-  // },
+  {
+    group: 'ZImageBase',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['ZImageBase'],
+      },
+    ],
+  },
 ];
 
 type BaseModelSupportType = 'full' | 'partial';
