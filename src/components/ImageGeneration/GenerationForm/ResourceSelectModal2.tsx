@@ -848,7 +848,8 @@ function ResourceSelectCard({
       if (selectSource !== 'generation') {
         onSelect({ ...resource, image });
       } else {
-        if (resource?.canGenerate || resource.substitute?.canGenerate)
+        console.log({resource})
+        if (resource?.canGenerate || resource?.substitute?.canGenerate)
           onSelect({ ...resource, image });
         else
           showErrorNotification({

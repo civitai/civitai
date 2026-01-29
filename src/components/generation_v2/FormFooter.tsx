@@ -9,7 +9,7 @@
 import { Alert, Button, Card, Notification, NumberInput, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
@@ -64,21 +64,25 @@ interface PriorityAlertSpaceProps {
 }
 
 /**
- * Priority-based alert space that shows only one alert at a time.
- * Priority order:
- * 1. WhatIf error (cost estimation failed)
- * 2. Submit error
- * 3. Daily boost reward claim
- * 4. Membership upsell
- * 5. Queue snackbar (fallback)
+ * Alert space with DailyBoostRewardClaim always on top, then priority-based alerts.
+ *
+ * Layout:
+ * - DailyBoostRewardClaim (always shown if available)
+ * - Priority alert (only one shows):
+ *   1. WhatIf error (cost estimation failed)
+ *   2. Submit error
+ *   3. Membership upsell
+ *   4. Queue snackbar (fallback)
  */
 function PriorityAlertSpace({ submitError, onClearSubmitError }: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
   const dailyBoost = useDailyBoostReward();
   const membershipUpsell = useMembershipUpsell();
 
+  // Determine which priority alert to show
+  let priorityAlert: ReactNode;
   if (hasWhatIfError && whatIfError) {
-    return (
+    priorityAlert = (
       <Notification
         icon={<IconX size={18} />}
         color="red"
@@ -88,10 +92,8 @@ function PriorityAlertSpace({ submitError, onClearSubmitError }: PriorityAlertSp
         {whatIfError.message || 'Failed to estimate generation cost.'}
       </Notification>
     );
-  }
-
-  if (submitError) {
-    return (
+  } else if (submitError) {
+    priorityAlert = (
       <Notification
         icon={<IconX size={18} />}
         color="red"
@@ -101,17 +103,18 @@ function PriorityAlertSpace({ submitError, onClearSubmitError }: PriorityAlertSp
         {submitError}
       </Notification>
     );
+  } else if (membershipUpsell.canShow) {
+    priorityAlert = <MembershipUpsell />;
+  } else {
+    priorityAlert = <QueueSnackbar />;
   }
 
-  if (dailyBoost.canShow) {
-    return <DailyBoostRewardClaim />;
-  }
-
-  if (membershipUpsell.canShow) {
-    return <MembershipUpsell />;
-  }
-
-  return <QueueSnackbar />;
+  return (
+    <>
+      {dailyBoost.canShow && <DailyBoostRewardClaim />}
+      {priorityAlert}
+    </>
+  );
 }
 
 // =============================================================================
