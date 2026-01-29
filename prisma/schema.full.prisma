@@ -4799,6 +4799,7 @@ model ComicProject {
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String             @db.VarChar(255)
   status    ComicProjectStatus @default(Active)
+  baseModel String?            @db.VarChar(50)
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
@@ -4856,6 +4857,7 @@ model ComicPanel {
   position     Int              @default(0)
   buzzCost     Int              @default(25)
   status       ComicPanelStatus @default(Pending)
+  workflowId   String?
   civitaiJobId String?          @db.VarChar(100)
   errorMessage String?          @db.Text
   createdAt    DateTime         @default(now())

@@ -3708,6 +3708,7 @@ export interface ComicProject {
   user?: User;
   name: string;
   status: ComicProjectStatus;
+  baseModel: string | null;
   createdAt: Date;
   updatedAt: Date;
   characters?: ComicCharacter[];
@@ -3747,6 +3748,7 @@ export interface ComicPanel {
   position: number;
   buzzCost: number;
   status: ComicPanelStatus;
+  workflowId: string | null;
   civitaiJobId: string | null;
   errorMessage: string | null;
   createdAt: Date;

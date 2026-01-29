@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { SessionUser } from 'next-auth';
 import {
   router,
   protectedProcedure,
@@ -12,6 +13,11 @@ import {
   ComicPanelStatus,
   ComicProjectStatus,
 } from '~/shared/utils/prisma/enums';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getGenerationConfig } from '~/server/common/constants';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import { createTextToImage } from '~/server/services/orchestrator/textToImage/textToImage';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
 
 // Middleware to check project ownership
 const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
@@ -210,6 +216,7 @@ export const comicsRouter = router({
           id: true,
           modelId: true,
           status: true,
+          baseModel: true,
           model: {
             select: {
               id: true,
@@ -231,6 +238,19 @@ export const comicsRouter = router({
 
       if (!isOwner && !isPublished) {
         throw throwAuthorizationError('You do not have access to this model');
+      }
+
+      // Set project baseModel from the LoRA's baseModel if not already set
+      const baseModelGroup = getBaseModelSetType(modelVersion.baseModel);
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: { baseModel: true },
+      });
+      if (project && !project.baseModel) {
+        await dbWrite.comicProject.update({
+          where: { id: input.projectId },
+          data: { baseModel: baseModelGroup },
+        });
       }
 
       const character = await dbWrite.comicCharacter.create({
@@ -343,16 +363,26 @@ export const comicsRouter = router({
           ...(input.query && {
             name: { contains: input.query, mode: 'insensitive' },
           }),
+          // Only models that have at least one version with generation coverage
+          modelVersions: {
+            some: {
+              generationCoverage: { covered: true },
+            },
+          },
         },
         select: {
           id: true,
           name: true,
           modelVersions: {
+            where: {
+              generationCoverage: { covered: true },
+            },
             orderBy: { createdAt: 'desc' },
             take: 1,
             select: {
               id: true,
               name: true,
+              baseModel: true,
             },
           },
         },
@@ -368,16 +398,17 @@ export const comicsRouter = router({
             name: m.name,
             versionId: version?.id,
             versionName: version?.name,
+            baseModel: version?.baseModel,
           };
         })
-        .filter((m) => m.versionId); // Only return models with at least one version
+        .filter((m) => m.versionId);
     }),
 
   // Panels
   createPanel: protectedProcedure
     .input(createPanelSchema)
     .use(isProjectOwner)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       // Get the next position
       const lastPanel = await dbRead.comicPanel.findFirst({
         where: { projectId: input.projectId },
@@ -400,13 +431,36 @@ export const comicsRouter = router({
         });
 
         if (character) {
-          // Use the appropriate model version based on source type
           modelVersionId = character.sourceType === ComicCharacterSourceType.ExistingModel
             ? character.modelVersionId
             : character.trainedModelVersionId;
         }
       }
 
+      if (!modelVersionId) {
+        throw throwBadRequestError('Character has no model version');
+      }
+
+      // Get the LoRA's baseModel to determine compatible checkpoint
+      const modelVersion = await dbRead.modelVersion.findUnique({
+        where: { id: modelVersionId },
+        select: { baseModel: true, trainedWords: true },
+      });
+      if (!modelVersion) {
+        throw throwBadRequestError('Model version not found');
+      }
+
+      const baseModelGroup = getBaseModelSetType(modelVersion.baseModel);
+      const config = getGenerationConfig(baseModelGroup);
+      const checkpointVersionId = config.checkpoint.id;
+
+      // Build prompt with trained words if available
+      const trainedWords = modelVersion.trainedWords ?? [];
+      const fullPrompt = trainedWords.length > 0
+        ? `${trainedWords.join(', ')}, ${input.prompt}`
+        : input.prompt;
+
+      // Create panel record as Pending (not yet submitted to orchestrator)
       const panel = await dbWrite.comicPanel.create({
         data: {
           projectId: input.projectId,
@@ -417,12 +471,80 @@ export const comicsRouter = router({
         },
       });
 
-      // TODO: Trigger generation job via orchestrator
-      // - Use modelVersionId as LoRA for the generation
-      // - Pass prompt and default settings
-      // - Update panel status and imageUrl when complete
+      // Submit generation workflow
+      try {
+        const token = await getOrchestratorToken(ctx.user!.id, ctx);
+        const result = await createTextToImage({
+          params: {
+            prompt: fullPrompt,
+            negativePrompt: '',
+            baseModel: baseModelGroup as any,
+            width: 832,
+            height: 1216,
+            workflow: 'txt2img',
+            sampler: 'Euler',
+            steps: 25,
+            cfgScale: 7,
+            quantity: 1,
+            draft: false,
+            disablePoi: false,
+            priority: 'low',
+            sourceImage: null,
+            images: null,
+          },
+          resources: [
+            { id: checkpointVersionId, strength: 1 },
+            { id: modelVersionId, strength: 1 },
+          ],
+          tags: ['comics'],
+          tips: { creators: 0, civitai: 0 },
+          user: ctx.user! as SessionUser,
+          token,
+          currencies: ['yellow'],
+        });
 
-      return panel;
+        // Atomically set status to Generating and store workflow ID
+        const updated = await dbWrite.comicPanel.update({
+          where: { id: panel.id },
+          data: { workflowId: result.id, status: ComicPanelStatus.Generating },
+        });
+        return updated;
+      } catch (error: any) {
+        // Capture as much detail as possible for debugging
+        const errorDetails: string[] = [];
+        if (error instanceof Error) {
+          errorDetails.push(error.message);
+          if (error.cause) errorDetails.push(`Cause: ${JSON.stringify(error.cause)}`);
+        } else {
+          errorDetails.push(String(error));
+        }
+        // Orchestrator errors often have response data
+        if (error?.response?.data) {
+          errorDetails.push(`Response: ${JSON.stringify(error.response.data)}`);
+        }
+        if (error?.data) {
+          errorDetails.push(`Data: ${JSON.stringify(error.data)}`);
+        }
+
+        const errorMessage = errorDetails.join(' | ');
+        console.error('Comics createPanel generation failed:', {
+          panelId: panel.id,
+          modelVersionId,
+          baseModelGroup,
+          checkpointVersionId,
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+
+        const updated = await dbWrite.comicPanel.update({
+          where: { id: panel.id },
+          data: {
+            status: ComicPanelStatus.Failed,
+            errorMessage,
+          },
+        });
+        return updated;
+      }
     }),
 
   updatePanel: protectedProcedure
@@ -498,5 +620,224 @@ export const comicsRouter = router({
       );
 
       return { success: true };
+    }),
+
+  // Debug info for a panel's generation workflow
+  getPanelDebugInfo: protectedProcedure
+    .input(z.object({ panelId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const panel = await dbRead.comicPanel.findUnique({
+        where: { id: input.panelId },
+        include: {
+          project: { select: { userId: true, baseModel: true } },
+          character: {
+            select: {
+              id: true,
+              name: true,
+              sourceType: true,
+              modelId: true,
+              modelVersionId: true,
+              trainedModelVersionId: true,
+            },
+          },
+        },
+      });
+
+      if (!panel || panel.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      // If panel has a workflowId and we can still check it, get orchestrator info
+      let workflowInfo: any = null;
+      if (panel.workflowId) {
+        try {
+          const token = await getOrchestratorToken(ctx.user!.id, ctx);
+          const workflow = await getWorkflow({
+            token,
+            path: { workflowId: panel.workflowId },
+          });
+          workflowInfo = {
+            id: workflow.id,
+            status: workflow.status,
+            createdAt: workflow.createdAt,
+            completedAt: workflow.completedAt,
+            cost: workflow.cost,
+            tags: workflow.tags,
+            steps: (workflow.steps ?? []).map((step: any) => ({
+              name: step.name,
+              status: step.status,
+              $type: step.$type,
+              completedAt: step.completedAt,
+              hasOutput: !!step.output,
+              outputImages: step.output?.images?.length ?? 0,
+              outputBlobs: step.output?.blobs?.length ?? 0,
+              jobs: (step.jobs ?? []).map((job: any) => ({
+                id: job.id,
+                status: job.status,
+                queuePosition: job.queuePosition,
+              })),
+            })),
+          };
+        } catch (error: any) {
+          workflowInfo = {
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+
+      // Get model version info if character is linked
+      let modelVersionInfo: any = null;
+      const character = panel.character;
+      if (character) {
+        const mvId = character.sourceType === 'ExistingModel'
+          ? character.modelVersionId
+          : character.trainedModelVersionId;
+        if (mvId) {
+          const mv = await dbRead.modelVersion.findUnique({
+            where: { id: mvId },
+            select: {
+              id: true,
+              baseModel: true,
+              trainedWords: true,
+              status: true,
+              model: { select: { id: true, name: true, type: true, status: true } },
+            },
+          });
+          if (mv) {
+            const baseModelGroup = getBaseModelSetType(mv.baseModel);
+            const config = getGenerationConfig(baseModelGroup);
+            modelVersionInfo = {
+              versionId: mv.id,
+              baseModel: mv.baseModel,
+              baseModelGroup,
+              trainedWords: mv.trainedWords,
+              status: mv.status,
+              model: mv.model,
+              checkpoint: {
+                id: config.checkpoint.id,
+                name: config.checkpoint.model?.name,
+              },
+            };
+          }
+        }
+      }
+
+      return {
+        panel: {
+          id: panel.id,
+          status: panel.status,
+          prompt: panel.prompt,
+          imageUrl: panel.imageUrl,
+          workflowId: panel.workflowId,
+          errorMessage: panel.errorMessage,
+          createdAt: panel.createdAt,
+          updatedAt: panel.updatedAt,
+        },
+        project: {
+          baseModel: panel.project.baseModel,
+        },
+        character: character
+          ? { id: character.id, name: character.name, sourceType: character.sourceType }
+          : null,
+        modelVersion: modelVersionInfo,
+        workflow: workflowInfo,
+      };
+    }),
+
+  // Poll panel generation status
+  pollPanelStatus: protectedProcedure
+    .input(z.object({ panelId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const panel = await dbRead.comicPanel.findUnique({
+        where: { id: input.panelId },
+        include: { project: { select: { userId: true } } },
+      });
+
+      if (!panel || panel.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      // Only poll if panel is actively generating with a workflow
+      if (
+        !panel.workflowId ||
+        panel.status === ComicPanelStatus.Ready ||
+        panel.status === ComicPanelStatus.Failed
+      ) {
+        return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
+      }
+
+      // Backstop timeout: orchestrator step timeout is 21 min, use 25 min as hard cap
+      const GENERATION_TIMEOUT = 25 * 60 * 1000;
+      if (panel.createdAt.getTime() < Date.now() - GENERATION_TIMEOUT) {
+        const updated = await dbWrite.comicPanel.update({
+          where: { id: panel.id },
+          data: {
+            status: ComicPanelStatus.Failed,
+            errorMessage: 'Generation timed out',
+          },
+        });
+        return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+      }
+
+      // Check orchestrator status
+      try {
+        const token = await getOrchestratorToken(ctx.user!.id, ctx);
+        const workflow = await getWorkflow({
+          token,
+          path: { workflowId: panel.workflowId },
+        });
+
+        // Extract image URL from first step output if present.
+        // Images can appear before the workflow status transitions to 'succeeded'
+        // (e.g. status may still be 'scheduled' when output images are already available).
+        const steps = workflow.steps ?? [];
+        const firstStep = steps[0] as any;
+        const imageUrl =
+          firstStep?.output?.images?.[0]?.url ??
+          firstStep?.output?.blobs?.[0]?.url ??
+          null;
+
+        if (imageUrl) {
+          const updated = await dbWrite.comicPanel.update({
+            where: { id: panel.id },
+            data: {
+              status: ComicPanelStatus.Ready,
+              imageUrl,
+            },
+          });
+          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+        }
+
+        // No images yet — check terminal statuses
+        if (workflow.status === 'succeeded') {
+          // Workflow done but no image URL — unusual, mark ready anyway
+          console.warn(
+            `Panel ${panel.id}: workflow succeeded but no image URL found in step output`,
+            JSON.stringify(firstStep?.output ?? null)
+          );
+          const updated = await dbWrite.comicPanel.update({
+            where: { id: panel.id },
+            data: { status: ComicPanelStatus.Ready },
+          });
+          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+        }
+
+        if (workflow.status === 'failed' || workflow.status === 'canceled') {
+          const updated = await dbWrite.comicPanel.update({
+            where: { id: panel.id },
+            data: {
+              status: ComicPanelStatus.Failed,
+              errorMessage: `Generation ${workflow.status}`,
+            },
+          });
+          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+        }
+      } catch (error) {
+        // If we can't check the workflow, don't fail the poll - just return current state
+        console.error('Failed to poll workflow status:', error);
+      }
+
+      // Still processing - return as-is
+      return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
     }),
 });

@@ -3,12 +3,15 @@ import {
   Badge,
   Button,
   Card,
+  Code,
   Container,
   Grid,
   Group,
   Image,
+  Loader,
   Menu,
   Modal,
+  ScrollArea,
   Stack,
   Text,
   Textarea,
@@ -17,7 +20,9 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
+  IconAlertTriangle,
   IconArrowLeft,
+  IconBug,
   IconDotsVertical,
   IconPhoto,
   IconPlus,
@@ -27,7 +32,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
@@ -55,6 +60,8 @@ function ProjectWorkspace() {
   const projectId = id as string;
 
   const [panelModalOpened, { open: openPanelModal, close: closePanelModal }] = useDisclosure(false);
+  const [debugModalOpened, { open: openDebugModal, close: closeDebugModal }] = useDisclosure(false);
+  const [debugPanelId, setDebugPanelId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
@@ -96,6 +103,40 @@ function ProjectWorkspace() {
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
     onSuccess: () => refetch(),
   });
+
+  const utils = trpc.useUtils();
+
+  // Poll for panels actively generating (have a workflowId)
+  const generatingPanelIds = useMemo(
+    () =>
+      (project?.panels ?? [])
+        .filter((p) => p.status === 'Generating')
+        .map((p) => p.id),
+    [project?.panels]
+  );
+
+  useEffect(() => {
+    if (generatingPanelIds.length === 0) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const results = await Promise.all(
+          generatingPanelIds.map((panelId) =>
+            utils.comics.pollPanelStatus.fetch({ panelId })
+          )
+        );
+        // If any panel changed status, refetch the full project
+        const changed = results.some(
+          (r) => r.status === 'Ready' || r.status === 'Failed'
+        );
+        if (changed) refetch();
+      } catch {
+        // Silently ignore poll errors
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [generatingPanelIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading || !project) {
     return (
@@ -291,7 +332,12 @@ function ProjectWorkspace() {
                         imageUrl={panel.imageUrl}
                         prompt={panel.prompt}
                         status={panel.status}
+                        errorMessage={panel.errorMessage}
                         onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
+                        onViewDebug={() => {
+                          setDebugPanelId(panel.id);
+                          openDebugModal();
+                        }}
                       />
                     </Grid.Col>
                   ))}
@@ -341,6 +387,13 @@ function ProjectWorkspace() {
           </Group>
         </Stack>
       </Modal>
+
+      {/* Debug Modal for failed panels */}
+      <PanelDebugModal
+        panelId={debugPanelId}
+        opened={debugModalOpened}
+        onClose={closeDebugModal}
+      />
     </>
   );
 }
@@ -350,10 +403,12 @@ interface PanelCardProps {
   imageUrl: string | null;
   prompt: string;
   status: string;
+  errorMessage: string | null;
   onDelete: () => void;
+  onViewDebug: () => void;
 }
 
-function PanelCard({ id, imageUrl, prompt, status, onDelete }: PanelCardProps) {
+function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onViewDebug }: PanelCardProps) {
   return (
     <Card withBorder padding="xs" className="aspect-[3/4] relative group">
       {imageUrl ? (
@@ -371,10 +426,15 @@ function PanelCard({ id, imageUrl, prompt, status, onDelete }: PanelCardProps) {
             </Stack>
           ) : status === 'Failed' ? (
             <Stack align="center" gap="xs">
-              <IconPhoto size={32} className="text-red-500" />
+              <IconAlertTriangle size={32} className="text-red-500" />
               <Text size="xs" c="red">
                 Failed
               </Text>
+              {errorMessage && (
+                <Text size="xs" c="dimmed" ta="center" lineClamp={2} px="xs">
+                  {errorMessage}
+                </Text>
+              )}
             </Stack>
           ) : (
             <IconPhoto size={32} className="text-gray-600" />
@@ -392,6 +452,11 @@ function PanelCard({ id, imageUrl, prompt, status, onDelete }: PanelCardProps) {
           </Menu.Target>
 
           <Menu.Dropdown>
+            {(status === 'Failed' || status === 'Generating' || status === 'Pending') && (
+              <Menu.Item leftSection={<IconBug size={14} />} onClick={onViewDebug}>
+                {status === 'Failed' ? 'View Error Details' : 'View Workflow'}
+              </Menu.Item>
+            )}
             <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={onDelete}>
               Delete
             </Menu.Item>
@@ -408,6 +473,74 @@ function PanelCard({ id, imageUrl, prompt, status, onDelete }: PanelCardProps) {
         </div>
       </Tooltip>
     </Card>
+  );
+}
+
+// Debug modal for viewing failed panel details
+function PanelDebugModal({
+  panelId,
+  opened,
+  onClose,
+}: {
+  panelId: string | null;
+  opened: boolean;
+  onClose: () => void;
+}) {
+  const { data, isLoading } = trpc.comics.getPanelDebugInfo.useQuery(
+    { panelId: panelId! },
+    { enabled: opened && !!panelId }
+  );
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Panel Workflow Info" size="lg">
+      {isLoading ? (
+        <Stack align="center" py="xl">
+          <Loader />
+        </Stack>
+      ) : data ? (
+        <Stack gap="md">
+          {/* Panel info */}
+          <div>
+            <Text fw={600} size="sm" mb={4}>Panel</Text>
+            <Code block>{JSON.stringify(data.panel, null, 2)}</Code>
+          </div>
+
+          {/* Error message */}
+          {data.panel.errorMessage && (
+            <div>
+              <Text fw={600} size="sm" mb={4} c="red">Error</Text>
+              <Code block color="red">{data.panel.errorMessage}</Code>
+            </div>
+          )}
+
+          {/* Character & Model version info */}
+          {data.modelVersion && (
+            <div>
+              <Text fw={600} size="sm" mb={4}>Model Version</Text>
+              <Code block>{JSON.stringify(data.modelVersion, null, 2)}</Code>
+            </div>
+          )}
+
+          {/* Workflow info from orchestrator */}
+          {data.workflow && (
+            <div>
+              <Text fw={600} size="sm" mb={4}>Orchestrator Workflow</Text>
+              <ScrollArea.Autosize mah={300}>
+                <Code block>{JSON.stringify(data.workflow, null, 2)}</Code>
+              </ScrollArea.Autosize>
+            </div>
+          )}
+
+          {/* Project base model */}
+          <div>
+            <Text fw={600} size="sm" mb={4}>Project</Text>
+            <Code block>{JSON.stringify(data.project, null, 2)}</Code>
+          </div>
+        </Stack>
+      ) : (
+        <Text c="dimmed">No debug info available</Text>
+      )}
+    </Modal>
   );
 }
 

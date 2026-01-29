@@ -16,7 +16,10 @@ To continue this work, reference the session above or point Claude to this docum
 - Pages: `src/pages/comics/`
 - Router: `src/server/routers/comics.router.ts`
 - Schema: `prisma/schema.full.prisma` (search for "ComicProject")
-- Migrations: `prisma/migrations/20260127*`
+- Migrations: `prisma/migrations/20260127*`, `prisma/migrations/20260128*`
+- Generation integration: Uses `createTextToImage()` from `src/server/services/orchestrator/textToImage/textToImage.ts`
+- Workflow polling: Uses `getWorkflow()` from `src/server/services/orchestrator/workflows.ts`
+- Base model mapping: Uses `getBaseModelSetType()` + `getGenerationConfig()` for checkpoint selection
 
 ---
 
@@ -44,9 +47,10 @@ This hackathon is about proving the concept works, not building a full product.
 | Pipeline | Required | Status | Endpoint (Confirm with Backend) | Notes |
 |----------|----------|--------|--------------------------------|-------|
 | Face embedding extraction | YES | ⬜ TBD | TBD - may be `POST /api/face/embed` or part of character creation | Input: images, Output: embedding vector |
-| Character creation | YES | ⬜ TBD | TBD - may be `POST /lora/train` or `POST /api/character/create` | Core magic - must produce consistent results |
-| Panel generation with character ref | YES | ⬜ TBD | TBD - may be `POST /generation/create` or `POST /api/generate/panel` | Input: character_id + prompt, Output: image |
-| Civitai SSO (test environment) | YES | ⬜ TBD | OAuth2 flow | Standard Civitai auth |
+| Character creation | YES | ✅ Implemented | `comics.createCharacterFromModel` (tRPC) | Uses existing Civitai LoRA models; sets project baseModel automatically |
+| Panel generation with character ref | YES | ✅ Implemented | `comics.createPanel` (tRPC) → `createTextToImage()` server-side | Uses orchestrator API; checkpoint auto-selected via `getGenerationConfig(baseModel)` |
+| Panel status polling | YES | ✅ Implemented | `comics.pollPanelStatus` (tRPC query) | Polls orchestrator `getWorkflow()` every 3s; extracts image URL on success |
+| Civitai SSO (test environment) | YES | ✅ Works | NextAuth (main app integration) | Running inside main Civitai app, auth is built-in |
 | Buzz reservation (if charging) | CONDITIONAL | ⬜ TBD | `POST /buzz/reserve`, `POST /buzz/commit` | Required for atomic transactions |
 | Buzz balance read | NICE TO HAVE | ⬜ TBD | `GET /users/{id}/buzz` | For display only |
 
@@ -895,10 +899,15 @@ If generation fails during demo:
 |---------|-----------------|
 | Style | Default/anime |
 | Shot type | Medium shot |
-| Aspect ratio | 3:4 (portrait) |
+| Aspect ratio | 832x1216 portrait (roughly 2:3) |
 | Generation count | 1 (not 4) |
 | Max character refs | 5 images |
 | Min character refs | 3 images |
+| Sampler | Euler |
+| Steps | 25 |
+| CFG Scale | 7 |
+| BaseModel matching | Auto-detected from LoRA's baseModel via `getBaseModelSetType()` |
+| Checkpoint | Auto-selected via `getGenerationConfig(baseModelGroup)` |
 
 ### API Response Times (Target)
 
