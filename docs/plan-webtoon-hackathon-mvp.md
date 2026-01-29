@@ -18,6 +18,7 @@ To continue this work, reference the session above or point Claude to this docum
 - Schema: `prisma/schema.full.prisma` (search for "ComicProject")
 - Migrations: `prisma/migrations/20260127*`, `prisma/migrations/20260128*`
 - Generation integration: Uses `createTextToImage()` from `src/server/services/orchestrator/textToImage/textToImage.ts`
+- Prompt enhancement: `src/server/services/comics/prompt-enhance.ts` — GPT-4o-mini rewrites user prompts (optional toggle, on by default)
 - Workflow polling: Uses `getWorkflow()` from `src/server/services/orchestrator/workflows.ts`
 - Base model mapping: Uses `getBaseModelSetType()` + `getGenerationConfig()` for checkpoint selection
 
@@ -908,6 +909,8 @@ If generation fails during demo:
 | CFG Scale | 7 |
 | BaseModel matching | Auto-detected from LoRA's baseModel via `getBaseModelSetType()` |
 | Checkpoint | Auto-selected via `getGenerationConfig(baseModelGroup)` |
+| Prompt enhancement | GPT-4o-mini rewrite (optional, on by default). Max 1500 chars. |
+| Negative prompt | Hardcoded quality filter (blurry, deformed, bad anatomy, etc.) |
 
 ### API Response Times (Target)
 

@@ -9,10 +9,12 @@ Wire up the comics `createPanel` mutation to actually generate images via the Ci
 createPanel (comics router)
   -> lookup character's modelVersion (get baseModel, trained words)
   -> determine compatible checkpoint via getGenerationConfig(baseModel)
+  -> if enhance=true: call enhanceComicPrompt() via GPT-4o-mini
+  -> else: prepend trained words to user prompt (original behavior)
   -> get orchestrator token for user
   -> build resources array (checkpoint + LoRA)
-  -> call orchestrator.generateImage (reuse existing mutation logic)
-  -> store workflowId on panel, set status=Generating
+  -> call orchestrator.generateImage with enhanced prompt + negative prompt
+  -> store workflowId + enhancedPrompt on panel, set status=Generating
   -> return panel
 
 pollPanelStatus (new endpoint)
@@ -34,16 +36,23 @@ Frontend polls `pollPanelStatus` every 3s for panels in Pending/Generating state
 ### 2. `prisma/migrations/20260128200053_add_comic_panel_workflowid_and_project_basemodel/migration.sql`
 - Migration to add both columns
 
-### 3. `src/server/routers/comics.router.ts`
+### 3. `src/server/services/comics/prompt-enhance.ts` (new)
+- `enhanceComicPrompt()` function that optionally rewrites the user's simple prompt into a detailed, comic-optimized image generation prompt via GPT-4o-mini
+- System prompt instructs the LLM to start with trigger words, add visual details, compositional terms, and quality terms
+- Output capped at 1500 characters (our prompt length limit)
+- Falls back to `trainedWords + userPrompt` if OpenAI is unavailable or the call fails
+
+### 4. `src/server/routers/comics.router.ts`
 **Changes:**
 - **`createPanel`** rewritten to submit an actual generation workflow:
-  1. Looks up character's model version to get `baseModel` and `trainedWords`
+  1. Looks up character's model version to get `baseModel` and `trainedWords`, plus character `name`
   2. Uses `getBaseModelSetType(baseModel)` to map raw baseModel string (e.g. "Flux.1 D") to BaseModelGroup (e.g. "Flux1")
   3. Uses `getGenerationConfig(baseModelGroup)` to get the default checkpoint
-  4. Gets orchestrator token via `getOrchestratorToken(ctx.user.id, ctx)`
-  5. Builds resources array: `[{ id: checkpointVersionId, strength: 1 }, { id: loraVersionId, strength: 1 }]`
-  6. Calls `createTextToImage()` with params: prompt (with trained words prepended), baseModel, 832x1216 portrait, workflow "txt2img", quantity 1, sampler "Euler", 25 steps, cfgScale 7
-  7. Stores `workflowId` on the panel record, sets status to `Generating`
+  4. If `input.enhance` is true (default), calls `enhanceComicPrompt()` to rewrite the user's prompt via GPT-4o-mini; otherwise prepends trained words to the user prompt
+  5. Gets orchestrator token via `getOrchestratorToken(ctx.user.id, ctx)`
+  6. Builds resources array: `[{ id: checkpointVersionId, strength: 1 }, { id: loraVersionId, strength: 1 }]`
+  7. Calls `createTextToImage()` with params: enhanced prompt, hardcoded negative prompt, baseModel, 832x1216 portrait, workflow "txt2img", quantity 1, sampler "Euler", 25 steps, cfgScale 7
+  8. Stores `workflowId` and `enhancedPrompt` on the panel record, sets status to `Generating`
 
 - **`pollPanelStatus` query added:**
   1. Takes `panelId` as input
@@ -67,15 +76,18 @@ import { getGenerationConfig } from '~/server/common/constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { createTextToImage } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 ```
 
-### 4. `src/pages/comics/project/[id]/index.tsx`
+### 5. `src/pages/comics/project/[id]/index.tsx`
 **Changes:**
 - Added `useEffect` polling that calls `pollPanelStatus` every 3s for panels in Pending/Generating state
 - Uses `trpc.useUtils()` to access `utils.comics.pollPanelStatus.fetch()`
 - When any panel transitions to Ready or Failed, refetches the full project data
+- Added "Enhance prompt" toggle (`Switch`) in the panel creation modal — on by default, can be turned off by users who want full control over their prompts
+- Debug modal now shows `enhancedPrompt` separately when available
 
-### 5. `docs/plan-webtoon-hackathon-mvp.md`
+### 6. `docs/plan-webtoon-hackathon-mvp.md`
 - Updated pipeline dependencies table to mark panel generation, character creation, and polling as implemented
 - Updated key files section with generation service integration details
 - Updated hardcoded defaults table with actual generation parameters
@@ -114,7 +126,9 @@ The orchestrator returns images in `workflow.steps[0].output.images[0].url`. Thi
 | Quantity | 1 |
 | Workflow | txt2img |
 | Priority | low |
-| Prompt | trainedWords + user prompt |
+| Prompt | Enhanced via GPT-4o-mini (optional, on by default) or trainedWords + user prompt |
+| Negative Prompt | Hardcoded quality filter (blurry, deformed, bad anatomy, etc.) |
+| Prompt Enhancement | GPT-4o-mini rewrites user prompt with visual details, composition, and quality terms (max 1500 chars). Toggle available in UI. |
 | Checkpoint | Auto-selected via getGenerationConfig(baseModelGroup) |
 
 ## Verification Steps
