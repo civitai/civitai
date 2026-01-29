@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
   Button,
   Card,
@@ -15,14 +16,16 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconArrowLeft, IconCheck, IconPhoto, IconSearch, IconUpload, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowLeft, IconCheck, IconPhoto, IconSearch, IconUpload, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -101,7 +104,7 @@ function CharacterUpload() {
 
   const createFromModelMutation = trpc.comics.createCharacterFromModel.useMutation({
     onSuccess: () => {
-      refetchProject();
+      router.push(`/comics/project/${projectId}`);
     },
   });
 
@@ -192,12 +195,68 @@ function CharacterUpload() {
     return () => clearInterval(interval);
   }, [existingCharacter?.id, existingCharacter?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // If character already exists, show status
-  if (existingCharacter && existingCharacter.status !== 'Failed') {
+  // Reference image management state
+  const [showUploadArea, setShowUploadArea] = useState(false);
+  const { uploadToCF, files: uploadingFiles, resetFiles } = useCFImageUpload();
+  const [uploadedImages, setUploadedImages] = useState<{ url: string; previewUrl: string; width: number; height: number }[]>([]);
+
+  const generateRefsMutation = trpc.comics.generateCharacterReferences.useMutation({
+    onSuccess: () => {
+      refetchProject();
+    },
+  });
+
+  const uploadRefsMutation = trpc.comics.uploadCharacterReferences.useMutation({
+    onSuccess: () => {
+      setShowUploadArea(false);
+      setUploadedImages([]);
+      resetFiles();
+      refetchProject();
+    },
+  });
+
+  const handleRefImageDrop = async (files: File[]) => {
+    for (const file of files) {
+      const result = await uploadToCF(file);
+      // Use objectUrl (local blob) for preview and dimension detection
+      // Store id (CF image ID) as the persistent URL for the database
+      const img = new window.Image();
+      img.src = result.objectUrl;
+      await new Promise<void>((resolve) => {
+        img.onload = () => {
+          setUploadedImages((prev) => [
+            ...prev,
+            { url: result.id, previewUrl: result.objectUrl, width: img.naturalWidth, height: img.naturalHeight },
+          ]);
+          resolve();
+        };
+        img.onerror = () => {
+          setUploadedImages((prev) => [
+            ...prev,
+            { url: result.id, previewUrl: result.objectUrl, width: 512, height: 512 },
+          ]);
+          resolve();
+        };
+      });
+    }
+  };
+
+  const handleSaveUploadedRefs = () => {
+    if (!existingCharacter || uploadedImages.length === 0) return;
+    uploadRefsMutation.mutate({
+      characterId: existingCharacter.id,
+      referenceImages: uploadedImages,
+    });
+  };
+
+  // If character already exists, show status + ref image management
+  if (existingCharacter) {
     const isExistingModel = existingCharacter.sourceType === 'ExistingModel';
+    const isFailed = existingCharacter.status === 'Failed';
     const generatedRefs = existingCharacter.generatedReferenceImages as
       | { url: string; width: number; height: number; view: string }[]
       | null;
+    const hasRefs = (generatedRefs?.length ?? 0) > 0;
 
     return (
       <>
@@ -215,23 +274,45 @@ function CharacterUpload() {
             <Card withBorder p="xl">
               <Stack align="center" gap="lg">
                 <div className="w-24 h-24 bg-gray-800 rounded-full flex items-center justify-center">
-                  <IconPhoto size={40} className="text-gray-500" />
+                  {isFailed ? (
+                    <IconAlertTriangle size={40} className="text-red-500" />
+                  ) : (
+                    <IconPhoto size={40} className="text-gray-500" />
+                  )}
                 </div>
 
                 <div className="text-center">
                   <Text fw={500} size="lg">
                     {existingCharacter.name}
                   </Text>
-                  <Text c="dimmed" size="sm">
-                    {existingCharacter.status === 'Ready'
-                      ? 'Ready to use'
-                      : existingCharacter.status === 'Processing'
-                        ? isExistingModel
-                          ? 'Generating reference images...'
-                          : 'Training your character...'
-                        : 'Queued for processing'}
+                  <Text c={isFailed ? 'red' : 'dimmed'} size="sm">
+                    {isFailed
+                      ? 'Reference image generation failed'
+                      : existingCharacter.status === 'Ready'
+                        ? hasRefs
+                          ? 'Ready to use'
+                          : 'No reference images yet'
+                        : existingCharacter.status === 'Processing'
+                          ? isExistingModel
+                            ? 'Generating reference images...'
+                            : 'Training your character...'
+                          : 'Queued for processing'}
                   </Text>
                 </div>
+
+                {/* Error details for failed characters */}
+                {isFailed && existingCharacter.errorMessage && (
+                  <Alert
+                    color="red"
+                    variant="light"
+                    title="Error details"
+                    icon={<IconAlertTriangle size={18} />}
+                    w="100%"
+                    maw={500}
+                  >
+                    <Text size="sm">{existingCharacter.errorMessage}</Text>
+                  </Alert>
+                )}
 
                 {existingCharacter.status === 'Processing' && (
                   <Stack gap="xs" w="100%" maw={300}>
@@ -245,13 +326,13 @@ function CharacterUpload() {
                 )}
 
                 {/* Display generated reference images when ready */}
-                {existingCharacter.status === 'Ready' && generatedRefs && generatedRefs.length > 0 && (
+                {existingCharacter.status === 'Ready' && hasRefs && (
                   <Stack gap="sm" w="100%">
                     <Text fw={500} size="sm" ta="center">
-                      Generated Reference Images
+                      Reference Images
                     </Text>
                     <Group justify="center" gap="md">
-                      {generatedRefs.map((ref, i) => (
+                      {generatedRefs!.map((ref, i) => (
                         <Stack key={i} gap={4} align="center">
                           <div
                             className="rounded-lg overflow-hidden"
@@ -261,12 +342,18 @@ function CharacterUpload() {
                               background: 'var(--mantine-color-dark-7)',
                             }}
                           >
-                            <Image
+                            <EdgeMedia2
                               src={ref.url}
+                              type="image"
+                              name={`${ref.view} view`}
                               alt={`${ref.view} view`}
-                              w={120}
-                              h={160}
-                              fit="cover"
+                              width={120}
+                              style={{
+                                width: 120,
+                                height: 160,
+                                objectFit: 'cover',
+                                display: 'block',
+                              }}
                             />
                           </div>
                           <Badge size="xs" variant="light">
@@ -275,6 +362,90 @@ function CharacterUpload() {
                         </Stack>
                       ))}
                     </Group>
+                  </Stack>
+                )}
+
+                {/* Reference image actions — for Ready or Failed state with ExistingModel */}
+                {(existingCharacter.status === 'Ready' || isFailed) && isExistingModel && (
+                  <Stack gap="sm" w="100%" maw={400}>
+                    <Group justify="center" gap="sm">
+                      <BuzzTransactionButton
+                        buzzAmount={75}
+                        label={isFailed ? 'Retry Generation' : hasRefs ? 'Regenerate References' : 'Generate Reference Images'}
+                        onPerformTransaction={() =>
+                          generateRefsMutation.mutate({ characterId: existingCharacter.id })
+                        }
+                        loading={generateRefsMutation.isPending}
+                      />
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          setShowUploadArea(!showUploadArea);
+                          setUploadedImages([]);
+                          resetFiles();
+                        }}
+                      >
+                        {hasRefs ? 'Upload New' : 'Upload Your Own'}
+                      </Button>
+                    </Group>
+
+                    {showUploadArea && (
+                      <Stack gap="sm">
+                        <Dropzone
+                          onDrop={handleRefImageDrop}
+                          accept={IMAGE_MIME_TYPE}
+                          maxFiles={5 - uploadedImages.length}
+                          disabled={uploadedImages.length >= 5}
+                        >
+                          <Group
+                            justify="center"
+                            gap="xl"
+                            mih={100}
+                            style={{ pointerEvents: 'none' }}
+                          >
+                            <Dropzone.Accept>
+                              <IconUpload size={32} className="text-blue-500" />
+                            </Dropzone.Accept>
+                            <Dropzone.Reject>
+                              <IconX size={32} className="text-red-500" />
+                            </Dropzone.Reject>
+                            <Dropzone.Idle>
+                              <IconPhoto size={32} className="text-gray-500" />
+                            </Dropzone.Idle>
+                            <div>
+                              <Text size="sm" inline>
+                                Drop reference images here
+                              </Text>
+                              <Text size="xs" c="dimmed" inline mt={4}>
+                                Upload 1-5 images
+                              </Text>
+                            </div>
+                          </Group>
+                        </Dropzone>
+
+                        {uploadedImages.length > 0 && (
+                          <Group>
+                            {uploadedImages.map((img, i) => (
+                              <div key={i} className="rounded-md overflow-hidden" style={{ width: 80, height: 80, background: 'var(--mantine-color-dark-7)' }}>
+                                <Image src={img.previewUrl} alt={`Upload ${i + 1}`} w={80} h={80} fit="cover" />
+                              </div>
+                            ))}
+                          </Group>
+                        )}
+
+                        {uploadingFiles.some((f) => f.status === 'uploading') && (
+                          <Progress value={65} animated size="xs" />
+                        )}
+
+                        <Button
+                          onClick={handleSaveUploadedRefs}
+                          disabled={uploadedImages.length === 0}
+                          loading={uploadRefsMutation.isPending}
+                        >
+                          Save Reference Images
+                        </Button>
+                      </Stack>
+                    )}
                   </Stack>
                 )}
 
@@ -319,7 +490,7 @@ function CharacterUpload() {
                   <Stack gap="md">
                     <Text fw={500}>Select a Character LoRA</Text>
                     <Text size="sm" c="dimmed">
-                      Choose from your existing LoRA models. Reference images will be auto-generated.
+                      Choose from your existing LoRA models. You can generate reference images later.
                     </Text>
 
                     <TextInput
@@ -448,7 +619,7 @@ function CharacterUpload() {
 
                 <Group justify="space-between">
                   <Text c="dimmed" size="sm">
-                    Cost: 50 Buzz (reference image generation)
+                    Free — uses your existing model
                   </Text>
                   <Group>
                     <Button

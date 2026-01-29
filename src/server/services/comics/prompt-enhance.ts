@@ -2,8 +2,11 @@ import { openai } from '~/server/services/ai/openai';
 
 const SYSTEM_PROMPT = `You enhance user prompts for AI comic panel generation. The generation model receives separate reference images of the main character, so you do NOT need to describe physical appearance.
 
+You will be given the names of all characters in the project. When the user mentions a character by name, keep that name in the enhanced prompt exactly as written — the name is how the generation model identifies who to draw.
+
 Rules:
-- Do NOT describe the character's physical appearance (hair color, eye color, clothing, etc.) — reference images handle that
+- Do NOT describe any character's physical appearance (hair color, eye color, clothing, etc.) — reference images handle that
+- Preserve character names exactly as provided — do not rename, shorten, or omit them
 - Focus on: pose, expression, action, emotion, scene composition, camera angle, environment
 - Keep every element the user mentioned — do not drop, replace, or reinterpret anything
 - Do NOT invent new characters, objects, actions, or locations the user didn't mention
@@ -17,6 +20,7 @@ Rules:
 export async function enhanceComicPrompt(input: {
   userPrompt: string;
   characterName: string;
+  characterNames?: string[];
   trainedWords?: string[];
   previousPanel?: {
     prompt: string;
@@ -24,7 +28,7 @@ export async function enhanceComicPrompt(input: {
     imageUrl: string | null;
   };
 }): Promise<string> {
-  const { userPrompt, characterName, trainedWords, previousPanel } = input;
+  const { userPrompt, characterName, characterNames, trainedWords, previousPanel } = input;
 
   // Fallback: just return the user prompt (no trained words for NanoBanana path)
   const fallback =
@@ -38,8 +42,10 @@ export async function enhanceComicPrompt(input: {
   }
 
   try {
+    const names = characterNames && characterNames.length > 0 ? characterNames : [characterName];
     const textParts = [
-      characterName && `Character name: ${characterName}`,
+      `Characters in this project: ${names.join(', ')}`,
+      characterName && `Active character (has reference images): ${characterName}`,
       previousPanel &&
         `Previous panel prompt: ${previousPanel.enhancedPrompt ?? previousPanel.prompt}`,
       `New scene: ${userPrompt}`,

@@ -3765,6 +3765,7 @@ export interface ComicPanel {
   workflowId: string | null;
   civitaiJobId: string | null;
   errorMessage: string | null;
+  metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
 }

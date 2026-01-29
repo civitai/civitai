@@ -20,19 +20,21 @@ import { createTextToImage } from '~/server/services/orchestrator/textToImage/te
 import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 // Constants
 const NANOBANANA_VERSION_ID = 2154472;
 const PANEL_WIDTH = 1728;
 const PANEL_HEIGHT = 2304;
 
-const REFERENCE_IMAGE_PROMPTS: Record<string, string> = {
+// View-specific prompts appended after the character's trigger words + name
+const REFERENCE_VIEW_SUFFIXES: Record<string, string> = {
   front:
-    'portrait, front view, facing the camera, detailed face, full upper body, neutral pose, clean background, high quality, sharp focus',
+    'solo, front view, facing viewer, looking at viewer, standing, arms at sides, upper body, simple white background, studio lighting, high quality, sharp focus, detailed',
   side:
-    'portrait, left side profile view, detailed face, full upper body, neutral pose, clean background, high quality, sharp focus',
+    'solo, from side, side profile, looking to the side, standing, arms at sides, upper body, simple white background, studio lighting, high quality, sharp focus, detailed',
   back:
-    'portrait, back view, showing back of head and upper body, neutral pose, clean background, high quality, sharp focus',
+    'solo, from behind, back view, looking away, standing, arms at sides, upper body, simple white background, studio lighting, high quality, sharp focus, detailed',
 };
 
 // Middleware to check project ownership
@@ -215,6 +217,50 @@ export const comicsRouter = router({
       return project;
     }),
 
+  getProjectForReader: protectedProcedure
+    .input(getProjectSchema)
+    .query(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          name: true,
+          userId: true,
+          chapters: {
+            orderBy: { position: 'asc' },
+            select: {
+              id: true,
+              name: true,
+              position: true,
+              panels: {
+                where: {
+                  status: ComicPanelStatus.Ready,
+                  imageUrl: { not: null },
+                },
+                orderBy: { position: 'asc' },
+                select: {
+                  id: true,
+                  imageUrl: true,
+                  prompt: true,
+                  position: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!project || project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      return {
+        id: project.id,
+        name: project.name,
+        chapters: project.chapters,
+      };
+    }),
+
   createProject: protectedProcedure
     .input(createProjectSchema)
     .mutation(async ({ ctx, input }) => {
@@ -354,7 +400,7 @@ export const comicsRouter = router({
       const character = await dbWrite.comicCharacter.create({
         data: {
           projectId: input.projectId,
-          userId: ctx.user.id,
+          userId: ctx.user!.id,
           name: input.name,
           sourceType: ComicCharacterSourceType.Upload,
           referenceImages: input.referenceImages,
@@ -370,8 +416,7 @@ export const comicsRouter = router({
       return character;
     }),
 
-  // Path 2: Create character from existing LoRA model
-  // Generates front/side/back reference images using the LoRA
+  // Path 2: Create character from existing LoRA model (instant — no ref images generated)
   createCharacterFromModel: protectedProcedure
     .input(createCharacterFromModelSchema)
     .use(isProjectOwner)
@@ -384,7 +429,6 @@ export const comicsRouter = router({
           modelId: true,
           status: true,
           baseModel: true,
-          trainedWords: true,
           model: {
             select: {
               id: true,
@@ -401,7 +445,7 @@ export const comicsRouter = router({
       }
 
       // Check if model is published or owned by user
-      const isOwner = modelVersion.model.userId === ctx.user.id;
+      const isOwner = modelVersion.model.userId === ctx.user!.id;
       const isPublished = modelVersion.model.status === 'Published';
 
       if (!isOwner && !isPublished) {
@@ -421,31 +465,78 @@ export const comicsRouter = router({
         });
       }
 
-      // Create character as Pending (reference images need to be generated)
+      // Create character as Ready immediately (no ref images yet)
       const character = await dbWrite.comicCharacter.create({
         data: {
           projectId: input.projectId,
-          userId: ctx.user.id,
+          userId: ctx.user!.id,
           name: input.name,
           sourceType: ComicCharacterSourceType.ExistingModel,
           modelId: input.modelId,
           modelVersionId: input.modelVersionId,
-          status: ComicCharacterStatus.Pending,
+          status: ComicCharacterStatus.Ready,
         },
       });
 
-      // Generate 3 reference images (front/side/back) using the LoRA
+      return character;
+    }),
+
+  // Generate reference images for an existing character using its LoRA
+  generateCharacterReferences: protectedProcedure
+    .input(z.object({ characterId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const character = await dbRead.comicCharacter.findUnique({
+        where: { id: input.characterId },
+        include: { project: { select: { id: true } } },
+      });
+
+      if (!character || character.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      if (character.sourceType !== ComicCharacterSourceType.ExistingModel || !character.modelVersionId) {
+        throw throwBadRequestError('Character must be linked to a LoRA model');
+      }
+
+      // Fetch model version for trained words and base model
+      const modelVersion = await dbRead.modelVersion.findUnique({
+        where: { id: character.modelVersionId },
+        select: { baseModel: true, trainedWords: true },
+      });
+
+      if (!modelVersion) {
+        throw throwBadRequestError('Model version not found');
+      }
+
+      // Set status to Processing (clears any previous error)
+      await dbWrite.comicCharacter.update({
+        where: { id: character.id },
+        data: { status: ComicCharacterStatus.Processing, errorMessage: null },
+      });
+
       try {
-        const token = await getOrchestratorToken(ctx.user.id, ctx);
+        const baseModelGroup = getBaseModelSetType(modelVersion.baseModel);
+        const token = await getOrchestratorToken(ctx.user!.id, ctx);
         const config = getGenerationConfig(baseModelGroup);
         const checkpointVersionId = config.checkpoint.id;
         const trainedWords = (modelVersion.trainedWords ?? []) as string[];
         const triggerPrefix = trainedWords.length > 0 ? `${trainedWords.join(', ')}, ` : '';
 
+        console.log('[Comics] Generating character reference images:', {
+          characterId: character.id,
+          modelVersionId: character.modelVersionId,
+          baseModel: modelVersion.baseModel,
+          baseModelGroup,
+          checkpointVersionId,
+          trainedWords,
+          triggerPrefix,
+        });
+
         const workflowIds: Record<string, string> = {};
 
-        for (const [view, viewPrompt] of Object.entries(REFERENCE_IMAGE_PROMPTS)) {
-          const fullPrompt = `${triggerPrefix}${viewPrompt}`;
+        for (const [view, viewSuffix] of Object.entries(REFERENCE_VIEW_SUFFIXES)) {
+          const fullPrompt = `${triggerPrefix}${character.name}, ${viewSuffix}`;
+          console.log(`[Comics] Ref image "${view}" prompt:`, fullPrompt);
 
           const result = await createTextToImage({
             params: {
@@ -468,7 +559,7 @@ export const comicsRouter = router({
             },
             resources: [
               { id: checkpointVersionId, strength: 1 },
-              { id: input.modelVersionId, strength: 1 },
+              { id: character.modelVersionId, strength: 1 },
             ],
             tags: ['comics', 'character-ref'],
             tips: { creators: 0, civitai: 0 },
@@ -477,19 +568,16 @@ export const comicsRouter = router({
             currencies: ['yellow'],
           });
 
+          console.log(`[Comics] Ref image "${view}" workflow submitted:`, result.id);
           workflowIds[view] = result.id;
         }
 
-        // Update character with workflow IDs and set to Processing
-        await dbWrite.comicCharacter.update({
+        const updated = await dbWrite.comicCharacter.update({
           where: { id: character.id },
-          data: {
-            referenceImageWorkflowIds: workflowIds,
-            status: ComicCharacterStatus.Processing,
-          },
+          data: { referenceImageWorkflowIds: workflowIds },
         });
 
-        return { ...character, status: ComicCharacterStatus.Processing };
+        return { ...updated, status: ComicCharacterStatus.Processing };
       } catch (error: any) {
         console.error('Failed to generate character reference images:', error);
         await dbWrite.comicCharacter.update({
@@ -506,6 +594,43 @@ export const comicsRouter = router({
           errorMessage: error instanceof Error ? error.message : String(error),
         };
       }
+    }),
+
+  // Upload custom reference images for a character
+  uploadCharacterReferences: protectedProcedure
+    .input(z.object({
+      characterId: z.string(),
+      referenceImages: z.array(z.object({
+        url: z.string().min(1),
+        width: z.number(),
+        height: z.number(),
+      })).min(1).max(5),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const character = await dbRead.comicCharacter.findUnique({
+        where: { id: input.characterId },
+      });
+
+      if (!character || character.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      const updated = await dbWrite.comicCharacter.update({
+        where: { id: character.id },
+        data: {
+          generatedReferenceImages: input.referenceImages.map((img) => ({
+            url: img.url,
+            width: img.width,
+            height: img.height,
+            view: 'uploaded',
+          })),
+          referenceImageWorkflowIds: null,
+          status: ComicCharacterStatus.Ready,
+          errorMessage: null,
+        },
+      });
+
+      return updated;
     }),
 
   // Poll character reference image generation status
@@ -629,7 +754,7 @@ export const comicsRouter = router({
       const character = await dbWrite.comicCharacter.create({
         data: {
           projectId: input.projectId,
-          userId: ctx.user.id,
+          userId: ctx.user!.id,
           name: input.name,
           sourceType: ComicCharacterSourceType.Upload,
           referenceImages: input.referenceImages,
@@ -762,20 +887,33 @@ export const comicsRouter = router({
     .input(createPanelSchema)
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
-      // Verify chapter ownership and get project info
+      // Verify chapter ownership and get project info + all character names
       const chapter = await dbRead.comicChapter.findUnique({
         where: { id: input.chapterId },
-        include: { project: { select: { id: true, userId: true } } },
+        include: {
+          project: {
+            select: {
+              id: true,
+              userId: true,
+              characters: {
+                where: { status: ComicCharacterStatus.Ready },
+                select: { name: true },
+              },
+            },
+          },
+        },
       });
-      if (!chapter || chapter.project.userId !== ctx.user.id) {
+      if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+
+      const allCharacterNames = chapter.project.characters.map((c) => c.name);
 
       // Get the previous panel (last by position) for context and next position
       const lastPanel = await dbRead.comicPanel.findFirst({
         where: { chapterId: input.chapterId },
         orderBy: { position: 'desc' },
-        select: { position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
+        select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
       });
 
       const nextPosition = (lastPanel?.position ?? -1) + 1;
@@ -798,7 +936,7 @@ export const comicsRouter = router({
         if (character) {
           characterName = character.name;
 
-          // Use generated reference images (from LoRA generation)
+          // Use generated reference images (from LoRA generation or user upload)
           if (character.generatedReferenceImages) {
             const genRefs = character.generatedReferenceImages as {
               url: string;
@@ -807,16 +945,17 @@ export const comicsRouter = router({
               view: string;
             }[];
             characterRefImages = genRefs.map((r) => ({
-              url: r.url,
+              // Resolve CF image IDs to full URLs for the orchestrator
+              url: getEdgeUrl(r.url, { original: true }),
               width: r.width,
               height: r.height,
             }));
           }
-          // Fallback: use uploaded reference images
+          // Fallback: use uploaded reference images (legacy)
           else if (character.referenceImages) {
             const uploadedRefs = character.referenceImages as string[];
             characterRefImages = uploadedRefs.map((url) => ({
-              url,
+              url: getEdgeUrl(url, { original: true }),
               width: 512,
               height: 512,
             }));
@@ -834,11 +973,34 @@ export const comicsRouter = router({
         fullPrompt = await enhanceComicPrompt({
           userPrompt: input.prompt,
           characterName,
+          characterNames: allCharacterNames,
           previousPanel: lastPanel ?? undefined,
         });
       } else {
         fullPrompt = input.prompt;
       }
+
+      // Build metadata for debugging
+      const metadata = {
+        previousPanelId: lastPanel?.id ?? null,
+        previousPanelPrompt: lastPanel
+          ? (lastPanel.enhancedPrompt ?? lastPanel.prompt)
+          : null,
+        previousPanelImageUrl: lastPanel?.imageUrl ?? null,
+        referenceImages: characterRefImages,
+        enhanceEnabled: input.enhance,
+        characterName,
+        allCharacterNames,
+        generationParams: {
+          engine: 'gemini',
+          baseModel: 'NanoBanana',
+          checkpointVersionId: NANOBANANA_VERSION_ID,
+          width: PANEL_WIDTH,
+          height: PANEL_HEIGHT,
+          prompt: fullPrompt,
+          negativePrompt: '',
+        },
+      };
 
       // Create panel record as Pending (not yet submitted to orchestrator)
       const panel = await dbWrite.comicPanel.create({
@@ -849,6 +1011,7 @@ export const comicsRouter = router({
           enhancedPrompt: input.enhance ? fullPrompt : null,
           position: nextPosition,
           status: ComicPanelStatus.Pending,
+          metadata,
         },
       });
 
@@ -1077,6 +1240,7 @@ export const comicsRouter = router({
           imageUrl: panel.imageUrl,
           workflowId: panel.workflowId,
           errorMessage: panel.errorMessage,
+          metadata: panel.metadata,
           createdAt: panel.createdAt,
           updatedAt: panel.updatedAt,
         },

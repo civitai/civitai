@@ -24,11 +24,13 @@ import { useDisclosure } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowLeft,
+  IconBook,
   IconBug,
   IconDotsVertical,
   IconPhoto,
   IconPlus,
   IconRefresh,
+  IconRefreshDot,
   IconTrash,
   IconUser,
 } from '@tabler/icons-react';
@@ -206,8 +208,17 @@ function ProjectWorkspace() {
     ?? activeCharacters[0]
     ?? null;
 
+  const activeCharacterHasRefs = activeCharacter && (
+    ((activeCharacter.generatedReferenceImages as any[])?.length ?? 0) > 0 ||
+    ((activeCharacter.referenceImages as any[])?.length ?? 0) > 0
+  );
+
+  const hasReadyPanelsWithImages = project.chapters.some((ch) =>
+    ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
+  );
+
   const handleGeneratePanel = () => {
-    if (!prompt.trim() || !activeCharacter || !activeChapter) return;
+    if (!prompt.trim() || !activeCharacter || !activeChapter || !activeCharacterHasRefs) return;
     createPanelMutation.mutate({
       chapterId: activeChapter.id,
       characterId: activeCharacter.id,
@@ -223,11 +234,22 @@ function ProjectWorkspace() {
       <Container size="xl" py="xl">
         <Stack gap="xl">
           {/* Header */}
-          <Group>
-            <ActionIcon variant="subtle" component={Link} href="/comics">
-              <IconArrowLeft size={20} />
-            </ActionIcon>
-            <Title order={2}>{project.name}</Title>
+          <Group justify="space-between">
+            <Group>
+              <ActionIcon variant="subtle" component={Link} href="/comics">
+                <IconArrowLeft size={20} />
+              </ActionIcon>
+              <Title order={2}>{project.name}</Title>
+            </Group>
+            <Button
+              variant="light"
+              leftSection={<IconBook size={16} />}
+              component={Link}
+              href={`/comics/project/${projectId}/read`}
+              disabled={!hasReadyPanelsWithImages}
+            >
+              Read
+            </Button>
           </Group>
 
           <Grid>
@@ -267,12 +289,20 @@ function ProjectWorkspace() {
                     const coverImage = character.modelId
                       ? characterImageMap.get(character.modelId)
                       : undefined;
-                    return (
+                    const charRefs = character.generatedReferenceImages as any[] | null;
+                    const charHasRefs = (charRefs?.length ?? 0) > 0 ||
+                      ((character.referenceImages as any[] | null)?.length ?? 0) > 0;
+                    const isReadyNoRefs = character.status === 'Ready' && !charHasRefs;
+                    const isFailed = character.status === 'Failed';
+                    const needsAction = isFailed || isReadyNoRefs;
+
+                    const content = (
                       <div
-                        key={character.id}
-                        className="flex items-center gap-3 rounded-lg px-3 py-2"
+                        className={`flex items-center gap-3 rounded-lg px-3 py-2${needsAction ? ' cursor-pointer hover:brightness-125' : ''}`}
                         style={{
-                          border: '1px solid var(--mantine-color-dark-4)',
+                          border: isFailed
+                            ? '1px solid var(--mantine-color-red-8)'
+                            : '1px solid var(--mantine-color-dark-4)',
                           background: 'var(--mantine-color-dark-6)',
                         }}
                       >
@@ -285,7 +315,11 @@ function ProjectWorkspace() {
                             background: 'var(--mantine-color-dark-7)',
                           }}
                         >
-                          {coverImage ? (
+                          {isFailed ? (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <IconAlertTriangle size={18} style={{ color: 'var(--mantine-color-red-6)' }} />
+                            </div>
+                          ) : coverImage ? (
                             <EdgeMedia2
                               src={coverImage.url}
                               type={coverImage.type as any}
@@ -318,22 +352,42 @@ function ProjectWorkspace() {
                             size="xs"
                             variant="light"
                             color={
-                              character.status === 'Ready'
-                                ? 'green'
-                                : character.status === 'Processing'
-                                  ? 'yellow'
-                                  : character.status === 'Failed'
-                                    ? 'red'
-                                    : 'gray'
+                              isFailed
+                                ? 'red'
+                                : isReadyNoRefs
+                                  ? 'orange'
+                                  : character.status === 'Ready'
+                                    ? 'green'
+                                    : character.status === 'Processing'
+                                      ? 'yellow'
+                                      : 'gray'
                             }
                           >
-                            {character.status === 'Processing'
-                              ? 'Generating refs...'
-                              : character.status}
+                            {isFailed
+                              ? 'Failed — fix'
+                              : isReadyNoRefs
+                                ? 'No refs'
+                                : character.status === 'Processing'
+                                  ? 'Generating refs...'
+                                  : character.status}
                           </Badge>
                         </div>
                       </div>
                     );
+
+                    if (needsAction) {
+                      return (
+                        <Link
+                          key={character.id}
+                          href={`/comics/project/${projectId}/character`}
+                          style={{ textDecoration: 'none' }}
+                        >
+                          {content}
+                        </Link>
+                      );
+                    }
+
+                    return <div key={character.id}>{content}</div>;
                   })
                 )}
               </Stack>
@@ -380,7 +434,7 @@ function ProjectWorkspace() {
                     size="sm"
                     leftSection={<IconPlus size={14} />}
                     onClick={openPanelModal}
-                    disabled={!activeCharacter || !activeChapter}
+                    disabled={!activeCharacter || !activeChapter || !activeCharacterHasRefs}
                   >
                     Add Panel
                   </Button>
@@ -402,6 +456,24 @@ function ProjectWorkspace() {
                     <Text c="dimmed" size="sm">
                       Wait for your character to finish processing before generating panels.
                     </Text>
+                  </Card>
+                )}
+
+                {activeCharacter && !activeCharacterHasRefs && (
+                  <Card withBorder p="md">
+                    <Group justify="space-between">
+                      <Text c="dimmed" size="sm">
+                        {activeCharacter.name} needs reference images before generating panels.
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        component={Link}
+                        href={`/comics/project/${projectId}/character`}
+                      >
+                        Add References
+                      </Button>
+                    </Group>
                   </Card>
                 )}
 
@@ -427,6 +499,11 @@ function ProjectWorkspace() {
                         onViewDebug={() => {
                           setDebugPanelId(panel.id);
                           openDebugModal();
+                        }}
+                        onRegenerate={() => {
+                          setPrompt(panel.prompt);
+                          if (panel.characterId) setSelectedCharacterId(panel.characterId);
+                          openPanelModal();
                         }}
                       />
                     </Grid.Col>
@@ -503,9 +580,10 @@ interface PanelCardProps {
   errorMessage: string | null;
   onDelete: () => void;
   onViewDebug: () => void;
+  onRegenerate: () => void;
 }
 
-function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onViewDebug }: PanelCardProps) {
+function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onViewDebug, onRegenerate }: PanelCardProps) {
   return (
     <Card withBorder padding="xs" className="aspect-[3/4] relative group">
       {imageUrl ? (
@@ -549,11 +627,14 @@ function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onVie
           </Menu.Target>
 
           <Menu.Dropdown>
-            {(status === 'Failed' || status === 'Generating' || status === 'Pending') && (
-              <Menu.Item leftSection={<IconBug size={14} />} onClick={onViewDebug}>
-                {status === 'Failed' ? 'View Error Details' : 'View Workflow'}
+            {(status === 'Ready' || status === 'Failed') && (
+              <Menu.Item leftSection={<IconRefreshDot size={14} />} onClick={onRegenerate}>
+                Regenerate
               </Menu.Item>
             )}
+            <Menu.Item leftSection={<IconBug size={14} />} onClick={onViewDebug}>
+              View Debug Info
+            </Menu.Item>
             <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={onDelete}>
               Delete
             </Menu.Item>
@@ -573,7 +654,7 @@ function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onVie
   );
 }
 
-// Debug modal for viewing failed panel details
+// Debug modal for viewing panel generation details
 function PanelDebugModal({
   panelId,
   opened,
@@ -588,71 +669,184 @@ function PanelDebugModal({
     { enabled: opened && !!panelId }
   );
 
+  const meta = data?.panel.metadata as Record<string, any> | null | undefined;
+
   return (
-    <Modal opened={opened} onClose={onClose} title="Panel Workflow Info" size="lg">
-      {isLoading ? (
-        <Stack align="center" py="xl">
-          <Loader />
-        </Stack>
-      ) : data ? (
-        <Stack gap="md">
-          {/* Panel info */}
-          <div>
-            <Text fw={600} size="sm" mb={4}>Panel</Text>
-            <Code block>{JSON.stringify(data.panel, null, 2)}</Code>
-          </div>
+    <Modal opened={opened} onClose={onClose} title="Panel Debug Info" size="lg">
+      <ScrollArea.Autosize mah="70vh">
+        {isLoading ? (
+          <Stack align="center" py="xl">
+            <Loader />
+          </Stack>
+        ) : data ? (
+          <Stack gap="md">
+            {/* Error (prominent at top) */}
+            {data.panel.errorMessage && (
+              <div>
+                <Text fw={600} size="sm" mb={4} c="red">
+                  Error
+                </Text>
+                <Code block color="red">
+                  {data.panel.errorMessage}
+                </Code>
+              </div>
+            )}
 
-          {/* Enhanced prompt */}
-          {data.panel.enhancedPrompt && (
+            {/* Original vs Enhanced prompt */}
             <div>
-              <Text fw={600} size="sm" mb={4}>Enhanced Prompt</Text>
-              <Code block>{data.panel.enhancedPrompt}</Code>
+              <Group gap="xs" mb={4}>
+                <Text fw={600} size="sm">
+                  Prompts
+                </Text>
+                <Badge size="xs" variant="light" color={meta?.enhanceEnabled ? 'teal' : 'gray'}>
+                  Enhance {meta?.enhanceEnabled ? 'ON' : 'OFF'}
+                </Badge>
+              </Group>
+              <Stack gap="xs">
+                <div>
+                  <Text size="xs" c="dimmed" mb={2}>
+                    Original
+                  </Text>
+                  <Code block>{data.panel.prompt}</Code>
+                </div>
+                {data.panel.enhancedPrompt && (
+                  <div>
+                    <Text size="xs" c="dimmed" mb={2}>
+                      Enhanced
+                    </Text>
+                    <Code block>{data.panel.enhancedPrompt}</Code>
+                  </div>
+                )}
+              </Stack>
             </div>
-          )}
 
-          {/* Error message */}
-          {data.panel.errorMessage && (
+            {/* Previous panel context */}
+            {meta?.previousPanelId && (
+              <div>
+                <Text fw={600} size="sm" mb={4}>
+                  Previous Panel Context
+                </Text>
+                <Stack gap="xs">
+                  <Group gap="xs">
+                    <Text size="xs" c="dimmed">ID:</Text>
+                    <Code>{meta.previousPanelId}</Code>
+                  </Group>
+                  {meta.previousPanelPrompt && (
+                    <div>
+                      <Text size="xs" c="dimmed" mb={2}>Prompt used</Text>
+                      <Code block>{meta.previousPanelPrompt}</Code>
+                    </div>
+                  )}
+                  <Group gap="xs">
+                    <Text size="xs" c="dimmed">Had image:</Text>
+                    <Badge size="xs" variant="light" color={meta.previousPanelImageUrl ? 'green' : 'gray'}>
+                      {meta.previousPanelImageUrl ? 'Yes' : 'No'}
+                    </Badge>
+                  </Group>
+                </Stack>
+              </div>
+            )}
+
+            {/* Reference images sent to orchestrator */}
+            {meta?.referenceImages && meta.referenceImages.length > 0 && (
+              <div>
+                <Text fw={600} size="sm" mb={4}>
+                  Reference Images ({meta.referenceImages.length})
+                </Text>
+                <Stack gap="xs">
+                  {(meta.referenceImages as { url: string; width: number; height: number }[]).map(
+                    (img, i) => (
+                      <Group key={i} gap="xs">
+                        <Badge size="xs" variant="light">
+                          {img.width}x{img.height}
+                        </Badge>
+                        <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }} lineClamp={1}>
+                          {img.url}
+                        </Text>
+                      </Group>
+                    )
+                  )}
+                </Stack>
+              </div>
+            )}
+
+            {/* Character info */}
             <div>
-              <Text fw={600} size="sm" mb={4} c="red">Error</Text>
-              <Code block color="red">{data.panel.errorMessage}</Code>
+              <Text fw={600} size="sm" mb={4}>
+                Character
+              </Text>
+              {meta?.characterName ? (
+                <Stack gap="xs">
+                  <Group gap="xs">
+                    <Text size="xs" c="dimmed">Active:</Text>
+                    <Text size="xs">{meta.characterName}</Text>
+                  </Group>
+                  {meta.allCharacterNames && (
+                    <Group gap="xs">
+                      <Text size="xs" c="dimmed">All:</Text>
+                      <Text size="xs">{(meta.allCharacterNames as string[]).join(', ')}</Text>
+                    </Group>
+                  )}
+                  {data.character && (
+                    <Group gap="xs">
+                      <Text size="xs" c="dimmed">Source:</Text>
+                      <Badge size="xs" variant="light">{data.character.sourceType}</Badge>
+                    </Group>
+                  )}
+                </Stack>
+              ) : data.character ? (
+                <Code block>{JSON.stringify(data.character, null, 2)}</Code>
+              ) : (
+                <Text size="xs" c="dimmed">No character info</Text>
+              )}
             </div>
-          )}
 
-          {/* Character & Reference images */}
-          {data.character && (
+            {/* Generation parameters */}
             <div>
-              <Text fw={600} size="sm" mb={4}>Character</Text>
-              <Code block>{JSON.stringify(data.character, null, 2)}</Code>
+              <Text fw={600} size="sm" mb={4}>
+                Generation Parameters
+              </Text>
+              {meta?.generationParams ? (
+                <Code block>{JSON.stringify(meta.generationParams, null, 2)}</Code>
+              ) : (
+                <Code block>{JSON.stringify(data.generation, null, 2)}</Code>
+              )}
             </div>
-          )}
 
-          {/* Generation config */}
-          {data.generation && (
+            {/* Panel record */}
             <div>
-              <Text fw={600} size="sm" mb={4}>Generation Config</Text>
-              <Code block>{JSON.stringify(data.generation, null, 2)}</Code>
+              <Text fw={600} size="sm" mb={4}>
+                Panel Record
+              </Text>
+              <Code block>
+                {JSON.stringify(
+                  {
+                    id: data.panel.id,
+                    status: data.panel.status,
+                    workflowId: data.panel.workflowId,
+                    createdAt: data.panel.createdAt,
+                    updatedAt: data.panel.updatedAt,
+                  },
+                  null,
+                  2
+                )}
+              </Code>
             </div>
-          )}
 
-          {/* Workflow info from orchestrator */}
-          {data.workflow && (
-            <div>
-              <Text fw={600} size="sm" mb={4}>Orchestrator Workflow</Text>
-              <ScrollArea.Autosize mah={300}>
+            {/* Orchestrator workflow */}
+            {data.workflow && (
+              <div>
+                <Text fw={600} size="sm" mb={4}>
+                  Orchestrator Workflow
+                </Text>
                 <Code block>{JSON.stringify(data.workflow, null, 2)}</Code>
-              </ScrollArea.Autosize>
-            </div>
-          )}
-
-          {/* Project base model */}
-          <div>
-            <Text fw={600} size="sm" mb={4}>Project</Text>
-            <Code block>{JSON.stringify(data.project, null, 2)}</Code>
-          </div>
-        </Stack>
-      ) : (
-        <Text c="dimmed">No debug info available</Text>
-      )}
+              </div>
+            )}
+          </Stack>
+        ) : (
+          <Text c="dimmed">No debug info available</Text>
+        )}
+      </ScrollArea.Autosize>
     </Modal>
   );
 }

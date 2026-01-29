@@ -4881,6 +4881,7 @@ model ComicPanel {
   workflowId   String?
   civitaiJobId String?          @db.VarChar(100)
   errorMessage String?          @db.Text
+  metadata     Json?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
