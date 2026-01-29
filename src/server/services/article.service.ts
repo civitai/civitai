@@ -651,7 +651,7 @@ export const getArticleById = async ({
       userId === article.userId ||
       (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
 
-    let contentJson: Record<string, any> | undefined;
+    let contentJson: MixedObject | undefined;
     if (article.content) {
       contentJson = article.content.startsWith('{')
         ? JSON.parse(article.content)

@@ -682,7 +682,10 @@ export default function ModelDetailsV2({
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
                     </Title>
-                    <StatHoverCard label="Unique Reviews" value={model.rank?.thumbsUpCountAllTime ?? 0}>
+                    <StatHoverCard
+                      label="Unique Reviews"
+                      value={model.rank?.thumbsUpCountAllTime ?? 0}
+                    >
                       <div>
                         <LoginRedirect reason="favorite-model">
                           <IconBadge
@@ -706,7 +709,10 @@ export default function ModelDetailsV2({
                         </LoginRedirect>
                       </div>
                     </StatHoverCard>
-                    <StatHoverCard label="Unique Downloads" value={model.rank?.downloadCountAllTime ?? 0}>
+                    <StatHoverCard
+                      label="Unique Downloads"
+                      value={model.rank?.downloadCountAllTime ?? 0}
+                    >
                       <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                         <Text className={classes.modelBadgeText}>
                           {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
@@ -731,7 +737,10 @@ export default function ModelDetailsV2({
                       </GenerateButton>
                     )}
                     {features.collections && (
-                      <StatHoverCard label="Collections" value={model.rank?.collectedCountAllTime ?? 0}>
+                      <StatHoverCard
+                        label="Collections"
+                        value={model.rank?.collectedCountAllTime ?? 0}
+                      >
                         <div>
                           <LoginRedirect reason="add-to-collection">
                             <IconBadge
