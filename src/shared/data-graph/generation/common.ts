@@ -397,14 +397,20 @@ export function quantityNode(config?: QuantityNodeConfig) {
 // Resource Schemas & Node Builders
 // =============================================================================
 
+/**
+ * Minimal resource schema for graph validation.
+ *
+ * Only validates fields that the client needs to send:
+ * - id: Required to identify the resource
+ * - strength: Optional LoRA/LoCon/DoRA strength
+ * - epochDetails: Optional epoch training info
+ *
+ * Server-side enrichment (via getResourceData) adds baseModel, model, air, etc.
+ * Handlers receive AIR strings via GenerationHandlerCtx instead of computing them.
+ */
 const resourceSchema = z.object({
   id: z.number(),
   strength: z.number().optional(),
-  baseModel: z.string(),
-  model: z.object({
-    id: z.number(),
-    type: z.string(),
-  }),
   epochDetails: z
     .object({
       epochNumber: z.number().optional(),
@@ -412,7 +418,7 @@ const resourceSchema = z.object({
     .optional(),
 });
 
-/** Resource data type inferred from resourceSchema */
+/** Resource data type inferred from resourceSchema (minimal client-side data) */
 export type ResourceData = z.infer<typeof resourceSchema>;
 
 const resourceInputSchema = z.union([
@@ -660,13 +666,7 @@ export function createCheckpointGraph(options?: {
         return {
           input: checkpointInputSchema,
           output: resourceSchema.optional(),
-          defaultValue: modelVersionId
-            ? ({
-                id: modelVersionId,
-                baseModel: ctx.baseModel,
-                model: { type: 'Checkpoint' },
-              } as any)
-            : undefined,
+          defaultValue: modelVersionId ? { id: modelVersionId } : undefined,
           meta: {
             options: {
               canGenerate: true,

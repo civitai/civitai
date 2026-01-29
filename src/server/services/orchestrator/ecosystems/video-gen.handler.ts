@@ -114,12 +114,11 @@ export async function createVideoGenInput(data: VideoEcosystemData): Promise<Ste
   // Determine process type from workflow
   const process = data.workflow.startsWith('img2vid') ? 'img2vid' : 'txt2vid';
 
-  // Build resources array
-  const resources = [
-    ...(data.model
-      ? [{ id: data.model.id, air: resourceToAir(data.model), strength: data.model.strength ?? 1 }]
-      : []),
-    ...(data.resources?.map((r) => ({ id: r.id, air: resourceToAir(r), strength: r.strength ?? 1 })) ?? []),
+  // Note: This function is unused - individual handlers (wan, vidu, etc.) are used instead.
+  // Resources are handled via GenerationHandlerCtx in the active handlers.
+  const resources: { id: number; strength: number }[] = [
+    ...(data.model ? [{ id: data.model.id, strength: data.model.strength ?? 1 }] : []),
+    ...(data.resources?.map((r) => ({ id: r.id, strength: r.strength ?? 1 })) ?? []),
   ];
 
   // Build params for the config
@@ -167,26 +166,4 @@ export async function createVideoGenInput(data: VideoEcosystemData): Promise<Ste
  */
 export function isVideoEcosystem(baseModel: string): baseModel is VideoEcosystem {
   return baseModel in ECOSYSTEM_TO_ENGINE;
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/**
- * Converts a ResourceData object to an AIR string for video resources.
- */
-function resourceToAir(resource: ResourceData): string {
-  const ecosystem = getEcosystemFromBaseModel(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-}
-
-/**
- * Maps baseModel strings to ecosystem names for AIR generation.
- */
-function getEcosystemFromBaseModel(baseModel: string): string {
-  // Video base models typically map directly
-  if (baseModel.startsWith('Wan')) return 'wan';
-  return baseModel.toLowerCase();
 }

@@ -8,6 +8,7 @@
 import type { ViduVideoGenInput } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -17,7 +18,7 @@ type ViduCtx = EcosystemGraphOutput & { baseModel: 'Vidu' };
  * Creates videoGen input for Vidu ecosystem.
  * Supports txt2vid, img2vid, img2vid:first-last-frame, and img2vid:ref2vid workflows.
  */
-export async function createViduInput(data: ViduCtx): Promise<ViduVideoGenInput> {
+export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, ctx) => {
   const hasImages = !!data.images?.length;
 
   return removeEmpty({
@@ -30,4 +31,4 @@ export async function createViduInput(data: ViduCtx): Promise<ViduVideoGenInput>
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as ViduVideoGenInput;
-}
+});

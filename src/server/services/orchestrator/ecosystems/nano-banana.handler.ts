@@ -15,6 +15,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { nanoBananaVersionIds, type NanoBananaMode } from '~/shared/data-graph/generation/nano-banana-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -35,7 +36,7 @@ const versionIdToMode = new Map<number, NanoBananaMode>(
  * Creates imageGen input for NanoBanana ecosystem.
  * Handles both standard (2.5-flash) and pro (nano-banana-pro) models.
  */
-export async function createNanoBananaInput(data: NanoBananaCtx): Promise<NanoBananaInput> {
+export const createNanoBananaInput = defineHandler<NanoBananaCtx, NanoBananaInput>((data, ctx) => {
   // Determine which model variant to use
   let model: NanoBananaMode = 'standard';
   if (data.model) {
@@ -88,4 +89,4 @@ export async function createNanoBananaInput(data: NanoBananaCtx): Promise<NanoBa
       seed: data.seed,
     }) as NanoBananaProImageGenInput;
   }
-}
+});

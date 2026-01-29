@@ -72,11 +72,10 @@ const FLUX_ULTRA_ASPECT_RATIOS: Record<string, { width: number; height: number }
 function modelFromFluxModeAir(air: string): ResourceData | undefined {
   const parsed = parseAIRSafe(air);
   if (!parsed) return undefined;
+  // Legacy mapper - include extra fields for downstream processing
   return {
     id: parsed.version,
-    baseModel: 'Flux 1 D',
-    model: { id: parsed.model, type: 'Checkpoint' },
-  };
+  } as ResourceData;
 }
 
 /**
@@ -277,14 +276,10 @@ function toResourceData(
   legacyStrength?: number | null
 ): ResourceData {
   const epochNumber = enriched.epochDetails?.epochNumber ?? enriched.epochNumber;
+  // Return minimal ResourceData - extra fields from enriched are used via enrichedResources
   return {
     id: enriched.id,
     strength: legacyStrength ?? enriched.strength ?? undefined,
-    baseModel: enriched.baseModel,
-    model: {
-      id: enriched.model.id,
-      type: enriched.model.type,
-    },
     epochDetails: epochNumber != null ? { epochNumber } : undefined,
   };
 }

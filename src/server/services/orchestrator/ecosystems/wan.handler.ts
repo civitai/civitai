@@ -14,10 +14,10 @@ import type {
   Wan25FalTextToVideoInput,
   Wan25FalImageToVideoInput,
 } from '@civitai/client';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -51,20 +51,10 @@ type WanInput =
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5';
 
 /**
- * Converts a ResourceData object to a lora resource for Wan.
- */
-function resourceToLora(resource: ResourceData) {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  const air = `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-  return { air, strength: resource.strength ?? 1 };
-}
-
-/**
  * Creates videoGen input for Wan ecosystem.
  * Handles multiple versions with version-specific parameters.
  */
-export async function createWanInput(data: WanCtx): Promise<WanInput> {
+export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
   const hasImages = !!data.images?.length;
   const version: WanVersion = 'version' in data ? (data.version as WanVersion) : 'v2.1';
 
@@ -72,7 +62,10 @@ export async function createWanInput(data: WanCtx): Promise<WanInput> {
   const loras: { air: string; strength: number }[] = [];
   if ('resources' in data && Array.isArray(data.resources)) {
     for (const resource of data.resources as ResourceData[]) {
-      loras.push(resourceToLora(resource));
+      loras.push({
+        air: ctx.airs.getOrThrow(resource.id),
+        strength: resource.strength ?? 1,
+      });
     }
   }
 
@@ -167,7 +160,7 @@ export async function createWanInput(data: WanCtx): Promise<WanInput> {
     default:
       return removeEmpty(baseInput) as WanInput;
   }
-}
+});
 
 /**
  * Checks if a baseModel is a Wan variant.

@@ -5,32 +5,21 @@
  * Fast generation, no negative prompt support.
  */
 
-import type { ImageJobNetworkParams, Scheduler, WorkflowStepTemplate } from '@civitai/client';
+import type { ImageJobNetworkParams, Scheduler, TextToImageStepTemplate } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type StepInput = WorkflowStepTemplate & { input: unknown };
 type ZImageTurboCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' };
-
-/**
- * Converts a ResourceData object to an AIR string.
- */
-function resourceToAir(resource: ResourceData): string {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-}
 
 /**
  * Creates step input for ZImageTurbo ecosystem.
  * Fast generation with no negative prompt support.
  */
-export async function createZImageTurboInput(data: ZImageTurboCtx): Promise<StepInput> {
+export const createZImageTurboInput = defineHandler<ZImageTurboCtx, TextToImageStepTemplate>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImageTurbo workflows');
 
   const quantity = data.quantity ?? 1;
@@ -39,16 +28,13 @@ export async function createZImageTurboInput(data: ZImageTurboCtx): Promise<Step
   // Build additionalNetworks from resources
   const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
   for (const resource of data.resources ?? []) {
-    additionalNetworks[resourceToAir(resource)] = {
-      strength: resource.strength,
-      type: resource.model.type,
-    };
+    additionalNetworks[ctx.airs.getOrThrow(resource.id)] = { strength: resource.strength };
   }
 
   return {
     $type: 'textToImage',
     input: {
-      model: data.model ? resourceToAir(data.model) : undefined,
+      model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
       additionalNetworks,
       scheduler: 'euler' as Scheduler,
       prompt: data.prompt,
@@ -62,5 +48,5 @@ export async function createZImageTurboInput(data: ZImageTurboCtx): Promise<Step
       batchSize: 1,
       outputFormat: data.outputFormat,
     },
-  } as StepInput;
-}
+  } as TextToImageStepTemplate;
+});

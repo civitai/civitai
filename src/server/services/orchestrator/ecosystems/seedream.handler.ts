@@ -9,6 +9,7 @@ import type { SeedreamImageGenInput, SeedreamVersion } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { seedreamVersionIds } from '~/shared/data-graph/generation/seedream-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -23,7 +24,7 @@ const versionIdToVersion = new Map<number, SeedreamVersion>(
  * Creates imageGen input for Seedream ecosystem.
  * Handles both txt2img and img2img operations.
  */
-export async function createSeedreamInput(data: SeedreamCtx): Promise<SeedreamImageGenInput> {
+export const createSeedreamInput = defineHandler<SeedreamCtx, SeedreamImageGenInput>((data, ctx) => {
   const quantity = data.quantity ?? 1;
 
   // Determine version from model
@@ -45,4 +46,4 @@ export async function createSeedreamInput(data: SeedreamCtx): Promise<SeedreamIm
     seed: data.seed,
     quantity,
   }) as SeedreamImageGenInput;
-}
+});

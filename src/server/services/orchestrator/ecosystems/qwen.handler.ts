@@ -6,10 +6,10 @@
  */
 
 import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -32,19 +32,10 @@ const qwenModelVersionMap = new Map<
 ]);
 
 /**
- * Converts a ResourceData object to an AIR string.
- */
-function resourceToAir(resource: ResourceData): string {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-}
-
-/**
  * Creates imageGen input for Qwen ecosystem.
  * Handles both txt2img and img2img operations based on model version.
  */
-export async function createQwenInput(data: QwenCtx): Promise<QwenInput> {
+export const createQwenInput = defineHandler<QwenCtx, QwenInput>((data, ctx) => {
   const quantity = data.quantity ?? 1;
 
   // Determine process type and version from model
@@ -62,8 +53,7 @@ export async function createQwenInput(data: QwenCtx): Promise<QwenInput> {
   const loras: Record<string, number> = {};
   if ('resources' in data && Array.isArray(data.resources)) {
     for (const resource of data.resources as ResourceData[]) {
-      const air = resourceToAir(resource);
-      loras[air] = resource.strength ?? 1;
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
     }
   }
 
@@ -95,4 +85,4 @@ export async function createQwenInput(data: QwenCtx): Promise<QwenInput> {
       images: data.images?.map((x) => x.url) ?? [],
     }) as Qwen20bEditImageGenInput;
   }
-}
+});

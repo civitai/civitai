@@ -5,34 +5,23 @@
  * Uses HiDream-specific input transformation for variant handling.
  */
 
-import type { ImageJobNetworkParams, Scheduler, WorkflowStepTemplate } from '@civitai/client';
+import type { ImageJobNetworkParams, Scheduler, TextToImageStepTemplate } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type StepInput = WorkflowStepTemplate & { input: unknown };
 type HiDreamCtx = EcosystemGraphOutput & { baseModel: 'HiDream' };
-
-/**
- * Converts a ResourceData object to an AIR string.
- */
-function resourceToAir(resource: ResourceData): string {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-}
 
 /**
  * Creates step input for HiDream ecosystem.
  * Uses HiDream-specific input transformation for variant handling.
  */
-export async function createHiDreamInput(data: HiDreamCtx): Promise<StepInput> {
+export const createHiDreamInput = defineHandler<HiDreamCtx, TextToImageStepTemplate>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for HiDream workflows');
   if (!data.model) throw new Error('Model is required for HiDream workflows');
 
@@ -78,7 +67,7 @@ export async function createHiDreamInput(data: HiDreamCtx): Promise<StepInput> {
   return {
     $type: 'textToImage',
     input: {
-      model: data.model ? resourceToAir(data.model as unknown as ResourceData) : undefined,
+      model: ctx.airs.getOrThrow(data.model.id),
       additionalNetworks,
       scheduler,
       prompt: params.prompt ?? data.prompt,
@@ -93,5 +82,5 @@ export async function createHiDreamInput(data: HiDreamCtx): Promise<StepInput> {
       batchSize: 1,
       outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
     },
-  } as StepInput;
-}
+  } as TextToImageStepTemplate;
+});

@@ -12,9 +12,9 @@ import type {
   OpenAiGpt15EditImageInput,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { openaiVersionIds } from '~/shared/data-graph/generation/openai-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -27,13 +27,6 @@ type OpenAIInput =
   | OpenAiGpt15CreateImageInput
   | OpenAiGpt15EditImageInput;
 
-// OpenAI supported sizes (for aspect ratio matching)
-const openAISizes = [
-  { width: 1024, height: 1024 },
-  { width: 1536, height: 1024 },
-  { width: 1024, height: 1536 },
-];
-
 // Map from version ID to API model name
 type OpenAIModel = 'gpt-image-1' | 'gpt-image-1.5';
 const versionIdToModel = new Map<number, OpenAIModel>([
@@ -45,7 +38,7 @@ const versionIdToModel = new Map<number, OpenAIModel>([
  * Creates imageGen input for OpenAI ecosystem.
  * Handles both createImage and editImage operations.
  */
-export async function createOpenAIInput(data: OpenAICtx): Promise<OpenAIInput> {
+export const createOpenAIInput = defineHandler<OpenAICtx, OpenAIInput>((data, ctx) => {
   const quantity = Math.min(data.quantity ?? 1, 10);
 
   // Determine model from resources
@@ -85,4 +78,4 @@ export async function createOpenAIInput(data: OpenAICtx): Promise<OpenAIInput> {
       images: data.images?.map((x) => x.url) ?? [],
     }) as OpenAIInput;
   }
-}
+});

@@ -9,6 +9,7 @@ import type { KlingVideoGenInput } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -26,7 +27,7 @@ const versionIdToModel = new Map<number, KlingModel>([
  * Creates videoGen input for Kling ecosystem.
  * Supports txt2vid and img2vid with model versions, modes, and duration options.
  */
-export async function createKlingInput(data: KlingCtx): Promise<KlingVideoGenInput> {
+export const createKlingInput = defineHandler<KlingCtx, KlingVideoGenInput>((data, ctx) => {
   const hasImages = !!data.images?.length;
 
   // Determine model version
@@ -49,4 +50,4 @@ export async function createKlingInput(data: KlingCtx): Promise<KlingVideoGenInp
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as KlingVideoGenInput;
-}
+});

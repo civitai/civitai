@@ -8,6 +8,7 @@
 import type { Sora2TextToVideoInput, Sora2ImageToVideoInput } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -20,7 +21,7 @@ type SoraInput = Sora2TextToVideoInput | Sora2ImageToVideoInput;
  * Creates videoGen input for Sora ecosystem.
  * Supports txt2vid and img2vid with resolution, pro mode, and duration options.
  */
-export async function createSoraInput(data: SoraCtx): Promise<SoraInput> {
+export const createSoraInput = defineHandler<SoraCtx, SoraInput>((data, ctx) => {
   const hasImages = !!data.images?.length;
 
   const baseInput = {
@@ -41,4 +42,4 @@ export async function createSoraInput(data: SoraCtx): Promise<SoraInput> {
   } else {
     return removeEmpty(baseInput) as Sora2TextToVideoInput;
   }
-}
+});

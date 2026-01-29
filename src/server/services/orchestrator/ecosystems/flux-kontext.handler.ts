@@ -12,6 +12,7 @@ import {
   fluxKontextVersionIds,
   type FluxKontextMode,
 } from '~/shared/data-graph/generation/flux-kontext-graph';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
@@ -29,24 +30,26 @@ const versionIdToMode = new Map<number, FluxKontextMode>(
  * Creates imageGen input for Flux Kontext ecosystem.
  * This is an img2img model that transforms source images based on prompts.
  */
-export async function createFluxKontextInput(data: FluxKontextCtx): Promise<FluxKontextInput> {
-  const quantity = data.quantity ?? 1;
+export const createFluxKontextInput = defineHandler<FluxKontextCtx, FluxKontextInput>(
+  (data, ctx) => {
+    const quantity = data.quantity ?? 1;
 
-  // Determine model from model version
-  let model: FluxKontextMode = 'pro';
-  if (data.model) {
-    const match = versionIdToMode.get(data.model.id);
-    if (match) model = match;
+    // Determine model from model version
+    let model: FluxKontextMode = 'pro';
+    if (data.model) {
+      const match = versionIdToMode.get(data.model.id);
+      if (match) model = match;
+    }
+
+    return removeEmpty({
+      engine: 'flux1-kontext',
+      model,
+      prompt: data.prompt,
+      images: data.images?.map((x) => x.url),
+      aspectRatio: data.aspectRatio?.value,
+      quantity,
+      guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
+      seed: data.seed,
+    }) as FluxKontextInput;
   }
-
-  return removeEmpty({
-    engine: 'flux1-kontext',
-    model,
-    prompt: data.prompt,
-    images: data.images?.map((x) => x.url),
-    aspectRatio: data.aspectRatio?.value,
-    quantity,
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    seed: data.seed,
-  }) as FluxKontextInput;
-}
+);

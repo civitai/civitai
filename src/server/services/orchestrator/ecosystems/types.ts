@@ -5,7 +5,6 @@
  * Types are derived from the generation graph where possible.
  */
 
-import type { WorkflowStepTemplate } from '@civitai/client';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 
 // Re-export ResourceData from the generation graph
@@ -27,14 +26,6 @@ export type SourceImageData = {
   url: string;
   width: number;
   height: number;
-};
-
-/**
- * Step input result from ecosystem handlers.
- * Contains the $type and input for the orchestrator step.
- */
-export type StepInput = WorkflowStepTemplate & {
-  input: unknown;
 };
 
 /**

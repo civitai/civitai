@@ -29,11 +29,6 @@ import {
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
-import {
-  applyResources,
-  populateWorkflowDefinition,
-} from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
   getResourceData,
   type GenerationResource,
@@ -49,14 +44,14 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
-import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
+import { createComfyInput } from './ecosystems/comfy-input';
 
 // =============================================================================
 // Types
@@ -108,6 +103,39 @@ type StepInput = WorkflowStepTemplate & {
 /** Ecosystem workflows - GenerationGraphOutput where baseModel is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { baseModel: string }>;
 
+/**
+ * A Map that throws an error when getting a value that doesn't exist.
+ * Used for AIR lookups where a missing value indicates a data problem.
+ */
+class StrictAirMap extends Map<number, string> {
+  /**
+   * Gets the AIR string for a resource ID.
+   * @throws Error if the resource ID is not found in the map.
+   */
+  getOrThrow(resourceId: number): string {
+    const air = this.get(resourceId);
+    if (!air) {
+      throw new Error(
+        `AIR not found for resource ID ${resourceId}. ` +
+          `This indicates a mismatch between form data and enriched resources.`
+      );
+    }
+    return air;
+  }
+}
+
+/**
+ * Context passed to generation handlers.
+ * Provides pre-computed AIR strings from server-side resource enrichment.
+ */
+export type GenerationHandlerCtx = {
+  /**
+   * Map of resource version ID to pre-computed AIR string.
+   * Use `airs.getOrThrow(id)` to get the AIR and throw if not found.
+   */
+  airs: StrictAirMap;
+};
+
 // =============================================================================
 // External Context Builder
 // =============================================================================
@@ -156,34 +184,39 @@ export async function buildGenerationContext(
 // Helpers
 // =============================================================================
 
-/**
- * Converts a ResourceData object to an AIR string.
- * AIR format: urn:air:{ecosystem}:{type}:{source}:{modelId}@{versionId}
- */
-function resourceToAir(resource: ResourceData): string {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-}
+/** Resource reference with optional epoch for getResourceData */
+type ResourceRef = { id: number; epoch?: number };
 
 /**
- * Collects all resource version IDs from generation graph output.
- * Returns IDs from model, resources, and vae fields where present.
+ * Collects all resource references from generation graph output.
+ * Returns IDs with epoch info from model, resources, and vae fields where present.
  */
-function collectResourceIds(data: GenerationGraphOutput): number[] {
-  const ids: number[] = [];
+function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
+  const refs: ResourceRef[] = [];
 
   if ('model' in data && data.model?.id) {
-    ids.push(data.model.id);
+    refs.push({
+      id: data.model.id,
+      epoch:
+        'epochDetails' in data.model ? data.model.epochDetails?.epochNumber : undefined,
+    });
   }
   if ('resources' in data && data.resources) {
-    ids.push(...data.resources.map((r) => r.id));
+    refs.push(
+      ...data.resources.map((r) => ({
+        id: r.id,
+        epoch: 'epochDetails' in r ? r.epochDetails?.epochNumber : undefined,
+      }))
+    );
   }
   if ('vae' in data && data.vae?.id) {
-    ids.push(data.vae.id);
+    refs.push({
+      id: data.vae.id,
+      epoch: 'epochDetails' in data.vae ? data.vae.epochDetails?.epochNumber : undefined,
+    });
   }
 
-  return ids;
+  return refs;
 }
 
 /** Enriched resource with air string */
@@ -207,10 +240,10 @@ type ResourceValidationResult = {
  * - Private generation detection
  */
 async function validateAndEnrichResources(
-  resourceIds: number[],
+  resourceRefs: ResourceRef[],
   user?: { id?: number; isModerator?: boolean }
 ): Promise<ResourceValidationResult> {
-  if (resourceIds.length === 0) {
+  if (resourceRefs.length === 0) {
     return {
       enrichedResources: [],
       isPrivateGeneration: false,
@@ -218,7 +251,7 @@ async function validateAndEnrichResources(
     };
   }
 
-  const resources = await getResourceData(resourceIds, user);
+  const resources = await getResourceData(resourceRefs, user);
 
   // Check for private/epoch resources requiring subscription
   const hasPrivateOrEpoch = resources.some(
@@ -284,71 +317,6 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
   }
 
   return result.data;
-}
-
-// =============================================================================
-// Step Input Creators
-// =============================================================================
-
-/** Data required for comfy workflow step creation */
-type ComfyInputData = {
-  /** Comfy workflow key (e.g., 'img2img-upscale') */
-  key: string;
-  /** Number of images to generate */
-  quantity?: number;
-  /** Resources to apply (model, LoRAs, VAE) */
-  resources?: ResourceData[];
-  /** Workflow-specific parameters (prompt, seed, dimensions, etc.) */
-  params: Record<string, unknown>;
-};
-
-/**
- * Creates comfy step input.
- *
- * Handles:
- * - sampler → comfy sampler/scheduler conversion
- * - Resource application (checkpoint, LoRA, etc.)
- */
-async function createComfyInput(data: ComfyInputData): Promise<StepInput> {
-  const { key, quantity = 1, resources = [], params } = data;
-
-  // Convert sampler to comfy sampler/scheduler if present
-  let workflowData: Record<string, unknown> = { ...params };
-  if ('sampler' in params && params.sampler) {
-    const comfySampler =
-      samplersToComfySamplers[
-        (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
-      ];
-    workflowData = {
-      ...workflowData,
-      sampler: comfySampler.sampler,
-      scheduler: comfySampler.scheduler,
-    };
-  }
-
-  const comfyWorkflow = await populateWorkflowDefinition(key, workflowData);
-
-  // Apply resources (checkpoint, LoRAs, VAE, etc.) to the workflow
-  if (resources.length > 0) {
-    const resourcesToApply = resources.map((resource) => ({
-      air: resourceToAir(resource),
-      strength: resource.strength,
-    }));
-    workflowData = { ...workflowData, resources: resourcesToApply };
-    applyResources(comfyWorkflow, resourcesToApply);
-  }
-
-  const imageMetadata = JSON.stringify(removeEmpty(workflowData));
-
-  return {
-    $type: 'comfy',
-    input: {
-      quantity,
-      comfyWorkflow,
-      imageMetadata,
-      useSpineComfy: null,
-    },
-  };
 }
 
 // =============================================================================
@@ -448,8 +416,14 @@ async function createImageRemoveBackgroundInput(
 /**
  * Routes to the appropriate step input creator based on the workflow discriminator.
  * Returns only $type and input - wrapping with priority/timeout/metadata happens here.
+ *
+ * @param data - Validated generation graph output
+ * @param handlerCtx - Context with pre-computed AIR strings for resource lookup
  */
-async function createStepInput(data: GenerationGraphOutput): Promise<StepInput> {
+async function createStepInput(
+  data: GenerationGraphOutput,
+  handlerCtx: GenerationHandlerCtx
+): Promise<StepInput> {
   // Standalone workflows (no ecosystem support)
   switch (data.workflow) {
     case 'vid2vid:interpolate':
@@ -470,7 +444,7 @@ async function createStepInput(data: GenerationGraphOutput): Promise<StepInput> 
     throw new Error('baseModel is required for ecosystem workflows');
   }
 
-  return createEcosystemStepInput(data as EcosystemGraphOutput);
+  return createEcosystemStepInput(data as EcosystemGraphOutput, handlerCtx);
 }
 
 /**
@@ -502,7 +476,11 @@ export async function createWorkflowStepFromGraph(
     );
   }
 
-  const { $type, input } = await createStepInput(data);
+  // Build AIR map from enriched resources for handlers
+  const airs = new StrictAirMap(enrichedResources.map((r) => [r.id, r.air]));
+  const handlerCtx: GenerationHandlerCtx = { airs };
+
+  const { $type, input } = await createStepInput(data, handlerCtx);
 
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
   const timeSpan = new TimeSpan(0, 20, 0);

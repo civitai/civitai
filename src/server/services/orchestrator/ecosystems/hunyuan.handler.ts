@@ -7,35 +7,28 @@
  */
 
 import type { HunyuanVdeoGenInput } from '@civitai/client';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
 type HunyuanCtx = EcosystemGraphOutput & { baseModel: 'HyV1' };
 
 /**
- * Converts a ResourceData object to a lora resource for Hunyuan.
- */
-function resourceToLora(resource: ResourceData) {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  const air = `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-  return { air, strength: resource.strength ?? 1 };
-}
-
-/**
  * Creates videoGen input for Hunyuan ecosystem.
  * Txt2vid only with CFG scale, steps, duration, and LoRA support.
  */
-export async function createHunyuanInput(data: HunyuanCtx): Promise<HunyuanVdeoGenInput> {
+export const createHunyuanInput = defineHandler<HunyuanCtx, HunyuanVdeoGenInput>((data, ctx) => {
   // Build loras from additional resources
   const loras: { air: string; strength: number }[] = [];
   if ('resources' in data && Array.isArray(data.resources)) {
     for (const resource of data.resources as ResourceData[]) {
-      loras.push(resourceToLora(resource));
+      loras.push({
+        air: ctx.airs.getOrThrow(resource.id),
+        strength: resource.strength ?? 1,
+      });
     }
   }
 
@@ -50,4 +43,4 @@ export async function createHunyuanInput(data: HunyuanCtx): Promise<HunyuanVdeoG
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
   }) as HunyuanVdeoGenInput;
-}
+});

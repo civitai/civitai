@@ -5,32 +5,21 @@
  * Chroma uses a fixed Euler sampler internally.
  */
 
-import type { ImageJobNetworkParams, Scheduler, WorkflowStepTemplate } from '@civitai/client';
+import type { ImageJobNetworkParams, Scheduler, TextToImageStepTemplate } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type StepInput = WorkflowStepTemplate & { input: unknown };
 type ChromaCtx = EcosystemGraphOutput & { baseModel: 'Chroma' };
-
-/**
- * Converts a ResourceData object to an AIR string.
- */
-function resourceToAir(resource: ResourceData): string {
-  const ecosystem = getEcosystemName(resource.baseModel);
-  const type = resource.model.type.toLowerCase();
-  return `urn:air:${ecosystem}:${type}:civitai:${resource.model.id}@${resource.id}`;
-}
 
 /**
  * Creates step input for Chroma ecosystem.
  * Chroma uses a fixed Euler sampler internally.
  */
-export async function createChromaInput(data: ChromaCtx): Promise<StepInput> {
+export const createChromaInput = defineHandler<ChromaCtx, TextToImageStepTemplate>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for Chroma workflows');
 
   const quantity = data.quantity ?? 1;
@@ -39,16 +28,13 @@ export async function createChromaInput(data: ChromaCtx): Promise<StepInput> {
   // Build additionalNetworks from resources
   const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
   for (const resource of data.resources ?? []) {
-    additionalNetworks[resourceToAir(resource)] = {
-      strength: resource.strength,
-      type: resource.model.type,
-    };
+    additionalNetworks[ctx.airs.getOrThrow(resource.id)] = { strength: resource.strength };
   }
 
   return {
     $type: 'textToImage',
     input: {
-      model: data.model ? resourceToAir(data.model) : undefined,
+      model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
       additionalNetworks,
       scheduler: 'euler' as Scheduler,
       prompt: data.prompt,
@@ -61,5 +47,5 @@ export async function createChromaInput(data: ChromaCtx): Promise<StepInput> {
       batchSize: 1,
       outputFormat: data.outputFormat,
     },
-  } as StepInput;
-}
+  } as TextToImageStepTemplate;
+});
