@@ -22,6 +22,7 @@ import {
   getBaseModelSetType,
   getClosestAspectRatio,
   getIsFluxUltra,
+  getIsZImageBase,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
@@ -41,9 +42,14 @@ import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imag
 import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import {
-  flux2KleinDisabledSamplers,
+  flux2KleinSampleMethods,
+  flux2KleinSchedules,
   getIsFlux2KleinGroup,
 } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import {
+  zImageSampleMethods,
+  zImageSchedules,
+} from '~/shared/orchestrator/ImageGen/zImage.config';
 import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
@@ -194,13 +200,33 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   )
     params.sampler = defaultValues.sampler;
 
-  // Flux2 Klein doesn't support certain samplers
+  // Flux2 Klein uses sdcpp samplers directly
   if (
     getIsFlux2KleinGroup(baseModel) &&
-    params.sampler &&
-    flux2KleinDisabledSamplers.includes(params.sampler)
+    (!params.sampler || !flux2KleinSampleMethods.includes(params.sampler as any))
   )
-    params.sampler = 'Euler a';
+    params.sampler = 'euler';
+
+  // Flux2 Klein needs a default scheduler
+  if (
+    getIsFlux2KleinGroup(baseModel) &&
+    (!params.scheduler || !flux2KleinSchedules.includes(params.scheduler as any))
+  )
+    params.scheduler = 'simple';
+
+  // ZImageBase uses sdcpp samplers directly (euler, heun, lcm)
+  if (
+    getIsZImageBase(baseModel) &&
+    (!params.sampler || !zImageSampleMethods.includes(params.sampler as any))
+  )
+    params.sampler = 'euler';
+
+  // ZImageBase needs a default scheduler
+  if (
+    getIsZImageBase(baseModel) &&
+    (!params.scheduler || !zImageSchedules.includes(params.scheduler as any))
+  )
+    params.scheduler = 'simple';
 
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
@@ -435,7 +461,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             setTimeout(() => {
               form.setValue('cfgScale', 4);
               form.setValue('steps', 20);
-              form.setValue('scheduler', 'karras');
+              form.setValue('scheduler', 'simple');
             }, 0);
           } else if (baseModel === 'LTXV2' && prevBaseModel !== baseModel) {
             setTimeout(() => {
@@ -479,12 +505,47 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           form.setValue('sampler', 'Euler a');
         }
 
-        // Flux2 Klein doesn't support certain samplers
+        // Flux2 Klein uses sdcpp samplers directly
+        // Use setTimeout to ensure form values are fully updated (important during remix)
+        if (baseModel && getIsFlux2KleinGroup(baseModel)) {
+          setTimeout(() => {
+            const currentSampler = form.getValues('sampler');
+            const currentScheduler = form.getValues('scheduler');
+            if (!currentSampler || !flux2KleinSampleMethods.includes(currentSampler as any)) {
+              form.setValue('sampler', 'euler');
+            }
+            if (!currentScheduler || !flux2KleinSchedules.includes(currentScheduler as any)) {
+              form.setValue('scheduler', 'simple');
+            }
+          }, 0);
+        }
+
+        // ZImageBase uses sdcpp samplers directly (euler, heun, lcm)
+        // Use setTimeout to ensure form values are fully updated (important during remix)
+        if (baseModel && getIsZImageBase(baseModel)) {
+          setTimeout(() => {
+            const currentSampler = form.getValues('sampler');
+            const currentScheduler = form.getValues('scheduler');
+            if (!currentSampler || !zImageSampleMethods.includes(currentSampler as any)) {
+              form.setValue('sampler', 'euler');
+            }
+            if (!currentScheduler || !zImageSchedules.includes(currentScheduler as any)) {
+              form.setValue('scheduler', 'simple');
+            }
+          }, 0);
+        }
+
+        // When switching AWAY from ZImageBase/Flux2Klein, reset sdcpp sampler to UI sampler
+        const wasUsingsdcppSamplers =
+          prevBaseModel &&
+          (getIsZImageBase(prevBaseModel) || getIsFlux2KleinGroup(prevBaseModel));
+        const nowUsingUISamplers =
+          baseModel && !getIsZImageBase(baseModel) && !getIsFlux2KleinGroup(baseModel);
         if (
-          baseModel &&
+          wasUsingsdcppSamplers &&
+          nowUsingUISamplers &&
           watchedValues.sampler &&
-          getIsFlux2KleinGroup(baseModel) &&
-          flux2KleinDisabledSamplers.includes(watchedValues.sampler)
+          !generation.samplers.includes(watchedValues.sampler as any)
         ) {
           form.setValue('sampler', 'Euler a');
         }
