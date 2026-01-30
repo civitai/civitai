@@ -35,7 +35,7 @@ export function getIsZImageFromEngine(value?: string) {
   return value === engine;
 }
 
-export const zImageSampleMethods = ['euler', 'heun', 'lcm'] as const satisfies SdCppSampleMethod[];
+export const zImageSampleMethods = ['euler', 'heun'] as const satisfies SdCppSampleMethod[];
 
 export const zImageSchedules = ['simple', 'discrete'] as const satisfies SdCppSchedule[];
 
