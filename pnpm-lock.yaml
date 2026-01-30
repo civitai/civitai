@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@rajesh896/broprint.js':
-    hash: b2e2baefc6eaabea539ea5823df962ec39e195cd4d9cf4ae7e20d621b818fdd2
+    hash: a0e67ca5d6e92e03cf29908889902364d87cefcde80c383008790df8c4c6ad65
     path: patches/@rajesh896__broprint.js.patch
 
 importers:
@@ -141,7 +141,7 @@ importers:
         version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
       '@rajesh896/broprint.js':
         specifier: ^2.1.1
-        version: 2.2.0(patch_hash=b2e2baefc6eaabea539ea5823df962ec39e195cd4d9cf4ae7e20d621b818fdd2)
+        version: 2.2.0(patch_hash=a0e67ca5d6e92e03cf29908889902364d87cefcde80c383008790df8c4c6ad65)
       '@react-hook/window-size':
         specifier: ^3.1.1
         version: 3.1.1(react@18.3.1)
@@ -10919,7 +10919,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.0': {}
 
-  '@rajesh896/broprint.js@2.2.0(patch_hash=b2e2baefc6eaabea539ea5823df962ec39e195cd4d9cf4ae7e20d621b818fdd2)': {}
+  '@rajesh896/broprint.js@2.2.0(patch_hash=a0e67ca5d6e92e03cf29908889902364d87cefcde80c383008790df8c4c6ad65)': {}
 
   '@react-aria/focus@3.21.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:

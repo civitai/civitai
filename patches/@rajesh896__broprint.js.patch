@@ -1,0 +1,12 @@
+diff --git a/package.json b/package.json
+index 1234567..abcdefg 100644
+--- a/package.json
++++ b/package.json
+@@ -6,6 +6,7 @@
+   "types": "./lib/index.d.ts",
+   "exports": {
+     ".": {
++      "types": "./lib/index.d.ts",
+       "import": "./lib/index.mjs",
+       "require": "./lib/index.js",
+       "default": "./lib/index.mjs"
