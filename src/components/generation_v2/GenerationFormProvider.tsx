@@ -11,6 +11,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
+import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import {
   useGenerationStore,
   useGenerationFormStore,
@@ -119,13 +120,15 @@ function InnerProvider({
       if (!data || counter === prevCounterRef.current) return;
       prevCounterRef.current = counter;
 
-      const { workflow } = useGenerationFormStore.getState();
+      // Split flat resources into model/resources/vae for graph nodes
+      const split = splitResourcesByType(data.resources);
+
       const values = {
         ...data.params,
-        workflow: workflow ?? data.params.workflow ?? data.params.process,
-        model: data.model,
-        resources: data.resources,
-        vae: data.vae,
+        workflow: data.params.workflow,
+        model: split.model,
+        resources: split.resources,
+        vae: split.vae,
       };
 
       if (data.runType === 'remix' || data.runType === 'replay') {

@@ -22,10 +22,8 @@ import type { WorkflowStep } from '@civitai/client';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
-import {
-  allInjectableResourceIds,
-  getBaseModelFromResources,
-} from '~/shared/constants/generation.constants';
+import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
 import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
@@ -237,34 +235,8 @@ export function inferBaseModel(
   return undefined;
 }
 
-// =============================================================================
-// Resource Splitting
-// =============================================================================
-
-/**
- * Splits a flat array of resources into model, additional resources, and vae by model type.
- * Filters out injectable resources (draft LoRAs) since those are auto-injected
- * by the new system and should not be stored as user-selected resources.
- *
- * Generic over the resource type — works with both `GenerationResource` (rich)
- * and any object with `{ id, model: { type } }`.
- */
-export function splitResourcesByType<T extends { id: number; model: { type: string } }>(
-  resources: T[]
-): { model?: T; resources: T[]; vae?: T } {
-  // Filter out injectable resources (draft LoRAs etc.)
-  const userResources = resources.filter((r) => !allInjectableResourceIds.includes(r.id));
-
-  const model = userResources.find(
-    (r) => r.model.type === 'Checkpoint' || r.model.type === 'Upscaler'
-  );
-  const vae = userResources.find((r) => r.model.type === 'VAE');
-  const additional = userResources.filter(
-    (r) => r.model.type !== 'Checkpoint' && r.model.type !== 'Upscaler' && r.model.type !== 'VAE'
-  );
-
-  return { model, resources: additional, vae };
-}
+// Re-export splitResourcesByType for backward compatibility
+export { splitResourcesByType } from '~/shared/utils/resource.utils';
 
 /**
  * Converts a GenerationResource to the ResourceData shape used by generation-graph.
@@ -279,6 +251,7 @@ function toResourceData(
   // Return minimal ResourceData - extra fields from enriched are used via enrichedResources
   return {
     id: enriched.id,
+    model: { type: enriched.model.type },
     strength: legacyStrength ?? enriched.strength ?? undefined,
     epochDetails: epochNumber != null ? { epochNumber } : undefined,
   };
@@ -498,4 +471,74 @@ export function getGenerationInput(
 
   // Legacy format: map from resources + params
   return mapLegacyMetadata(step, enrichedResources) ?? {};
+}
+
+// =============================================================================
+// Reverse Mapping: Graph → Legacy Format
+// =============================================================================
+
+/**
+ * Maps generation-graph output to the legacy v1 form format.
+ * This is the inverse of mapDataToGraphInput.
+ *
+ * Transforms:
+ * - aspectRatio: { value, width, height } → string value
+ * - images → sourceImage (first image)
+ * - transparent → openAITransparentBackground
+ * - quality → openAIQuality
+ *
+ * Resources should be handled separately using splitResourcesByType.
+ *
+ * @param graphOutput - The generation-graph output (without model/resources/vae)
+ * @returns Params in legacy format for v1 form
+ */
+export function mapGraphToLegacyParams(
+  graphOutput: Record<string, unknown>
+): Record<string, unknown> {
+  const {
+    // Transform these fields
+    aspectRatio,
+    images,
+    transparent,
+    quality,
+    // Pass through everything else
+    ...rest
+  } = graphOutput;
+
+  // Convert aspectRatio object to string
+  let aspectRatioValue: string | undefined;
+  let width: number | undefined;
+  let height: number | undefined;
+  if (aspectRatio && typeof aspectRatio === 'object') {
+    const ar = aspectRatio as { value?: string; width?: number; height?: number };
+    aspectRatioValue = ar.value;
+    width = ar.width;
+    height = ar.height;
+  } else if (typeof aspectRatio === 'string') {
+    aspectRatioValue = aspectRatio;
+  }
+
+  // Convert images array to sourceImage (v1 form uses single sourceImage)
+  let sourceImage: { url: string; width: number; height: number } | undefined;
+  if (Array.isArray(images) && images.length > 0) {
+    const firstImage = images[0] as { url?: string; width?: number; height?: number };
+    if (firstImage.url) {
+      sourceImage = {
+        url: firstImage.url,
+        width: firstImage.width ?? 512,
+        height: firstImage.height ?? 512,
+      };
+    }
+  }
+
+  return removeEmpty({
+    ...rest,
+    aspectRatio: aspectRatioValue,
+    width,
+    height,
+    sourceImage,
+    // Map back to legacy field names
+    ...(transparent != null && { openAITransparentBackground: transparent }),
+    ...(quality != null && { openAIQuality: quality }),
+  });
 }

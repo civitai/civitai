@@ -844,11 +844,17 @@ function ResourceSelectCard({
       id,
       generation: selectSource !== 'generation' ? false : undefined,
     }).then((data) => {
-      const resource = data.resources[0];
+      // Find the specific resource that was requested by ID
+      const resource = data.resources.find((r) => r.id === id) ?? data.resources[0];
+      if (!resource) {
+        showErrorNotification({
+          error: new Error('Resource not found'),
+        });
+        return;
+      }
       if (selectSource !== 'generation') {
         onSelect({ ...resource, image });
       } else {
-        console.log({resource})
         if (resource?.canGenerate || resource?.substitute?.canGenerate)
           onSelect({ ...resource, image });
         else

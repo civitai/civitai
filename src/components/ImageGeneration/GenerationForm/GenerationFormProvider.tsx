@@ -11,6 +11,7 @@ import { generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type { GenerationData } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
+import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import {
   fluxKreaAir,
   fluxModeOptions,
@@ -41,6 +42,7 @@ import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.con
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
 import { imageAnnotationsSchema } from '~/components/Generation/Input/DrawingEditor/drawing.utils';
+import { mapGraphToLegacyParams } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 // #region [schemas]
 
@@ -143,23 +145,32 @@ function createFormSchema() {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormData {
-  const { quantity, ...params } = data.params as Partial<
+
+/** Internal format for form data with split resources */
+type FormGenerationData = {
+  params: Record<string, unknown>;
+  resources: GenerationResource[];
+  remixOfId?: number;
+  remixOf?: GenerationData['remixOf'];
+  model?: GenerationResource;
+  vae?: GenerationResource;
+};
+
+function formatGenerationData(data: FormGenerationData): PartialFormData {
+  const { quantity, ...rawParams } = data.params as Partial<
     z.infer<typeof textToImageParamsSchema>
   > &
     Record<string, unknown>;
 
-  // Handle graph-format aspectRatio (v2 mapper returns { value, width, height }, v1 form expects string)
-  if (params.aspectRatio && typeof params.aspectRatio === 'object') {
-    params.aspectRatio = (params.aspectRatio as unknown as { value: string }).value;
-  }
+  // Transform graph-format params to legacy v1 format
+  // Handles: aspectRatio object→string, images→sourceImage, transparent→openAITransparentBackground, etc.
+  const params = mapGraphToLegacyParams(rawParams) as typeof rawParams;
 
-  // Use pre-split model/vae from server, fall back to finding in resources (backwards compat)
-  let checkpoint =
-    data.model ?? data.resources.find((x) => x.model.type === 'Checkpoint') ?? undefined;
-  let vae: GenerationResource | null =
-    data.vae ?? data.resources.find((x) => x.model.type === 'VAE') ?? null;
-  const allResources = [data.model, ...data.resources, data.vae].filter(isDefined);
+  // Split flat resources into model/resources/vae if not pre-split
+  const split = data.model ? { model: data.model, resources: data.resources, vae: data.vae } : splitResourcesByType(data.resources);
+  let checkpoint = split.model;
+  let vae: GenerationResource | null = split.vae ?? null;
+  const allResources = [split.model, ...split.resources, split.vae].filter(isDefined);
   const baseModel =
     params.baseModel ??
     getBaseModelFromResourcesWithDefault(
@@ -310,7 +321,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   // #region [effects]
   useEffect(() => {
     if (type === 'image' && storeData) {
-      const { runType, remixOfId, model, resources, vae, params: rawParams } = storeData;
+      const { runType, remixOfId, resources: flatResources, params: rawParams } = storeData;
+      // Split flat resources into model/resources/vae
+      const { model, resources, vae } = splitResourcesByType(flatResources);
       const params = rawParams as Partial<z.infer<typeof textToImageParamsSchema>>;
       if (!params.sourceImage && !params.workflow)
         form.setValue('workflow', params.process ?? 'txt2img');

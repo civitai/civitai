@@ -402,14 +402,18 @@ export function quantityNode(config?: QuantityNodeConfig) {
  *
  * Only validates fields that the client needs to send:
  * - id: Required to identify the resource
+ * - model.type: Required for routing resources to appropriate graph nodes
  * - strength: Optional LoRA/LoCon/DoRA strength
  * - epochDetails: Optional epoch training info
  *
- * Server-side enrichment (via getResourceData) adds baseModel, model, air, etc.
+ * Server-side enrichment (via getResourceData) adds baseModel, model.name, air, etc.
  * Handlers receive AIR strings via GenerationHandlerCtx instead of computing them.
  */
 const resourceSchema = z.object({
   id: z.number(),
+  model: z.object({
+    type: z.string(),
+  }),
   strength: z.number().optional(),
   epochDetails: z
     .object({
@@ -666,7 +670,7 @@ export function createCheckpointGraph(options?: {
         return {
           input: checkpointInputSchema,
           output: resourceSchema.optional(),
-          defaultValue: modelVersionId ? { id: modelVersionId } : undefined,
+          defaultValue: modelVersionId ? { id: modelVersionId, model: { type: 'Checkpoint' } } : undefined,
           meta: {
             options: {
               canGenerate: true,

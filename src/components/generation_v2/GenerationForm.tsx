@@ -5,7 +5,7 @@
  * Handles workflow/ecosystem selection with compatibility checks.
  */
 
-import { Button, Checkbox, Divider, Group, Input, Radio, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Button, Checkbox, Divider, Group, Input, Paper, Radio, SegmentedControl, Stack, Text } from '@mantine/core';
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 
 import { CopyButton } from '~/components/CopyButton/CopyButton';
@@ -335,66 +335,81 @@ export function GenerationForm() {
             )}
           />
 
-          {/* Prompt */}
+          {/* Prompt with Trigger Words */}
           <Controller
             graph={graph}
             name="prompt"
             render={({ value, onChange, meta, error }) => (
-              <PromptInput
-                value={value}
-                onChange={onChange}
-                label="Prompt"
-                placeholder="Your prompt goes here..."
-                autosize
-                minRows={2}
-                required={meta.required}
-                error={error?.message}
-              />
+              <Input.Wrapper label="Prompt" required={meta.required} error={error?.message}>
+                <Paper
+                  px="sm"
+                  radius="md"
+                  withBorder
+                  className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
+                >
+                  <PromptInput
+                    name="prompt"
+                    value={value}
+                    onChange={onChange}
+                    placeholder="Your prompt goes here..."
+                    autosize
+                    minRows={2}
+                    variant="unstyled"
+                    styles={(theme) => ({
+                      input: {
+                        padding: '10px 0',
+                        backgroundColor: 'transparent',
+                        lineHeight: theme.lineHeights.sm,
+                      },
+                      error: { display: 'none' },
+                      wrapper: { margin: 0 },
+                    })}
+                  />
+                  {/* Nested trigger words controller */}
+                  <Controller
+                    graph={graph}
+                    name="triggerWords"
+                    render={({ value: triggerWords }) => {
+                      if (!triggerWords || triggerWords.length === 0) return null;
+                      return (
+                        <div className="mb-1 flex flex-col gap-2">
+                          <Divider />
+                          <Text c="dimmed" className="text-xs font-semibold">
+                            Trigger words
+                          </Text>
+                          <div className="mb-2 flex items-center gap-1">
+                            <TrainedWords
+                              type="LORA"
+                              trainedWords={triggerWords}
+                              badgeProps={{
+                                style: {
+                                  textTransform: 'none',
+                                  height: 'auto',
+                                  cursor: 'pointer',
+                                },
+                              }}
+                            />
+                            <CopyButton value={triggerWords.join(', ')}>
+                              {({ copied, copy, Icon, color }) => (
+                                <Button
+                                  variant="subtle"
+                                  color={color ?? 'blue.5'}
+                                  onClick={copy}
+                                  size="compact-xs"
+                                  classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
+                                >
+                                  {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
+                                </Button>
+                              )}
+                            </CopyButton>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                </Paper>
+              </Input.Wrapper>
             )}
-          />
-
-          {/* Trigger Words - shown when resources have trained words */}
-          <Controller
-            graph={graph}
-            name="triggerWords"
-            render={({ value: triggerWords }) => {
-              if (!triggerWords || triggerWords.length === 0) return null;
-
-              return (
-                <div className="flex flex-col gap-2">
-                  <Divider />
-                  <Text c="dimmed" className="text-xs font-semibold">
-                    Trigger words
-                  </Text>
-                  <div className="mb-2 flex flex-wrap items-center gap-1">
-                    <TrainedWords
-                      type="LORA"
-                      trainedWords={triggerWords}
-                      badgeProps={{
-                        style: {
-                          textTransform: 'none',
-                          height: 'auto',
-                          cursor: 'pointer',
-                        },
-                      }}
-                    />
-                    <CopyButton value={triggerWords.join(', ')}>
-                      {({ copied, copy, Icon, color }) => (
-                        <Button
-                          variant="subtle"
-                          color={color ?? 'blue.5'}
-                          onClick={copy}
-                          size="compact-xs"
-                          classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                        >
-                          {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                        </Button>
-                      )}
-                    </CopyButton>
-                  </div>
-                </div>
-              );
-            }}
           />
 
           {/* Negative prompt (SD only) */}

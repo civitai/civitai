@@ -12,6 +12,21 @@ import { getSourceImageFromUrl } from '~/utils/image-utils';
 
 export type RunType = 'run' | 'remix' | 'replay' | 'patch';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
+
+/**
+ * Internal state format - stores flat resources array.
+ * Consumers (v1/v2 form providers) split into model/resources/vae as needed.
+ */
+type GenerationStateData = {
+  type: MediaType;
+  remixOfId?: number;
+  remixOf?: RemixOfProps;
+  /** Flat array of all resources (checkpoint, LoRAs, VAE, etc.) */
+  resources: GenerationResource[];
+  params: Record<string, unknown>;
+  runType: RunType;
+};
+
 type SetDataArgs = GenerationData & {
   type: MediaType;
   workflow?: string;
@@ -23,7 +38,7 @@ type GenerationState = {
   loading: boolean;
   type: MediaType;
   remixOf?: RemixOfProps;
-  data?: GenerationData & { runType: RunType };
+  data?: GenerationStateData;
   // input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
@@ -54,7 +69,7 @@ export const useGenerationStore = create<GenerationState>()(
 
           try {
             const result = await fetchGenerationData(input);
-            const { remixOf, ...data } = result;
+            const { remixOf, resources, ...data } = result;
             const { params } = await transformParams(data.params, remixOf);
             if (params.engine) {
               useGenerationFormStore.setState({ engine: params.engine, type: data.type });
@@ -62,11 +77,14 @@ export const useGenerationStore = create<GenerationState>()(
               useGenerationFormStore.setState({ type: data.type });
             }
 
+            // Apply substitutes to resources (keeps flat array)
+            const substitutedResources = withSubstitute(resources);
+
             if (isMedia) {
               useRemixStore.setState({
                 ...result,
                 params,
-                resources: withSubstitute(result.resources),
+                resources: substitutedResources,
               });
             }
 
@@ -74,9 +92,7 @@ export const useGenerationStore = create<GenerationState>()(
               state.data = {
                 ...data,
                 params,
-                model: data.model ? substituteResource(data.model) : undefined,
-                resources: withSubstitute(data.resources),
-                vae: data.vae ? substituteResource(data.vae) : undefined,
+                resources: substitutedResources,
                 runType: input.type === 'image' || input.type === 'video' ? 'remix' : 'run',
               };
               state.loading = false;
@@ -97,7 +113,15 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: async ({ type, remixOf, workflow, engine, runType = 'replay', ...data }) => {
+      setData: async ({
+        type,
+        remixOf,
+        workflow,
+        engine,
+        runType = 'replay',
+        resources,
+        ...data
+      }) => {
         // TODO.Briant - cleanup at a later point in time
         useGenerationFormStore.setState({ type, workflow });
         // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
@@ -110,6 +134,9 @@ export const useGenerationStore = create<GenerationState>()(
         }
         if (params.sourceImage) params.images = [params.sourceImage];
 
+        // Apply substitutes to resources (keeps flat array)
+        const substitutedResources = withSubstitute(resources);
+
         set((state) => {
           if (isMobileDevice()) {
             useGenerationPanelStore.setState({ view: 'generate' });
@@ -120,9 +147,7 @@ export const useGenerationStore = create<GenerationState>()(
             ...data,
             type,
             params,
-            model: data.model ? substituteResource(data.model) : undefined,
-            resources: withSubstitute(data.resources),
-            vae: data.vae ? substituteResource(data.vae) : undefined,
+            resources: substitutedResources,
             runType,
           };
           state.counter++;

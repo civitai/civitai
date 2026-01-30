@@ -1277,9 +1277,9 @@ export class DataGraph<
     return keys;
   }
 
-  /** Get all computed keys defined by this graph's template entries */
+  /** Get all active computed keys (includes subgraph computed keys) */
   getComputedKeys(): string[] {
-    return this.entries.filter((e) => e.kind === 'computed').map((e) => e.key);
+    return Array.from(this.rootGraph.computedNodes);
   }
 
   /** Get all possible keys across all discriminator branches */

@@ -53,14 +53,22 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // Track graph changes with a monotonic revision counter.
   // This avoids relying on getSnapshot() returning a new object reference,
   // which is unreliable across reset+set cycles (e.g. remix).
-  // We filter out non-cost-affecting fields to avoid unnecessary queries.
+  // We filter out non-cost-affecting fields and computed keys to avoid unnecessary queries.
   const [revision, incrementRevision] = useReducer((r: number) => r + 1, 0);
   const prevSnapshotRef = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
+    // Build list of keys to exclude from change detection
+    const keysToOmit = [...IGNORED_KEYS_FOR_WHATIF, ...graph.getComputedKeys()];
+
+    // Initialize with current snapshot to avoid spurious first increment
+    // See: docs/features/whatif-double-query-analysis.md
+    const initialSnapshot = graph.getSnapshot() as Record<string, unknown>;
+    prevSnapshotRef.current = omit(initialSnapshot, keysToOmit);
+
     return graph.subscribe(() => {
       const snapshot = graph.getSnapshot() as Record<string, unknown>;
-      const relevantSnapshot = omit(snapshot, IGNORED_KEYS_FOR_WHATIF);
+      const relevantSnapshot = omit(snapshot, keysToOmit);
 
       // Only increment revision if cost-affecting values changed
       if (!isEqual(relevantSnapshot, prevSnapshotRef.current)) {

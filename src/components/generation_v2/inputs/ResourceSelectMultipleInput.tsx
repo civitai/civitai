@@ -20,7 +20,6 @@ import {
   Divider,
   Group,
   Input,
-  Skeleton,
   Text,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
@@ -39,34 +38,19 @@ import {
   getStatusClasses,
   isResourceDisabled,
 } from './ResourceItemContent';
-import type { GenerationResource } from '~/shared/types/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
+import {
+  needsHydration,
+  isFullyHydrated,
+  resolveResourceOptions,
+  ResourceItemSkeleton,
+  type ResourceData,
+  type ResourceSelectValue,
+  type PartialResourceValue,
+} from './resource-select.utils';
 
-/**
- * Value type for ResourceSelectMultipleInput - stores full GenerationResource objects.
- * Input schema accepts just { id } and the component hydrates to full resource.
- */
-export type ResourceSelectValue = GenerationResource;
-
-/** Partial value that may need hydration (only has id) */
-type PartialResourceValue = Partial<ResourceSelectValue> & { id: number };
-
-/**
- * Helper to check if a value needs hydration.
- * A value needs hydration if it only has an id (came from URL param or minimal input).
- */
-function needsHydration(value: PartialResourceValue): boolean {
-  // If we're missing the model object, we need to hydrate
-  return !('model' in value) || !value.model;
-}
-
-/**
- * Helper to check if a value is fully hydrated (has all required data).
- * Used to display resource data from localStorage before fetch completes.
- */
-function isFullyHydrated(value: PartialResourceValue): value is ResourceSelectValue {
-  return 'model' in value && !!value.model;
-}
+// Re-export types for consumers
+export type { ResourceSelectValue, PartialResourceValue } from './resource-select.utils';
 
 // =============================================================================
 // Types
@@ -103,7 +87,7 @@ export interface ResourceSelectMultipleInputProps
 
 interface ResourceItemProps {
   resourceValue: PartialResourceValue;
-  resource: (GenerationResource & { air: string }) | undefined;
+  resource: ResourceData | undefined;
   onChange: (value: ResourceSelectValue) => void;
   onRemove: () => void;
   disabled?: boolean;
@@ -132,10 +116,7 @@ function ResourceItem({
           'bg-gray-2 dark:bg-dark-5': isOdd,
         })}
       >
-        <Group gap="xs" justify="space-between" wrap="nowrap">
-          <Skeleton height={20} width="60%" />
-          <Skeleton height={24} width={24} radius="sm" />
-        </Group>
+        <ResourceItemSkeleton />
       </div>
     );
   }
@@ -188,7 +169,7 @@ function useResourcesData(ids: number[]) {
 
   // Get resource data for all IDs
   const resources = useMemo(() => {
-    const map = new Map<number, (GenerationResource & { air: string }) | undefined>();
+    const map = new Map<number, ResourceData | undefined>();
     for (const id of ids) {
       map.set(id, getResourceData(id));
     }
@@ -233,11 +214,33 @@ export function ResourceSelectMultipleInput({
     }
   };
 
-  // Get all resource IDs
+  // All resource IDs (for excludeIds in modal and hydration tracking)
   const resourceIds = useMemo(() => value.map((v) => v.id), [value]);
 
-  // Batch fetch resource data
-  const { resources } = useResourcesData(resourceIds);
+  // Only fetch IDs that need hydration (missing name/model data)
+  const idsToFetch = useMemo(
+    () => value.filter((v) => needsHydration(v)).map((v) => v.id),
+    [value]
+  );
+
+  // Batch fetch resource data for items that need hydration
+  const { resources: fetchedResources } = useResourcesData(idsToFetch);
+
+  // Build complete resource map: fetched data for items that needed hydration,
+  // existing hydrated data for items that didn't
+  const resources = useMemo(() => {
+    const map = new Map<number, ResourceData | undefined>();
+    for (const v of value) {
+      if (needsHydration(v)) {
+        // Use fetched data
+        map.set(v.id, fetchedResources.get(v.id));
+      } else {
+        // Already hydrated - use existing value
+        map.set(v.id, v as ResourceData);
+      }
+    }
+    return map;
+  }, [value, fetchedResources]);
 
   // Track which IDs we've hydrated to avoid infinite loops
   const hydratedIdsRef = useRef<Set<number>>(new Set());
@@ -284,12 +287,8 @@ export function ResourceSelectMultipleInput({
     }
   }, [resourceIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Build options from resourceType if provided, but don't overwrite existing resources
-  // (deriveProps may set options.resources with baseModels filtering)
-  const resolvedOptions: ResourceSelectOptions =
-    resourceType && !options?.resources?.length
-      ? { ...options, resources: [{ type: resourceType }] }
-      : options;
+  // Build options from resourceType if provided
+  const resolvedOptions = resolveResourceOptions(options, resourceType);
 
   // Get ordered types from options.resources (for sorting groups)
   const optionTypes = useMemo(
@@ -299,10 +298,7 @@ export function ResourceSelectMultipleInput({
 
   // Group resources by type and sort disabled resources to the end
   const { groups, disabledCount } = useMemo(() => {
-    const groupMap = new Map<
-      string,
-      { value: PartialResourceValue; resource?: GenerationResource & { air: string } }[]
-    >();
+    const groupMap = new Map<string, { value: PartialResourceValue; resource?: ResourceData }[]>();
 
     let disabled = 0;
 

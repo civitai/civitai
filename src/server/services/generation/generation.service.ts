@@ -56,10 +56,7 @@ import {
   getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
 import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
-import {
-  mapDataToGraphInput,
-  splitResourcesByType,
-} from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 type GenerationResourceSimple = {
   id: number;
@@ -231,13 +228,18 @@ export type RemixOfProps = {
   similarity?: number;
   createdAt: Date;
 };
+/**
+ * Generation data returned from the API.
+ * Uses flat resources array + params format for storage compatibility.
+ * Clients should use splitResourcesByType() to route resources to graph nodes.
+ */
 export type GenerationData = {
   type: MediaType;
   remixOfId?: number;
   remixOf?: RemixOfProps;
-  model?: GenerationResource;
+  /** Flat array of all resources (checkpoint, LoRAs, VAE, etc.) */
   resources: GenerationResource[];
-  vae?: GenerationResource;
+  /** Generation parameters (prompt, seed, steps, etc.) */
   params: Record<string, unknown>;
 };
 
@@ -347,9 +349,6 @@ async function getMediaGenerationData({
         supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
       );
 
-  // Split resources into model/resources/vae
-  const split = splitResourcesByType(resources);
-
   // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
   // Cast to Record for loose field access (normalizeMeta returns a union type)
   const meta = normalized as Record<string, unknown>;
@@ -359,13 +358,12 @@ async function getMediaGenerationData({
 
   if (type === 'audio') throw new Error('not implemented');
 
+  // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {
     type,
     remixOfId: media.id, // TODO - remove
     remixOf,
-    model: split.model,
-    resources: split.resources,
-    vae: split.vae,
+    resources,
     params,
   };
 }
@@ -378,10 +376,10 @@ const getModelVersionGenerationData = async ({
   versionIds: { id: number; epoch?: number }[] | number[];
   user?: SessionUser;
   generation: boolean;
-}) => {
+}): Promise<GenerationData> => {
   if (!versionIds.length) throw new Error('missing version ids');
   const resources = await getResourceData(versionIds, user, generation);
-  const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
+  const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await getResourceData([checkpoint.vaeId], user, generation);
     if (vae) resources.push({ ...vae, vaeId: undefined });
@@ -389,39 +387,18 @@ const getModelVersionGenerationData = async ({
 
   const deduped = uniqBy(resources, 'id');
 
-  // const engine = getBaseModelEngine(baseModel);
-
-  // let version: string | undefined;
-  // let process: string | undefined;
-  // switch (engine) {
-  //   case 'wan':
-  //     version = getWanVersion(baseModel);
-  //     process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
-  //     break;
-  //   case 'hunyuan':
-  //     process = 'txt2vid';
-  //     break;
-  //   case 'veo3':
-  //     process = getVeo3ProcessFromAir(resources[0].air);
-  //     break;
-  // }
-
-  const split = splitResourcesByType(deduped);
+  // Build params from checkpoint settings
   const params = mapDataToGraphInput(
     {
-      model: checkpoint,
-      resources: split.resources,
-      vae: split.vae,
       clipSkip: checkpoint?.clipSkip,
     },
     deduped
   );
 
+  // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {
     type: getBaseModelMediaType(params.baseModel as string),
-    model: split.model,
-    resources: split.resources,
-    vae: split.vae,
+    resources: deduped,
     params,
   };
 };

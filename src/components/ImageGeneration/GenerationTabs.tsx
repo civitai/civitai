@@ -1,4 +1,4 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
+import { Tooltip, CloseButton, SegmentedControl } from '@mantine/core';
 import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconArrowsDiagonal,
@@ -13,12 +13,13 @@ import type { GenerationPanelView } from '~/store/generation.store';
 import { generationPanel, useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationFormV2 } from '~/components/generation_v2';
+import { GenerationForm } from '~/components/Generate/GenerationForm';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -42,6 +43,28 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   useEffect(() => {
     if (isImageFeedSeparate && view === 'generate') setView('queue');
   }, [isImageFeedSeparate, view]);
+
+  // Build tabs based on current user (moderators get v2 form)
+  const tabs = useMemo<Tabs>(
+    () => ({
+      generate: {
+        Icon: IconBrush,
+        label: 'Generate',
+        Component: currentUser?.isModerator ? GenerationFormV2 : GenerationForm,
+      },
+      queue: {
+        Icon: IconClockHour9,
+        label: 'Queue',
+        Component: ScrollableQueue,
+      },
+      feed: {
+        Icon: IconGridDots,
+        label: 'Feed',
+        Component: ScrollableFeed,
+      },
+    }),
+    [currentUser?.isModerator]
+  );
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
@@ -142,24 +165,6 @@ type Tabs = Record<
     Component: React.FC;
   }
 >;
-
-const tabs: Tabs = {
-  generate: {
-    Icon: IconBrush,
-    label: 'Generate',
-    Component: GenerationFormV2,
-  },
-  queue: {
-    Icon: IconClockHour9,
-    label: 'Queue',
-    Component: ScrollableQueue,
-  },
-  feed: {
-    Icon: IconGridDots,
-    label: 'Feed',
-    Component: ScrollableFeed,
-  },
-};
 
 function ScrollableQueue() {
   return (

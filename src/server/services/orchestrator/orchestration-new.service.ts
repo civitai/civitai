@@ -46,6 +46,7 @@ import { isDefined } from '~/utils/type-guards';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { getEcosystemName } from '~/shared/constants/basemodel.constants';
+import { toStepMetadata } from '~/shared/utils/resource.utils';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
@@ -485,6 +486,14 @@ export async function createWorkflowStepFromGraph(
   timeSpan.addMinutes(Math.max(0, enrichedResources.length - 1));
   const timeout = timeSpan.toString(['hours', 'minutes', 'seconds']);
 
+  // Convert graph output to legacy {resources, params} format for storage
+  // This allows the legacy-metadata-mapper to read historical data consistently
+  const stepMetadata = toStepMetadata(data as Record<string, unknown> & {
+    model?: { id: number; model: { type: string } };
+    resources?: { id: number; model: { type: string } }[];
+    vae?: { id: number; model: { type: string } };
+  });
+
   return {
     $type,
     input: { ...(input as object), outputFormat: data.outputFormat },
@@ -494,7 +503,7 @@ export async function createWorkflowStepFromGraph(
       ? undefined
       : {
           isPrivateGeneration,
-          input: data,
+          ...stepMetadata,
         },
   } as WorkflowStepTemplate;
 }

@@ -12,7 +12,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
-import { Button, Group, Input, Skeleton } from '@mantine/core';
+import { Button, Input } from '@mantine/core';
 import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -28,34 +28,17 @@ import {
   getStatusClasses,
   isResourceDisabled,
 } from './ResourceItemContent';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import {
+  needsHydration,
+  resolveResourceOptions,
+  ResourceCardSkeleton,
+  type ResourceData,
+  type ResourceSelectValue,
+  type PartialResourceValue,
+} from './resource-select.utils';
 
-/** Resource data as returned by ResourceDataProvider (GenerationResource with air field) */
-type ResourceData = GenerationResource & { air: string };
-
-/**
- * Value type for ResourceSelectInput - stores the full GenerationResource.
- * Input schema accepts just an id (number) and the component hydrates to full resource.
- */
-export type ResourceSelectValue = GenerationResource;
-
-/**
- * Partial resource value that can be passed to the input.
- * This matches what DataGraph validation schema outputs.
- */
-export type PartialResourceValue = Partial<GenerationResource> & { id: number };
-
-/**
- * Helper to check if a value needs hydration.
- * A value needs hydration if it's missing essential fields like name or model.name.
- * This can happen when the value came from URL params, minimal input, or DataGraph defaults.
- */
-function needsHydration(value: Partial<ResourceSelectValue> | undefined): boolean {
-  if (!value) return false;
-  // If we're missing name or model.name, we need to hydrate
-  // DataGraph defaults only include { id, baseModel, model: { type } } - no name fields
-  return !('name' in value) || !value.name || !value.model?.name;
-}
+// Re-export types for consumers
+export type { ResourceSelectValue, PartialResourceValue } from './resource-select.utils';
 
 // =============================================================================
 // Types
@@ -176,24 +159,6 @@ function ResourceCard({
 }
 
 // =============================================================================
-// Loading State
-// =============================================================================
-
-function ResourceCardSkeleton() {
-  return (
-    <div className="rounded-lg border border-solid border-gray-3 bg-gray-0 p-2 dark:border-dark-4 dark:bg-dark-6">
-      <Group gap="xs" justify="space-between" wrap="nowrap">
-        <Skeleton height={20} width="60%" />
-        <Group gap={4}>
-          <Skeleton height={24} width={50} radius="xl" />
-          <Skeleton height={24} width={24} radius="sm" />
-        </Group>
-      </Group>
-    </div>
-  );
-}
-
-// =============================================================================
 // Component
 // =============================================================================
 
@@ -239,12 +204,8 @@ export function ResourceSelectInput({
     hasHydratedRef.current = false;
   }, [value?.id]);
 
-  // Build options from resourceType if provided, but don't overwrite existing resources
-  // (deriveProps may set options.resources with baseModels filtering)
-  const resolvedOptions: ResourceSelectOptions =
-    resourceType && !options?.resources?.length
-      ? { ...options, resources: [{ type: resourceType }] }
-      : options;
+  // Build options from resourceType if provided
+  const resolvedOptions = resolveResourceOptions(options, resourceType);
 
   const handleOpenResourceSearch = () => {
     openResourceSelectModal({
