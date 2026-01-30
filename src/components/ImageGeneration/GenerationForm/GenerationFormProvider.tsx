@@ -506,41 +506,33 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
 
         // Flux2 Klein uses sdcpp samplers directly
-        if (
-          baseModel &&
-          getIsFlux2KleinGroup(baseModel) &&
-          (!watchedValues.sampler ||
-            !flux2KleinSampleMethods.includes(watchedValues.sampler as any))
-        ) {
-          form.setValue('sampler', 'euler');
-        }
-
-        // Flux2 Klein needs a valid scheduler
-        if (
-          baseModel &&
-          getIsFlux2KleinGroup(baseModel) &&
-          (!watchedValues.scheduler ||
-            !flux2KleinSchedules.includes(watchedValues.scheduler as any))
-        ) {
-          form.setValue('scheduler', 'simple');
+        // Use setTimeout to ensure form values are fully updated (important during remix)
+        if (baseModel && getIsFlux2KleinGroup(baseModel)) {
+          setTimeout(() => {
+            const currentSampler = form.getValues('sampler');
+            const currentScheduler = form.getValues('scheduler');
+            if (!currentSampler || !flux2KleinSampleMethods.includes(currentSampler as any)) {
+              form.setValue('sampler', 'euler');
+            }
+            if (!currentScheduler || !flux2KleinSchedules.includes(currentScheduler as any)) {
+              form.setValue('scheduler', 'simple');
+            }
+          }, 0);
         }
 
         // ZImageBase uses sdcpp samplers directly (euler, heun, lcm)
-        if (
-          baseModel &&
-          getIsZImageBase(baseModel) &&
-          (!watchedValues.sampler || !zImageSampleMethods.includes(watchedValues.sampler as any))
-        ) {
-          form.setValue('sampler', 'euler');
-        }
-
-        // ZImageBase needs a valid scheduler
-        if (
-          baseModel &&
-          getIsZImageBase(baseModel) &&
-          (!watchedValues.scheduler || !zImageSchedules.includes(watchedValues.scheduler as any))
-        ) {
-          form.setValue('scheduler', 'simple');
+        // Use setTimeout to ensure form values are fully updated (important during remix)
+        if (baseModel && getIsZImageBase(baseModel)) {
+          setTimeout(() => {
+            const currentSampler = form.getValues('sampler');
+            const currentScheduler = form.getValues('scheduler');
+            if (!currentSampler || !zImageSampleMethods.includes(currentSampler as any)) {
+              form.setValue('sampler', 'euler');
+            }
+            if (!currentScheduler || !zImageSchedules.includes(currentScheduler as any)) {
+              form.setValue('scheduler', 'simple');
+            }
+          }, 0);
         }
 
         // When switching AWAY from ZImageBase/Flux2Klein, reset sdcpp sampler to UI sampler
