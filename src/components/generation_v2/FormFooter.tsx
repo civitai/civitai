@@ -33,7 +33,7 @@ import { useTipStore } from '~/store/tip.store';
 import { hashify } from '~/utils/string-helpers';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useWhatIfContext } from './WhatIfProvider';
-import { filterSnapshotForSubmit } from './inputs/ResourceItemContent';
+import { filterSnapshotForSubmit } from './utils';
 
 // =============================================================================
 // Helper Functions

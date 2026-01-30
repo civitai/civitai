@@ -284,8 +284,8 @@ export function clipSkipNode({
  */
 export function seedNode() {
   return {
-    input: z.union([z.undefined(), z.coerce.number().int().min(0).max(MAX_SEED)]).optional(),
-    output: z.number().int().optional(),
+    input: z.union([z.undefined(), z.coerce.number().int().min(1).max(MAX_SEED)]).optional(),
+    output: z.number().int().min(1).max(MAX_SEED).optional(),
     defaultValue: undefined,
   };
 }
