@@ -19,6 +19,7 @@ import {
   createCheckpointGraph,
   negativePromptNode,
   seedNode,
+  type ResourceData,
 } from './common';
 
 // =============================================================================
@@ -65,14 +66,11 @@ const resolutionOptions = ['1K', '2K', '4K'] as const;
 // Mode Subgraphs
 // =============================================================================
 
-/** Type for model value from parent context */
-type ModelValue = { id: number; baseModel: string; model: { type: string } } | undefined;
-
 /** Context shape passed to nano banana mode subgraphs */
 type NanoBananaModeCtx = {
   baseModel: string;
   workflow: string;
-  model: ModelValue;
+  model: ResourceData;
   nanoBananaMode: NanoBananaMode;
 };
 
@@ -109,7 +107,7 @@ const proModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
  * - pro: negativePrompt, aspectRatio, resolution, seed
  */
 export const nanoBananaGraph = new DataGraph<
-  { baseModel: string; workflow: string; model: ModelValue },
+  { baseModel: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options

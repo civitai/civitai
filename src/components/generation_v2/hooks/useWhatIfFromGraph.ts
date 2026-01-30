@@ -2,15 +2,13 @@
  * useWhatIfFromGraph
  *
  * Hook that fetches cost estimation (what-if) data for the generation graph.
- * Debounces the request and only fetches when the user is logged in.
  *
- * Cost estimation uses a lighter validity check than form submission:
- * it only requires cost-affecting fields (workflow, baseModel, model, etc.)
- * and lets the backend fill in placeholders for non-cost-affecting fields
- * (prompt, source images) via applyWhatIfDefaults.
+ * Uses prompt focus tracking to avoid race conditions when clicking submit:
+ * - When prompt is focused, we use the last committed prompt value
+ * - When prompt loses focus, we update to the current value
+ * - This prevents blur from triggering a new whatIf request that interferes with submit
  */
 
-import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual, omit } from 'lodash-es';
 import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,17 +18,18 @@ import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workf
 import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../inputs/ResourceItemContent';
+import { usePromptFocusedStore } from '../inputs/PromptInput';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
 /**
- * Graph keys that don't affect cost estimation.
+ * Graph keys that don't affect cost estimation at all.
  * Changes to these fields will NOT trigger a new whatIf query.
- * Add additional keys here as needed.
+ * Note: 'prompt' IS included because it affects SFW/NSFW classification and pricing.
  */
-const IGNORED_KEYS_FOR_WHATIF = ['prompt', 'negativePrompt', 'seed', 'denoise'] as const;
+const IGNORED_KEYS_FOR_WHATIF = ['negativePrompt', 'seed', 'denoise'] as const;
 
 // =============================================================================
 // Types
@@ -49,28 +48,27 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
   const { isLoading: resourcesLoading } = useResourceDataContext();
+  const promptFocused = usePromptFocusedStore((x) => x.focused);
 
-  // Track graph changes with a monotonic revision counter.
-  // This avoids relying on getSnapshot() returning a new object reference,
-  // which is unreliable across reset+set cycles (e.g. remix).
-  // We filter out non-cost-affecting fields and computed keys to avoid unnecessary queries.
+  // Track graph changes with a revision counter
   const [revision, incrementRevision] = useReducer((r: number) => r + 1, 0);
   const prevSnapshotRef = useRef<Record<string, unknown> | null>(null);
 
+  // Track the last committed prompt value (updated when prompt loses focus)
+  const promptRef = useRef<string>('');
+
   useEffect(() => {
-    // Build list of keys to exclude from change detection
     const keysToOmit = [...IGNORED_KEYS_FOR_WHATIF, ...graph.getComputedKeys()];
 
-    // Initialize with current snapshot to avoid spurious first increment
-    // See: docs/features/whatif-double-query-analysis.md
+    // Initialize with current snapshot
     const initialSnapshot = graph.getSnapshot() as Record<string, unknown>;
     prevSnapshotRef.current = omit(initialSnapshot, keysToOmit);
+    promptRef.current = (initialSnapshot.prompt as string) ?? '';
 
     return graph.subscribe(() => {
       const snapshot = graph.getSnapshot() as Record<string, unknown>;
       const relevantSnapshot = omit(snapshot, keysToOmit);
 
-      // Only increment revision if cost-affecting values changed
       if (!isEqual(relevantSnapshot, prevSnapshotRef.current)) {
         prevSnapshotRef.current = relevantSnapshot;
         incrementRevision();
@@ -78,27 +76,32 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     });
   }, [graph]);
 
-  // Debounce the revision counter to avoid excessive API calls and validation runs
-  const [debouncedRevision] = useDebouncedValue(revision, 150);
-
-  // Read the snapshot when the debounced revision changes
+  // Get current snapshot for building the query
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const debouncedValues = useMemo(() => graph.getSnapshot(), [debouncedRevision, graph]);
+  const snapshot = useMemo(
+    () => graph.getSnapshot() as Record<string, unknown>,
+    [revision, graph]
+  );
+
+  // Update committed prompt when not focused
+  useEffect(() => {
+    if (!promptFocused && snapshot?.prompt !== undefined) {
+      promptRef.current = snapshot.prompt as string;
+    }
+  }, [promptFocused, snapshot?.prompt]);
 
   // Full validation for isValid flag (used to disable submit button)
-  // Only run validation on debounced values to avoid running on every keystroke
   const validationResult = useMemo(
-    () => (debouncedValues ? graph.validate({ saveState: false }) : null),
-    [debouncedValues, graph]
+    () => (snapshot ? graph.validate({ saveState: false }) : null),
+    [snapshot, graph]
   );
   const isValid = validationResult?.success ?? false;
 
   // Lighter check for cost estimation: only require cost-affecting fields.
-  // The backend fills in placeholders for non-cost-affecting fields (prompt, images)
+  // The backend fills in placeholders for non-cost-affecting fields (images)
   // via applyWhatIfDefaults, so we don't need full validation to pass.
   const canEstimateCost = useMemo(() => {
-    if (!debouncedValues) return false;
-    const snapshot = debouncedValues as Record<string, unknown>;
+    if (!snapshot) return false;
 
     const workflow = snapshot.workflow as string | undefined;
     if (!workflow) return false;
@@ -114,16 +117,21 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     if (!snapshot.baseModel) return false;
 
     return true;
-  }, [debouncedValues, isValid]);
+  }, [snapshot, isValid]);
 
   // Build the query payload using the lighter cost check
   // Filter out computed nodes and disabled resources
+  // Use stale prompt value when prompt is focused to avoid blur race condition
   const queryPayload = useMemo(() => {
-    if (!debouncedValues || !canEstimateCost) return null;
-    return filterSnapshotForSubmit(debouncedValues as Record<string, unknown>, {
+    if (!snapshot || !canEstimateCost) return null;
+
+    // Build snapshot with committed prompt value (stale when focused)
+    const snapshotForQuery = { ...snapshot, prompt: promptRef.current };
+
+    return filterSnapshotForSubmit(snapshotForQuery, {
       computedKeys: graph.getComputedKeys(),
     });
-  }, [debouncedValues, canEstimateCost, graph]);
+  }, [snapshot, canEstimateCost, graph, promptFocused]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
     enabled: enabled && !!currentUser && !!queryPayload && !resourcesLoading,
@@ -132,6 +140,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   return {
     ...queryResult,
     isValid,
+    isLoading: queryResult.isFetching,
     validationErrors: validationResult?.success === false ? validationResult.errors : undefined,
   };
 }

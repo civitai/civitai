@@ -25,7 +25,7 @@ import {
 import { useLocalStorage } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
   ResourceSelectOptions,
@@ -153,33 +153,6 @@ function ResourceItem({
 }
 
 // =============================================================================
-// Hook for batch resource data
-// =============================================================================
-
-function useResourcesData(ids: number[]) {
-  const { registerResourceId, unregisterResourceId, getResourceData } = useResourceDataContext();
-
-  // Register all IDs on mount
-  useEffect(() => {
-    ids.forEach(registerResourceId);
-    return () => {
-      ids.forEach(unregisterResourceId);
-    };
-  }, [ids.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Get resource data for all IDs
-  const resources = useMemo(() => {
-    const map = new Map<number, ResourceData | undefined>();
-    for (const id of ids) {
-      map.set(id, getResourceData(id));
-    }
-    return map;
-  }, [ids, getResourceData]);
-
-  return { resources };
-}
-
-// =============================================================================
 // Component
 // =============================================================================
 
@@ -214,78 +187,26 @@ export function ResourceSelectMultipleInput({
     }
   };
 
-  // All resource IDs (for excludeIds in modal and hydration tracking)
+  // All resource IDs (for excludeIds in modal)
   const resourceIds = useMemo(() => value.map((v) => v.id), [value]);
 
-  // Only fetch IDs that need hydration (missing name/model data)
-  const idsToFetch = useMemo(
-    () => value.filter((v) => needsHydration(v)).map((v) => v.id),
-    [value]
-  );
+  // Get resource data from context (registration handled by form provider)
+  const { getResourceData } = useResourceDataContext();
 
-  // Batch fetch resource data for items that need hydration
-  const { resources: fetchedResources } = useResourcesData(idsToFetch);
-
-  // Build complete resource map: fetched data for items that needed hydration,
-  // existing hydrated data for items that didn't
+  // Build resource map: fetched data for items needing hydration, form value for hydrated items
   const resources = useMemo(() => {
     const map = new Map<number, ResourceData | undefined>();
     for (const v of value) {
       if (needsHydration(v)) {
-        // Use fetched data
-        map.set(v.id, fetchedResources.get(v.id));
+        // Use fetched data from context
+        map.set(v.id, getResourceData(v.id));
       } else {
         // Already hydrated - use existing value
         map.set(v.id, v as ResourceData);
       }
     }
     return map;
-  }, [value, fetchedResources]);
-
-  // Track which IDs we've hydrated to avoid infinite loops
-  const hydratedIdsRef = useRef<Set<number>>(new Set());
-
-  // Hydrate values when resource data is fetched
-  useEffect(() => {
-    if (!onChange) return;
-
-    // Check if any values need hydration
-    const idsToHydrate = new Set<number>();
-    for (const v of value) {
-      const resource = resources.get(v.id);
-      if (resource && needsHydration(v) && !hydratedIdsRef.current.has(v.id)) {
-        idsToHydrate.add(v.id);
-        hydratedIdsRef.current.add(v.id);
-      }
-    }
-
-    if (idsToHydrate.size > 0) {
-      const hydratedValues = value.map((v): ResourceSelectValue => {
-        const resource = resources.get(v.id);
-        if (resource && idsToHydrate.has(v.id)) {
-          // Store the full resource, preserving any existing strength override
-          return {
-            ...resource,
-            strength: v.strength ?? resource.strength,
-          };
-        }
-        // Already hydrated - cast to full type
-        return v as ResourceSelectValue;
-      });
-      onChange(hydratedValues);
-    }
-  }, [resources, value, onChange]);
-
-  // Reset hydration tracking when value array changes (different IDs)
-  useEffect(() => {
-    const currentIds = new Set(value.map((v) => v.id));
-    // Remove IDs that are no longer in value from the hydrated set
-    for (const id of hydratedIdsRef.current) {
-      if (!currentIds.has(id)) {
-        hydratedIdsRef.current.delete(id);
-      }
-    }
-  }, [resourceIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [value, getResourceData]);
 
   // Build options from resourceType if provided
   const resolvedOptions = resolveResourceOptions(options, resourceType);
@@ -453,11 +374,9 @@ export function ResourceSelectMultipleInput({
                 {groups.map((group, index) => (
                   <div key={group.type}>
                     {index !== 0 && <Divider />}
-                    {groups.length > 1 && (
-                      <Text size="xs" c="dimmed" fw={500} className="px-3 pb-1 pt-2">
-                        {group.label}
-                      </Text>
-                    )}
+                    <Text size="xs" c="dimmed" fw={500} className="px-3 pb-1 pt-2">
+                      {group.label}
+                    </Text>
                     <div className="flex flex-col">
                       {group.items.map(({ value: resourceValue, resource }, itemIndex) => (
                         <ResourceItem

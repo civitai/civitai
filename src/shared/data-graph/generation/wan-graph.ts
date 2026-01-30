@@ -30,6 +30,7 @@ import {
   cfgScaleNode,
   stepsNode,
   resourcesNode,
+  createCheckpointGraph,
 } from './common';
 
 // =============================================================================
@@ -140,10 +141,9 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   })
   .node(
     'resources',
-    (ctx, ext) =>
+    (ctx) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2, // Fal provider has 2 max resources
       }),
     ['baseModel']
@@ -187,10 +187,9 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   })
   .node(
     'resources',
-    (ctx, ext) =>
+    (ctx) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2,
       }),
     ['baseModel']
@@ -229,10 +228,9 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
   })
   .node(
     'resources',
-    (ctx, ext) =>
+    (ctx) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2,
       }),
     ['baseModel']
@@ -265,10 +263,9 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   })
   .node(
     'resources',
-    (ctx, ext) =>
+    (ctx) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: 2,
       }),
     ['baseModel']
@@ -287,6 +284,9 @@ type WanCtx = { baseModel: string; workflow: string };
  * Uses discriminator on 'version' to select version-specific controls.
  */
 export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
+  // Merge checkpoint graph (model node with locked model from ecosystem settings)
+  .merge(createCheckpointGraph())
+
   // Version selector node
   .node('version', {
     input: z.enum(wanVersions).optional(),

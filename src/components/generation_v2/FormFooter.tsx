@@ -126,14 +126,15 @@ interface SubmitButtonProps {
   onSubmit?: () => void;
 }
 
-function SubmitButton({ isLoading, onSubmit }: SubmitButtonProps) {
+function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) {
   const graph = useGraph<GenerationGraphTypes>();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
   const { creatorTip, civitaiTip } = useTipStore();
 
   // Get whatIf data from context (provided by WhatIfProvider)
-  const { data, isError, isInitialLoading, isValid } = useWhatIfContext();
+  // isLoading includes both pending debounce AND fetching states
+  const { data, isError, isLoading: isWhatIfLoading, isValid } = useWhatIfContext();
 
   // Get values from graph for tip calculation
   const snapshot = graph.getSnapshot() as ResourceSnapshot;
@@ -157,7 +158,7 @@ function SubmitButton({ isLoading, onSubmit }: SubmitButtonProps) {
       type="button"
       data-tour="gen:submit"
       className="h-full flex-1 px-2"
-      loading={isInitialLoading || isLoading}
+      loading={isWhatIfLoading || isSubmitting}
       cost={totalCost}
       disabled={isError || !isValid}
       onClick={handleClick}

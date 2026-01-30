@@ -16,7 +16,14 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, cfgScaleNode, stepsNode, resourcesNode } from './common';
+import {
+  seedNode,
+  aspectRatioNode,
+  cfgScaleNode,
+  stepsNode,
+  resourcesNode,
+  createCheckpointGraph,
+} from './common';
 
 // =============================================================================
 // Constants
@@ -51,6 +58,9 @@ type HunyuanCtx = { baseModel: string; workflow: string };
  * Supports LoRAs for customization.
  */
 export const hunyuanGraph = new DataGraph<HunyuanCtx, GenerationCtx>()
+  // Merge checkpoint graph (model node with locked model from ecosystem settings)
+  .merge(createCheckpointGraph())
+
   // Seed node
   .node('seed', seedNode())
 
@@ -103,7 +113,6 @@ export const hunyuanGraph = new DataGraph<HunyuanCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']

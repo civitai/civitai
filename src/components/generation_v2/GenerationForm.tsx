@@ -369,7 +369,8 @@ export function GenerationForm() {
                   <Controller
                     graph={graph}
                     name="triggerWords"
-                    render={({ value: triggerWords }) => {
+                    render={({ value }) => {
+                      const triggerWords = value as string[] | undefined;
                       if (!triggerWords || triggerWords.length === 0) return null;
                       return (
                         <div className="mb-1 flex flex-col gap-2">

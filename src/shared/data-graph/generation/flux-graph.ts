@@ -153,7 +153,6 @@ const standardModeWithResourcesGraph = new DataGraph<FluxModeCtx, GenerationCtx>
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']

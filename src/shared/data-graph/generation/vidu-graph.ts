@@ -15,7 +15,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, enumNode } from './common';
+import { seedNode, aspectRatioNode, enumNode, createCheckpointGraph } from './common';
 
 // =============================================================================
 // Constants
@@ -58,6 +58,9 @@ type ViduCtx = { baseModel: string; workflow: string };
  * - img2vid:ref2vid: Shows aspect ratio but no style
  */
 export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
+  // Merge checkpoint graph (model node with locked model from ecosystem settings)
+  .merge(createCheckpointGraph())
+
   // Seed node
   .node('seed', seedNode())
 

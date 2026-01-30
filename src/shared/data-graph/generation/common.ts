@@ -415,6 +415,7 @@ const resourceSchema = z.object({
     type: z.string(),
   }),
   strength: z.number().optional(),
+  trainedWords: z.array(z.string()).optional(),
   epochDetails: z
     .object({
       epochNumber: z.number().optional(),
@@ -671,18 +672,19 @@ export function createCheckpointGraph(options?: {
           input: checkpointInputSchema,
           output: resourceSchema.optional(),
           defaultValue: modelVersionId ? { id: modelVersionId, model: { type: 'Checkpoint' } } : undefined,
-          meta: {
+          // Meta is computed from value to derive excludeIds
+          meta: (_ctx, _ext, value: ResourceData | undefined) => ({
             options: {
               canGenerate: true,
               resources: getResourceSelectOptions(ctx.baseModel, ['Checkpoint']),
-              excludeIds: ext.resources?.map((x) => x.id) ?? [],
+              excludeIds: value ? [value.id] : [],
             },
             modelLocked,
             // Versions are always passed; showVersionSelector computed determines visibility
             versions,
             // Default model ID for "revert to default" functionality
             defaultModelId: modelVersionId,
-          },
+          }),
           // Transform model version when workflow changes (if workflowVersions configured)
           transform: buildModelTransform(),
         };
@@ -740,17 +742,18 @@ function buildVersionMappings(
 
 /**
  * Creates an additional resources (LoRA, etc.) node.
- * Meta contains: options, limit (dynamic based on baseModel and external context)
+ * Meta contains: options, limit (dynamic based on baseModel)
+ *
+ * Meta is computed from the current value to derive excludeIds,
+ * eliminating the need to pass resource IDs through external context.
  */
 export function resourcesNode({
   baseModel,
   resourceTypes = ['TextualInversion', 'LORA', 'LoCon', 'DoRA'] as ModelType[],
-  resourceIds = [],
   limit = 12,
 }: {
   baseModel: string;
   resourceTypes?: ModelType[];
-  resourceIds?: number[];
   limit?: number;
 }) {
   const resources = getResourceSelectOptions(baseModel, resourceTypes);
@@ -762,40 +765,36 @@ export function resourcesNode({
       .max(limit, 'You have exceeded the maximum number of allowed resources')
       .optional(),
     defaultValue: [],
-    meta: {
+    meta: (_ctx: unknown, _ext: unknown, value: ResourceData[] | undefined) => ({
       options: {
         canGenerate: true,
         resources,
-        excludeIds: resourceIds,
+        excludeIds: value?.map((r) => r.id) ?? [],
       },
       limit,
-    },
+    }),
   };
 }
 
 /**
  * Creates a VAE node.
  * Meta contains only: options (dynamic based on baseModel)
+ *
+ * Meta is computed from the current value to derive excludeIds.
  */
-export function vaeNode({
-  baseModel,
-  resourceIds = [],
-}: {
-  baseModel: string;
-  resourceIds?: number[];
-}) {
+export function vaeNode({ baseModel }: { baseModel: string }) {
   const resources = getResourceSelectOptions(baseModel, ['VAE']);
 
   return {
     input: resourceInputSchema.optional(),
     output: resourceSchema.optional(),
-    meta: {
+    meta: (_ctx: unknown, _ext: unknown, value: ResourceData | undefined) => ({
       options: {
         canGenerate: true,
         resources,
-        excludeIds: resourceIds,
+        excludeIds: value ? [value.id] : [],
       },
-    },
+    }),
   };
 }
 

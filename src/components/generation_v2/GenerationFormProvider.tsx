@@ -20,6 +20,7 @@ import {
 
 import { ResourceDataProvider, useResourceDataContext } from './inputs/ResourceDataProvider';
 import { WhatIfProvider } from './WhatIfProvider';
+import { needsHydration, type PartialResourceValue } from './inputs/resource-select.utils';
 
 // =============================================================================
 // Constants
@@ -82,9 +83,9 @@ function InnerProvider({
   skipStorage = false,
 }: GenerationFormProviderProps) {
   const status = useGenerationStatus();
-  const { resources } = useResourceDataContext();
+  const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
-  // Build external context from generation status and resource data
+  // Build external context from generation status
   const externalContext = useMemo<GenerationCtx>(
     () => ({
       limits: {
@@ -95,9 +96,8 @@ function InnerProvider({
         isMember: status.tier !== 'free',
         tier: status.tier,
       },
-      resources,
     }),
-    [status.limits.quantity, status.limits.resources, status.tier, resources]
+    [status.limits.quantity, status.limits.resources, status.tier]
   );
 
   // Initialize the DataGraph (clone, attach storage, init once)
@@ -146,6 +146,61 @@ function InnerProvider({
     // Subscribe to future changes
     return useGenerationStore.subscribe(applyStoreData);
   }, [graph]);
+
+  // Register resource IDs from graph for hydration
+  // This extracts IDs from model/resources/vae nodes and registers them with ResourceDataProvider.
+  // Components can then access full resource data via getResourceData(id) without managing hydration.
+  const registeredIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    function syncResourceIds() {
+      const snapshot = graph.getSnapshot() as Record<string, unknown>;
+
+      // Extract resource values from known resource nodes
+      const resourceValues: PartialResourceValue[] = [];
+      if (snapshot.model) resourceValues.push(snapshot.model as PartialResourceValue);
+      if (snapshot.vae) resourceValues.push(snapshot.vae as PartialResourceValue);
+      if (Array.isArray(snapshot.resources)) {
+        resourceValues.push(...(snapshot.resources as PartialResourceValue[]));
+      }
+
+      // Find IDs that need hydration (missing full data)
+      const idsToRegister = new Set(
+        resourceValues.filter((v) => v?.id && needsHydration(v)).map((v) => v.id)
+      );
+
+      // Unregister IDs that are no longer needed
+      for (const id of registeredIdsRef.current) {
+        if (!idsToRegister.has(id)) {
+          unregisterResourceId(id);
+          registeredIdsRef.current.delete(id);
+        }
+      }
+
+      // Register new IDs
+      for (const id of idsToRegister) {
+        if (!registeredIdsRef.current.has(id)) {
+          registerResourceId(id);
+          registeredIdsRef.current.add(id);
+        }
+      }
+    }
+
+    // Initial sync
+    syncResourceIds();
+
+    // Subscribe to graph changes
+    return graph.subscribe(syncResourceIds);
+  }, [graph, registerResourceId, unregisterResourceId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      for (const id of registeredIdsRef.current) {
+        unregisterResourceId(id);
+      }
+      registeredIdsRef.current.clear();
+    };
+  }, [unregisterResourceId]);
 
   return (
     <DataGraphProvider graph={graph}>

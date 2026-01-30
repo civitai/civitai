@@ -28,6 +28,7 @@ import {
   samplerNode,
   seedNode,
   stepsNode,
+  type ResourceData,
 } from './common';
 
 // =============================================================================
@@ -96,14 +97,11 @@ const hiDreamAspectRatios = [
 // Variant Subgraphs
 // =============================================================================
 
-/** Type for model value from parent context */
-type ModelValue = { id: number; baseModel: string; model: { type: string } } | undefined;
-
 /** Context shape passed to HiDream variant subgraphs */
 type HiDreamVariantCtx = {
   baseModel: string;
   workflow: string;
-  model: ModelValue;
+  model: ResourceData;
   hiDreamVariant: HiDreamVariant;
 };
 
@@ -124,7 +122,6 @@ const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']
@@ -169,7 +166,7 @@ const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
  * - full: resources, aspectRatio, negativePrompt, sampler, cfgScale, steps, seed
  */
 export const hiDreamGraph = new DataGraph<
-  { baseModel: string; workflow: string; model: ModelValue },
+  { baseModel: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options

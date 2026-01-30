@@ -1,6 +1,10 @@
 import { Textarea, type TextareaProps } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import type { KeyboardEvent } from 'react';
+import { create } from 'zustand';
+
+// Store to track prompt focus state for whatIf debouncing
+export const usePromptFocusedStore = create<{ focused: boolean }>(() => ({ focused: false }));
 
 export type PromptInputProps = Omit<TextareaProps, 'onChange'> & {
   onChange?: (value: string) => void;
@@ -25,6 +29,8 @@ export function PromptInput(props: PromptInputProps) {
       {...props}
       onChange={(e) => props.onChange?.(e.target.value)}
       onKeyDown={keyHandler}
+      onFocus={() => usePromptFocusedStore.setState({ focused: true })}
+      onBlur={() => usePromptFocusedStore.setState({ focused: false })}
     />
   );
 }

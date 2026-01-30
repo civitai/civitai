@@ -12,7 +12,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode } from './common';
+import { seedNode, createCheckpointGraph } from './common';
 
 // =============================================================================
 // Mochi Graph
@@ -28,6 +28,9 @@ type MochiCtx = { baseModel: string; workflow: string };
  * Mochi 1 preview by Genmo - state-of-the-art open video generation.
  */
 export const mochiGraph = new DataGraph<MochiCtx, GenerationCtx>()
+  // Merge checkpoint graph (model node with locked model from ecosystem settings)
+  .merge(createCheckpointGraph())
+
   // Seed node
   .node('seed', seedNode())
 

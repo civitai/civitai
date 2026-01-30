@@ -10,7 +10,7 @@
  * when fetched. This allows URL params to pass just an id while handlers get full context.
  */
 
-import { useEffect, useRef } from 'react';
+import React from 'react';
 import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
@@ -176,33 +176,12 @@ export function ResourceSelectInput({
   onRevertToDefault,
   ...inputWrapperProps
 }: ResourceSelectInputProps) {
-  // Only fetch if the value needs hydration (missing full resource data)
-  const shouldFetch = needsHydration(value);
-  const { data: fetchedData, isLoading } = useResourceData(shouldFetch ? value?.id : undefined);
+  // Fetch resource data for display (registration handled by form provider)
+  // If value is already hydrated, use it directly; otherwise fetch via provider
+  const { data: fetchedData, isLoading } = useResourceData(value?.id);
 
-  // Use fetched data if we needed hydration, otherwise use the value directly
-  const resourceData = shouldFetch ? fetchedData : (value as ResourceData | undefined);
-
-  // Track if we've already hydrated to avoid infinite loops
-  const hasHydratedRef = useRef(false);
-
-  // Hydrate the value when resource data is fetched and value needs hydration
-  useEffect(() => {
-    if (resourceData && value && needsHydration(value) && !hasHydratedRef.current && onChange) {
-      hasHydratedRef.current = true;
-      // Store the full resource, preserving any existing strength override
-      const hydrated: ResourceSelectValue = {
-        ...resourceData,
-        strength: value.strength ?? resourceData.strength,
-      };
-      onChange(hydrated);
-    }
-  }, [resourceData, value, onChange]);
-
-  // Reset hydration flag when id changes
-  useEffect(() => {
-    hasHydratedRef.current = false;
-  }, [value?.id]);
+  // Use fetched data for display info, but preserve form value's strength
+  const resourceData = fetchedData ?? (value && !needsHydration(value) ? (value as ResourceData) : undefined);
 
   // Build options from resourceType if provided
   const resolvedOptions = resolveResourceOptions(options, resourceType);
@@ -240,16 +219,7 @@ export function ResourceSelectInput({
     );
   }
 
-  // Render loading state (only when fetching and data not yet available)
-  if (shouldFetch && (isLoading || !resourceData)) {
-    return (
-      <Input.Wrapper {...inputWrapperProps}>
-        <ResourceCardSkeleton />
-      </Input.Wrapper>
-    );
-  }
-
-  // If we have a value but no resource data (shouldn't happen, but handle gracefully)
+  // Render loading state when fetching data or waiting for hydration
   if (!resourceData) {
     return (
       <Input.Wrapper {...inputWrapperProps}>
@@ -259,7 +229,6 @@ export function ResourceSelectInput({
   }
 
   // Render selected resource
-  // At this point resourceData exists, so value is either already hydrated or will be on next render
   // Use resourceData as the canonical value, with strength from form state
   const displayValue: ResourceSelectValue = {
     ...resourceData,

@@ -70,20 +70,11 @@ export const stableDiffusionGraph = new DataGraph<
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']
   )
-  .node(
-    'vae',
-    (ctx, ext) =>
-      vaeNode({
-        baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
-      }),
-    ['baseModel']
-  )
+  .node('vae', (ctx) => vaeNode({ baseModel: ctx.baseModel }), ['baseModel'])
   .node(
     'aspectRatio',
     (ctx) => {

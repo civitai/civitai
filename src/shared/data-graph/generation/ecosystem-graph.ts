@@ -1,3 +1,4 @@
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 /**
  * Ecosystem Graph
  *
@@ -43,7 +44,6 @@ import { hunyuanGraph } from './hunyuan-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
-import { isDefined } from '~/utils/type-guards';
 
 // =============================================================================
 // Helper Functions
@@ -145,7 +145,7 @@ export const ecosystemGraph = new DataGraph<
     ['workflow']
   )
   .node('prompt', (ctx) => promptNode({ required: ctx.input === 'text' }), ['input'])
-  .computed('triggerWords', (ctx, ext) => ext.resources?.flatMap((r) => r.trainedWords).filter(isDefined), [])
+
   .node(
     'images',
     (ctx) => {
@@ -207,7 +207,13 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
-  ]);
+  ])
+  .computed('triggerWords', (ctx) => {
+    const resources = (('resources' in ctx ? ctx.resources : undefined) ?? [])
+    const model = ('model' in ctx ? ctx.model : undefined)
+    const allResources = model ? [model, ...resources] : resources;
+    return allResources.flatMap((r) => r.trainedWords ?? []);
+  }, ['model', 'resources']);
 
 /**
  * Get image config from workflow configs.

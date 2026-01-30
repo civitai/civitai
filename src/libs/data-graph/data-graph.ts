@@ -651,8 +651,12 @@ export class DataGraph<
       const def = this.nodeDefs.get(entry.key);
       if (!def) continue;
 
+      const nodeValue = this._ctx[entry.key as keyof Ctx];
+
+      // Compute meta (static or dynamic with value)
       const metaValue =
-        typeof def.meta === 'function' ? def.meta(this._ctx, this._ext) : def.meta ?? {};
+        typeof def.meta === 'function' ? def.meta(this._ctx, this._ext, nodeValue) : def.meta;
+
       this.updateMeta(entry.key, metaValue);
     }
   }
@@ -842,7 +846,8 @@ export class DataGraph<
       input?: AnyZodSchema;
       output: T;
       defaultValue?: InferOutput<T>;
-      meta?: M;
+      /** Static meta object, or function that computes meta from context and current value */
+      meta?: M | ((ctx: Ctx, ext: ExternalCtx, value: InferOutput<T>) => M);
       /** Transform value when dependencies change. Runs after parsing input, before setting value. */
       transform?: (value: InferOutput<T>, ctx: Ctx, ext: ExternalCtx) => InferOutput<T>;
     }
@@ -867,7 +872,8 @@ export class DataGraph<
       input?: AnyZodSchema;
       output: T;
       defaultValue?: InferOutput<T>;
-      meta?: M;
+      /** Static meta object, or function that computes meta from context and current value */
+      meta?: M | ((ctx: Ctx, ext: ExternalCtx, value: InferOutput<T>) => M);
       when?: undefined | true;
       /** Transform value when dependencies change. Runs after parsing input, before setting value. */
       transform?: (value: InferOutput<T>, ctx: Ctx, ext: ExternalCtx) => InferOutput<T>;
@@ -897,7 +903,8 @@ export class DataGraph<
       input?: AnyZodSchema;
       output: T;
       defaultValue?: InferOutput<T>;
-      meta?: M;
+      /** Static meta object, or function that computes meta from context and current value */
+      meta?: M | ((ctx: Ctx, ext: ExternalCtx, value: InferOutput<T>) => M);
       when: boolean;
       /** Transform value when dependencies change. Runs after parsing input, before setting value. */
       transform?: (value: InferOutput<T>, ctx: Ctx, ext: ExternalCtx) => InferOutput<T>;
@@ -1131,8 +1138,9 @@ export class DataGraph<
 
   /**
    * Add a computed (derived) value that is calculated from other nodes.
+   * Deps can reference any key that exists in any branch (uses CtxValues which accumulates all keys).
    */
-  computed<const K extends string, T, const Deps extends readonly (keyof Ctx & string)[]>(
+  computed<const K extends string, T, const Deps extends readonly (keyof CtxValues & string)[]>(
     key: K,
     compute: (ctx: Ctx, ext: ExternalCtx) => T,
     deps: Deps

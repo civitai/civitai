@@ -15,7 +15,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode } from './common';
+import { seedNode, aspectRatioNode, createCheckpointGraph } from './common';
 
 // =============================================================================
 // Constants
@@ -54,6 +54,9 @@ type SoraCtx = { baseModel: string; workflow: string };
  * - img2vid: Aspect ratio derived from source image
  */
 export const soraGraph = new DataGraph<SoraCtx, GenerationCtx>()
+  // Merge checkpoint graph (model node with locked model from ecosystem settings)
+  .merge(createCheckpointGraph())
+
   // Seed node
   .node('seed', seedNode())
 

@@ -78,7 +78,6 @@ export const ponyV7Graph = new DataGraph<
     (ctx, ext) =>
       resourcesNode({
         baseModel: ctx.baseModel,
-        resourceIds: ext.resources?.map((x) => x.id) ?? [],
         limit: ext.limits.maxResources,
       }),
     ['baseModel']
