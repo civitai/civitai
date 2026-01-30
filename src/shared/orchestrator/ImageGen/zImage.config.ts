@@ -5,7 +5,11 @@ import type {
   SdCppSchedule,
 } from '@civitai/client';
 import * as z from 'zod';
-import { promptSchema, seedSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  negativePromptSchema,
+  promptSchema,
+  seedSchema,
+} from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 const engine = 'zImage';
@@ -53,6 +57,7 @@ const baseSchema = z.object({
   quantity: z.number().optional(),
   seed: seedSchema,
   loras: z.record(z.string(), z.number()).optional(),
+  negativePrompt: negativePromptSchema,
 });
 
 export const zImageConfig = ImageGenConfig({
@@ -68,8 +73,10 @@ export const zImageConfig = ImageGenConfig({
       steps: params.steps,
       sampler: params.sampler,
       scheduler: params.scheduler,
+
       quantity: params.quantity,
       seed: params.seed,
+      negativePrompt: params.negativePrompt,
     };
   },
   inputFn: ({
@@ -108,6 +115,7 @@ export const zImageConfig = ImageGenConfig({
       schedule: params?.scheduler,
       quantity: params.quantity,
       seed: params.seed,
+      negativePrompt: params.negativePrompt,
       loras,
     }) as ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
   },

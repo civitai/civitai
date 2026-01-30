@@ -634,8 +634,7 @@ export function GenerationFormContent() {
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
               isSeedream ||
-              isZImageTurbo ||
-              isZImageBase;
+              isZImageTurbo;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -1701,6 +1700,7 @@ export function GenerationFormContent() {
                                   <InputSelect
                                     name="sampler"
                                     disabled={samplerDisabled}
+                                    allowDeselect={false}
                                     label={
                                       <div className="flex items-center gap-1">
                                         <Input.Label>Sampler</Input.Label>
@@ -1724,6 +1724,7 @@ export function GenerationFormContent() {
                                 {(isZImageBase || isFlux2Klein) && (
                                   <InputSelect
                                     name="scheduler"
+                                    allowDeselect={false}
                                     label={
                                       <div className="flex items-center gap-1">
                                         <Input.Label>Scheduler</Input.Label>
