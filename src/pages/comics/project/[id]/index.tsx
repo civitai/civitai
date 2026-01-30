@@ -12,6 +12,7 @@ import {
   Menu,
   Modal,
   ScrollArea,
+  SimpleGrid,
   Stack,
   Switch,
   Tabs,
@@ -38,6 +39,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 
+import type { DragEndEvent } from '@dnd-kit/core';
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -70,6 +76,11 @@ function ProjectWorkspace() {
   const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
+  const [regeneratingPanelId, setRegeneratingPanelId] = useState<string | null>(null);
+
+  const panelSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
 
   const { data: project, isLoading, refetch } = trpc.comics.getProject.useQuery(
     { id: projectId },
@@ -109,11 +120,16 @@ function ProjectWorkspace() {
     onSuccess: () => {
       closePanelModal();
       setPrompt('');
+      setRegeneratingPanelId(null);
       refetch();
     },
   });
 
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
+    onSuccess: () => refetch(),
+  });
+
+  const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
     onSuccess: () => refetch(),
   });
 
@@ -217,8 +233,30 @@ function ProjectWorkspace() {
     ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
   );
 
-  const handleGeneratePanel = () => {
+  const handlePanelDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !activeChapter) return;
+
+    const panels = activeChapter.panels;
+    const oldIndex = panels.findIndex((p) => p.id === active.id);
+    const newIndex = panels.findIndex((p) => p.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(panels, oldIndex, newIndex);
+    reorderPanelsMutation.mutate({
+      chapterId: activeChapter.id,
+      panelIds: reordered.map((p) => p.id),
+    });
+  };
+
+  const handleGeneratePanel = async () => {
     if (!prompt.trim() || !activeCharacter || !activeChapter || !activeCharacterHasRefs) return;
+
+    // If regenerating, delete the old panel first so it isn't used as previous-panel context
+    if (regeneratingPanelId) {
+      await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+    }
+
     createPanelMutation.mutate({
       chapterId: activeChapter.id,
       characterId: activeCharacter.id,
@@ -486,29 +524,38 @@ function ProjectWorkspace() {
                   </Card>
                 )}
 
-                <Grid>
-                  {(activeChapter?.panels ?? []).map((panel) => (
-                    <Grid.Col key={panel.id} span={{ base: 6, sm: 4, lg: 3 }}>
-                      <PanelCard
-                        id={panel.id}
-                        imageUrl={panel.imageUrl}
-                        prompt={panel.prompt}
-                        status={panel.status}
-                        errorMessage={panel.errorMessage}
-                        onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
-                        onViewDebug={() => {
-                          setDebugPanelId(panel.id);
-                          openDebugModal();
-                        }}
-                        onRegenerate={() => {
-                          setPrompt(panel.prompt);
-                          if (panel.characterId) setSelectedCharacterId(panel.characterId);
-                          openPanelModal();
-                        }}
-                      />
-                    </Grid.Col>
-                  ))}
-                </Grid>
+                <DndContext
+                  sensors={panelSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handlePanelDragEnd}
+                >
+                  <SortableContext items={(activeChapter?.panels ?? []).map((p) => p.id)}>
+                    <SimpleGrid cols={{ base: 2, sm: 3, lg: 4 }} spacing="md">
+                      {(activeChapter?.panels ?? []).map((panel) => (
+                        <SortablePanel key={panel.id} id={panel.id}>
+                          <PanelCard
+                            id={panel.id}
+                            imageUrl={panel.imageUrl}
+                            prompt={panel.prompt}
+                            status={panel.status}
+                            errorMessage={panel.errorMessage}
+                            onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
+                            onViewDebug={() => {
+                              setDebugPanelId(panel.id);
+                              openDebugModal();
+                            }}
+                            onRegenerate={() => {
+                              setRegeneratingPanelId(panel.id);
+                              setPrompt(panel.prompt);
+                              if (panel.characterId) setSelectedCharacterId(panel.characterId);
+                              openPanelModal();
+                            }}
+                          />
+                        </SortablePanel>
+                      ))}
+                    </SimpleGrid>
+                  </SortableContext>
+                </DndContext>
               </Stack>
             </Grid.Col>
           </Grid>
@@ -516,7 +563,15 @@ function ProjectWorkspace() {
       </Container>
 
       {/* Generate Panel Modal */}
-      <Modal opened={panelModalOpened} onClose={closePanelModal} title="Generate Panel" size="lg">
+      <Modal
+        opened={panelModalOpened}
+        onClose={() => {
+          closePanelModal();
+          setRegeneratingPanelId(null);
+        }}
+        title={regeneratingPanelId ? 'Regenerate Panel' : 'Generate Panel'}
+        size="lg"
+      >
         <Stack gap="md">
           {activeCharacter && (
             <Group>
@@ -547,12 +602,18 @@ function ProjectWorkspace() {
               Cost: 25 Buzz
             </Text>
             <Group>
-              <Button variant="default" onClick={closePanelModal}>
+              <Button
+                variant="default"
+                onClick={() => {
+                  closePanelModal();
+                  setRegeneratingPanelId(null);
+                }}
+              >
                 Cancel
               </Button>
               <Button
                 onClick={handleGeneratePanel}
-                loading={createPanelMutation.isPending}
+                loading={deletePanelMutation.isPending || createPanelMutation.isPending}
                 disabled={!prompt.trim()}
               >
                 Generate
@@ -572,6 +633,28 @@ function ProjectWorkspace() {
   );
 }
 
+function SortablePanel({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        cursor: isDragging ? 'grabbing' : 'grab',
+        opacity: isDragging ? 0.5 : 1,
+        touchAction: 'none',
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
 interface PanelCardProps {
   id: string;
   imageUrl: string | null;
@@ -587,7 +670,7 @@ function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onVie
   return (
     <Card withBorder padding="xs" className="aspect-[3/4] relative group">
       {imageUrl ? (
-        <Image src={imageUrl} alt={prompt} className="w-full h-full object-cover rounded" />
+        <Image src={getEdgeUrl(imageUrl, { width: 450 })} alt={prompt} className="w-full h-full object-cover rounded" />
       ) : (
         <div className="w-full h-full bg-gray-800 rounded flex items-center justify-center">
           {status === 'Generating' || status === 'Pending' ? (
