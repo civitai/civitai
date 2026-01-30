@@ -35,6 +35,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getChallengeConfig,
   getChallengeTypeConfig,
+  getJudgePrompts,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { generateWinners } from '~/server/games/daily-challenge/generative-content';
 import { getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
@@ -209,6 +210,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       id: number;
       title: string;
       theme: string | null;
+      invitation: string | null;
       coverImageId: number | null;
       startsAt: Date;
       endsAt: Date;
@@ -230,6 +232,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.id,
       c.title,
       c.theme,
+      c.invitation,
       c."coverImageId",
       c."startsAt",
       c."endsAt",
@@ -288,6 +291,14 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       id: item.id,
       title: item.title,
       theme: item.theme,
+      invitation: item.invitation,
+      startsAt: item.startsAt,
+      endsAt: item.endsAt,
+      status: item.status,
+      source: item.source,
+      prizePool: item.prizePool,
+      collectionId: item.collectionId,
+      entryCount: Number(item.entryCount),
       coverImage: coverImage
         ? {
             id: coverImage.id,
@@ -299,15 +310,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
             type: coverImage.type,
           }
         : null,
-      startsAt: item.startsAt,
-      endsAt: item.endsAt,
-      status: item.status,
-      source: item.source,
-      prizePool: item.prizePool,
-      entryCount: Number(item.entryCount),
       modelVersionIds: item.modelVersionIds ?? [],
-      model: item.modelId && item.modelName ? { id: item.modelId, name: item.modelName } : null,
-      collectionId: item.collectionId,
       createdBy: {
         id: item.createdById,
         username: item.creatorUsername,
@@ -395,7 +398,44 @@ export async function getChallengeDetail(
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
   if (challenge.status === ChallengeStatus.Completed) {
-    winners = await getChallengeWinners(id);
+    const rawWinners = await getChallengeWinners(id);
+    // Enrich winners with profile pictures and cosmetics
+    const winnerUserIds = rawWinners.map((w) => w.userId);
+    const [winnerProfilePics, winnerCosmetics] =
+      winnerUserIds.length > 0
+        ? await Promise.all([
+            getProfilePicturesForUsers(winnerUserIds),
+            getCosmeticsForUsers(winnerUserIds),
+          ])
+        : [{}, {}];
+    winners = rawWinners.map((w) => ({
+      ...w,
+      profilePicture: winnerProfilePics[w.userId] ?? null,
+      cosmetics: winnerCosmetics[w.userId] ?? null,
+    }));
+  }
+
+  // Get judge info if challenge has a judge assigned
+  let judge: ChallengeDetail['judge'] = null;
+  if (challenge.judgeId) {
+    const [judgeRow] = await dbRead.$queryRaw<
+      [{ id: number; userId: number; name: string; bio: string | null } | undefined]
+    >`
+      SELECT cj.id, cj."userId", cj.name, cj.bio
+      FROM "ChallengeJudge" cj
+      WHERE cj.id = ${challenge.judgeId}
+    `;
+    if (judgeRow) {
+      const [judgeProfilePics, judgeCosmetics] = await Promise.all([
+        getProfilePicturesForUsers([judgeRow.userId]),
+        getCosmeticsForUsers([judgeRow.userId]),
+      ]);
+      judge = {
+        ...judgeRow,
+        profilePicture: judgeProfilePics[judgeRow.userId] ?? null,
+        cosmetics: judgeCosmetics[judgeRow.userId] ?? null,
+      };
+    }
   }
 
   // Extract completion summary from metadata
@@ -444,6 +484,7 @@ export async function getChallengeDetail(
       profilePicture: profilePictures[challenge.createdById] ?? null,
       cosmetics: cosmetics[challenge.createdById] ?? null,
     },
+    judge,
     winners,
     completionSummary,
   };
@@ -568,7 +609,7 @@ export async function upsertChallenge({
   userId,
   ...input
 }: UpsertChallengeInput & { userId: number }) {
-  const { id, coverImage, ...data } = input;
+  const { id, coverImage, judgeId, ...data } = input;
 
   // Handle cover image - create Image record if needed (like Article does)
   let coverImageId: number | null = null;
@@ -599,6 +640,7 @@ export async function upsertChallenge({
         data: {
           ...data,
           coverImageId,
+          judgeId: judgeId ?? null,
           modelVersionIds: data.modelVersionIds ?? [],
           prizes: data.prizes,
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
@@ -661,6 +703,7 @@ export async function upsertChallenge({
         data: {
           ...data,
           coverImageId,
+          judgeId: judgeId ?? null,
           collectionId: collection.id,
           createdById: userId,
           modelVersionIds: data.modelVersionIds ?? [],
@@ -768,6 +811,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   // Get challenge config for judging
   const config = await getChallengeConfig();
   const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  const judgePrompts = await getJudgePrompts(challenge.judgeId, challenge.judgingPrompt);
 
   log('Ending challenge and picking winners:', challengeId);
 
@@ -805,6 +849,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       score: entry.score,
     })),
     config: challengeTypeConfig,
+    judgePrompts,
   });
 
   // Map winners to entries
@@ -984,4 +1029,21 @@ export async function voidChallenge(challengeId: number) {
   log('Challenge status updated to Cancelled');
 
   return { success: true };
+}
+
+/**
+ * Get active ChallengeJudge records for the moderator dropdown.
+ */
+export async function getActiveJudges() {
+  return dbRead.challengeJudge.findMany({
+    where: { active: true },
+    orderBy: { name: 'asc' },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      bio: true,
+      reviewPrompt: true,
+    },
+  });
 }

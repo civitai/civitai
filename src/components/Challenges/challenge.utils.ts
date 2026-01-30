@@ -32,10 +32,10 @@ export function useGetActiveChallenges() {
   const dismissed = useStore((state) => state.dismissed);
 
   // Use new challenge endpoint with Active status filter
-  const { data, isLoading } = trpc.challenge.getInfinite.useQuery(
-    { status: [ChallengeStatus.Active], limit: 2 },
-    { staleTime: 60 * 1000 } // 1 minute cache
-  );
+  const { data, isLoading } = trpc.challenge.getInfinite.useQuery({
+    status: [ChallengeStatus.Active],
+    limit: 2,
+  });
 
   const challenges = useMemo(() => {
     if (!data?.items) return [];
@@ -43,18 +43,13 @@ export function useGetActiveChallenges() {
     return data.items.map((challenge) => ({
       // New Challenge table fields
       challengeId: challenge.id,
-      // Legacy fields for backward compatibility
-      articleId: 0, // No longer used for navigation
       date: challenge.endsAt,
-      resources: challenge.modelVersionIds?.map((id) => ({
-        id,
-        modelId: challenge.model?.id ?? 0,
-      })),
-      engine: undefined, // Not applicable for new challenges yet
+      resources: challenge.modelVersionIds,
       collectionId: challenge.collectionId ?? 0,
       title: challenge.title,
-      invitation: '', // Detail needs to be fetched separately
+      invitation: challenge.invitation,
       coverUrl: challenge.coverImage?.url ?? '',
+      // TODO.challenge: Display the selected judge instead of the creator
       judge: 'ai' as 'ai' | 'team', // Default to AI for system challenges
       dismissed: dismissed.includes(challenge.id),
       endsToday: !isFutureDate(startOfDay(challenge.endsAt)),

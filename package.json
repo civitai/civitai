@@ -2,7 +2,7 @@
   "name": "model-share",
   "version": "5.0.1390",
   "private": true,
-  "packageManager": "pnpm@10.28.1",
+  "packageManager": "pnpm@10.28.2",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "start": "next start",
@@ -338,6 +338,9 @@
       "sharp",
       "unrs-resolver",
       "utf-8-validate"
-    ]
+    ],
+    "patchedDependencies": {
+      "@rajesh896/broprint.js": "patches/@rajesh896__broprint.js.patch"
+    }
   }
 }

@@ -53,26 +53,15 @@ export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps 
     let newLevels = [...selectedLevels];
 
     if (checked) {
-      // Add this level and all lower levels (if adding PG-13, also include PG)
-      const levelIndex = selectableLevels.indexOf(level);
-      for (let i = 0; i <= levelIndex; i++) {
-        if (!newLevels.includes(selectableLevels[i])) {
-          newLevels.push(selectableLevels[i]);
-        }
+      if (!newLevels.includes(level)) {
+        newLevels.push(level);
       }
     } else {
-      // Remove this level and all higher levels
-      const levelIndex = selectableLevels.indexOf(level);
-      newLevels = newLevels.filter((l) => {
-        const idx = (selectableLevels as readonly number[]).indexOf(l);
-        return idx !== -1 && idx < levelIndex;
-      });
+      newLevels = newLevels.filter((l) => l !== level);
     }
 
-    // Ensure at least PG is always selected
-    if (!newLevels.includes(NsfwLevel.PG)) {
-      newLevels.push(NsfwLevel.PG);
-    }
+    // Ensure at least one level remains selected
+    if (newLevels.length === 0) return;
 
     onChange?.(flagifyBrowsingLevel(newLevels));
   };
@@ -118,7 +107,6 @@ export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps 
                     <Checkbox
                       checked={isChecked}
                       onChange={(e) => handleLevelToggle(level, e.currentTarget.checked)}
-                      disabled={level === NsfwLevel.PG} // PG is always required
                     />
                     <Badge color={color} variant="light" size="sm" w={55}>
                       {label}

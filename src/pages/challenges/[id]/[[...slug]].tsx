@@ -26,6 +26,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -125,27 +126,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <Title fw="bold" lineClamp={2} order={1} fz={{ base: 'h2', sm: 'h1' }}>
                 {challenge.title}
               </Title>
-              <CurrencyBadge
-                size="lg"
-                radius="sm"
-                currency={Currency.BUZZ}
-                unitAmount={challenge.prizePool}
-                variant="light"
-                style={{ flexShrink: 0 }}
-              />
             </Group>
 
             {/* Row 2: Theme + Status + Stats (inline with dividers) */}
             <Group gap={8} wrap="wrap">
-              {challenge.theme && (
-                <>
-                  <Text c="blue" fw={600} size="lg">
-                    Theme: {challenge.theme}
-                  </Text>
-                  <Divider orientation="vertical" />
-                </>
-              )}
-
               {/* Status badge */}
               {isCompleted ? (
                 <IconBadge
@@ -178,6 +162,15 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                 {abbreviateNumber(challenge.entryCount)}{' '}
                 {challenge.entryCount === 1 ? 'entry' : 'entries'}
               </IconBadge>
+
+              {challenge.theme && (
+                <>
+                  <Divider orientation="vertical" />
+                  <Text c="blue" fw={600} size="lg">
+                    {challenge.theme}
+                  </Text>
+                </>
+              )}
             </Group>
           </Stack>
 
@@ -195,10 +188,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                             <EdgeMedia2
                               src={challenge.coverImage!.url}
                               type={challenge.coverImage!.type}
-                              className="max-h-80 w-full object-cover md:max-h-[450px]"
+                              className="aspect-[4/3] w-full object-cover"
                             />
                           ) : (
-                            <div className="relative aspect-video w-full overflow-hidden">
+                            <div className="relative aspect-[4/3] w-full overflow-hidden">
                               <MediaHash {...challenge.coverImage} />
                             </div>
                           )}
@@ -209,9 +202,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                 )}
 
                 {/* About */}
-                <Title order={2} mt="sm">
-                  About this challenge
-                </Title>
                 <article>
                   <Stack gap={4}>
                     {challenge.description ? (
@@ -261,11 +251,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: <Text size="sm">{formatDate(challenge.startsAt, undefined, true)}</Text>,
+      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm a')}</Text>,
     },
     {
       label: 'Ends',
-      value: <Text size="sm">{formatDate(challenge.endsAt, undefined, true)}</Text>,
+      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm a')}</Text>,
     },
     {
       label: 'Max Entries',
@@ -286,7 +276,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     ...(challenge.entryPrize && challenge.entryPrizeRequirement > 0
       ? [
           {
-            label: 'Entry Prize Requirement',
+            label: 'Participation Prize Requirement',
             value: <Text size="sm">Min {challenge.entryPrizeRequirement} entries to qualify</Text>,
           },
         ]
@@ -360,11 +350,10 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
         {isActive && !currentUser?.muted && (
           <Button
             onClick={() => {
-              const modelVersionId = challenge.modelVersionIds?.[0];
-              if (modelVersionId) {
+              if (challenge.modelVersionIds.length) {
                 generationPanel.open({
-                  type: 'modelVersion',
-                  id: modelVersionId,
+                  type: 'modelVersions',
+                  ids: challenge.modelVersionIds,
                 });
               } else {
                 generationPanel.open();
@@ -425,7 +414,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           <Accordion.Panel>
             <DescriptionTable
               items={challengeDetails}
-              labelWidth="35%"
+              labelWidth="40%"
               withBorder
               paperProps={{
                 style: {
@@ -462,24 +451,46 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Panel>
         </Accordion.Item>
 
-        <Accordion.Item value="creator">
-          <Accordion.Control>
-            <Group justify="space-between">Created By</Group>
-          </Accordion.Control>
-          <Accordion.Panel p={0}>
-            <CreatorCardSimple
-              user={{
-                ...challenge.createdBy,
-                // Convert null to undefined for CreatorCardSimple compatibility
-                cosmetics: challenge.createdBy.cosmetics ?? undefined,
-                profilePicture: challenge.createdBy.profilePicture ?? undefined,
-              }}
-              statDisplayOverwrite={[]}
-              style={{ border: 'none', borderRadius: 0 }}
-            />
-          </Accordion.Panel>
-        </Accordion.Item>
+        {challenge.judge && (
+          <Accordion.Item value="judge">
+            <Accordion.Control>
+              <Group justify="space-between">Judged By</Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Group gap="sm" p="sm">
+                <UserAvatar
+                  user={{
+                    id: challenge.judge.userId,
+                    profilePicture: challenge.judge.profilePicture ?? undefined,
+                    cosmetics: challenge.judge.cosmetics ?? undefined,
+                  }}
+                  size="md"
+                />
+                <div>
+                  <Text fw={600} size="sm">
+                    {challenge.judge.name}
+                  </Text>
+                  {challenge.judge.bio && (
+                    <Text size="xs" c="dimmed" lineClamp={2}>
+                      {challenge.judge.bio}
+                    </Text>
+                  )}
+                </div>
+              </Group>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
       </Accordion>
+
+      <CreatorCardSimple
+        user={{
+          ...challenge.createdBy,
+          // Convert null to undefined for CreatorCardSimple compatibility
+          cosmetics: challenge.createdBy.cosmetics ?? undefined,
+          profilePicture: challenge.createdBy.profilePicture ?? undefined,
+        }}
+        statDisplayOverwrite={[]}
+      />
     </Stack>
   );
 }
@@ -520,7 +531,9 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
               <IconTrophy size={32} className="text-yellow-500" />
             </Group>
             <Text c="dimmed" size="sm">
-              Selected by AI Judge based on theme, creativity, and aesthetic quality
+              {challenge.judge
+                ? `Judged by ${challenge.judge.name}`
+                : 'Selected based on theme, creativity, and aesthetic quality'}
             </Text>
           </div>
 
@@ -562,19 +575,33 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                 isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-white/80'
               }`}
             >
-              <Group gap="sm" mb="md">
-                <div className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-cyan-400">
-                  <IconSparkles size={20} className="text-white" />
-                </div>
-                <div>
-                  <Text fw={600} size="sm">
-                    AI Judge Commentary
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Automated analysis powered by GPT-4
-                  </Text>
-                </div>
-              </Group>
+              {challenge.judge && (
+                <Group gap="sm" mb="md">
+                  <UserAvatar
+                    user={{
+                      id: challenge.judge.userId,
+                      profilePicture: challenge.judge.profilePicture ?? undefined,
+                      cosmetics: challenge.judge.cosmetics ?? undefined,
+                    }}
+                    size="md"
+                  />
+                  <div>
+                    <Text fw={600} size="sm">
+                      {challenge.judge.name}&apos;s Commentary
+                    </Text>
+                    {challenge.judge.bio && (
+                      <Text size="xs" c="dimmed">
+                        {challenge.judge.bio}
+                      </Text>
+                    )}
+                  </div>
+                </Group>
+              )}
+              {!challenge.judge && (
+                <Text fw={600} size="sm" mb="md">
+                  Judging Commentary
+                </Text>
+              )}
 
               <Stack gap="md">
                 {challenge.completionSummary?.judgingProcess && (
@@ -706,9 +733,20 @@ function WinnerPodiumCard({
 
       {/* Winner Info */}
       <div className="flex flex-1 flex-col gap-3 p-4">
-        {/* Username */}
+        {/* Username + Avatar */}
         <Link href={`/user/${winner.username}`}>
           <Group gap="xs">
+            <UserAvatar
+              user={{
+                id: winner.userId,
+                username: winner.username,
+                profilePicture: winner.profilePicture ?? undefined,
+                cosmetics: winner.cosmetics ?? undefined,
+              }}
+              size="sm"
+              includeAvatar
+              withUsername={false}
+            />
             <Text fw={600} size={isFirst ? 'md' : 'sm'} className="hover:underline">
               {winner.username}
             </Text>

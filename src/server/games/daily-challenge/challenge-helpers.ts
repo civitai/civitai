@@ -28,6 +28,7 @@ export type ChallengeDetails = {
   allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
   modelVersionIds: number[]; // Array of allowed model version IDs
   collectionId: number | null; // Collection for entries (null if not yet created)
+  judgeId: number | null; // ChallengeJudge ID (null if no judge assigned)
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxReviews: number | null;
@@ -54,6 +55,7 @@ type ChallengeDbRow = Omit<
   | 'coverImageHeight'
   | 'prizes'
   | 'entryPrize'
+  | 'judgeId'
 > & {
   modelVersionIds: number[] | null; // Can be null from DB
   coverImageId: number | null;
@@ -63,6 +65,7 @@ type ChallengeDbRow = Omit<
   coverImageHeight: number | null;
   prizes: Prize[] | string; // JSON comes as string or parsed
   entryPrize: Prize | string | null;
+  judgeId: number | null;
 };
 
 export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {
@@ -86,6 +89,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."allowedNsfwLevel",
       c."modelVersionIds",
       c."collectionId",
+      c."judgeId",
       c."judgingPrompt",
       c."reviewPercentage",
       c."maxReviews",

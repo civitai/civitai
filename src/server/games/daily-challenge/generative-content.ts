@@ -197,6 +197,7 @@ type GenerateReviewInput = {
   creator: string;
   imageUrl: string;
   config: ChallengeConfig;
+  judgePrompts?: JudgePromptOverrides;
 };
 type GeneratedReview = {
   score: Score;
@@ -207,12 +208,15 @@ type GeneratedReview = {
 export async function generateReview(input: GenerateReviewInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  // Apply judge prompt overrides if available
+  const config = applyJudgeOverrides(input.config, input.judgePrompts);
+
   const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
     model: AI_MODELS.GPT_4O,
     messages: [
       prepareSystemMessage(
-        input.config,
+        config,
         'review',
         `{
           "score": {
@@ -256,6 +260,7 @@ type GenerateWinnersInput = {
   }>;
   theme: string;
   config: ChallengeConfig;
+  judgePrompts?: JudgePromptOverrides;
 };
 type GeneratedWinners = {
   winners: Array<{
@@ -269,12 +274,15 @@ type GeneratedWinners = {
 export async function generateWinners(input: GenerateWinnersInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  // Apply judge prompt overrides if available
+  const config = applyJudgeOverrides(input.config, input.judgePrompts);
+
   const result = await openrouter.getJsonCompletion<GeneratedWinners>({
     retries: 3,
     model: AI_MODELS.GPT_4O,
     messages: [
       prepareSystemMessage(
-        input.config,
+        config,
         'winner',
         `{
           "winners": [
@@ -308,6 +316,32 @@ export async function generateWinners(input: GenerateWinnersInput) {
 
 // Helpers
 // ------------------------------------
+export type JudgePromptOverrides = {
+  systemPrompt?: string | null;
+  reviewPrompt?: string | null;
+  winnerSelectionPrompt?: string | null;
+};
+
+/**
+ * Apply ChallengeJudge prompt overrides to a config.
+ * Fallback chain: challenge-specific judgingPrompt > ChallengeJudge prompts > Redis config defaults.
+ */
+function applyJudgeOverrides(
+  config: ChallengeConfig,
+  overrides?: JudgePromptOverrides
+): ChallengeConfig {
+  if (!overrides) return config;
+  return {
+    ...config,
+    prompts: {
+      ...config.prompts,
+      ...(overrides.systemPrompt ? { systemMessage: overrides.systemPrompt } : {}),
+      ...(overrides.reviewPrompt ? { review: overrides.reviewPrompt } : {}),
+      ...(overrides.winnerSelectionPrompt ? { winner: overrides.winnerSelectionPrompt } : {}),
+    },
+  };
+}
+
 function prepareSystemMessage(
   config: ChallengeConfig,
   promptType: ChallengePromptType,

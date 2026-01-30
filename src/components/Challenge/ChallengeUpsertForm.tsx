@@ -1,3 +1,4 @@
+import type { SelectProps } from '@mantine/core';
 import { Button, Divider, Group, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -25,6 +26,8 @@ import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSource, Currency } from '~/shared/utils/prisma/enums';
 import { upsertChallengeSchema, type Prize } from '~/server/schema/challenge.schema';
+import type { GetActiveJudgesItem } from '~/types/router';
+import { IconCheck } from '@tabler/icons-react';
 
 // Wrapped custom components for form integration
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
@@ -32,12 +35,16 @@ const InputContentRatingSelect = withController(ContentRatingSelect);
 const InputNumberWrapper = withController(NumberInputWrapper);
 
 // Form schema - extends server schema with flattened prize fields for UI
-const schema = upsertChallengeSchema.omit({ prizes: true, entryPrize: true }).extend({
-  prize1Buzz: z.number().min(0).default(5000),
-  prize2Buzz: z.number().min(0).default(2500),
-  prize3Buzz: z.number().min(0).default(1000),
-  entryPrizeBuzz: z.number().min(0).default(0),
-});
+// judgeId is overridden to string|null because Mantine Select uses string values
+const schema = upsertChallengeSchema
+  .omit({ prizes: true, entryPrize: true, judgeId: true })
+  .extend({
+    judgeId: z.string().nullable().optional(),
+    prize1Buzz: z.number().min(0).default(5000),
+    prize2Buzz: z.number().min(0).default(2500),
+    prize3Buzz: z.number().min(0).default(1000),
+    entryPrizeBuzz: z.number().min(0).default(0),
+  });
 
 type ChallengeForEdit = {
   id: number;
@@ -49,6 +56,7 @@ type ChallengeForEdit = {
   modelVersionIds: number[];
   nsfwLevel: number;
   allowedNsfwLevel: number;
+  judgeId: number | null;
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxEntriesPerUser: number;
@@ -72,6 +80,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const queryUtils = trpc.useUtils();
   const isEditing = !!challenge;
 
+  // Fetch available judges for dropdown
+  const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
+
   // Default dates
   const defaultStartsAt = dayjs().add(1, 'day').startOf('day').toDate();
   const defaultEndsAt = dayjs().add(2, 'day').startOf('day').toDate();
@@ -92,6 +103,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? 1,
+      judgeId: challenge?.judgeId ? String(challenge.judgeId) : null,
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
       maxEntriesPerUser: challenge?.maxEntriesPerUser ?? 20,
@@ -146,6 +158,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       modelVersionIds: data.modelVersionIds,
       nsfwLevel: data.nsfwLevel,
       allowedNsfwLevel: data.allowedNsfwLevel,
+      judgeId: data.judgeId ? Number(data.judgeId) : null,
       judgingPrompt: data.judgingPrompt || undefined,
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
@@ -213,7 +226,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description="Suggested resolution: 1200 x 630 (optional)"
+              description="Suggested resolution: 1024 x 768 (4:3 aspect ratio, optional)"
               withNsfwLevel={false}
             />
           </Stack>
@@ -223,8 +236,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <InputModelVersionMultiSelect
             name="modelVersionIds"
-            label="Required Model Versions"
-            description="Optionally require specific model versions for entries. Entries must use at least one of these models (OR logic). Leave empty to allow any model."
+            label="Eligible Models"
+            description="Specify which models are allowed for this challenge. Entries must use at least one. Leave empty to allow any model."
           />
         </Paper>
 
@@ -234,6 +247,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Title order={4}>Schedule</Title>
 
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
+              {/* TODO.challenge: Figure out why date format doesn't follow system format (i.e: USA is MM/DD/YYYY, ROW is DD/MM/YYYY) */}
               <InputDateTimePicker
                 name="visibleAt"
                 label="Visible From"
@@ -343,35 +357,37 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Stack>
         </Paper>
 
-        {/* Configuration */}
+        {/* Judge */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
-            <Title order={4}>AI Configuration</Title>
-
-            <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              <InputNumber
-                name="reviewPercentage"
-                label="Review Percentage"
-                description="% of entries to AI-score"
-                min={0}
-                max={100}
-              />
-
-              <InputNumberWrapper
-                name="operationBudget"
-                label="Operation Budget"
-                description="Budget for AI review costs"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                min={0}
-                step={100}
-              />
-            </SimpleGrid>
-
+            <Title order={4}>Judge</Title>
+            <InputSelect
+              classNames={{ option: '[&[data-checked="true"]]:bg-blue-9/30' }}
+              name="judgeId"
+              label="Assigned Judge"
+              placeholder="Select a judge persona"
+              description="Select a judge persona for this challenge. Leave empty for default judging."
+              data={judges.map((j) => ({ value: String(j.id), label: j.name })) ?? []}
+              renderOption={(item) => renderJudgeOption({ ...item, judges })}
+              onChange={(value) => {
+                const selectedJudge = judges.find((j) => String(j.id) === value);
+                if (selectedJudge?.reviewPrompt) {
+                  form.setValue('judgingPrompt', selectedJudge.reviewPrompt);
+                } else {
+                  form.setValue('judgingPrompt', '');
+                }
+              }}
+              allowDeselect={false}
+              clearable
+            />
             <InputTextArea
               name="judgingPrompt"
-              label="Custom Judging Prompt"
-              placeholder="Custom prompt for AI judging (leave empty for default)"
+              label="Judging Prompt Override"
+              description="Custom prompt for this challenge's AI judge. Overrides the judge persona's default prompts. Leave empty to use defaults."
+              placeholder="e.g., For this holiday challenge, focus on festive themes and seasonal creativity..."
+              autosize
               minRows={3}
+              maxRows={8}
             />
           </Stack>
         </Paper>
@@ -416,3 +432,27 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     </Form>
   );
 }
+
+const renderJudgeOption = ({
+  option,
+  checked,
+  judges,
+}: Parameters<NonNullable<SelectProps['renderOption']>>[0] & { judges: GetActiveJudgesItem[] }) => {
+  const judge = judges.find((j) => String(j.id) === option.value);
+
+  return (
+    <Stack gap={4} className="w-full">
+      <Group align="center" justify="space-between" gap="sm">
+        <div>
+          <Text fw={500}>{option.label}</Text>
+          {judge?.bio && (
+            <Text size="sm" c="dimmed">
+              {judge.bio}
+            </Text>
+          )}
+        </div>
+        {checked && <IconCheck stroke={1.5} color="currentColor" size={18} />}
+      </Group>
+    </Stack>
+  );
+};

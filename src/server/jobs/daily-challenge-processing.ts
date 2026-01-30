@@ -24,6 +24,7 @@ import {
   getChallengeTypeConfig,
   getEndedActiveChallenges,
   getUpcomingSystemChallenge,
+  getJudgePrompts,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
@@ -350,15 +351,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // ----------------------------------------------
   const reviewing = Date.now();
 
-  // Get the Challenge record to check allowedNsfwLevel (new system)
+  // Get the Challenge record to check allowedNsfwLevel and judgeId (new system)
   // Fall back to PG-only (1) for old article-based challenges
-  const [challengeRecord] = await dbRead.$queryRaw<[{ allowedNsfwLevel: number } | undefined]>`
-    SELECT "allowedNsfwLevel"
+  const [challengeRecord] = await dbRead.$queryRaw<
+    [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
+  >`
+    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt"
     FROM "Challenge"
-    WHERE "collectionId" = ${currentChallenge.collectionId}
+    WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
   `;
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+
+  // Look up judge prompts for this challenge (if assigned)
+  const judgePrompts = await getJudgePrompts(
+    challengeRecord?.judgeId,
+    challengeRecord?.judgingPrompt
+  );
 
   // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
   // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
@@ -531,6 +540,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: challengeTypeConfig,
+        judgePrompts,
       });
       log('Review prepared', entry.imageId, review);
 
@@ -739,6 +749,19 @@ async function pickWinnersForChallenge(
 
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
+  // Look up judge prompts for this challenge (if assigned)
+  const [challengeJudgeRow] = await dbRead.$queryRaw<
+    [{ judgeId: number | null; judgingPrompt: string | null } | undefined]
+  >`
+    SELECT "judgeId", "judgingPrompt" FROM "Challenge"
+    WHERE id = ${currentChallenge.challengeId}
+    LIMIT 1
+  `;
+  const judgePrompts = await getJudgePrompts(
+    challengeJudgeRow?.judgeId,
+    challengeJudgeRow?.judgingPrompt
+  );
+
   // Close challenge
   // ----------------------------------------------
   await endChallenge(currentChallenge);
@@ -751,16 +774,8 @@ async function pickWinnersForChallenge(
   if (!judgedEntries.length) {
     log('No judged entries for challenge:', currentChallenge.challengeId);
     // Still need to mark the challenge as completed even with no entries
-    const challengeRecord = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Challenge"
-      WHERE "collectionId" = ${currentChallenge.collectionId}
-      AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
-      LIMIT 1
-    `;
-    if (challengeRecord[0]) {
-      await updateChallengeStatus(challengeRecord[0].id, ChallengeStatus.Completed);
-      log('Challenge marked as completed (no entries)');
-    }
+    await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
+    log('Challenge marked as completed (no entries)');
     return;
   }
 
@@ -775,6 +790,7 @@ async function pickWinnersForChallenge(
       score: entry.score,
     })),
     config: challengeTypeConfig,
+    judgePrompts,
   });
 
   // Map winners to entries
@@ -884,7 +900,7 @@ async function pickWinnersForChallenge(
   // Find the Challenge by collectionId
   const winnerChallengeRecords = await dbRead.$queryRaw<{ id: number; metadata: unknown }[]>`
     SELECT id, metadata FROM "Challenge"
-    WHERE "collectionId" = ${currentChallenge.collectionId}
+    WHERE id = ${currentChallenge.challengeId}
     AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
     LIMIT 1
   `;

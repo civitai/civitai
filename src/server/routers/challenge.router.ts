@@ -27,6 +27,7 @@ import {
   getUserEntryCount,
   upsertChallenge,
   voidChallenge,
+  getActiveJudges,
 } from '~/server/services/challenge.service';
 
 // Router definition
@@ -37,11 +38,11 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .query(({ input }) => getInfiniteChallenges(input)),
 
-  // Get single challenge by ID
+  // Get single challenge by ID (moderators bypass visibility filters)
   getById: publicProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeDetail(input.id)),
+    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.isModerator)),
 
   // Get upcoming challenge themes for preview widget
   getUpcomingThemes: publicProcedure
@@ -84,6 +85,11 @@ export const challengeRouter = router({
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => voidChallenge(input.id)),
+
+  // Moderator: Get active judges for dropdown
+  getJudges: moderatorProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getActiveJudges()),
 
   // Moderator: Delete a challenge
   delete: moderatorProcedure

@@ -37,7 +37,7 @@ import { useMemo } from 'react';
 
 export type UserMenuItem = {
   label: string;
-  icon: React.ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
+  icon: React.ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>;
   color?: string;
   visible?: boolean;
   href?: string;

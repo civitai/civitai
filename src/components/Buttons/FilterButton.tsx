@@ -7,7 +7,7 @@ import clsx from 'clsx';
 
 export type FilterButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   ButtonProps & {
-    icon?: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+    icon?: ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>;
     active?: boolean;
     onClick?: MouseEventHandler<HTMLButtonElement>;
   };

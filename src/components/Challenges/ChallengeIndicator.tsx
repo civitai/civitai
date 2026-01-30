@@ -13,7 +13,7 @@ export function ChallengeIndicator() {
   const handleOpen = () => {
     dialogStore.trigger({
       component: ChallengeInvitation,
-      props: { onClose: () => dismissChallenges(challenges.map((x) => x.articleId)) },
+      props: { onClose: () => dismissChallenges(challenges.map((x) => x.challengeId)) },
     });
   };
 

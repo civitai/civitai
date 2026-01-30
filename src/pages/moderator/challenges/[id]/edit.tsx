@@ -55,6 +55,7 @@ export default function EditChallengePage() {
     modelVersionIds: challenge.modelVersionIds ?? [],
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel ?? 1,
+    judgeId: challenge.judge?.id ?? null,
     judgingPrompt: challenge.judgingPrompt,
     reviewPercentage: challenge.reviewPercentage,
     maxEntriesPerUser: challenge.maxEntriesPerUser,

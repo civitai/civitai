@@ -383,6 +383,7 @@ model User {
   userRestrictions            UserRestriction[]               @relation("userRestrictions")
   challengesCreated          Challenge[]
   challengeWins              ChallengeWinner[]
+  challengeJudge             ChallengeJudge?
 
   @@index([deletedAt])
 }
@@ -3775,6 +3776,10 @@ model Challenge {
   createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
   source      ChallengeSource @default(System)
 
+  // Judge
+  judgeId Int?
+  judge   ChallengeJudge? @relation(fields: [judgeId], references: [id], onDelete: SetNull)
+
   // Lifecycle
   status ChallengeStatus @default(Scheduled)
 
@@ -3791,6 +3796,27 @@ model Challenge {
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
   @@index([createdById, status]) // User's challenges by status
+  @@index([judgeId])
+}
+
+model ChallengeJudge {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name                  String  @db.VarChar(255)
+  bio                   String? @db.Text
+  systemPrompt          String? @db.Text
+  reviewPrompt          String? @db.Text
+  winnerSelectionPrompt String? @db.Text
+  active                Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  challenges Challenge[]
+
+  @@index([active])
 }
 
 model ChallengeWinner {

@@ -36,7 +36,7 @@ type Props = ActionIconProps & {
 
 const SocialIcons: Record<
   SocialOption,
-  ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>
+  ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>
 > = {
   github: IconBrandGithub,
   discord: IconBrandDiscord,

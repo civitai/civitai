@@ -144,6 +144,46 @@ export type Prize = {
   points: number;
 };
 
+/**
+ * Get judge prompt overrides for a challenge.
+ * Override priority (highest → lowest):
+ *   1. Challenge.judgingPrompt (per-challenge override) → used as systemPrompt
+ *   2. ChallengeJudge prompts (judge persona's system/review/winner prompts)
+ *   3. Redis config / defaults (existing fallback)
+ * Returns undefined if no overrides exist, allowing the default prompt chain.
+ */
+export async function getJudgePrompts(
+  judgeId: number | null | undefined,
+  judgingPrompt?: string | null
+) {
+  if (!judgeId && !judgingPrompt) return undefined;
+
+  if (!judgeId) {
+    return {
+      systemPrompt: judgingPrompt!,
+      reviewPrompt: null,
+      winnerSelectionPrompt: null,
+    };
+  }
+
+  const judge = await dbRead.challengeJudge.findUnique({
+    where: { id: judgeId },
+    select: {
+      systemPrompt: true,
+      reviewPrompt: true,
+      winnerSelectionPrompt: true,
+    },
+  });
+
+  if (!judge && !judgingPrompt) return undefined;
+
+  return {
+    systemPrompt: judgingPrompt ?? judge?.systemPrompt ?? null,
+    reviewPrompt: judge?.reviewPrompt ?? null,
+    winnerSelectionPrompt: judge?.winnerSelectionPrompt ?? null,
+  };
+}
+
 export type Score = {
   theme: number; // 0-10 how well it fits the theme
   wittiness: number; // 0-10 how witty it is

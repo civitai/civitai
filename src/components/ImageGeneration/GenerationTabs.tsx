@@ -137,7 +137,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 type Tabs = Record<
   GenerationPanelView,
   {
-    Icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+    Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>;
     label: string;
     Component: React.FC;
   }

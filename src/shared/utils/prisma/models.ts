@@ -447,6 +447,7 @@ export interface User {
   userRestrictions?: UserRestriction[];
   challengesCreated?: Challenge[];
   challengeWins?: ChallengeWinner[];
+  challengeJudge?: ChallengeJudge | null;
 }
 
 export interface CustomerSubscription {
@@ -2826,11 +2827,28 @@ export interface Challenge {
   createdById: number;
   createdBy?: User;
   source: ChallengeSource;
+  judgeId: number | null;
+  judge?: ChallengeJudge | null;
   status: ChallengeStatus;
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
+}
+
+export interface ChallengeJudge {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  bio: string | null;
+  systemPrompt: string | null;
+  reviewPrompt: string | null;
+  winnerSelectionPrompt: string | null;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  challenges?: Challenge[];
 }
 
 export interface ChallengeWinner {

@@ -38,6 +38,7 @@ export type ChallengeListItem = {
   id: number;
   title: string;
   theme: string | null;
+  invitation: string | null;
   coverImage: ChallengeCoverImage | null;
   startsAt: Date;
   endsAt: Date;
@@ -46,7 +47,6 @@ export type ChallengeListItem = {
   prizePool: number;
   entryCount: number;
   modelVersionIds: number[];
-  model: { id: number; name: string } | null;
   collectionId: number | null;
   createdBy: {
     id: number;
@@ -63,6 +63,15 @@ export type ChallengeCompletionSummary = {
   judgingProcess: string;
   outcome: string;
   completedAt: string;
+};
+
+export type ChallengeJudgeInfo = {
+  id: number;
+  userId: number;
+  name: string;
+  bio: string | null;
+  profilePicture?: ProfileImage | null;
+  cosmetics?: UserWithCosmetics['cosmetics'] | null;
 };
 
 export type ChallengeDetail = {
@@ -102,6 +111,7 @@ export type ChallengeDetail = {
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
     deletedAt?: Date | null;
   };
+  judge: ChallengeJudgeInfo | null;
   winners: Array<{
     place: number;
     userId: number;
@@ -110,6 +120,8 @@ export type ChallengeDetail = {
     imageUrl: string;
     buzzAwarded: number;
     reason: string | null;
+    profilePicture?: ProfileImage | null;
+    cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
   completionSummary: ChallengeCompletionSummary | null;
 };
@@ -143,30 +155,27 @@ export const challengeCursorSchema = z.string().optional();
 
 // Query schema for infinite challenge list
 export type GetInfiniteChallengesInput = z.infer<typeof getInfiniteChallengesSchema>;
-export const getInfiniteChallengesSchema = infiniteQuerySchema
-  .omit({ cursor: true })
-  .merge(
-    z.object({
-      // Override cursor to be a string for composite cursor support
-      cursor: challengeCursorSchema,
-      query: z.string().optional(),
-      status: z.enum(ChallengeStatus).array().optional(),
-      source: z.enum(ChallengeSource).array().optional(),
-      period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
-      sort: z
-        .enum([
-          ChallengeSort.Newest,
-          ChallengeSort.EndingSoon,
-          ChallengeSort.MostEntries,
-          ChallengeSort.HighestPrize,
-        ])
-        .default(ChallengeSort.Newest),
-      userId: z.number().optional(),
-      modelVersionId: z.number().optional(),
-      includeEnded: z.boolean().default(false),
-      limit: z.coerce.number().min(1).max(100).default(20),
-    })
-  );
+export const getInfiniteChallengesSchema = z.object({
+  ...infiniteQuerySchema.omit({ cursor: true }).shape,
+  // Override cursor to be a string for composite cursor support
+  cursor: challengeCursorSchema,
+  query: z.string().optional(),
+  status: z.enum(ChallengeStatus).array().optional(),
+  source: z.enum(ChallengeSource).array().optional(),
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  sort: z
+    .enum([
+      ChallengeSort.Newest,
+      ChallengeSort.EndingSoon,
+      ChallengeSort.MostEntries,
+      ChallengeSort.HighestPrize,
+    ])
+    .default(ChallengeSort.Newest),
+  userId: z.number().optional(),
+  modelVersionId: z.number().optional(),
+  includeEnded: z.boolean().default(false),
+  limit: z.coerce.number().min(1).max(100).default(20),
+});
 
 // Note: Challenge entries are stored as CollectionItems in the challenge's collection.
 // Use collection endpoints to query entries.
@@ -206,6 +215,7 @@ export const upsertChallengeSchema = z.object({
   nsfwLevel: z.number().min(1).max(32).default(1),
   allowedNsfwLevel: z.number().min(1).max(63).default(1),
   modelVersionIds: z.array(z.number()).default([]),
+  judgeId: z.number().optional().nullable(),
   judgingPrompt: z.string().optional().nullable(),
   reviewPercentage: z.number().min(0).max(100).default(100),
   maxReviews: z.number().optional().nullable(),

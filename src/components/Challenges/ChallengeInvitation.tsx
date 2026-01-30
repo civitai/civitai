@@ -75,16 +75,16 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
 
 function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClose: () => void }) {
   function handleAccept() {
-    const modelVersionId = props.resources?.[0]?.id;
-    if (modelVersionId)
+    if (props.resources.length) {
       generationPanel.open({
-        type: 'modelVersion',
-        id: modelVersionId,
+        type: 'modelVersions',
+        ids: props.resources,
       });
-    else generationPanel.open();
+    } else {
+      generationPanel.open();
+    }
 
-    generationFormStore.setType(props.engine ? 'video' : 'image');
-    if (props.engine) generationFormStore.setEngine(props.engine);
+    generationFormStore.setType('image');
 
     onClose();
   }
