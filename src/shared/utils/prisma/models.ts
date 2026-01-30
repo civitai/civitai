@@ -3707,6 +3707,8 @@ export interface ComicProject {
   userId: number;
   user?: User;
   name: string;
+  description: string | null;
+  coverImageUrl: string | null;
   status: ComicProjectStatus;
   baseModel: string | null;
   createdAt: Date;

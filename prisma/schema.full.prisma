@@ -4797,9 +4797,11 @@ model ComicProject {
   id        String             @id @default(cuid())
   userId    Int
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String             @db.VarChar(255)
-  status    ComicProjectStatus @default(Active)
-  baseModel String?            @db.VarChar(50)
+  name          String             @db.VarChar(255)
+  description   String?            @db.Text
+  coverImageUrl String?            @db.VarChar(500)
+  status        ComicProjectStatus @default(Active)
+  baseModel     String?            @db.VarChar(50)
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 

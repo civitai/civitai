@@ -1,43 +1,48 @@
 import {
   ActionIcon,
-  Badge,
   Button,
-  Card,
   Code,
   Container,
-  Grid,
   Group,
-  Image,
   Loader,
   Menu,
   Modal,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Switch,
-  Tabs,
   Text,
   Textarea,
+  TextInput,
   Title,
-  Tooltip,
+  Badge,
 } from '@mantine/core';
+import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDisclosure } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowLeft,
   IconBook,
   IconBug,
   IconDotsVertical,
+  IconPencil,
   IconPhoto,
   IconPlus,
   IconRefresh,
   IconRefreshDot,
+  IconSettings,
+  IconSparkles,
   IconTrash,
+  IconUpload,
   IconUser,
+  IconX,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -47,8 +52,10 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './ProjectWorkspace.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -71,12 +78,29 @@ function ProjectWorkspace() {
 
   const [panelModalOpened, { open: openPanelModal, close: closePanelModal }] = useDisclosure(false);
   const [debugModalOpened, { open: openDebugModal, close: closeDebugModal }] = useDisclosure(false);
+  const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const [debugPanelId, setDebugPanelId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<string | null>(null);
+
+  // Chapter rename state
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
+  const [editChapterName, setEditChapterName] = useState('');
+  const chapterInputRef = useRef<HTMLInputElement>(null);
+
+  // Settings modal state
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editCoverUrl, setEditCoverUrl] = useState<string | null>(null);
+  const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
+
+  // Panel detail drawer state
+  const [detailPanelId, setDetailPanelId] = useState<string | null>(null);
+  // Insert-at-position state for adding panels between existing ones
+  const [insertAtPosition, setInsertAtPosition] = useState<number | null>(null);
 
   const panelSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -121,12 +145,16 @@ function ProjectWorkspace() {
       closePanelModal();
       setPrompt('');
       setRegeneratingPanelId(null);
+      setInsertAtPosition(null);
       refetch();
     },
   });
 
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => {
+      refetch();
+      setDetailPanelId(null);
+    },
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
@@ -138,6 +166,25 @@ function ProjectWorkspace() {
       setActiveChapterId(data.id);
       refetch();
     },
+  });
+
+  const updateChapterMutation = trpc.comics.updateChapter.useMutation({
+    onSuccess: () => refetch(),
+  });
+
+  const deleteChapterMutation = trpc.comics.deleteChapter.useMutation({
+    onSuccess: () => refetch(),
+  });
+
+  const updateProjectMutation = trpc.comics.updateProject.useMutation({
+    onSuccess: () => {
+      closeSettings();
+      refetch();
+    },
+  });
+
+  const deleteCharacterMutation = trpc.comics.deleteCharacter.useMutation({
+    onSuccess: () => refetch(),
   });
 
   const utils = trpc.useUtils();
@@ -159,24 +206,14 @@ function ProjectWorkspace() {
 
   useEffect(() => {
     if (generatingPanelIds.length === 0) return;
-
     const interval = setInterval(async () => {
       try {
         const results = await Promise.all(
-          generatingPanelIds.map((panelId) =>
-            utils.comics.pollPanelStatus.fetch({ panelId })
-          )
+          generatingPanelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
         );
-        // If any panel changed status, refetch the full project
-        const changed = results.some(
-          (r) => r.status === 'Ready' || r.status === 'Failed'
-        );
-        if (changed) refetch();
-      } catch {
-        // Silently ignore poll errors
-      }
+        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
+      } catch { /* ignore */ }
     }, 3000);
-
     return () => clearInterval(interval);
   }, [generatingPanelIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -191,30 +228,41 @@ function ProjectWorkspace() {
 
   useEffect(() => {
     if (processingCharacterIds.length === 0) return;
-
     const interval = setInterval(async () => {
       try {
         const results = await Promise.all(
-          processingCharacterIds.map((characterId) =>
-            utils.comics.pollCharacterStatus.fetch({ characterId })
-          )
+          processingCharacterIds.map((cid) => utils.comics.pollCharacterStatus.fetch({ characterId: cid }))
         );
-        const changed = results.some(
-          (r) => r.status === 'Ready' || r.status === 'Failed'
-        );
-        if (changed) refetch();
-      } catch {
-        // Silently ignore poll errors
-      }
+        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
+      } catch { /* ignore */ }
     }, 5000);
-
     return () => clearInterval(interval);
   }, [processingCharacterIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Focus chapter rename input
+  useEffect(() => {
+    if (editingChapterId && chapterInputRef.current) {
+      chapterInputRef.current.focus();
+      chapterInputRef.current.select();
+    }
+  }, [editingChapterId]);
+
+  // Build character name map for panel cards
+  const characterNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of project?.characters ?? []) {
+      map.set(c.id, c.name);
+    }
+    return map;
+  }, [project?.characters]);
 
   if (isLoading || !project) {
     return (
       <Container size="xl" py="xl">
-        <Text>Loading project...</Text>
+        <Stack align="center" gap="md" py={60}>
+          <Loader color="yellow" />
+          <Text c="dimmed">Loading project...</Text>
+        </Stack>
       </Container>
     );
   }
@@ -233,36 +281,126 @@ function ProjectWorkspace() {
     ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
   );
 
+  const totalPanelCount = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
+
+  // Find panel for detail drawer
+  const detailPanel = detailPanelId
+    ? project.chapters.flatMap((ch) => ch.panels).find((p) => p.id === detailPanelId)
+    : null;
+  const detailPanelIndex = detailPanel && activeChapter
+    ? activeChapter.panels.findIndex((p) => p.id === detailPanel.id)
+    : -1;
+
   const handlePanelDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id || !activeChapter) return;
-
     const panels = activeChapter.panels;
     const oldIndex = panels.findIndex((p) => p.id === active.id);
     const newIndex = panels.findIndex((p) => p.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-
     const reordered = arrayMove(panels, oldIndex, newIndex);
-    reorderPanelsMutation.mutate({
-      chapterId: activeChapter.id,
-      panelIds: reordered.map((p) => p.id),
-    });
+    reorderPanelsMutation.mutate({ chapterId: activeChapter.id, panelIds: reordered.map((p) => p.id) });
   };
 
   const handleGeneratePanel = async () => {
     if (!prompt.trim() || !activeCharacter || !activeChapter || !activeCharacterHasRefs) return;
-
-    // If regenerating, delete the old panel first so it isn't used as previous-panel context
     if (regeneratingPanelId) {
       await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
     }
-
     createPanelMutation.mutate({
       chapterId: activeChapter.id,
       characterId: activeCharacter.id,
       prompt: prompt.trim(),
       enhance: enhancePrompt,
+      ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
     });
+  };
+
+  const handleSaveChapterName = () => {
+    if (!editingChapterId || !editChapterName.trim()) {
+      setEditingChapterId(null);
+      return;
+    }
+    updateChapterMutation.mutate(
+      { chapterId: editingChapterId, name: editChapterName.trim() },
+      { onSettled: () => setEditingChapterId(null) }
+    );
+  };
+
+  const handleDeleteChapter = (chapterId: string, chapterName: string) => {
+    if (project.chapters.length <= 1) return;
+    openConfirmModal({
+      title: 'Delete Chapter',
+      children: (
+        <Text size="sm">
+          Are you sure you want to delete &quot;{chapterName}&quot;? All panels in this chapter will be permanently deleted.
+        </Text>
+      ),
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        deleteChapterMutation.mutate({ chapterId });
+        if (activeChapterId === chapterId) {
+          const remaining = project.chapters.filter((ch) => ch.id !== chapterId);
+          setActiveChapterId(remaining[0]?.id ?? null);
+        }
+      },
+    });
+  };
+
+  const handleDeleteCharacter = (characterId: string, characterName: string) => {
+    openConfirmModal({
+      title: 'Delete Character',
+      children: (
+        <Text size="sm">
+          Are you sure you want to delete &quot;{characterName}&quot;? Existing panels will be preserved but unlinked.
+        </Text>
+      ),
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        deleteCharacterMutation.mutate({ characterId });
+        if (selectedCharacterId === characterId) setSelectedCharacterId(null);
+      },
+    });
+  };
+
+  const handleOpenSettings = () => {
+    setEditName(project.name);
+    setEditDescription(project.description ?? '');
+    setEditCoverUrl(project.coverImageUrl ?? null);
+    resetCoverFiles();
+    openSettings();
+  };
+
+  const handleSaveSettings = () => {
+    updateProjectMutation.mutate({
+      id: projectId,
+      name: editName.trim() || undefined,
+      description: editDescription.trim() || null,
+      coverImageUrl: editCoverUrl,
+    });
+  };
+
+  const handleCoverDrop = async (files: File[]) => {
+    if (files.length === 0) return;
+    const result = await uploadToCF(files[0]);
+    setEditCoverUrl(result.id);
+  };
+
+  const getStatusDotClass = (status: string, hasRefs: boolean) => {
+    if (status === 'Failed') return styles.failed;
+    if (status === 'Ready' && !hasRefs) return styles.noRefs;
+    if (status === 'Ready') return styles.ready;
+    if (status === 'Processing') return styles.processing;
+    return styles.pending;
+  };
+
+  const getStatusLabel = (status: string, hasRefs: boolean, isFailed: boolean) => {
+    if (isFailed) return 'Failed';
+    if (status === 'Ready' && !hasRefs) return 'No refs';
+    if (status === 'Processing') return 'Generating refs...';
+    return status;
   };
 
   return (
@@ -271,92 +409,116 @@ function ProjectWorkspace() {
 
       <Container size="xl" py="xl">
         <Stack gap="xl">
-          {/* Header */}
-          <Group justify="space-between">
-            <Group>
-              <ActionIcon variant="subtle" component={Link} href="/comics">
-                <IconArrowLeft size={20} />
+          {/* ── Header card ─────────────────────────── */}
+          <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
+            <div className={styles.headerImage} onClick={handleOpenSettings}>
+              {project.coverImageUrl ? (
+                <img src={getEdgeUrl(project.coverImageUrl, { width: 160 })} alt={project.name} />
+              ) : (
+                <IconPhoto size={24} style={{ color: '#909296' }} />
+              )}
+            </div>
+
+            <div className={styles.headerContent}>
+              <Group gap="xs" mb={4}>
+                <ActionIcon variant="subtle" size="sm" component={Link} href="/comics" c="dimmed">
+                  <IconArrowLeft size={16} />
+                </ActionIcon>
+                <Title order={3} style={{ fontWeight: 700 }} lineClamp={1}>
+                  {project.name}
+                </Title>
+              </Group>
+
+              {project.description && (
+                <Text size="sm" c="dimmed" lineClamp={2} mb={8}>
+                  {project.description}
+                </Text>
+              )}
+
+              <div className="flex gap-3">
+                <span className={styles.statPill}>
+                  <span className={styles.statDot} />
+                  {project.chapters.length} {project.chapters.length === 1 ? 'chapter' : 'chapters'}
+                </span>
+                <span className={styles.statPill}>
+                  <span className={styles.statDot} />
+                  {totalPanelCount} {totalPanelCount === 1 ? 'panel' : 'panels'}
+                </span>
+              </div>
+            </div>
+
+            <div className={styles.headerActions}>
+              <ActionIcon variant="subtle" size="lg" onClick={handleOpenSettings} c="dimmed">
+                <IconSettings size={20} />
               </ActionIcon>
-              <Title order={2}>{project.name}</Title>
-            </Group>
-            <Button
-              variant="light"
-              leftSection={<IconBook size={16} />}
-              component={Link}
-              href={`/comics/project/${projectId}/read`}
-              disabled={!hasReadyPanelsWithImages}
-            >
-              Read
-            </Button>
-          </Group>
+              <button
+                className={styles.gradientBtn}
+                onClick={() => router.push(`/comics/project/${projectId}/read`)}
+                disabled={!hasReadyPanelsWithImages}
+              >
+                <IconBook size={16} />
+                Read
+              </button>
+            </div>
+          </div>
 
-          <Grid>
-            {/* Sidebar - Character */}
-            <Grid.Col span={{ base: 12, md: 3 }}>
-              <Stack gap="sm">
-                <Group justify="space-between">
-                  <Text fw={500}>Characters</Text>
-                  <ActionIcon
-                    variant="subtle"
-                    size="sm"
-                    component={Link}
-                    href={`/comics/project/${projectId}/character`}
-                  >
-                    <IconPlus size={16} />
-                  </ActionIcon>
-                </Group>
+          {/* ── Main layout ─────────────────────────── */}
+          <div className="grid gap-6" style={{ gridTemplateColumns: '280px 1fr' }}>
+            {/* ── Sidebar: Characters ─────────────── */}
+            <div>
+              <div className="flex justify-between items-center mb-4 px-1">
+                <Text size="sm" fw={600}>Characters</Text>
+                <ActionIcon
+                  variant="subtle"
+                  size="sm"
+                  component={Link}
+                  href={`/comics/project/${projectId}/character`}
+                  color="yellow"
+                >
+                  <IconPlus size={16} />
+                </ActionIcon>
+              </div>
 
+              <Stack gap={8}>
                 {project.characters.length === 0 ? (
-                  <Card withBorder>
-                    <Stack align="center" gap="sm" py="md">
-                      <IconUser size={32} className="text-gray-500" />
-                      <Text size="sm" c="dimmed" ta="center">
-                        No character yet
-                      </Text>
-                      <Button
-                        size="sm"
-                        component={Link}
-                        href={`/comics/project/${projectId}/character`}
-                      >
-                        Add Character
-                      </Button>
-                    </Stack>
-                  </Card>
+                  <div className="flex flex-col items-center py-8 text-center">
+                    <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
+                    <Text size="sm" c="dimmed" mb="md">No characters yet</Text>
+                    <button
+                      className={styles.gradientBtn}
+                      onClick={() => router.push(`/comics/project/${projectId}/character`)}
+                    >
+                      <IconPlus size={14} />
+                      Add Character
+                    </button>
+                  </div>
                 ) : (
                   project.characters.map((character) => {
-                    const coverImage = character.modelId
-                      ? characterImageMap.get(character.modelId)
-                      : undefined;
+                    const coverImage = character.modelId ? characterImageMap.get(character.modelId) : undefined;
                     const charRefs = character.generatedReferenceImages as any[] | null;
                     const charHasRefs = (charRefs?.length ?? 0) > 0 ||
                       ((character.referenceImages as any[] | null)?.length ?? 0) > 0;
-                    const isReadyNoRefs = character.status === 'Ready' && !charHasRefs;
                     const isFailed = character.status === 'Failed';
-                    const needsAction = isFailed || isReadyNoRefs;
+                    const isReady = character.status === 'Ready';
+                    const isSelected = selectedCharacterId === character.id ||
+                      (!selectedCharacterId && activeCharacter?.id === character.id);
 
-                    const content = (
+                    return (
                       <div
-                        className={`flex items-center gap-3 rounded-lg px-3 py-2${needsAction ? ' cursor-pointer hover:brightness-125' : ''}`}
-                        style={{
-                          border: isFailed
-                            ? '1px solid var(--mantine-color-red-8)'
-                            : '1px solid var(--mantine-color-dark-4)',
-                          background: 'var(--mantine-color-dark-6)',
-                        }}
+                        key={character.id}
+                        className={clsx(
+                          styles.characterCard,
+                          isSelected && isReady && styles.characterCardSelected
+                        )}
+                        onClick={() => { if (isReady) setSelectedCharacterId(character.id); }}
                       >
-                        {/* Thumbnail */}
-                        <div
-                          className="flex-shrink-0 rounded-md overflow-hidden"
-                          style={{
-                            width: 40,
-                            height: 40,
-                            background: 'var(--mantine-color-dark-7)',
-                          }}
+                        <Link
+                          href={`/comics/project/${projectId}/character?characterId=${character.id}`}
+                          className={styles.characterAvatar}
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
                         >
                           {isFailed ? (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <IconAlertTriangle size={18} style={{ color: 'var(--mantine-color-red-6)' }} />
-                            </div>
+                            <IconAlertTriangle size={18} style={{ color: '#fa5252' }} />
                           ) : coverImage ? (
                             <EdgeMedia2
                               src={coverImage.url}
@@ -365,222 +527,375 @@ function ProjectWorkspace() {
                               name={character.name}
                               alt={character.name}
                               width={80}
-                              style={{
-                                maxWidth: '100%',
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'cover',
-                                objectPosition: 'top center',
-                                display: 'block',
-                              }}
+                              style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', display: 'block' }}
                             />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <IconUser size={18} style={{ color: 'var(--mantine-color-dark-3)' }} />
-                            </div>
+                            <IconUser size={18} style={{ color: '#909296' }} />
                           )}
+                        </Link>
+
+                        <div className={styles.characterInfo}>
+                          <Link
+                            href={`/comics/project/${projectId}/character?characterId=${character.id}`}
+                            className={styles.characterName}
+                            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                          >
+                            {character.name}
+                          </Link>
+                          <p className={styles.characterStatus}>
+                            <span className={clsx(styles.statusDot, getStatusDotClass(character.status, charHasRefs))} />
+                            {getStatusLabel(character.status, charHasRefs, isFailed)}
+                          </p>
                         </div>
 
-                        {/* Name + status */}
-                        <div className="flex-1 min-w-0">
-                          <Text size="sm" fw={500} c="white" truncate>
-                            {character.name}
-                          </Text>
-                          <Badge
-                            size="xs"
-                            variant="light"
-                            color={
-                              isFailed
-                                ? 'red'
-                                : isReadyNoRefs
-                                  ? 'orange'
-                                  : character.status === 'Ready'
-                                    ? 'green'
-                                    : character.status === 'Processing'
-                                      ? 'yellow'
-                                      : 'gray'
-                            }
+                        <div className={styles.characterDelete}>
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            size="sm"
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              handleDeleteCharacter(character.id, character.name);
+                            }}
                           >
-                            {isFailed
-                              ? 'Failed — fix'
-                              : isReadyNoRefs
-                                ? 'No refs'
-                                : character.status === 'Processing'
-                                  ? 'Generating refs...'
-                                  : character.status}
-                          </Badge>
+                            <IconTrash size={14} />
+                          </ActionIcon>
                         </div>
                       </div>
                     );
-
-                    if (needsAction) {
-                      return (
-                        <Link
-                          key={character.id}
-                          href={`/comics/project/${projectId}/character`}
-                          style={{ textDecoration: 'none' }}
-                        >
-                          {content}
-                        </Link>
-                      );
-                    }
-
-                    return <div key={character.id}>{content}</div>;
                   })
                 )}
               </Stack>
-            </Grid.Col>
+            </div>
 
-            {/* Main - Panels */}
-            <Grid.Col span={{ base: 12, md: 9 }}>
-              <Stack gap="md">
-                {/* Chapter tabs */}
-                {project.chapters.length > 0 && (
-                  <Group justify="space-between">
-                    <Tabs
-                      value={activeChapterId ?? project.chapters[0]?.id}
-                      onChange={(v) => setActiveChapterId(v)}
-                      variant="outline"
+            {/* ── Main: Panels ───────────────────── */}
+            <div>
+              {/* Chapter tabs */}
+              {project.chapters.length > 0 && (
+                <div className={styles.chapterTabs}>
+                  {project.chapters.map((chapter) => (
+                    <button
+                      key={chapter.id}
+                      className={clsx(
+                        styles.chapterTab,
+                        (activeChapterId ?? project.chapters[0]?.id) === chapter.id && styles.chapterTabActive
+                      )}
+                      onClick={() => {
+                        if (editingChapterId !== chapter.id) setActiveChapterId(chapter.id);
+                      }}
                     >
-                      <Tabs.List>
-                        {project.chapters.map((chapter) => (
-                          <Tabs.Tab key={chapter.id} value={chapter.id}>
-                            {chapter.name}
-                          </Tabs.Tab>
-                        ))}
-                      </Tabs.List>
-                    </Tabs>
-                    <Group gap="xs">
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<IconPlus size={14} />}
-                        onClick={() =>
-                          createChapterMutation.mutate({ projectId })
-                        }
-                        loading={createChapterMutation.isPending}
-                      >
-                        Add Chapter
-                      </Button>
-                    </Group>
-                  </Group>
-                )}
-
-                <Group justify="space-between">
-                  <Text fw={500}>Panels</Text>
-                  <Button
-                    size="sm"
-                    leftSection={<IconPlus size={14} />}
-                    onClick={openPanelModal}
-                    disabled={!activeCharacter || !activeChapter || !activeCharacterHasRefs}
+                      {editingChapterId === chapter.id ? (
+                        <input
+                          ref={chapterInputRef}
+                          className={styles.chapterTabInput}
+                          value={editChapterName}
+                          onChange={(e) => setEditChapterName(e.target.value)}
+                          onBlur={handleSaveChapterName}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveChapterName();
+                            if (e.key === 'Escape') setEditingChapterId(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        chapter.name
+                      )}
+                      <span className={styles.chapterTabActions}>
+                        <ActionIcon
+                          variant="transparent"
+                          size="xs"
+                          c="dimmed"
+                          onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            setEditingChapterId(chapter.id);
+                            setEditChapterName(chapter.name);
+                          }}
+                        >
+                          <IconPencil size={12} />
+                        </ActionIcon>
+                        {project.chapters.length > 1 && (
+                          <ActionIcon
+                            variant="transparent"
+                            size="xs"
+                            color="red"
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              handleDeleteChapter(chapter.id, chapter.name);
+                            }}
+                          >
+                            <IconX size={12} />
+                          </ActionIcon>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                  <button
+                    className={styles.chapterTab}
+                    style={{ color: '#fab005' }}
+                    onClick={() => createChapterMutation.mutate({ projectId })}
                   >
-                    Add Panel
-                  </Button>
-                </Group>
+                    <IconPlus size={14} />
+                    Add Chapter
+                  </button>
+                </div>
+              )}
 
-                {!activeCharacter && project.characters.length === 0 && (
-                  <Card withBorder p="xl" className="text-center">
-                    <Stack align="center" gap="md">
-                      <Text c="dimmed">Add a character first to start generating panels</Text>
-                      <Button component={Link} href={`/comics/project/${projectId}/character`}>
-                        Add Character
-                      </Button>
-                    </Stack>
-                  </Card>
-                )}
+              {/* Status messages */}
+              {!activeCharacter && project.characters.length === 0 && (
+                <div className="flex flex-col items-center py-12 text-center">
+                  <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
+                  <Text c="dimmed" mb="md">Add a character first to start generating panels</Text>
+                  <button
+                    className={styles.gradientBtn}
+                    onClick={() => router.push(`/comics/project/${projectId}/character`)}
+                  >
+                    <IconPlus size={14} />
+                    Add Character
+                  </button>
+                </div>
+              )}
 
-                {!activeCharacter && project.characters.length > 0 && (
-                  <Card withBorder p="md">
-                    <Text c="dimmed" size="sm">
-                      Wait for your character to finish processing before generating panels.
-                    </Text>
-                  </Card>
-                )}
+              {!activeCharacter && project.characters.length > 0 && (
+                <div className="py-8 text-center">
+                  <Text c="dimmed" size="sm">
+                    Wait for your character to finish processing before generating panels.
+                  </Text>
+                </div>
+              )}
 
-                {activeCharacter && !activeCharacterHasRefs && (
-                  <Card withBorder p="md">
-                    <Group justify="space-between">
-                      <Text c="dimmed" size="sm">
-                        {activeCharacter.name} needs reference images before generating panels.
-                      </Text>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        component={Link}
-                        href={`/comics/project/${projectId}/character`}
-                      >
-                        Add References
-                      </Button>
-                    </Group>
-                  </Card>
-                )}
+              {activeCharacter && !activeCharacterHasRefs && (
+                <div className="flex items-center justify-between py-4 px-4 rounded-lg" style={{ background: '#2C2E33', border: '1px solid #373A40' }}>
+                  <Text c="dimmed" size="sm">
+                    {activeCharacter.name} needs reference images before generating panels.
+                  </Text>
+                  <button
+                    className={styles.subtleBtn}
+                    onClick={() => router.push(`/comics/project/${projectId}/character?characterId=${activeCharacter.id}`)}
+                  >
+                    Add References
+                  </button>
+                </div>
+              )}
 
-                {activeChapter && activeChapter.panels.length === 0 && activeCharacter && (
-                  <Card withBorder p="xl" className="text-center">
-                    <Stack align="center" gap="md">
-                      <IconPhoto size={48} className="text-gray-500" />
-                      <Text c="dimmed">No panels yet. Create your first panel!</Text>
-                    </Stack>
-                  </Card>
-                )}
+              {activeChapter && activeChapter.panels.length === 0 && activeCharacter && activeCharacterHasRefs && (
+                <div className="flex flex-col items-center py-12 text-center">
+                  <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
+                  <Text c="dimmed">No panels yet. Create your first panel!</Text>
+                </div>
+              )}
 
-                <DndContext
-                  sensors={panelSensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handlePanelDragEnd}
-                >
-                  <SortableContext items={(activeChapter?.panels ?? []).map((p) => p.id)}>
-                    <SimpleGrid cols={{ base: 2, sm: 3, lg: 4 }} spacing="md">
-                      {(activeChapter?.panels ?? []).map((panel) => (
-                        <SortablePanel key={panel.id} id={panel.id}>
-                          <PanelCard
-                            id={panel.id}
-                            imageUrl={panel.imageUrl}
-                            prompt={panel.prompt}
-                            status={panel.status}
-                            errorMessage={panel.errorMessage}
-                            onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
-                            onViewDebug={() => {
-                              setDebugPanelId(panel.id);
-                              openDebugModal();
-                            }}
-                            onRegenerate={() => {
-                              setRegeneratingPanelId(panel.id);
-                              setPrompt(panel.prompt);
-                              if (panel.characterId) setSelectedCharacterId(panel.characterId);
-                              openPanelModal();
-                            }}
-                          />
-                        </SortablePanel>
-                      ))}
-                    </SimpleGrid>
-                  </SortableContext>
-                </DndContext>
-              </Stack>
-            </Grid.Col>
-          </Grid>
+              {/* Panel grid */}
+              <DndContext sensors={panelSensors} collisionDetection={closestCenter} onDragEnd={handlePanelDragEnd}>
+                <SortableContext items={(activeChapter?.panels ?? []).map((p) => p.id)}>
+                  <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+                    {(activeChapter?.panels ?? []).map((panel, index) => (
+                      <SortablePanel key={panel.id} id={panel.id}>
+                        <PanelCard
+                          panel={panel}
+                          position={index + 1}
+                          characterName={panel.characterId ? characterNameMap.get(panel.characterId) ?? null : null}
+                          onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
+                          onViewDebug={() => { setDebugPanelId(panel.id); openDebugModal(); }}
+                          onRegenerate={() => {
+                            setRegeneratingPanelId(panel.id);
+                            setPrompt(panel.prompt);
+                            if (panel.characterId) setSelectedCharacterId(panel.characterId);
+                            openPanelModal();
+                          }}
+                          onInsertAfter={() => {
+                            setInsertAtPosition(index + 1);
+                            openPanelModal();
+                          }}
+                          onClick={() => setDetailPanelId(panel.id)}
+                        />
+                      </SortablePanel>
+                    ))}
+
+                    {/* Add panel button */}
+                    {activeCharacter && activeCharacterHasRefs && (
+                      <button className={styles.addPanelBtn} onClick={openPanelModal}>
+                        <IconPlus size={28} />
+                      </button>
+                    )}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </div>
+          </div>
         </Stack>
       </Container>
 
-      {/* Generate Panel Modal */}
+      {/* ── Panel Detail Drawer ──────────────────── */}
+      <div
+        className={clsx(styles.drawerBackdrop, detailPanel && styles.active)}
+        onClick={() => setDetailPanelId(null)}
+      />
+      <div className={clsx(styles.drawer, detailPanel && styles.active)}>
+        {detailPanel && (
+          <>
+            <div className={styles.drawerHeader}>
+              <Title order={4} style={{ fontWeight: 700 }}>
+                Panel #{detailPanelIndex >= 0 ? detailPanelIndex + 1 : '?'}
+              </Title>
+              <ActionIcon variant="subtle" c="dimmed" onClick={() => setDetailPanelId(null)}>
+                <IconX size={20} />
+              </ActionIcon>
+            </div>
+
+            <div className={styles.drawerContent}>
+              {/* Image */}
+              <div className={styles.drawerImageContainer}>
+                {detailPanel.imageUrl ? (
+                  <img src={getEdgeUrl(detailPanel.imageUrl, { width: 800 })} alt="Panel" />
+                ) : (
+                  <div className="w-full flex items-center justify-center" style={{ background: '#2C2E33', aspectRatio: '3/4' }}>
+                    {detailPanel.status === 'Generating' || detailPanel.status === 'Pending' ? (
+                      <div className={styles.spinner} />
+                    ) : (
+                      <IconAlertTriangle size={32} style={{ color: '#fa5252' }} />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Status + Character row */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className={styles.detailStatusBadge}>
+                  <span className={clsx(styles.detailStatusDot, {
+                    [styles.ready]: detailPanel.status === 'Ready',
+                    [styles.generating]: detailPanel.status === 'Generating' || detailPanel.status === 'Pending',
+                    [styles.failed]: detailPanel.status === 'Failed',
+                  })} />
+                  {detailPanel.status === 'Pending' ? 'Queued' : detailPanel.status}
+                </div>
+                {detailPanel.characterId && characterNameMap.has(detailPanel.characterId) && (
+                  <span className={styles.detailCharacterPill}>
+                    <IconUser size={14} />
+                    {characterNameMap.get(detailPanel.characterId)}
+                  </span>
+                )}
+                <div className="flex-1" />
+                <Text size="xs" c="dimmed">{new Date(detailPanel.createdAt).toLocaleDateString()}</Text>
+              </div>
+
+              {/* Original prompt */}
+              <div>
+                <div className={styles.detailSectionTitle}>Original Prompt</div>
+                <div className={styles.promptBox}>{detailPanel.prompt}</div>
+              </div>
+
+              {/* Enhanced prompt */}
+              {detailPanel.enhancedPrompt && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={styles.detailSectionTitle} style={{ marginBottom: 0 }}>Enhanced Prompt</span>
+                    <span className={styles.enhancedBadge}>
+                      <IconSparkles size={12} />
+                      Enhanced
+                    </span>
+                  </div>
+                  <div className={clsx(styles.promptBox, styles.promptBoxEnhanced)}>
+                    {detailPanel.enhancedPrompt}
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {detailPanel.errorMessage && (
+                <div>
+                  <div className={styles.detailSectionTitle}>Error</div>
+                  <div className={styles.promptBox} style={{ borderColor: '#fa5252', color: '#fa5252' }}>
+                    {detailPanel.errorMessage}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className={styles.detailActions}>
+                {(detailPanel.status === 'Ready' || detailPanel.status === 'Failed') && (
+                  <button
+                    className={styles.gradientBtn}
+                    onClick={() => {
+                      setDetailPanelId(null);
+                      setRegeneratingPanelId(detailPanel.id);
+                      setPrompt(detailPanel.prompt);
+                      if (detailPanel.characterId) setSelectedCharacterId(detailPanel.characterId);
+                      openPanelModal();
+                    }}
+                  >
+                    <IconRefreshDot size={16} />
+                    Regenerate
+                  </button>
+                )}
+                {detailPanelIndex >= 0 && activeCharacter && activeCharacterHasRefs && (
+                  <button
+                    className={styles.subtleBtn}
+                    onClick={() => {
+                      setDetailPanelId(null);
+                      setInsertAtPosition(detailPanelIndex + 1);
+                      openPanelModal();
+                    }}
+                  >
+                    <IconPlus size={14} />
+                    Insert after
+                  </button>
+                )}
+                <button
+                  className={styles.subtleBtn}
+                  onClick={() => {
+                    setDetailPanelId(null);
+                    setDebugPanelId(detailPanel.id);
+                    openDebugModal();
+                  }}
+                >
+                  <IconBug size={14} />
+                  Debug Info
+                </button>
+                <button
+                  className={styles.dangerBtn}
+                  onClick={() => {
+                    openConfirmModal({
+                      title: 'Delete Panel',
+                      children: <Text size="sm">Are you sure you want to delete this panel?</Text>,
+                      labels: { confirm: 'Delete', cancel: 'Cancel' },
+                      confirmProps: { color: 'red' },
+                      onConfirm: () => deletePanelMutation.mutate({ panelId: detailPanel.id }),
+                    });
+                  }}
+                >
+                  <IconTrash size={14} />
+                  Delete
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Generate Panel Modal ─────────────────── */}
       <Modal
         opened={panelModalOpened}
-        onClose={() => {
-          closePanelModal();
-          setRegeneratingPanelId(null);
-        }}
-        title={regeneratingPanelId ? 'Regenerate Panel' : 'Generate Panel'}
+        onClose={() => { closePanelModal(); setRegeneratingPanelId(null); setInsertAtPosition(null); }}
+        title={regeneratingPanelId ? 'Regenerate Panel' : insertAtPosition != null ? 'Insert Panel' : 'Generate Panel'}
         size="lg"
       >
         <Stack gap="md">
-          {activeCharacter && (
+          {activeCharacters.length > 1 ? (
+            <Select
+              label="Character"
+              data={activeCharacters.map((c) => ({ value: c.id, label: c.name }))}
+              value={selectedCharacterId ?? activeCharacter?.id ?? null}
+              onChange={(v) => setSelectedCharacterId(v)}
+            />
+          ) : activeCharacter ? (
             <Group>
-              <Text size="sm" c="dimmed">
-                Character:
-              </Text>
-              <Badge>{activeCharacter.name}</Badge>
+              <Text size="sm" c="dimmed">Character:</Text>
+              <span className={styles.detailCharacterPill} style={{ padding: '3px 10px', fontSize: 12 }}>
+                <IconUser size={12} />
+                {activeCharacter.name}
+              </span>
             </Group>
-          )}
+          ) : null}
 
           <Textarea
             label="Describe the scene"
@@ -595,48 +910,84 @@ function ProjectWorkspace() {
             description="Use AI to add detail and composition to your prompt"
             checked={enhancePrompt}
             onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
+            color="yellow"
           />
 
           <Group justify="space-between">
-            <Text size="sm" c="dimmed">
-              Cost: 25 Buzz
-            </Text>
+            <Text size="sm" c="dimmed">Cost: 25 Buzz</Text>
             <Group>
-              <Button
-                variant="default"
-                onClick={() => {
-                  closePanelModal();
-                  setRegeneratingPanelId(null);
-                }}
-              >
+              <Button variant="default" onClick={() => { closePanelModal(); setRegeneratingPanelId(null); }}>
                 Cancel
               </Button>
-              <Button
+              <button
+                className={styles.gradientBtn}
                 onClick={handleGeneratePanel}
-                loading={deletePanelMutation.isPending || createPanelMutation.isPending}
-                disabled={!prompt.trim()}
+                disabled={!prompt.trim() || deletePanelMutation.isPending || createPanelMutation.isPending}
               >
-                Generate
-              </Button>
+                {insertAtPosition != null ? 'Insert' : 'Generate'}
+              </button>
             </Group>
           </Group>
         </Stack>
       </Modal>
 
-      {/* Debug Modal for failed panels */}
-      <PanelDebugModal
-        panelId={debugPanelId}
-        opened={debugModalOpened}
-        onClose={closeDebugModal}
-      />
+      {/* ── Settings Modal ───────────────────────── */}
+      <Modal opened={settingsOpened} onClose={closeSettings} title="Project Settings" size="md">
+        <Stack gap="md">
+          <TextInput label="Project name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+          <Textarea
+            label="Description"
+            placeholder="A brief description of your comic project..."
+            maxLength={5000}
+            rows={3}
+            value={editDescription}
+            onChange={(e) => setEditDescription(e.target.value)}
+          />
+
+          <div>
+            <Text size="sm" fw={500} mb={4}>Cover Image</Text>
+            {editCoverUrl ? (
+              <div className="relative inline-block">
+                <div className="rounded-lg overflow-hidden" style={{ width: 120, height: 160, background: '#2C2E33' }}>
+                  <img src={getEdgeUrl(editCoverUrl, { width: 240 })} alt="Cover" className="w-full h-full object-cover" />
+                </div>
+                <ActionIcon variant="filled" color="dark" size="xs" className="absolute -top-2 -right-2" onClick={() => setEditCoverUrl(null)}>
+                  <IconX size={12} />
+                </ActionIcon>
+              </div>
+            ) : (
+              <Dropzone onDrop={handleCoverDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
+                <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
+                  <Dropzone.Accept><IconUpload size={24} className="text-blue-500" /></Dropzone.Accept>
+                  <Dropzone.Reject><IconX size={24} className="text-red-500" /></Dropzone.Reject>
+                  <Dropzone.Idle><IconPhoto size={24} style={{ color: '#909296' }} /></Dropzone.Idle>
+                  <Text size="sm" c="dimmed">Drop a cover image or click to browse</Text>
+                </Group>
+              </Dropzone>
+            )}
+            {coverUploadFiles.some((f) => f.status === 'uploading') && (
+              <Text size="xs" c="dimmed" mt={4}>Uploading...</Text>
+            )}
+          </div>
+
+          <Group justify="flex-end">
+            <Button variant="default" onClick={closeSettings}>Cancel</Button>
+            <button className={styles.gradientBtn} onClick={handleSaveSettings} disabled={!editName.trim()}>
+              Save
+            </button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* ── Debug Modal ──────────────────────────── */}
+      <PanelDebugModal panelId={debugPanelId} opened={debugModalOpened} onClose={closeDebugModal} />
     </>
   );
 }
 
+// ── Sortable panel wrapper ─────────────────────────
 function SortablePanel({ id, children }: { id: string; children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id,
-  });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
     <div
       ref={setNodeRef}
@@ -655,98 +1006,106 @@ function SortablePanel({ id, children }: { id: string; children: React.ReactNode
   );
 }
 
+// ── Panel card ─────────────────────────────────────
 interface PanelCardProps {
-  id: string;
-  imageUrl: string | null;
-  prompt: string;
-  status: string;
-  errorMessage: string | null;
+  panel: {
+    id: string;
+    imageUrl: string | null;
+    prompt: string;
+    status: string;
+    errorMessage: string | null;
+  };
+  position: number;
+  characterName: string | null;
   onDelete: () => void;
   onViewDebug: () => void;
   onRegenerate: () => void;
+  onInsertAfter: () => void;
+  onClick: () => void;
 }
 
-function PanelCard({ id, imageUrl, prompt, status, errorMessage, onDelete, onViewDebug, onRegenerate }: PanelCardProps) {
+function PanelCard({ panel, position, characterName, onDelete, onViewDebug, onRegenerate, onInsertAfter, onClick }: PanelCardProps) {
+  const { imageUrl, prompt, status, errorMessage } = panel;
+
   return (
-    <Card withBorder padding="xs" className="aspect-[3/4] relative group">
+    <div className={styles.panelCard} onClick={onClick}>
       {imageUrl ? (
-        <Image src={getEdgeUrl(imageUrl, { width: 450 })} alt={prompt} className="w-full h-full object-cover rounded" />
-      ) : (
-        <div className="w-full h-full bg-gray-800 rounded flex items-center justify-center">
-          {status === 'Generating' || status === 'Pending' ? (
-            <Stack align="center" gap="xs">
-              <div className="animate-spin">
-                <IconRefresh size={24} className="text-gray-500" />
+        <>
+          <img src={getEdgeUrl(imageUrl, { width: 450 })} alt={prompt} className={styles.panelImage} />
+          <div className={styles.panelOverlay}>
+            <div className="flex justify-between items-start">
+              <span className={styles.panelNumber}>#{position}</span>
+              <div className={styles.panelMenu}>
+                <Menu position="bottom-end" withinPortal>
+                  <Menu.Target>
+                    <ActionIcon
+                      variant="filled"
+                      color="dark"
+                      size="sm"
+                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                    >
+                      <IconDotsVertical size={14} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {(status === 'Ready' || status === 'Failed') && (
+                      <Menu.Item leftSection={<IconRefreshDot size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onRegenerate(); }}>
+                        Regenerate
+                      </Menu.Item>
+                    )}
+                    <Menu.Item leftSection={<IconPlus size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onInsertAfter(); }}>
+                      Insert after
+                    </Menu.Item>
+                    <Menu.Item leftSection={<IconBug size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onViewDebug(); }}>
+                      Debug Info
+                    </Menu.Item>
+                    <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(); }}>
+                      Delete
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
               </div>
-              <Text size="xs" c="dimmed">
-                {status === 'Pending' ? 'Queued' : 'Generating...'}
-              </Text>
-            </Stack>
-          ) : status === 'Failed' ? (
-            <Stack align="center" gap="xs">
-              <IconAlertTriangle size={32} className="text-red-500" />
-              <Text size="xs" c="red">
-                Failed
-              </Text>
-              {errorMessage && (
-                <Text size="xs" c="dimmed" ta="center" lineClamp={2} px="xs">
-                  {errorMessage}
-                </Text>
+            </div>
+            <div className="flex flex-col gap-1">
+              {characterName && (
+                <span className={styles.panelCharacterPill}>
+                  <IconUser size={10} />
+                  {characterName}
+                </span>
               )}
-            </Stack>
+              <p className={styles.panelPrompt}>{prompt}</p>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          {status === 'Generating' || status === 'Pending' ? (
+            <div className={styles.panelEmpty}>
+              <div className={styles.spinner} />
+              <Text size="xs">{status === 'Pending' ? 'Queued' : 'Generating...'}</Text>
+            </div>
+          ) : status === 'Failed' ? (
+            <div className={styles.panelFailed}>
+              <IconAlertTriangle size={28} />
+              <Text size="xs" c="red">Failed</Text>
+              {errorMessage && <Text size="xs" c="dimmed" ta="center" lineClamp={2} px="xs">{errorMessage}</Text>}
+            </div>
           ) : (
-            <IconPhoto size={32} className="text-gray-600" />
+            <div className={styles.panelEmpty}>
+              <IconPhoto size={28} />
+            </div>
           )}
-        </div>
+          <div className="absolute top-2 left-2">
+            <span className={styles.panelNumber}>#{position}</span>
+          </div>
+        </>
       )}
-
-      {/* Hover overlay with actions */}
-      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-start justify-end p-2">
-        <Menu position="bottom-end" withinPortal>
-          <Menu.Target>
-            <ActionIcon variant="filled" color="dark" size="sm">
-              <IconDotsVertical size={14} />
-            </ActionIcon>
-          </Menu.Target>
-
-          <Menu.Dropdown>
-            {(status === 'Ready' || status === 'Failed') && (
-              <Menu.Item leftSection={<IconRefreshDot size={14} />} onClick={onRegenerate}>
-                Regenerate
-              </Menu.Item>
-            )}
-            <Menu.Item leftSection={<IconBug size={14} />} onClick={onViewDebug}>
-              View Debug Info
-            </Menu.Item>
-            <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={onDelete}>
-              Delete
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </div>
-
-      {/* Prompt tooltip */}
-      <Tooltip label={prompt} multiline maw={300}>
-        <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent rounded-b opacity-0 group-hover:opacity-100 transition-opacity">
-          <Text size="xs" c="white" truncate>
-            {prompt}
-          </Text>
-        </div>
-      </Tooltip>
-    </Card>
+    </div>
   );
 }
 
-// Debug modal for viewing panel generation details
-function PanelDebugModal({
-  panelId,
-  opened,
-  onClose,
-}: {
-  panelId: string | null;
-  opened: boolean;
-  onClose: () => void;
-}) {
+// ── Debug modal ────────────────────────────────────
+function PanelDebugModal({ panelId, opened, onClose }: { panelId: string | null; opened: boolean; onClose: () => void }) {
   const { data, isLoading } = trpc.comics.getPanelDebugInfo.useQuery(
     { panelId: panelId! },
     { enabled: opened && !!panelId }
@@ -758,123 +1117,73 @@ function PanelDebugModal({
     <Modal opened={opened} onClose={onClose} title="Panel Debug Info" size="lg">
       <ScrollArea.Autosize mah="70vh">
         {isLoading ? (
-          <Stack align="center" py="xl">
-            <Loader />
-          </Stack>
+          <Stack align="center" py="xl"><Loader /></Stack>
         ) : data ? (
           <Stack gap="md">
-            {/* Error (prominent at top) */}
             {data.panel.errorMessage && (
               <div>
-                <Text fw={600} size="sm" mb={4} c="red">
-                  Error
-                </Text>
-                <Code block color="red">
-                  {data.panel.errorMessage}
-                </Code>
+                <Text fw={600} size="sm" mb={4} c="red">Error</Text>
+                <Code block color="red">{data.panel.errorMessage}</Code>
               </div>
             )}
-
-            {/* Original vs Enhanced prompt */}
             <div>
               <Group gap="xs" mb={4}>
-                <Text fw={600} size="sm">
-                  Prompts
-                </Text>
+                <Text fw={600} size="sm">Prompts</Text>
                 <Badge size="xs" variant="light" color={meta?.enhanceEnabled ? 'teal' : 'gray'}>
                   Enhance {meta?.enhanceEnabled ? 'ON' : 'OFF'}
                 </Badge>
               </Group>
               <Stack gap="xs">
                 <div>
-                  <Text size="xs" c="dimmed" mb={2}>
-                    Original
-                  </Text>
+                  <Text size="xs" c="dimmed" mb={2}>Original</Text>
                   <Code block>{data.panel.prompt}</Code>
                 </div>
                 {data.panel.enhancedPrompt && (
                   <div>
-                    <Text size="xs" c="dimmed" mb={2}>
-                      Enhanced
-                    </Text>
+                    <Text size="xs" c="dimmed" mb={2}>Enhanced</Text>
                     <Code block>{data.panel.enhancedPrompt}</Code>
                   </div>
                 )}
               </Stack>
             </div>
-
-            {/* Previous panel context */}
             {meta?.previousPanelId && (
               <div>
-                <Text fw={600} size="sm" mb={4}>
-                  Previous Panel Context
-                </Text>
+                <Text fw={600} size="sm" mb={4}>Previous Panel Context</Text>
                 <Stack gap="xs">
-                  <Group gap="xs">
-                    <Text size="xs" c="dimmed">ID:</Text>
-                    <Code>{meta.previousPanelId}</Code>
-                  </Group>
+                  <Group gap="xs"><Text size="xs" c="dimmed">ID:</Text><Code>{meta.previousPanelId}</Code></Group>
                   {meta.previousPanelPrompt && (
-                    <div>
-                      <Text size="xs" c="dimmed" mb={2}>Prompt used</Text>
-                      <Code block>{meta.previousPanelPrompt}</Code>
-                    </div>
+                    <div><Text size="xs" c="dimmed" mb={2}>Prompt used</Text><Code block>{meta.previousPanelPrompt}</Code></div>
                   )}
                   <Group gap="xs">
                     <Text size="xs" c="dimmed">Had image:</Text>
-                    <Badge size="xs" variant="light" color={meta.previousPanelImageUrl ? 'green' : 'gray'}>
-                      {meta.previousPanelImageUrl ? 'Yes' : 'No'}
-                    </Badge>
+                    <Badge size="xs" variant="light" color={meta.previousPanelImageUrl ? 'green' : 'gray'}>{meta.previousPanelImageUrl ? 'Yes' : 'No'}</Badge>
                   </Group>
                 </Stack>
               </div>
             )}
-
-            {/* Reference images sent to orchestrator */}
-            {meta?.referenceImages && meta.referenceImages.length > 0 && (
+            {meta?.referenceImages?.length > 0 && (
               <div>
-                <Text fw={600} size="sm" mb={4}>
-                  Reference Images ({meta.referenceImages.length})
-                </Text>
+                <Text fw={600} size="sm" mb={4}>Reference Images ({meta!.referenceImages.length})</Text>
                 <Stack gap="xs">
-                  {(meta.referenceImages as { url: string; width: number; height: number }[]).map(
-                    (img, i) => (
-                      <Group key={i} gap="xs">
-                        <Badge size="xs" variant="light">
-                          {img.width}x{img.height}
-                        </Badge>
-                        <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }} lineClamp={1}>
-                          {img.url}
-                        </Text>
-                      </Group>
-                    )
-                  )}
+                  {(meta!.referenceImages as { url: string; width: number; height: number }[]).map((img, i) => (
+                    <Group key={i} gap="xs">
+                      <Badge size="xs" variant="light">{img.width}x{img.height}</Badge>
+                      <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }} lineClamp={1}>{img.url}</Text>
+                    </Group>
+                  ))}
                 </Stack>
               </div>
             )}
-
-            {/* Character info */}
             <div>
-              <Text fw={600} size="sm" mb={4}>
-                Character
-              </Text>
+              <Text fw={600} size="sm" mb={4}>Character</Text>
               {meta?.characterName ? (
                 <Stack gap="xs">
-                  <Group gap="xs">
-                    <Text size="xs" c="dimmed">Active:</Text>
-                    <Text size="xs">{meta.characterName}</Text>
-                  </Group>
+                  <Group gap="xs"><Text size="xs" c="dimmed">Active:</Text><Text size="xs">{meta.characterName}</Text></Group>
                   {meta.allCharacterNames && (
-                    <Group gap="xs">
-                      <Text size="xs" c="dimmed">All:</Text>
-                      <Text size="xs">{(meta.allCharacterNames as string[]).join(', ')}</Text>
-                    </Group>
+                    <Group gap="xs"><Text size="xs" c="dimmed">All:</Text><Text size="xs">{(meta.allCharacterNames as string[]).join(', ')}</Text></Group>
                   )}
                   {data.character && (
-                    <Group gap="xs">
-                      <Text size="xs" c="dimmed">Source:</Text>
-                      <Badge size="xs" variant="light">{data.character.sourceType}</Badge>
-                    </Group>
+                    <Group gap="xs"><Text size="xs" c="dimmed">Source:</Text><Badge size="xs" variant="light">{data.character.sourceType}</Badge></Group>
                   )}
                 </Stack>
               ) : data.character ? (
@@ -883,45 +1192,17 @@ function PanelDebugModal({
                 <Text size="xs" c="dimmed">No character info</Text>
               )}
             </div>
-
-            {/* Generation parameters */}
             <div>
-              <Text fw={600} size="sm" mb={4}>
-                Generation Parameters
-              </Text>
-              {meta?.generationParams ? (
-                <Code block>{JSON.stringify(meta.generationParams, null, 2)}</Code>
-              ) : (
-                <Code block>{JSON.stringify(data.generation, null, 2)}</Code>
-              )}
+              <Text fw={600} size="sm" mb={4}>Generation Parameters</Text>
+              <Code block>{JSON.stringify(meta?.generationParams ?? data.generation, null, 2)}</Code>
             </div>
-
-            {/* Panel record */}
             <div>
-              <Text fw={600} size="sm" mb={4}>
-                Panel Record
-              </Text>
-              <Code block>
-                {JSON.stringify(
-                  {
-                    id: data.panel.id,
-                    status: data.panel.status,
-                    workflowId: data.panel.workflowId,
-                    createdAt: data.panel.createdAt,
-                    updatedAt: data.panel.updatedAt,
-                  },
-                  null,
-                  2
-                )}
-              </Code>
+              <Text fw={600} size="sm" mb={4}>Panel Record</Text>
+              <Code block>{JSON.stringify({ id: data.panel.id, status: data.panel.status, workflowId: data.panel.workflowId, createdAt: data.panel.createdAt, updatedAt: data.panel.updatedAt }, null, 2)}</Code>
             </div>
-
-            {/* Orchestrator workflow */}
             {data.workflow && (
               <div>
-                <Text fw={600} size="sm" mb={4}>
-                  Orchestrator Workflow
-                </Text>
+                <Text fw={600} size="sm" mb={4}>Orchestrator Workflow</Text>
                 <Code block>{JSON.stringify(data.workflow, null, 2)}</Code>
               </div>
             )}

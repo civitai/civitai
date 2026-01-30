@@ -168,7 +168,10 @@ function CharacterUpload() {
     });
   };
 
-  const existingCharacter = project?.characters?.[0];
+  const characterId = router.query.characterId as string | undefined;
+  const existingCharacter = characterId
+    ? project?.characters?.find((c) => c.id === characterId)
+    : undefined;
 
   // Poll for character status when in Pending/Processing state
   useEffect(() => {

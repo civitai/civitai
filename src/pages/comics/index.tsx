@@ -11,6 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { IconPhoto, IconPlus } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -91,6 +92,8 @@ function ComicsDashboard() {
                   <ProjectCard
                     id={project.id}
                     name={project.name}
+                    description={project.description}
+                    coverImageUrl={project.coverImageUrl}
                     panelCount={project.panelCount}
                     thumbnailUrl={project.thumbnailUrl}
                     updatedAt={project.updatedAt}
@@ -133,27 +136,30 @@ function ComicsDashboard() {
 interface ProjectCardProps {
   id: string;
   name: string;
+  description: string | null;
+  coverImageUrl: string | null;
   panelCount: number;
   thumbnailUrl: string | null;
   updatedAt: Date;
 }
 
-function ProjectCard({ id, name, panelCount, thumbnailUrl, updatedAt }: ProjectCardProps) {
+function ProjectCard({ id, name, description, coverImageUrl, panelCount, thumbnailUrl, updatedAt }: ProjectCardProps) {
   const router = useRouter();
+  const imageUrl = coverImageUrl ?? thumbnailUrl;
 
   return (
     <Card
       withBorder
       padding="lg"
-      className="h-48 cursor-pointer hover:border-blue-500 transition-colors"
+      className="h-56 cursor-pointer hover:border-blue-500 transition-colors"
       onClick={() => router.push(`/comics/project/${id}`)}
     >
       <Stack justify="space-between" className="h-full">
         <div>
-          {thumbnailUrl ? (
+          {imageUrl ? (
             <div className="w-full h-20 rounded mb-2 overflow-hidden">
               <img
-                src={thumbnailUrl}
+                src={getEdgeUrl(imageUrl, { width: 450 })}
                 alt={name}
                 className="w-full h-full object-cover"
               />
@@ -166,6 +172,11 @@ function ProjectCard({ id, name, panelCount, thumbnailUrl, updatedAt }: ProjectC
           <Text fw={500} truncate>
             {name}
           </Text>
+          {description && (
+            <Text size="xs" c="dimmed" lineClamp={1}>
+              {description}
+            </Text>
+          )}
           <Text size="sm" c="dimmed">
             {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
           </Text>

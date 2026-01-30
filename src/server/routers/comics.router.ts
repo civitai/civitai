@@ -111,6 +111,7 @@ const createPanelSchema = z.object({
   characterId: z.string().optional(),
   prompt: z.string().min(1).max(2000),
   enhance: z.boolean().default(true),
+  position: z.number().int().min(0).optional(),
 });
 
 const updatePanelSchema = z.object({
@@ -150,6 +151,17 @@ const reorderChaptersSchema = z.object({
   chapterIds: z.array(z.string()),
 });
 
+const updateProjectSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().max(5000).nullish(),
+  coverImageUrl: z.string().max(500).nullish(),
+});
+
+const deleteCharacterSchema = z.object({
+  characterId: z.string(),
+});
+
 export const comicsRouter = router({
   // Projects
   getMyProjects: protectedProcedure.query(async ({ ctx }) => {
@@ -182,6 +194,8 @@ export const comicsRouter = router({
       return {
         id: p.id,
         name: p.name,
+        description: p.description,
+        coverImageUrl: p.coverImageUrl,
         panelCount,
         thumbnailUrl,
         createdAt: p.createdAt,
@@ -300,6 +314,30 @@ export const comicsRouter = router({
       });
 
       return { success: true };
+    }),
+
+  updateProject: protectedProcedure
+    .input(updateProjectSchema)
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: { userId: true },
+      });
+      if (!project || project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      const data: Record<string, any> = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.description !== undefined) data.description = input.description;
+      if (input.coverImageUrl !== undefined) data.coverImageUrl = input.coverImageUrl;
+
+      const updated = await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data,
+      });
+
+      return updated;
     }),
 
   // Chapters
@@ -826,6 +864,25 @@ export const comicsRouter = router({
       return character;
     }),
 
+  deleteCharacter: protectedProcedure
+    .input(deleteCharacterSchema)
+    .mutation(async ({ ctx, input }) => {
+      const character = await dbRead.comicCharacter.findUnique({
+        where: { id: input.characterId },
+        select: { userId: true },
+      });
+
+      if (!character || character.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      await dbWrite.comicCharacter.delete({
+        where: { id: input.characterId },
+      });
+
+      return { success: true };
+    }),
+
   // Search user's models for character selection
   // Images are fetched separately on the frontend via image.getEntitiesCoverImage
   searchMyModels: protectedProcedure
@@ -909,14 +966,34 @@ export const comicsRouter = router({
 
       const allCharacterNames = chapter.project.characters.map((c) => c.name);
 
-      // Get the previous panel (last by position) for context and next position
-      const lastPanel = await dbRead.comicPanel.findFirst({
-        where: { chapterId: input.chapterId },
-        orderBy: { position: 'desc' },
-        select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
-      });
+      // If inserting at a specific position, shift existing panels and get the
+      // panel just before the insertion point for context. Otherwise use the last panel.
+      let nextPosition: number;
+      let contextPanel: { id: string; position: number; prompt: string; enhancedPrompt: string | null; imageUrl: string | null } | null;
 
-      const nextPosition = (lastPanel?.position ?? -1) + 1;
+      if (input.position != null) {
+        // Get the panel just before the insertion point (position < input.position)
+        contextPanel = await dbRead.comicPanel.findFirst({
+          where: { chapterId: input.chapterId, position: { lt: input.position } },
+          orderBy: { position: 'desc' },
+          select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
+        });
+
+        // Shift panels at or after the insertion point
+        await dbWrite.comicPanel.updateMany({
+          where: { chapterId: input.chapterId, position: { gte: input.position } },
+          data: { position: { increment: 1 } },
+        });
+        nextPosition = input.position;
+      } else {
+        // Appending: use the last panel for context
+        contextPanel = await dbRead.comicPanel.findFirst({
+          where: { chapterId: input.chapterId },
+          orderBy: { position: 'desc' },
+          select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
+        });
+        nextPosition = (contextPanel?.position ?? -1) + 1;
+      }
 
       // Get character's reference images for generation
       let characterName = '';
@@ -974,7 +1051,7 @@ export const comicsRouter = router({
           userPrompt: input.prompt,
           characterName,
           characterNames: allCharacterNames,
-          previousPanel: lastPanel ?? undefined,
+          previousPanel: contextPanel ?? undefined,
         });
       } else {
         fullPrompt = input.prompt;
@@ -982,11 +1059,11 @@ export const comicsRouter = router({
 
       // Build metadata for debugging
       const metadata = {
-        previousPanelId: lastPanel?.id ?? null,
-        previousPanelPrompt: lastPanel
-          ? (lastPanel.enhancedPrompt ?? lastPanel.prompt)
+        previousPanelId: contextPanel?.id ?? null,
+        previousPanelPrompt: contextPanel
+          ? (contextPanel.enhancedPrompt ?? contextPanel.prompt)
           : null,
-        previousPanelImageUrl: lastPanel?.imageUrl ?? null,
+        previousPanelImageUrl: contextPanel?.imageUrl ?? null,
         referenceImages: characterRefImages,
         enhanceEnabled: input.enhance,
         characterName,
