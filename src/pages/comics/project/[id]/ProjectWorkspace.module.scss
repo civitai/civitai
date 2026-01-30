@@ -178,76 +178,162 @@
   }
 }
 
-/* ── Chapter tabs ──────────────────────────────────── */
-.chapterTabs {
+/* ── Chapter sidebar ───────────────────────────────── */
+.chapterSidebar {
   display: flex;
-  gap: 2px;
-  border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
-  margin-bottom: 20px;
-  padding-bottom: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.chapterTab {
-  padding: 12px 16px;
-  background: transparent;
-  border: none;
-  color: light-dark(var(--mantine-color-gray-6), #909296);
-  font-size: 14px;
-  font-weight: 500;
+.chapterItem {
+  background: light-dark(var(--mantine-color-gray-0), #25262b);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: inherit;
 
   &:hover {
-    color: light-dark(var(--mantine-color-gray-8), #c1c2c5);
+    background: light-dark(var(--mantine-color-gray-1), #2C2E33);
   }
 }
 
-.chapterTabActive {
+.chapterItemActive {
+  border-left: 3px solid;
+  border-image: linear-gradient(180deg, #fab005, #fd7e14) 1;
+  background: light-dark(rgba(250, 176, 5, 0.05), rgba(250, 176, 5, 0.05));
+  padding-left: 9px;
+}
+
+.chapterItemNumber {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: light-dark(var(--mantine-color-gray-1), rgba(0, 0, 0, 0.25));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  color: #fab005;
+  flex-shrink: 0;
+}
+
+.chapterItemInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.chapterItemName {
+  font-size: 13px;
+  font-weight: 500;
   color: light-dark(var(--mantine-color-dark-9), #f9fafb);
-  font-weight: 600;
-
-  &::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, #fab005, #fd7e14);
-  }
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
 
-.chapterTabActions {
+.chapterItemCount {
+  font-size: 11px;
+  color: #909296;
+  margin: 2px 0 0;
+}
+
+.chapterItemActions {
   opacity: 0;
   transition: opacity 0.2s ease;
   display: flex;
   gap: 2px;
-  margin-left: 4px;
+  flex-shrink: 0;
 
-  .chapterTab:hover & {
+  .chapterItem:hover & {
     opacity: 1;
   }
 }
 
-.chapterTabInput {
+.chapterItemInput {
   background: light-dark(var(--mantine-color-gray-0), #2C2E33);
   border: 1px solid #fab005;
   border-radius: 4px;
   padding: 2px 6px;
   color: light-dark(var(--mantine-color-dark-9), #f9fafb);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   outline: none;
-  width: 120px;
+  width: 100%;
+}
+
+.chapterAddBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed light-dark(var(--mantine-color-gray-3), #373A40);
+  border-radius: 6px;
+  background: transparent;
+  color: #909296;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+
+  &:hover {
+    border-color: #fab005;
+    color: #fab005;
+    background: rgba(250, 176, 5, 0.05);
+  }
+}
+
+/* ── Main layout ──────────────────────────────────── */
+.workspaceGrid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: 240px 200px 1fr;
+}
+
+@media (max-width: 1100px) {
+  .workspaceGrid {
+    grid-template-columns: 200px 180px 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .workspaceGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sidebarSection {
+  position: sticky;
+  top: 80px;
+  align-self: start;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.sidebarTitle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 0 2px;
+
+  span {
+    font-size: 11px;
+    font-weight: 700;
+    color: #909296;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
 }
 
 /* ── Panel cards ───────────────────────────────────── */

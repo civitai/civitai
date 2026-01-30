@@ -1,25 +1,23 @@
 import {
   Button,
-  Card,
   Container,
-  Grid,
   Group,
   Modal,
   Stack,
-  Text,
   TextInput,
-  Title,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { IconPhoto, IconPlus } from '@tabler/icons-react';
+import { IconPhoto, IconPhotoOff, IconPlus } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './Comics.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -63,46 +61,45 @@ function ComicsDashboard() {
         description="Create comics with consistent AI-generated characters"
       />
 
-      <Container size="xl" py="xl">
-        <Stack gap="xl">
-          <Group justify="space-between">
-            <div>
-              <Title order={1}>My Comics</Title>
-              <Text c="dimmed">Create and manage your comic projects</Text>
-            </div>
-            <Button leftSection={<IconPlus size={16} />} onClick={open}>
-              New Project
-            </Button>
-          </Group>
+      <Container size="xl">
+        <div className={styles.dashboardHeader}>
+          <div>
+            <h1 className={styles.browseTitle}>My Comics</h1>
+            <p className={styles.browseSubtitle}>
+              Create and manage your comic projects
+            </p>
+          </div>
+          <button className={styles.dashboardNewBtn} onClick={open}>
+            <IconPlus size={16} />
+            New Project
+          </button>
+        </div>
 
-          {isLoading ? (
-            <Text c="dimmed">Loading projects...</Text>
-          ) : projects?.length === 0 ? (
-            <Card withBorder p="xl" className="text-center">
-              <Stack align="center" gap="md">
-                <IconPhoto size={48} className="text-gray-500" />
-                <Text c="dimmed">No projects yet</Text>
-                <Button onClick={open}>Create your first comic</Button>
-              </Stack>
-            </Card>
-          ) : (
-            <Grid>
-              {projects?.map((project) => (
-                <Grid.Col key={project.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
-                  <ProjectCard
-                    id={project.id}
-                    name={project.name}
-                    description={project.description}
-                    coverImageUrl={project.coverImageUrl}
-                    panelCount={project.panelCount}
-                    thumbnailUrl={project.thumbnailUrl}
-                    updatedAt={project.updatedAt}
-                  />
-                </Grid.Col>
-              ))}
-            </Grid>
-          )}
-        </Stack>
+        {isLoading ? (
+          <div className={styles.loadingCenter}>
+            <div className={styles.spinner} />
+          </div>
+        ) : projects?.length === 0 ? (
+          <div className={styles.browseEmpty}>
+            <IconPhotoOff size={48} />
+            <p>No projects yet</p>
+            <button className={styles.dashboardNewBtn} onClick={open}>
+              <IconPlus size={16} />
+              Create your first comic
+            </button>
+          </div>
+        ) : (
+          <div
+            className="grid gap-5"
+            style={{
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            }}
+          >
+            {projects?.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        )}
       </Container>
 
       <Modal opened={opened} onClose={close} title="New Project">
@@ -133,59 +130,44 @@ function ComicsDashboard() {
   );
 }
 
-interface ProjectCardProps {
-  id: string;
-  name: string;
-  description: string | null;
-  coverImageUrl: string | null;
-  panelCount: number;
-  thumbnailUrl: string | null;
-  updatedAt: Date;
-}
+type ProjectItem = NonNullable<
+  ReturnType<typeof trpc.comics.getMyProjects.useQuery>['data']
+>[number];
 
-function ProjectCard({ id, name, description, coverImageUrl, panelCount, thumbnailUrl, updatedAt }: ProjectCardProps) {
-  const router = useRouter();
-  const imageUrl = coverImageUrl ?? thumbnailUrl;
+function ProjectCard({ project }: { project: ProjectItem }) {
+  const imageUrl = project.coverImageUrl ?? project.thumbnailUrl;
 
   return (
-    <Card
-      withBorder
-      padding="lg"
-      className="h-56 cursor-pointer hover:border-blue-500 transition-colors"
-      onClick={() => router.push(`/comics/project/${id}`)}
-    >
-      <Stack justify="space-between" className="h-full">
-        <div>
-          {imageUrl ? (
-            <div className="w-full h-20 rounded mb-2 overflow-hidden">
-              <img
-                src={getEdgeUrl(imageUrl, { width: 450 })}
-                alt={name}
-                className="w-full h-full object-cover"
-              />
+    <Link href={`/comics/project/${project.id}`} className={styles.comicCard}>
+      <div className={styles.comicCardImage}>
+        {imageUrl ? (
+          <>
+            <img
+              src={getEdgeUrl(imageUrl, { width: 450 })}
+              alt={project.name}
+            />
+            <div className={styles.comicCardOverlay}>
+              <span className={styles.comicCardPanelBadge}>
+                {project.panelCount} {project.panelCount === 1 ? 'panel' : 'panels'}
+              </span>
             </div>
-          ) : (
-            <div className="w-full h-20 bg-gray-800 rounded mb-2 flex items-center justify-center">
-              <IconPhoto size={24} className="text-gray-600" />
-            </div>
-          )}
-          <Text fw={500} truncate>
-            {name}
-          </Text>
-          {description && (
-            <Text size="xs" c="dimmed" lineClamp={1}>
-              {description}
-            </Text>
-          )}
-          <Text size="sm" c="dimmed">
-            {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
-          </Text>
-        </div>
-        <Text size="xs" c="dimmed">
-          Updated {formatDate(updatedAt)}
-        </Text>
-      </Stack>
-    </Card>
+          </>
+        ) : (
+          <div className={styles.comicCardImageEmpty}>
+            <IconPhoto size={36} />
+          </div>
+        )}
+      </div>
+      <div className={styles.comicCardBody}>
+        <h3 className={styles.comicCardTitle}>{project.name}</h3>
+        {project.description && (
+          <p className={styles.comicCardDescription}>{project.description}</p>
+        )}
+        <p className={styles.comicCardTimestamp}>
+          Updated {formatDate(project.updatedAt)}
+        </p>
+      </div>
+    </Link>
   );
 }
 

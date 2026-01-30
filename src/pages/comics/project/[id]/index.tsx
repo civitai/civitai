@@ -102,6 +102,15 @@ function ProjectWorkspace() {
   // Insert-at-position state for adding panels between existing ones
   const [insertAtPosition, setInsertAtPosition] = useState<number | null>(null);
 
+  // Smart Create modal state
+  const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
+  const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
+  const [smartChapterName, setSmartChapterName] = useState('New Chapter');
+  const [smartStory, setSmartStory] = useState('');
+  const [smartCharacterId, setSmartCharacterId] = useState<string | null>(null);
+  const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
+  const [smartEnhance, setSmartEnhance] = useState(true);
+
   const panelSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
@@ -185,6 +194,22 @@ function ProjectWorkspace() {
 
   const deleteCharacterMutation = trpc.comics.deleteCharacter.useMutation({
     onSuccess: () => refetch(),
+  });
+
+  const planPanelsMutation = trpc.comics.planChapterPanels.useMutation({
+    onSuccess: (data) => {
+      setSmartPanels(data.panels);
+      setSmartStep('review');
+    },
+  });
+
+  const smartCreateMutation = trpc.comics.smartCreateChapter.useMutation({
+    onSuccess: (data) => {
+      closeSmartModal();
+      setActiveChapterId(data.id);
+      resetSmartState();
+      refetch();
+    },
   });
 
   const utils = trpc.useUtils();
@@ -388,6 +413,33 @@ function ProjectWorkspace() {
     setEditCoverUrl(result.id);
   };
 
+  const resetSmartState = () => {
+    setSmartStep('input');
+    setSmartChapterName('New Chapter');
+    setSmartStory('');
+    setSmartCharacterId(null);
+    setSmartPanels([]);
+    setSmartEnhance(true);
+  };
+
+  const handlePlanPanels = () => {
+    if (!smartStory.trim()) return;
+    planPanelsMutation.mutate({ projectId, storyDescription: smartStory.trim() });
+  };
+
+  const handleSmartCreate = () => {
+    const smartChar = activeCharacters.find((c) => c.id === smartCharacterId) ?? activeCharacters[0];
+    if (!smartChar || smartPanels.length === 0) return;
+    smartCreateMutation.mutate({
+      projectId,
+      chapterName: smartChapterName.trim() || 'New Chapter',
+      characterId: smartChar.id,
+      storyDescription: smartStory.trim(),
+      panels: smartPanels.filter((p) => p.prompt.trim()),
+      enhance: smartEnhance,
+    });
+  };
+
   const getStatusDotClass = (status: string, hasRefs: boolean) => {
     if (status === 'Failed') return styles.failed;
     if (status === 'Ready' && !hasRefs) return styles.noRefs;
@@ -463,11 +515,11 @@ function ProjectWorkspace() {
           </div>
 
           {/* ── Main layout ─────────────────────────── */}
-          <div className="grid gap-6" style={{ gridTemplateColumns: '280px 1fr' }}>
+          <div className={styles.workspaceGrid}>
             {/* ── Sidebar: Characters ─────────────── */}
-            <div>
-              <div className="flex justify-between items-center mb-4 px-1">
-                <Text size="sm" fw={600}>Characters</Text>
+            <div className={styles.sidebarSection}>
+              <div className={styles.sidebarTitle}>
+                <span>Characters</span>
                 <ActionIcon
                   variant="subtle"
                   size="sm"
@@ -568,39 +620,53 @@ function ProjectWorkspace() {
               </Stack>
             </div>
 
-            {/* ── Main: Panels ───────────────────── */}
-            <div>
-              {/* Chapter tabs */}
-              {project.chapters.length > 0 && (
-                <div className={styles.chapterTabs}>
-                  {project.chapters.map((chapter) => (
-                    <button
+            {/* ── Sidebar: Chapters ───────────────── */}
+            <div className={styles.sidebarSection}>
+              <div className={styles.sidebarTitle}>
+                <span>Chapters</span>
+              </div>
+
+              <div className={styles.chapterSidebar}>
+                {project.chapters.map((chapter, idx) => {
+                  const isActive = (activeChapterId ?? project.chapters[0]?.id) === chapter.id;
+                  const panelCount = chapter.panels.length;
+
+                  return (
+                    <div
                       key={chapter.id}
                       className={clsx(
-                        styles.chapterTab,
-                        (activeChapterId ?? project.chapters[0]?.id) === chapter.id && styles.chapterTabActive
+                        styles.chapterItem,
+                        isActive && styles.chapterItemActive
                       )}
                       onClick={() => {
                         if (editingChapterId !== chapter.id) setActiveChapterId(chapter.id);
                       }}
                     >
-                      {editingChapterId === chapter.id ? (
-                        <input
-                          ref={chapterInputRef}
-                          className={styles.chapterTabInput}
-                          value={editChapterName}
-                          onChange={(e) => setEditChapterName(e.target.value)}
-                          onBlur={handleSaveChapterName}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSaveChapterName();
-                            if (e.key === 'Escape') setEditingChapterId(null);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        chapter.name
-                      )}
-                      <span className={styles.chapterTabActions}>
+                      <span className={styles.chapterItemNumber}>{idx + 1}</span>
+                      <div className={styles.chapterItemInfo}>
+                        {editingChapterId === chapter.id ? (
+                          <input
+                            ref={chapterInputRef}
+                            className={styles.chapterItemInput}
+                            value={editChapterName}
+                            onChange={(e) => setEditChapterName(e.target.value)}
+                            onBlur={handleSaveChapterName}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveChapterName();
+                              if (e.key === 'Escape') setEditingChapterId(null);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : (
+                          <>
+                            <p className={styles.chapterItemName}>{chapter.name}</p>
+                            <p className={styles.chapterItemCount}>
+                              {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                      <span className={styles.chapterItemActions}>
                         <ActionIcon
                           variant="transparent"
                           size="xs"
@@ -627,19 +693,33 @@ function ProjectWorkspace() {
                           </ActionIcon>
                         )}
                       </span>
-                    </button>
-                  ))}
-                  <button
-                    className={styles.chapterTab}
-                    style={{ color: '#fab005' }}
-                    onClick={() => createChapterMutation.mutate({ projectId })}
-                  >
-                    <IconPlus size={14} />
-                    Add Chapter
-                  </button>
-                </div>
-              )}
+                    </div>
+                  );
+                })}
 
+                <button
+                  className={styles.chapterAddBtn}
+                  onClick={() => createChapterMutation.mutate({ projectId })}
+                >
+                  <IconPlus size={14} />
+                  Add Chapter
+                </button>
+
+                {activeCharacters.length > 0 && (
+                  <button
+                    className={styles.gradientBtn}
+                    style={{ padding: '8px 12px', fontSize: 13, width: '100%' }}
+                    onClick={() => { resetSmartState(); openSmartModal(); }}
+                  >
+                    <IconSparkles size={14} />
+                    Smart Create
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Main: Panels ───────────────────── */}
+            <div>
               {/* Status messages */}
               {!activeCharacter && project.characters.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
@@ -682,6 +762,13 @@ function ProjectWorkspace() {
                   <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
                   <Text c="dimmed">No panels yet. Create your first panel!</Text>
                 </div>
+              )}
+
+              {/* Active chapter title */}
+              {activeChapter && (
+                <Title order={4} mb="md" style={{ fontWeight: 700 }}>
+                  {activeChapter.name}
+                </Title>
               )}
 
               {/* Panel grid */}
@@ -929,6 +1016,166 @@ function ProjectWorkspace() {
             </Group>
           </Group>
         </Stack>
+      </Modal>
+
+      {/* ── Smart Create Modal ────────────────────── */}
+      <Modal
+        opened={smartModalOpened}
+        onClose={() => { closeSmartModal(); resetSmartState(); }}
+        title={smartStep === 'input' ? 'Smart Create Chapter' : `Review Panels — ${smartChapterName}`}
+        size="lg"
+      >
+        {smartStep === 'input' ? (
+          <Stack gap="md">
+            <TextInput
+              label="Chapter name"
+              value={smartChapterName}
+              onChange={(e) => setSmartChapterName(e.target.value)}
+            />
+
+            {activeCharacters.length > 1 ? (
+              <Select
+                label="Character"
+                data={activeCharacters.map((c) => ({ value: c.id, label: c.name }))}
+                value={smartCharacterId ?? activeCharacters[0]?.id ?? null}
+                onChange={(v) => setSmartCharacterId(v)}
+              />
+            ) : activeCharacters[0] ? (
+              <Group>
+                <Text size="sm" c="dimmed">Character:</Text>
+                <span className={styles.detailCharacterPill} style={{ padding: '3px 10px', fontSize: 12 }}>
+                  <IconUser size={12} />
+                  {activeCharacters[0].name}
+                </span>
+              </Group>
+            ) : null}
+
+            <Textarea
+              label="Describe the story or scene"
+              placeholder="A warrior discovers an ancient temple in the jungle, encounters a guardian spirit, and must prove their worth through a test of courage..."
+              rows={6}
+              autosize
+              minRows={4}
+              maxRows={10}
+              value={smartStory}
+              onChange={(e) => setSmartStory(e.target.value)}
+            />
+
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => { closeSmartModal(); resetSmartState(); }}>
+                Cancel
+              </Button>
+              <button
+                className={styles.gradientBtn}
+                onClick={handlePlanPanels}
+                disabled={!smartStory.trim() || planPanelsMutation.isPending}
+              >
+                {planPanelsMutation.isPending ? (
+                  <Loader size={14} color="dark" />
+                ) : (
+                  <IconSparkles size={14} />
+                )}
+                {planPanelsMutation.isPending ? 'Planning...' : 'Plan Panels'}
+              </button>
+            </Group>
+
+            {planPanelsMutation.isError && (
+              <Text size="sm" c="red">
+                {planPanelsMutation.error?.message ?? 'Failed to plan panels'}
+              </Text>
+            )}
+          </Stack>
+        ) : (
+          <Stack gap="md">
+            <Text size="sm" c="dimmed">{smartPanels.length} panels planned</Text>
+
+            <ScrollArea.Autosize mah="50vh">
+              <Stack gap="sm">
+                {smartPanels.map((panel, index) => (
+                  <div key={index} className="flex gap-2 items-start">
+                    <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
+                      #{index + 1}
+                    </Text>
+                    <Textarea
+                      className="flex-1"
+                      autosize
+                      minRows={2}
+                      maxRows={5}
+                      value={panel.prompt}
+                      onChange={(e) => {
+                        const updated = [...smartPanels];
+                        updated[index] = { prompt: e.target.value };
+                        setSmartPanels(updated);
+                      }}
+                    />
+                    <ActionIcon
+                      variant="subtle"
+                      color="red"
+                      size="sm"
+                      mt={8}
+                      onClick={() => setSmartPanels(smartPanels.filter((_, i) => i !== index))}
+                      disabled={smartPanels.length <= 1}
+                    >
+                      <IconX size={14} />
+                    </ActionIcon>
+                  </div>
+                ))}
+              </Stack>
+            </ScrollArea.Autosize>
+
+            <Button
+              variant="subtle"
+              color="yellow"
+              size="xs"
+              leftSection={<IconPlus size={14} />}
+              onClick={() => setSmartPanels([...smartPanels, { prompt: '' }])}
+            >
+              Add Panel
+            </Button>
+
+            <Switch
+              label="Enhance prompts"
+              description="Use AI to add detail and composition to each panel"
+              checked={smartEnhance}
+              onChange={(e) => setSmartEnhance(e.currentTarget.checked)}
+              color="yellow"
+            />
+
+            <Text size="sm" c="dimmed">
+              Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x 25 ={' '}
+              {smartPanels.filter((p) => p.prompt.trim()).length * 25} Buzz
+            </Text>
+
+            <Group justify="space-between">
+              <Button
+                variant="default"
+                leftSection={<IconArrowLeft size={14} />}
+                onClick={() => setSmartStep('input')}
+              >
+                Back
+              </Button>
+              <button
+                className={styles.gradientBtn}
+                onClick={handleSmartCreate}
+                disabled={
+                  smartPanels.filter((p) => p.prompt.trim()).length === 0 ||
+                  smartCreateMutation.isPending
+                }
+              >
+                {smartCreateMutation.isPending ? (
+                  <Loader size={14} color="dark" />
+                ) : null}
+                {smartCreateMutation.isPending ? 'Creating...' : 'Create Chapter'}
+              </button>
+            </Group>
+
+            {smartCreateMutation.isError && (
+              <Text size="sm" c="red">
+                {smartCreateMutation.error?.message ?? 'Failed to create chapter'}
+              </Text>
+            )}
+          </Stack>
+        )}
       </Modal>
 
       {/* ── Settings Modal ───────────────────────── */}

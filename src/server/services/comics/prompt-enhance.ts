@@ -27,8 +27,13 @@ export async function enhanceComicPrompt(input: {
     enhancedPrompt: string | null;
     imageUrl: string | null;
   };
+  storyContext?: {
+    storyDescription: string;
+    previousPanelPrompts: string[];
+  };
 }): Promise<string> {
-  const { userPrompt, characterName, characterNames, trainedWords, previousPanel } = input;
+  const { userPrompt, characterName, characterNames, trainedWords, previousPanel, storyContext } =
+    input;
 
   // Fallback: just return the user prompt (no trained words for NanoBanana path)
   const fallback =
@@ -46,9 +51,14 @@ export async function enhanceComicPrompt(input: {
     const textParts = [
       `Characters in this project: ${names.join(', ')}`,
       characterName && `Active character (has reference images): ${characterName}`,
-      previousPanel &&
+      storyContext && `Overall story: ${storyContext.storyDescription}`,
+      storyContext &&
+        storyContext.previousPanelPrompts.length > 0 &&
+        `Previous panels in this chapter:\n${storyContext.previousPanelPrompts.map((p, i) => `  Panel ${i + 1}: ${p}`).join('\n')}`,
+      !storyContext &&
+        previousPanel &&
         `Previous panel prompt: ${previousPanel.enhancedPrompt ?? previousPanel.prompt}`,
-      `New scene: ${userPrompt}`,
+      `New scene (panel ${storyContext ? storyContext.previousPanelPrompts.length + 1 : 'next'}): ${userPrompt}`,
     ]
       .filter(Boolean)
       .join('\n');

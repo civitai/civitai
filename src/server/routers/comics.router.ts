@@ -3,10 +3,15 @@ import type { SessionUser } from 'next-auth';
 import {
   router,
   protectedProcedure,
+  publicProcedure,
   middleware,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   ComicCharacterStatus,
   ComicCharacterSourceType,
@@ -20,7 +25,9 @@ import { createTextToImage } from '~/server/services/orchestrator/textToImage/te
 import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // Constants
 const NANOBANANA_VERSION_ID = 2154472;
@@ -151,6 +158,22 @@ const reorderChaptersSchema = z.object({
   chapterIds: z.array(z.string()),
 });
 
+const planChapterPanelsSchema = z.object({
+  projectId: z.string(),
+  storyDescription: z.string().min(1).max(5000),
+});
+
+const smartCreateChapterSchema = z.object({
+  projectId: z.string(),
+  chapterName: z.string().min(1).max(255).default('New Chapter'),
+  characterId: z.string(),
+  storyDescription: z.string().max(5000).default(''),
+  panels: z.array(z.object({
+    prompt: z.string().min(1).max(2000),
+  })).min(1).max(20),
+  enhance: z.boolean().default(true),
+});
+
 const updateProjectSchema = z.object({
   id: z.string(),
   name: z.string().min(1).max(255).optional(),
@@ -161,6 +184,177 @@ const updateProjectSchema = z.object({
 const deleteCharacterSchema = z.object({
   characterId: z.string(),
 });
+
+// Shared helper: resolve a character's reference images for generation
+async function getCharacterRefImages(characterId: string) {
+  const character = await dbRead.comicCharacter.findUnique({
+    where: { id: characterId },
+    select: {
+      name: true,
+      generatedReferenceImages: true,
+      referenceImages: true,
+      sourceType: true,
+      status: true,
+    },
+  });
+
+  if (!character) return { characterName: '', refImages: [] };
+
+  let refImages: { url: string; width: number; height: number }[] = [];
+  if (character.generatedReferenceImages) {
+    const genRefs = character.generatedReferenceImages as {
+      url: string; width: number; height: number; view: string;
+    }[];
+    refImages = genRefs.map((r) => ({
+      url: getEdgeUrl(r.url, { original: true }),
+      width: r.width,
+      height: r.height,
+    }));
+  } else if (character.referenceImages) {
+    const uploadedRefs = character.referenceImages as string[];
+    refImages = uploadedRefs.map((url) => ({
+      url: getEdgeUrl(url, { original: true }),
+      width: 512,
+      height: 512,
+    }));
+  }
+
+  return { characterName: character.name, refImages };
+}
+
+// Shared helper: create a single panel record and submit generation
+async function createSinglePanel(args: {
+  chapterId: string;
+  characterId: string;
+  prompt: string;
+  enhance: boolean;
+  position: number;
+  contextPanel: { id: string; prompt: string; enhancedPrompt: string | null; imageUrl: string | null } | null;
+  allCharacterNames: string[];
+  characterName: string;
+  characterRefImages: { url: string; width: number; height: number }[];
+  userId: number;
+  ctx: any;
+  storyContext?: {
+    storyDescription: string;
+    previousPanelPrompts: string[];
+  };
+}) {
+  const {
+    chapterId, characterId, prompt, enhance, position,
+    contextPanel, allCharacterNames, characterName, characterRefImages,
+    userId, ctx, storyContext,
+  } = args;
+
+  // Build prompt — optionally enhance via LLM
+  let fullPrompt: string;
+  if (enhance) {
+    fullPrompt = await enhanceComicPrompt({
+      userPrompt: prompt,
+      characterName,
+      characterNames: allCharacterNames,
+      previousPanel: contextPanel ?? undefined,
+      storyContext,
+    });
+  } else {
+    fullPrompt = prompt;
+  }
+
+  const metadata = {
+    previousPanelId: contextPanel?.id ?? null,
+    previousPanelPrompt: contextPanel
+      ? (contextPanel.enhancedPrompt ?? contextPanel.prompt)
+      : null,
+    previousPanelImageUrl: contextPanel?.imageUrl ?? null,
+    referenceImages: characterRefImages,
+    enhanceEnabled: enhance,
+    characterName,
+    allCharacterNames,
+    generationParams: {
+      engine: 'gemini',
+      baseModel: 'NanoBanana',
+      checkpointVersionId: NANOBANANA_VERSION_ID,
+      width: PANEL_WIDTH,
+      height: PANEL_HEIGHT,
+      prompt: fullPrompt,
+      negativePrompt: '',
+    },
+  };
+
+  const panel = await dbWrite.comicPanel.create({
+    data: {
+      chapterId,
+      characterId,
+      prompt,
+      enhancedPrompt: enhance ? fullPrompt : null,
+      position,
+      status: ComicPanelStatus.Pending,
+      metadata,
+    },
+  });
+
+  try {
+    const token = await getOrchestratorToken(userId, ctx);
+    const result = await createImageGen({
+      params: {
+        prompt: fullPrompt,
+        negativePrompt: '',
+        engine: 'gemini',
+        baseModel: 'NanoBanana' as any,
+        width: PANEL_WIDTH,
+        height: PANEL_HEIGHT,
+        workflow: 'txt2img',
+        sampler: 'Euler',
+        steps: 25,
+        quantity: 1,
+        draft: false,
+        disablePoi: false,
+        priority: 'low',
+        sourceImage: null,
+        images: characterRefImages,
+      },
+      resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+      tags: ['comics'],
+      tips: { creators: 0, civitai: 0 },
+      user: ctx.user! as SessionUser,
+      token,
+      currencies: ['yellow'],
+    });
+
+    const updated = await dbWrite.comicPanel.update({
+      where: { id: panel.id },
+      data: { workflowId: result.id, status: ComicPanelStatus.Generating },
+    });
+    return updated;
+  } catch (error: any) {
+    const errorDetails: string[] = [];
+    if (error instanceof Error) {
+      errorDetails.push(error.message);
+      if (error.cause) errorDetails.push(`Cause: ${JSON.stringify(error.cause)}`);
+    } else {
+      errorDetails.push(String(error));
+    }
+    if (error?.response?.data) {
+      errorDetails.push(`Response: ${JSON.stringify(error.response.data)}`);
+    }
+    if (error?.data) {
+      errorDetails.push(`Data: ${JSON.stringify(error.data)}`);
+    }
+
+    const errorMessage = errorDetails.join(' | ');
+    console.error('Comics panel generation failed:', {
+      panelId: panel.id,
+      error: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    const updated = await dbWrite.comicPanel.update({
+      where: { id: panel.id },
+      data: { status: ComicPanelStatus.Failed, errorMessage },
+    });
+    return updated;
+  }
+}
 
 export const comicsRouter = router({
   // Projects
@@ -272,6 +466,162 @@ export const comicsRouter = router({
         id: project.id,
         name: project.name,
         chapters: project.chapters,
+      };
+    }),
+
+  // Public queries — no auth required
+  getPublicProjects: publicProcedure
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(50).default(20),
+        cursor: z.string().optional(),
+      })
+    )
+    .query(async ({ input }) => {
+      const { limit, cursor } = input;
+
+      const projects = await dbRead.comicProject.findMany({
+        where: {
+          status: ComicProjectStatus.Active,
+          chapters: {
+            some: {
+              panels: {
+                some: {
+                  status: ComicPanelStatus.Ready,
+                  imageUrl: { not: null },
+                },
+              },
+            },
+          },
+        },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          coverImageUrl: true,
+          updatedAt: true,
+          user: {
+            select: userWithCosmeticsSelect,
+          },
+          chapters: {
+            select: {
+              _count: {
+                select: {
+                  panels: {
+                    where: {
+                      status: ComicPanelStatus.Ready,
+                      imageUrl: { not: null },
+                    },
+                  },
+                },
+              },
+              panels: {
+                where: {
+                  status: ComicPanelStatus.Ready,
+                  imageUrl: { not: null },
+                },
+                take: 1,
+                orderBy: { position: 'asc' },
+                select: { imageUrl: true },
+              },
+            },
+            orderBy: { position: 'asc' },
+          },
+        },
+      });
+
+      let nextCursor: string | undefined;
+      if (projects.length > limit) {
+        const nextItem = projects.pop()!;
+        nextCursor = nextItem.id;
+      }
+
+      const items = projects.map((p) => {
+        const readyPanelCount = p.chapters.reduce(
+          (sum, ch) => sum + ch._count.panels,
+          0
+        );
+        const chapterCount = p.chapters.length;
+        const thumbnailUrl =
+          p.coverImageUrl ??
+          p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)
+            ?.imageUrl ??
+          null;
+
+        return {
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          thumbnailUrl,
+          readyPanelCount,
+          chapterCount,
+          user: p.user,
+          updatedAt: p.updatedAt,
+        };
+      });
+
+      return { items, nextCursor };
+    }),
+
+  getPublicProjectForReader: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          coverImageUrl: true,
+          status: true,
+          user: {
+            select: userWithCosmeticsSelect,
+          },
+          chapters: {
+            orderBy: { position: 'asc' },
+            select: {
+              id: true,
+              name: true,
+              position: true,
+              panels: {
+                where: {
+                  status: ComicPanelStatus.Ready,
+                  imageUrl: { not: null },
+                },
+                orderBy: { position: 'asc' },
+                select: {
+                  id: true,
+                  imageUrl: true,
+                  prompt: true,
+                  position: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!project || project.status === ComicProjectStatus.Deleted) {
+        throw throwNotFoundError('Comic not found');
+      }
+
+      // Filter out chapters with no ready panels
+      const chapters = project.chapters.filter((ch) => ch.panels.length > 0);
+
+      if (chapters.length === 0) {
+        throw throwNotFoundError('Comic not found');
+      }
+
+      return {
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        coverImageUrl: project.coverImageUrl,
+        user: project.user,
+        chapters,
       };
     }),
 
@@ -1435,5 +1785,111 @@ export const comicsRouter = router({
 
       // Still processing - return as-is
       return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
+    }),
+
+  // Smart Create — Plan chapter panels via GPT
+  planChapterPanels: protectedProcedure
+    .input(planChapterPanelsSchema)
+    .use(isProjectOwner)
+    .mutation(async ({ input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: {
+          characters: {
+            where: { status: ComicCharacterStatus.Ready },
+            select: { name: true },
+          },
+        },
+      });
+
+      const characterNames = (project?.characters ?? []).map((c) => c.name);
+
+      return planChapterPanels({
+        storyDescription: input.storyDescription,
+        characterNames,
+      });
+    }),
+
+  // Smart Create — Create chapter with all panels at once
+  smartCreateChapter: protectedProcedure
+    .input(smartCreateChapterSchema)
+    .use(isProjectOwner)
+    .mutation(async ({ ctx, input }) => {
+      // Create the chapter
+      const lastChapter = await dbRead.comicChapter.findFirst({
+        where: { projectId: input.projectId },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      });
+      const nextPosition = (lastChapter?.position ?? -1) + 1;
+
+      const chapter = await dbWrite.comicChapter.create({
+        data: {
+          projectId: input.projectId,
+          name: input.chapterName,
+          position: nextPosition,
+        },
+      });
+
+      // Get character ref images
+      const { characterName, refImages } = await getCharacterRefImages(input.characterId);
+      if (refImages.length === 0) {
+        throw throwBadRequestError('Character has no reference images');
+      }
+
+      // Get all character names for prompt enhancement
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: {
+          characters: {
+            where: { status: ComicCharacterStatus.Ready },
+            select: { name: true },
+          },
+        },
+      });
+      const allCharacterNames = (project?.characters ?? []).map((c) => c.name);
+
+      // Create panels sequentially — each panel uses the previous as context
+      // Build story context so the enhancer sees the full narrative arc
+      const createdPanels: any[] = [];
+      const previousPanelPrompts: string[] = [];
+      let contextPanel: { id: string; prompt: string; enhancedPrompt: string | null; imageUrl: string | null } | null = null;
+
+      for (let i = 0; i < input.panels.length; i++) {
+        const panelInput = input.panels[i];
+        const panel = await createSinglePanel({
+          chapterId: chapter.id,
+          characterId: input.characterId,
+          prompt: panelInput.prompt,
+          enhance: input.enhance,
+          position: i,
+          contextPanel,
+          allCharacterNames,
+          characterName,
+          characterRefImages: refImages,
+          userId: ctx.user!.id,
+          ctx,
+          storyContext: {
+            storyDescription: input.storyDescription,
+            previousPanelPrompts: [...previousPanelPrompts],
+          },
+        });
+
+        createdPanels.push(panel);
+        previousPanelPrompts.push(panel.enhancedPrompt ?? panelInput.prompt);
+
+        // Use this panel as context for the next one
+        contextPanel = {
+          id: panel.id,
+          prompt: panelInput.prompt,
+          enhancedPrompt: panel.enhancedPrompt,
+          imageUrl: panel.imageUrl,
+        };
+      }
+
+      return {
+        ...chapter,
+        panels: createdPanels,
+      };
     }),
 });
