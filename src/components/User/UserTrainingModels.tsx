@@ -498,20 +498,25 @@ export default function UserTrainingModels() {
               )}
               {(mv.trainingStatus === TrainingStatus.Failed ||
                 mv.trainingStatus === TrainingStatus.Denied) && (
-                <Button
-                  size="xs"
-                  color="gray"
-                  py={0}
-                  style={{ fontSize: 12, fontWeight: 600, height: 20 }}
-                  component="a"
-                  href="/support-portal"
-                  target="_blank"
-                  onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-                >
-                  <Group wrap="nowrap" gap={6}>
-                    Open Support Ticket <IconExternalLink size={12} />
-                  </Group>
-                </Button>
+                <>
+                  <Divider size="sm" orientation="vertical" />
+                  <HoverCard shadow="md" width={300} zIndex={100} withArrow withinPortal>
+                    <HoverCard.Target>
+                      <IconAlertCircle size={20} color="orange" style={{ cursor: 'pointer' }} />
+                    </HoverCard.Target>
+                    <HoverCard.Dropdown>
+                      <Text size="sm">
+                        Training success can vary based on system conditions and
+                        configuration. Check for service updates at the top of the page or
+                        on the{' '}
+                        <Anchor href="/changelog" target="_blank">
+                          Updates page
+                        </Anchor>{' '}
+                        for any relevant LoRA training notices before retrying.
+                      </Text>
+                    </HoverCard.Dropdown>
+                  </HoverCard>
+                </>
               )}
             </Group>
           );
