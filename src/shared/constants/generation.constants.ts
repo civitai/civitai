@@ -1,4 +1,4 @@
-import type { SdCppSampleMethod, SdCppSchedule, WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
@@ -235,53 +235,6 @@ export const samplersToComfySamplers: Record<
   LCM: { sampler: 'lcm', scheduler: 'normal' },
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
 };
-
-// Maps UI Sampler names to SdCpp sampler/schedule values (used by Flux2 Klein)
-// SdCppSampleMethod: 'euler', 'heun', 'dpm2', 'dpm++2s_a', 'dpm++2m', 'dpm++2mv2', 'ipndm', 'ipndm_v', 'ddim_trailing', 'euler_a', 'lcm'
-// SdCppSchedule: 'simple', 'discrete', 'karras', 'exponential', 'ays'
-export const samplersToSdCpp: Record<
-  Sampler | 'undefined',
-  { sampleMethod: SdCppSampleMethod; schedule: SdCppSchedule }
-> = {
-  'Euler a': { sampleMethod: 'euler_a', schedule: 'simple' },
-  Euler: { sampleMethod: 'euler', schedule: 'simple' },
-  LMS: { sampleMethod: 'euler', schedule: 'simple' }, // No direct LMS equivalent, fallback to euler
-  Heun: { sampleMethod: 'heun', schedule: 'simple' },
-  DPM2: { sampleMethod: 'dpm2', schedule: 'simple' },
-  'DPM2 a': { sampleMethod: 'dpm2', schedule: 'simple' },
-  'DPM++ 2S a': { sampleMethod: 'dpm++2s_a', schedule: 'simple' },
-  'DPM++ 2M': { sampleMethod: 'dpm++2m', schedule: 'simple' },
-  'DPM++ 2M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'simple' },
-  'DPM++ SDE': { sampleMethod: 'dpm++2m', schedule: 'simple' },
-  'DPM fast': { sampleMethod: 'dpm++2m', schedule: 'simple' },
-  'DPM adaptive': { sampleMethod: 'dpm++2m', schedule: 'simple' },
-  'LMS Karras': { sampleMethod: 'euler', schedule: 'karras' },
-  'DPM2 Karras': { sampleMethod: 'dpm2', schedule: 'karras' },
-  'DPM2 a Karras': { sampleMethod: 'dpm2', schedule: 'karras' },
-  'DPM++ 2S a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
-  'DPM++ 2M Karras': { sampleMethod: 'dpm++2m', schedule: 'karras' },
-  'DPM++ 2M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
-  'DPM++ SDE Karras': { sampleMethod: 'dpm++2m', schedule: 'karras' },
-  'DPM++ 3M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'simple' },
-  'DPM++ 3M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
-  'DPM++ 3M SDE Exponential': { sampleMethod: 'dpm++2mv2', schedule: 'exponential' },
-  DDIM: { sampleMethod: 'ddim_trailing', schedule: 'simple' },
-  PLMS: { sampleMethod: 'ipndm', schedule: 'simple' },
-  UniPC: { sampleMethod: 'ipndm_v', schedule: 'simple' },
-  LCM: { sampleMethod: 'lcm', schedule: 'simple' },
-  undefined: { sampleMethod: 'dpm++2m', schedule: 'karras' },
-};
-
-/**
- * Converts a UI Sampler name to SdCpp sampleMethod and schedule values
- * Used by Flux2 Klein and other sd.cpp based models
- */
-export function samplerToSdCpp(sampler: Sampler | undefined): {
-  sampleMethod: SdCppSampleMethod;
-  schedule: SdCppSchedule;
-} {
-  return samplersToSdCpp[sampler ?? 'Euler'];
-}
 
 // #region [utils]
 export function getBaseModelSetType(baseModel?: string, defaultType: BaseModelGroup = 'SD1') {

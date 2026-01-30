@@ -7,7 +7,16 @@ import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.sch
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { baseModelGroups } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
+import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { defaultCatch } from '~/utils/zod-helpers';
+
+// All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
+const allValidSamplers = [
+  ...generationSamplers,
+  ...zImageSampleMethods,
+  ...flux2KleinSampleMethods,
+] as const;
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -19,7 +28,7 @@ export const textToImageParamsSchema = z.object({
   prompt: z.string().default(''),
   negativePrompt: z.string().optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
-  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+  sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
   scheduler: z.enum(['simple', 'discrete', 'karras', 'exponential', 'ays']).optional(),

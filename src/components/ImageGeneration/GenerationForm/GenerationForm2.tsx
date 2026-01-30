@@ -115,6 +115,8 @@ import {
   getIsZImage,
   zImageModelModeOptions,
   zImageModelVersionToModelMap,
+  zImageSampleMethods,
+  zImageSchedules,
 } from '~/shared/orchestrator/ImageGen/zImage.config';
 import {
   flux2ModelModeOptions,
@@ -123,7 +125,8 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   flux2KleinModelVariantOptions,
-  flux2KleinDisabledSamplers,
+  flux2KleinSampleMethods,
+  flux2KleinSchedules,
   getFlux2KleinBaseModel,
   getFlux2KleinDefaults,
   getIsFlux2Klein,
@@ -508,7 +511,7 @@ export function GenerationFormContent() {
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
       { isActive: isFlux2Klein, options: flux2KleinModelVariantOptions },
-      // { isActive: isZImage, options: zImageModelModeOptions },
+      { isActive: isZImage, options: zImageModelModeOptions },
       // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
@@ -621,11 +624,7 @@ export function GenerationFormContent() {
               isSeedream ||
               isFlux2NotDev;
             const disableAdvanced =
-              isFluxUltra ||
-              isOpenAI ||
-              isImagen4 ||
-              isHiDream ||
-              isNanoBanana;
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
@@ -635,8 +634,7 @@ export function GenerationFormContent() {
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
               isSeedream ||
-              isZImageTurbo ||
-              isZImageBase;
+              isZImageTurbo;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -697,12 +695,12 @@ export function GenerationFormContent() {
               isSeedream ||
               isFlux2KleinDistilled;
 
-            // Flux2 Klein doesn't support certain samplers
-            // Flux2 Klein and zImageBase share the same restricted sampler set
-            const samplerOptions =
-              isFlux2Klein || isZImageBase
-                ? generation.samplers.filter((s) => !flux2KleinDisabledSamplers.includes(s))
-                : generation.samplers;
+            // ZImageBase and Flux2Klein use sdcpp samplers directly
+            const samplerOptions = isZImageBase
+              ? [...zImageSampleMethods]
+              : isFlux2Klein
+              ? [...flux2KleinSampleMethods]
+              : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
@@ -1702,6 +1700,7 @@ export function GenerationFormContent() {
                                   <InputSelect
                                     name="sampler"
                                     disabled={samplerDisabled}
+                                    allowDeselect={false}
                                     label={
                                       <div className="flex items-center gap-1">
                                         <Input.Label>Sampler</Input.Label>
@@ -1713,8 +1712,8 @@ export function GenerationFormContent() {
                                     }
                                     data={samplerOptions}
                                     presets={
-                                      isFlux2Klein || isZImageBase
-                                        ? [{ label: 'Fast', value: 'Euler a' }]
+                                      isZImageBase || isFlux2Klein
+                                        ? [{ label: 'Fast', value: 'euler' }]
                                         : [
                                             { label: 'Fast', value: 'Euler a' },
                                             { label: 'Popular', value: 'DPM++ 2M Karras' },
@@ -1722,9 +1721,10 @@ export function GenerationFormContent() {
                                     }
                                   />
                                 )}
-                                {isZImageBase && (
+                                {(isZImageBase || isFlux2Klein) && (
                                   <InputSelect
                                     name="scheduler"
+                                    allowDeselect={false}
                                     label={
                                       <div className="flex items-center gap-1">
                                         <Input.Label>Scheduler</Input.Label>
@@ -1734,17 +1734,12 @@ export function GenerationFormContent() {
                                         </InfoPopover>
                                       </div>
                                     }
-                                    data={[
-                                      { label: 'Simple', value: 'simple' },
-                                      { label: 'Discrete', value: 'discrete' },
-                                      { label: 'Karras', value: 'karras' },
-                                      { label: 'Exponential', value: 'exponential' },
-                                      { label: 'AYS', value: 'ays' },
-                                    ]}
-                                    presets={[
-                                      { label: 'Default', value: 'karras' },
-                                      { label: 'Fast', value: 'simple' },
-                                    ]}
+                                    data={
+                                      isZImageBase
+                                        ? [...zImageSchedules]
+                                        : [...flux2KleinSchedules]
+                                    }
+                                    presets={[{ label: 'Default', value: 'simple' }]}
                                   />
                                 )}
                                 {!disableSteps && (
