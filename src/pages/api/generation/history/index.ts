@@ -1,12 +1,12 @@
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLimiter } from '~/server/utils/rate-limiting';
 
 const historyLimiter = createLimiter({
-  counterKey: REDIS_KEYS.COUNTERS.HISTORY_DOWNLOADS,
+  counterKey: REDIS_SYS_KEYS.COUNTERS.HISTORY_DOWNLOADS,
   limitKey: REDIS_SYS_KEYS.LIMITS.HISTORY_DOWNLOADS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,

@@ -508,7 +508,7 @@ export function GenerationFormContent() {
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
       { isActive: isFlux2Klein, options: flux2KleinModelVariantOptions },
-      { isActive: isZImage, options: zImageModelModeOptions },
+      // { isActive: isZImage, options: zImageModelModeOptions },
       // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
@@ -575,6 +575,11 @@ export function GenerationFormContent() {
               stepsMax = 50;
             }
 
+            if (isFlux2KleinDistilled) {
+              stepsMin = 4;
+              stepsMax = 12;
+            }
+
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
             let cfgScaleStep = 0.5;
@@ -620,8 +625,7 @@ export function GenerationFormContent() {
               isOpenAI ||
               isImagen4 ||
               isHiDream ||
-              isNanoBanana ||
-              isFlux2KleinDistilled;
+              isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
@@ -680,7 +684,7 @@ export function GenerationFormContent() {
                 !isFlux2Klein &&
                 !isQwenImageEdit) ||
               isFluxKontext;
-            const disableCfgScale = isFluxUltra;
+            const disableCfgScale = isFluxUltra || isFlux2KleinDistilled;
             const disableSampler =
               isFlux ||
               isQwen ||
@@ -690,7 +694,8 @@ export function GenerationFormContent() {
               isZImageTurbo ||
               isFlux2 ||
               isPonyV7 ||
-              isSeedream;
+              isSeedream ||
+              isFlux2KleinDistilled;
 
             // Flux2 Klein doesn't support certain samplers
             // Flux2 Klein and zImageBase share the same restricted sampler set

@@ -441,15 +441,27 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             setTimeout(() => {
               form.setValue('steps', 20);
             }, 0);
+          } else if (
+            (baseModel === 'Flux2Klein_4B' || baseModel === 'Flux2Klein_9B') &&
+            prevBaseModel !== baseModel
+          ) {
+            setTimeout(() => {
+              form.setValue('cfgScale', 1);
+              form.setValue('steps', 8);
+            }, 0);
           } else if (baseModel === 'Qwen' && prevBaseModel !== baseModel) {
             form.setValue('cfgScale', 2.5);
           } else if (
             baseModel !== 'ZImageTurbo' &&
             baseModel !== 'ZImageBase' &&
             baseModel !== 'Qwen' &&
+            baseModel !== 'Flux2Klein_4B' &&
+            baseModel !== 'Flux2Klein_9B' &&
             !fluxBaseModels.includes(baseModel) &&
             (prevBaseModel === 'ZImageTurbo' ||
               prevBaseModel === 'ZImageBase' ||
+              prevBaseModel === 'Flux2Klein_4B' ||
+              prevBaseModel === 'Flux2Klein_9B' ||
               fluxBaseModels.includes(prevBaseModel))
           ) {
             setTimeout(() => {

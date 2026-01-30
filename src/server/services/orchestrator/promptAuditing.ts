@@ -3,7 +3,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
@@ -16,22 +16,58 @@ import {
 } from '~/utils/metadata/audit';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
+// --- Blocked Prompt Storage ---
+// Stores each blocked prompt in Redis so we can retrieve all of them when creating a UserRestriction
+export interface BlockedPromptEntry {
+  prompt: string;
+  negativePrompt: string;
+  source: string;
+  category?: PromptTriggerCategory;
+  matchedWord?: string;
+  matchedRegex?: string;
+  imageId: number | null;
+  time: string;
+}
+
+const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours (matches the limiter refetch interval)
+
+function getBlockedPromptsKey(userId: number) {
+  return `${REDIS_SYS_KEYS.GENERATION.BLOCKED_PROMPTS}:${userId}` as const;
+}
+
+async function storeBlockedPrompt(userId: number, entry: BlockedPromptEntry) {
+  const key = getBlockedPromptsKey(userId);
+  await sysRedis.lPush(key, JSON.stringify(entry));
+  await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
+}
+
+async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> {
+  const key = getBlockedPromptsKey(userId);
+  const entries = await sysRedis.lRange(key, 0, -1);
+  return entries.map((entry) => JSON.parse(entry) as BlockedPromptEntry);
+}
+
+async function clearBlockedPrompts(userId: number) {
+  const key = getBlockedPromptsKey(userId);
+  await sysRedis.del(key);
+}
+
 // --- Prohibited request counter ---
 // Redis is the sole authority for the 24h mute threshold.
 // ClickHouse is used only for audit logging.
 export const blockedPromptLimiter = createLimiter({
-  counterKey: REDIS_KEYS.GENERATION.COUNT,
+  counterKey: REDIS_SYS_KEYS.GENERATION.COUNT,
   limitKey: REDIS_SYS_KEYS.GENERATION.LIMITS,
   fetchCount: async () => 0,
   refetchInterval: 60 * 60 * 24, // 24h
 });
 
 /**
- * Reset a user's prohibited request count.
+ * Reset a user's prohibited request count and clear stored blocked prompts.
  * Call this when a ban is overturned so the user isn't immediately re-muted.
  */
 export async function resetProhibitedRequestCount(userId: number) {
-  await blockedPromptLimiter.reset(userId.toString());
+  await Promise.all([blockedPromptLimiter.reset(userId.toString()), clearBlockedPrompts(userId)]);
 }
 
 // --- Prompt Allowlist Cache ---
@@ -218,15 +254,31 @@ async function reportProhibitedRequest(options: {
 
   // Track the prohibited request in ClickHouse (audit log only)
   if (track) {
-    await track.prohibitedRequest({
-      prompt: prompt ?? '{error capturing prompt}',
-      negativePrompt: negativePrompt ?? '{error capturing negativePrompt}',
-      source,
-    });
+    try {
+      await track.prohibitedRequest({
+        prompt: prompt ?? '{error capturing prompt}',
+        negativePrompt: negativePrompt ?? '{error capturing negativePrompt}',
+        source,
+      });
+    } catch {
+      // Continue with muting even if tracking fails
+    }
   }
 
   // Skip muting for moderators
   if (isModerator) return;
+
+  // Store this blocked prompt in Redis for later retrieval
+  const blockedEntry: BlockedPromptEntry = {
+    prompt: prompt ?? '',
+    negativePrompt: negativePrompt ?? '',
+    source,
+    category: triggers[0]?.category,
+    matchedWord: triggers[0]?.matchedWord,
+    imageId: imageId ?? null,
+    time: new Date().toISOString(),
+  };
+  await storeBlockedPrompt(userId, blockedEntry);
 
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
@@ -237,25 +289,23 @@ async function reportProhibitedRequest(options: {
     });
     await refreshSession(userId);
 
-    // Create a UserRestriction record with the trigger data for moderator review
+    // Retrieve all blocked prompts from Redis for the UserRestriction record
+    const allBlockedPrompts = await getBlockedPrompts(userId);
+
+    // Create a UserRestriction record with ALL trigger data for moderator review
     try {
       await dbWrite.userRestriction.create({
         data: {
           userId,
           type: 'generation',
-          triggers: [
-            {
-              prompt: prompt ?? '',
-              negativePrompt: negativePrompt ?? '',
-              source,
-              category: triggers[0]?.category,
-              matchedWord: triggers[0]?.matchedWord,
-              imageId: imageId ?? null,
-              time: new Date().toISOString(),
-            },
-          ],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          triggers: allBlockedPrompts as any,
         },
       });
+
+      // Clear the blocked prompts from Redis now that they're stored in the DB
+      await clearBlockedPrompts(userId);
+
       // Notify the user about the restriction
       await createNotification({
         type: 'generation-muted',

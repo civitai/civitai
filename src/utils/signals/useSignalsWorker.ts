@@ -20,6 +20,7 @@ export function useSignalsWorker(options?: {
   const [connection, setConnection] = useState<SignalStatus>();
   const [ready, setReady] = useState(false);
   const [worker, setWorker] = useState<SharedWorker | null>(null);
+  const [reconnectCount, setReconnectCount] = useState(0);
   const shouldInitialize = connection === 'closed';
 
   const queryUtils = trpc.useUtils();
@@ -56,7 +57,10 @@ export function useSignalsWorker(options?: {
       else if (data.type === 'connection:state') {
         setConnection(data.state ?? 'closed');
         onStateChange?.({ state: data.state, message: data.message });
-        if (data.state === 'closed') queryUtils.signals.getToken.invalidate();
+        if (data.state === 'closed') {
+          queryUtils.signals.getToken.invalidate();
+          setReconnectCount((c) => c + 1);
+        }
         if (logConnectionState) console.log({ state: data.state }, new Date().toLocaleTimeString());
       }
     };
@@ -83,7 +87,7 @@ export function useSignalsWorker(options?: {
         token: accessToken,
         userId,
       });
-  }, [worker, accessToken, ready, userId]);
+  }, [worker, accessToken, ready, userId, reconnectCount]);
 
   // ping
   useEffect(() => {

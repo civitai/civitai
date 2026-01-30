@@ -233,7 +233,6 @@ const ages = [
 ];
 
 const templateParts = {
-  age: [] as string[], // Filled in later
   teen: ['teen', 'ten', 'tein', 'tien', 'tn'],
   years: ['y', 'yr', 'yrs', 'years', 'year', 'anos'],
   old: ['o', 'old'],
@@ -249,8 +248,14 @@ const templates = [
 ];
 
 // --------------------------------------
-// Prepare Regexes
+// Prepare Regexes - Two Phase Approach
 // --------------------------------------
+// Phase 1: Quick screening pattern - rejects most prompts instantly
+const quickScreenPattern =
+  /(?:age[ds]?|year|old|birthday|anos|\b(?:1[0-7]|[1-9])\b|teen|eleven|twelve|one|two|three|four|five|six|seven|eight|nine|ten)/i;
+
+// Phase 2: Per-age regex patterns (much smaller than one giant alternation)
+// Expand teen variations for ages 13-17
 for (const age of ages) {
   const newMatches = new Set<string>();
   for (const match of age.matches) {
@@ -265,44 +270,61 @@ for (const age of ages) {
   }
   age.matches = Array.from(newMatches);
 }
-templateParts.age = ages.flatMap((x) => x.matches);
 
-const partRegexStrings: Record<keyof typeof templateParts, string> = Object.entries(
-  templateParts
-).reduce((acc, [key, values]) => {
-  acc[key as keyof typeof templateParts] = values.join('|');
-  return acc;
-}, {} as Record<keyof typeof templateParts, string>);
+// Build regex patterns for each age separately
+const yearsPattern = templateParts.years.join('|');
+const oldPattern = templateParts.old.join('|');
+
+const perAgeRegexes = ages.map((ageEntry) => {
+  const agePattern = ageEntry.matches.join('|');
+  const regexes = templates.map((template) => {
+    let regexStr = template;
+    regexStr = regexStr.replace('{age}', `(${agePattern})`);
+    regexStr = regexStr.replace('{years}', `(${yearsPattern})`);
+    regexStr = regexStr.replace('{old}', `(${oldPattern})`);
+    // Limit to 0-3 non-alphanumeric chars between parts
+    regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
+    regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+    return new RegExp(regexStr, 'i');
+  });
+  return { age: ageEntry.age, regexes };
+});
+
+// Legacy: Keep ageRegexes for debugAuditPrompt and highlightMinor (which iterate all templates)
+// These use the combined pattern for detailed match info
+const allAgeMatches = ages.flatMap((x) => x.matches);
 const ageRegexes = templates.map((template) => {
   let regexStr = template;
-  for (const [key, value] of Object.entries(partRegexStrings)) {
-    regexStr = regexStr.replace(`{${key}}`, `(?<${key}>${value})`);
-  }
-  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
+  regexStr = regexStr.replace('{age}', `(?<age>${allAgeMatches.join('|')})`);
+  regexStr = regexStr.replace('{years}', `(?<years>${yearsPattern})`);
+  regexStr = regexStr.replace('{old}', `(?<old>${oldPattern})`);
+  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
   regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
   return new RegExp(regexStr, 'i');
 });
 
 // --------------------------------------
-// Age Check Function
+// Age Check Function (Two-Phase Approach)
 // --------------------------------------
 export function includesMinorAge(prompt: string | undefined) {
   if (!prompt) return { found: false, age: undefined };
 
-  let found = false;
-  let age: number | undefined = undefined;
-  for (const regex of ageRegexes) {
-    if (regex.test(prompt)) {
-      const match = regex.exec(prompt);
-      found = true;
+  // Phase 1: Quick screening - skip if prompt clearly doesn't contain age references
+  // This rejects 99%+ of prompts instantly with a tiny regex
+  if (!quickScreenPattern.test(prompt)) {
+    return { found: false, age: undefined };
+  }
 
-      const ageText = match?.groups?.age?.toLowerCase();
-      age = ages.find((x) => x.matches.includes(ageText ?? ''))?.age;
-      break;
+  // Phase 2: Detailed matching - check each age with smaller per-age patterns
+  for (const { age, regexes } of perAgeRegexes) {
+    for (const regex of regexes) {
+      if (regex.test(prompt)) {
+        return { found: true, age };
+      }
     }
   }
 
-  return { found, age };
+  return { found: false, age: undefined };
 }
 
 // #endregion
@@ -360,7 +382,11 @@ export function checkable(
         if (result !== false) return result;
         else continue;
       }
-      if (regex.test(prompt)) return word;
+      const match = regex.exec(prompt);
+      if (match) {
+        // Return object with matched text (for highlighting) and pattern (for debugging)
+        return { matchedText: match[0], pattern: word, regex: regex.source };
+      }
     }
     return false;
   }
@@ -526,7 +552,7 @@ export function includesInappropriate(
 function includesInappropriateEnriched(
   input: { prompt?: string; negativePrompt?: string },
   nsfw?: boolean
-): { type: 'minor' | 'poi'; matchedWord?: string } | false {
+): { type: 'minor' | 'poi'; matchedWord?: string; regex?: string; pattern?: string } | false {
   if (!input.prompt) return false;
   input.prompt = input.prompt.replace(/'|\.|\-/g, '');
 
@@ -554,13 +580,31 @@ function includesInappropriateEnriched(
     return { type: 'minor', matchedWord: `${ageCheck.age} year old` };
 
   const youngNoun = words.young.nouns.inPrompt(input.prompt);
-  if (youngNoun)
-    return { type: 'minor', matchedWord: typeof youngNoun === 'string' ? youngNoun : undefined };
+  if (youngNoun) {
+    const isObject = typeof youngNoun === 'object';
+    const matchedWord = isObject
+      ? youngNoun.matchedText
+      : typeof youngNoun === 'string'
+      ? youngNoun
+      : undefined;
+    const regex = isObject ? youngNoun.regex : undefined;
+    const pattern = isObject ? youngNoun.pattern : undefined;
+    return { type: 'minor', matchedWord, regex, pattern };
+  }
 
   if (input.negativePrompt) {
     const negYoung = words.young.negativeNouns.inPrompt(input.negativePrompt);
-    if (negYoung)
-      return { type: 'minor', matchedWord: typeof negYoung === 'string' ? negYoung : undefined };
+    if (negYoung) {
+      const isObject = typeof negYoung === 'object';
+      const matchedWord = isObject
+        ? negYoung.matchedText
+        : typeof negYoung === 'string'
+        ? negYoung
+        : undefined;
+      const regex = isObject ? negYoung.regex : undefined;
+      const pattern = isObject ? negYoung.pattern : undefined;
+      return { type: 'minor', matchedWord, regex, pattern };
+    }
   }
 
   return false;
@@ -694,3 +738,157 @@ export function cleanPrompt({
   return { prompt, negativePrompt };
 }
 // #endregion [highlight]
+
+// #region [debug]
+// --------------------------------------
+// Debug Audit Function
+// --------------------------------------
+export interface DebugAuditMatch {
+  check: string;
+  matched: boolean;
+  matchedText?: string;
+  regex?: string;
+  context?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface DebugAuditResult {
+  normalizedPrompt: string;
+  normalizedNegativePrompt?: string;
+  matches: DebugAuditMatch[];
+  wouldBlock: boolean;
+  blockReason?: string;
+}
+
+/**
+ * Debug version of audit that returns detailed information about ALL checks,
+ * not just the first failure. Used for debugging problematic prompts.
+ */
+export function debugAuditPrompt(prompt: string, negativePrompt?: string): DebugAuditResult {
+  const matches: DebugAuditMatch[] = [];
+  const normalizedPrompt = normalizeText(prompt);
+  const normalizedNegativePrompt = normalizeText(negativePrompt);
+
+  // 1. Minor age check - test all templates
+  for (let i = 0; i < ageRegexes.length; i++) {
+    const regex = ageRegexes[i];
+    const match = regex.exec(normalizedPrompt);
+    if (match) {
+      const ageText = match?.groups?.age?.toLowerCase();
+      const age = ages.find((x) => x.matches.includes(ageText ?? ''))?.age;
+      matches.push({
+        check: `minor_age`,
+        matched: true,
+        matchedText: match[0],
+        regex: regex.source,
+        context: normalizedPrompt.substring(
+          Math.max(0, (match.index ?? 0) - 30),
+          (match.index ?? 0) + (match[0]?.length ?? 0) + 30
+        ),
+        details: { templateIndex: i, template: templates[i], ageText, detectedAge: age },
+      });
+    }
+  }
+
+  // 2. POI check
+  const poiMatch = includesPoi(normalizedPrompt);
+  if (poiMatch) {
+    matches.push({
+      check: 'poi',
+      matched: true,
+      matchedText: typeof poiMatch === 'string' ? poiMatch : undefined,
+    });
+  }
+  const negPoiMatch = includesPoi(normalizedNegativePrompt);
+  if (negPoiMatch) {
+    matches.push({
+      check: 'poi (negative)',
+      matched: true,
+      matchedText: typeof negPoiMatch === 'string' ? negPoiMatch : undefined,
+    });
+  }
+
+  // 3. Inappropriate content check
+  const inappropriateResult = includesInappropriateEnriched({
+    prompt: normalizedPrompt,
+    negativePrompt: normalizedNegativePrompt,
+  });
+  if (inappropriateResult) {
+    matches.push({
+      check: `inappropriate_${inappropriateResult.type}`,
+      matched: true,
+      matchedText: inappropriateResult.matchedWord,
+      regex: inappropriateResult.regex,
+      details: inappropriateResult.pattern ? { pattern: inappropriateResult.pattern } : undefined,
+    });
+  }
+
+  // 4. NSFW blocklist check
+  for (const { word, regex } of blockedNSFWRegexLazy()) {
+    const match = regex.exec(normalizedPrompt);
+    if (match) {
+      matches.push({
+        check: `nsfw_blocklist`,
+        matched: true,
+        matchedText: match[0],
+        regex: regex.source,
+        details: { blockedWord: word },
+        context: normalizedPrompt.substring(
+          Math.max(0, (match.index ?? 0) - 20),
+          (match.index ?? 0) + (match[0]?.length ?? 0) + 20
+        ),
+      });
+    }
+  }
+
+  // 5. Young nouns check (only if not already captured by inappropriate_minor)
+  const hasInappropriateMinor = inappropriateResult && inappropriateResult.type === 'minor';
+  if (!hasInappropriateMinor) {
+    const youngNoun = words.young.nouns.inPrompt(normalizedPrompt);
+    if (youngNoun) {
+      const isObject = typeof youngNoun === 'object';
+      matches.push({
+        check: 'young_nouns',
+        matched: true,
+        matchedText: isObject
+          ? youngNoun.matchedText
+          : typeof youngNoun === 'string'
+          ? youngNoun
+          : undefined,
+        regex: isObject ? youngNoun.regex : undefined,
+        details: isObject ? { pattern: youngNoun.pattern } : undefined,
+      });
+    }
+  }
+
+  // 6. Young negative nouns check (only if not already captured by inappropriate_minor from negative prompt)
+  if (normalizedNegativePrompt && !hasInappropriateMinor) {
+    const negYoung = words.young.negativeNouns.inPrompt(normalizedNegativePrompt);
+    if (negYoung) {
+      const isObject = typeof negYoung === 'object';
+      matches.push({
+        check: 'young_nouns (negative)',
+        matched: true,
+        matchedText: isObject
+          ? negYoung.matchedText
+          : typeof negYoung === 'string'
+          ? negYoung
+          : undefined,
+        regex: isObject ? negYoung.regex : undefined,
+        details: isObject ? { pattern: negYoung.pattern } : undefined,
+      });
+    }
+  }
+
+  // Determine if this would block
+  const auditResult = auditPromptEnriched(prompt, negativePrompt, false);
+
+  return {
+    normalizedPrompt,
+    normalizedNegativePrompt: normalizedNegativePrompt || undefined,
+    matches,
+    wouldBlock: !auditResult.success,
+    blockReason: auditResult.blockedFor[0],
+  };
+}
+// #endregion [debug]

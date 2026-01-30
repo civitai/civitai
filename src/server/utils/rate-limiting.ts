@@ -1,5 +1,5 @@
-import type { RedisKeyStringsCache, RedisKeyStringsSys } from '~/server/redis/client';
-import { redis, sysRedis } from '~/server/redis/client';
+import type { RedisKeyStringsSys } from '~/server/redis/client';
+import { sysRedis } from '~/server/redis/client';
 
 export function createLimiter({
   counterKey,
@@ -8,7 +8,7 @@ export function createLimiter({
   refetchInterval = 60 * 60,
   fetchOnUnknown = false,
 }: {
-  counterKey: RedisKeyStringsCache;
+  counterKey: RedisKeyStringsSys;
   limitKey: RedisKeyStringsSys;
   fetchCount: (userKey: string) => Promise<number>;
   refetchInterval?: number; // in seconds
@@ -16,18 +16,18 @@ export function createLimiter({
 }) {
   async function populateCount(userKey: string) {
     const fetchedCount = await fetchCount(userKey);
-    await redis.set(`${counterKey}:${userKey}`, fetchedCount, {
+    await sysRedis.set(`${counterKey}:${userKey}`, fetchedCount, {
       EX: refetchInterval,
     });
     return fetchedCount;
   }
 
   async function getCount(userKey: string) {
-    const countStr = await redis.get(`${counterKey}:${userKey}`);
+    const countStr = await sysRedis.get(`${counterKey}:${userKey}`);
     if (!countStr) return fetchOnUnknown ? await populateCount(userKey) : undefined;
 
     // Handle missing TTL
-    const ttl = await redis.ttl(`${counterKey}:${userKey}`);
+    const ttl = await sysRedis.ttl(`${counterKey}:${userKey}`);
     if (ttl < 0) return await populateCount(userKey);
 
     return Number(countStr);
@@ -54,11 +54,11 @@ export function createLimiter({
 
   async function increment(userKey: string, by = 1) {
     // Ensure key exists before incrementing
-    const exists = await redis.exists(`${counterKey}:${userKey}`);
+    const exists = await sysRedis.exists(`${counterKey}:${userKey}`);
     if (!exists) await populateCount(userKey);
 
     // Increment and get new count
-    const newCount = await redis.incrBy(`${counterKey}:${userKey}`, by);
+    const newCount = await sysRedis.incrBy(`${counterKey}:${userKey}`, by);
 
     // Check if limit exceeded and set limit hit time
     const limit = await getLimit(userKey);
@@ -73,7 +73,7 @@ export function createLimiter({
   }
 
   async function reset(userKey: string) {
-    await redis.del(`${counterKey}:${userKey}`);
+    await sysRedis.del(`${counterKey}:${userKey}`);
     await sysRedis.del(`${limitKey}:${userKey}`);
   }
 

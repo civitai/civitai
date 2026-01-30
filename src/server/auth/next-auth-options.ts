@@ -12,12 +12,12 @@ import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
 import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
-import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
+import { civitaiTokenCookieName, cookiePrefix, useSecureCookies } from '~/libs/auth';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { getSessionUser } from './session-user';
@@ -77,7 +77,7 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
 }
 
 const emailLimiter = createLimiter({
-  counterKey: REDIS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
+  counterKey: REDIS_SYS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
   limitKey: REDIS_SYS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
@@ -450,6 +450,34 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
               : env.NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname,
         },
       },
+      // Only configure state/pkce cookies when NEXTAUTH_COOKIE_DOMAIN is set (PR previews)
+      // This enables cross-subdomain OAuth flows through auth.civitaic.com
+      ...(env.NEXTAUTH_COOKIE_DOMAIN
+        ? {
+            state: {
+              name: `${cookiePrefix}next-auth.state`,
+              options: {
+                httpOnly: true,
+                sameSite: 'lax' as const, // Must be 'lax' for OAuth redirect flows
+                path: '/',
+                secure: useSecureCookies,
+                domain: env.NEXTAUTH_COOKIE_DOMAIN,
+                maxAge: 900, // 15 minutes - same as NextAuth default
+              },
+            },
+            pkceCodeVerifier: {
+              name: `${cookiePrefix}next-auth.pkce.code_verifier`,
+              options: {
+                httpOnly: true,
+                sameSite: 'lax' as const, // Must be 'lax' for OAuth redirect flows
+                path: '/',
+                secure: useSecureCookies,
+                domain: env.NEXTAUTH_COOKIE_DOMAIN,
+                maxAge: 900, // 15 minutes - same as NextAuth default
+              },
+            },
+          }
+        : {}),
     },
     pages: {
       signIn: '/login',
@@ -468,8 +496,10 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   const { hostname: reqHostname } = new URL(req.headers.origin);
 
   // Handle domain-specific cookie
+  // Skip domain color override when NEXTAUTH_COOKIE_DOMAIN is explicitly set
+  // (needed for PR preview cross-subdomain cookie sharing via auth.civitaic.com)
   const domainColor = getRequestDomainColor(req);
-  if (domainColor && !!options.cookies?.sessionToken?.options?.domain) {
+  if (domainColor && !!options.cookies?.sessionToken?.options?.domain && !env.NEXTAUTH_COOKIE_DOMAIN) {
     options.cookies.sessionToken.options.domain =
       (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }

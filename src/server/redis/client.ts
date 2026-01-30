@@ -617,15 +617,18 @@ if (!env.IS_BUILD) {
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
+    COUNT: 'download:count',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
+    COUNT: 'generation:count',
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
     EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -640,6 +643,7 @@ export const REDIS_SYS_KEYS = {
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
+    SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -655,6 +659,10 @@ export const REDIS_SYS_KEYS = {
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
     HISTORY_DOWNLOADS: 'limits:history-downloads',
+  },
+  COUNTERS: {
+    EMAIL_VERIFICATIONS: 'counters:email-verifications',
+    HISTORY_DOWNLOADS: 'counters:history-downloads',
   },
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',
@@ -773,6 +781,7 @@ export const REDIS_KEYS = {
     RESOURCE_DATA: 'packed:generation:resource-data-3',
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',

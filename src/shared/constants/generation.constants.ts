@@ -280,7 +280,7 @@ export function samplerToSdCpp(sampler: Sampler | undefined): {
   sampleMethod: SdCppSampleMethod;
   schedule: SdCppSchedule;
 } {
-  return samplersToSdCpp[sampler ?? 'undefined'];
+  return samplersToSdCpp[sampler ?? 'Euler'];
 }
 
 // #region [utils]
