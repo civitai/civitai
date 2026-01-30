@@ -56,7 +56,7 @@ async function clearBlockedPrompts(userId: number) {
 // Redis is the sole authority for the 24h mute threshold.
 // ClickHouse is used only for audit logging.
 export const blockedPromptLimiter = createLimiter({
-  counterKey: REDIS_KEYS.GENERATION.COUNT,
+  counterKey: REDIS_SYS_KEYS.GENERATION.COUNT,
   limitKey: REDIS_SYS_KEYS.GENERATION.LIMITS,
   fetchCount: async () => 0,
   refetchInterval: 60 * 60 * 24, // 24h

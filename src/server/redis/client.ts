@@ -617,9 +617,11 @@ if (!env.IS_BUILD) {
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
+    COUNT: 'download:count',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
+    COUNT: 'generation:count',
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
@@ -656,6 +658,10 @@ export const REDIS_SYS_KEYS = {
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
     HISTORY_DOWNLOADS: 'limits:history-downloads',
+  },
+  COUNTERS: {
+    EMAIL_VERIFICATIONS: 'counters:email-verifications',
+    HISTORY_DOWNLOADS: 'counters:history-downloads',
   },
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',

@@ -17,7 +17,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { getSessionUser } from './session-user';
@@ -77,7 +77,7 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
 }
 
 const emailLimiter = createLimiter({
-  counterKey: REDIS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
+  counterKey: REDIS_SYS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
   limitKey: REDIS_SYS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
