@@ -107,7 +107,7 @@ export function aspectRatioNode({
  * No meta - all props (label, placeholder, etc.) are static.
  */
 export function promptNode({ required }: { required?: boolean } = {}) {
-  let output = z.string().max(1500, 'Prompt is too long');
+  let output = z.string().trim().max(1500, 'Prompt is too long');
   if (required) output = output.nonempty('Prompt is required');
   return {
     input: z.string().optional(),
@@ -126,7 +126,7 @@ export function promptNode({ required }: { required?: boolean } = {}) {
 export function negativePromptNode({ maxLength = 1000 }: { maxLength?: number } = {}) {
   return {
     input: z.string().optional(),
-    output: z.string().max(maxLength, 'Negative prompt is too long'),
+    output: z.string().trim().max(maxLength, 'Negative prompt is too long'),
     defaultValue: '',
   };
 }

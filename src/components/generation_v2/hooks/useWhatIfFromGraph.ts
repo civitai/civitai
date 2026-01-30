@@ -125,13 +125,15 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const queryPayload = useMemo(() => {
     if (!snapshot || !canEstimateCost) return null;
 
-    // Build snapshot with committed prompt value (stale when focused)
-    const snapshotForQuery = { ...snapshot, prompt: promptRef.current };
+    // When focused, use committed prompt value to avoid race conditions with submit
+    // When not focused, use current snapshot value directly (effect updates ref for next focus)
+    const promptValue = promptFocused ? promptRef.current : (snapshot.prompt as string);
+    const snapshotForQuery = { ...snapshot, prompt: promptValue };
 
     return filterSnapshotForSubmit(snapshotForQuery, {
       computedKeys: graph.getComputedKeys(),
     });
-  }, [snapshot, canEstimateCost, graph, promptFocused]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [snapshot, canEstimateCost, graph, promptFocused]);
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
     enabled: enabled && !!currentUser && !!queryPayload && !resourcesLoading,
