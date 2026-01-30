@@ -1109,18 +1109,20 @@ export async function modAdjustCashBalance({
       throw new Error('Failed to create transaction');
     }
 
-    await dbWrite.cashWithdrawal.create({
-      data: {
-        userId,
-        amount,
-        fee: 0,
-        status: CashWithdrawalStatus.Paid,
-        method: CashWithdrawalMethod.Custom,
-        transactionId,
-        note: `[Mod adjustment] ${note}`,
-        metadata: { modUserId, accountType, direction },
-      },
-    });
+    if (accountType === 'cashSettled') {
+      await dbWrite.cashWithdrawal.create({
+        data: {
+          userId,
+          amount,
+          fee: 0,
+          status: CashWithdrawalStatus.Paid,
+          method: CashWithdrawalMethod.Custom,
+          transactionId,
+          note: `[Mod adjustment] ${note}`,
+          metadata: { modUserId, accountType, direction },
+        },
+      });
+    }
   }
 
   await logToAxiom({
