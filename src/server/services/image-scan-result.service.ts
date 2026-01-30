@@ -332,12 +332,15 @@ async function processTags({
   if (prompt) {
     // Detect real person in prompt
     const realPersonName = includesPoi(prompt);
-    if (realPersonName)
+    if (realPersonName) {
+      const tagName =
+        typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
       normalized.push({
-        name: realPersonName.toLowerCase(),
+        name: tagName.toLowerCase(),
         confidence: 100,
         source: TagSource.Computed,
       });
+    }
 
     // Detect tags from prompt
     const promptTags = getTagsFromPrompt(prompt);

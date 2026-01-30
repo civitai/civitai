@@ -1,6 +1,8 @@
+import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { createLogger } from '~/utils/logging';
+import { signalClient } from '~/utils/signal-client';
 import { clearSessionCache } from './session-cache';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
@@ -25,14 +27,29 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
   return userTokens;
 }
 
+async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
+  try {
+    await signalClient.send({
+      userId,
+      target: SignalMessages.SessionRefresh,
+      data: { type },
+    });
+  } catch (error) {
+    // Don't let signal failures break session invalidation
+    log(`Failed to send session ${type} signal to user ${userId}: ${error}`);
+  }
+}
+
 export async function refreshSession(userId: number) {
   const userTokens = await updateSessionState(userId, 'refresh');
+  await sendSessionSignal(userId, 'refresh');
 
   log(`Refreshed session for user ${userId} - ${userTokens.length} token(s) marked for refresh`);
 }
 
 export async function invalidateSession(userId: number) {
   const userTokens = await updateSessionState(userId, 'invalid');
+  await sendSessionSignal(userId, 'invalid');
 
   log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);
 }

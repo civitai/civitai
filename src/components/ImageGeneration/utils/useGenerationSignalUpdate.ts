@@ -98,10 +98,10 @@ async function updateSignaledWorkflows() {
 function usePollWorkflows() {
   const hasIds = usePollableWorkflowIdsStore(({ ids }) => ids.length > 0);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
   function handleClearInterval() {
     if (intervalRef.current) {
-      clearInterval(intervalRef.current);
+      window.clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
   }
@@ -112,7 +112,7 @@ function usePollWorkflows() {
     }
 
     if (!intervalRef.current) {
-      intervalRef.current = setInterval(async () => {
+      intervalRef.current = window.setInterval(async () => {
         const ids = usePollableWorkflowIdsStore.getState().ids;
         await updateWorkflowsStatus(ids);
       }, 60000);

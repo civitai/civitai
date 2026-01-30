@@ -8,7 +8,8 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:basemodel');
-const BATCH_SIZE = 200;
+const BATCH_SIZE = 500;
+const AGGREGATION_CONCURRENCY = 5;
 
 const baseModelMetricKeys = ['thumbsUpCount', 'downloadCount', 'imageCount'] as const;
 type BaseModelMetricKey = (typeof baseModelMetricKeys)[number];
@@ -30,32 +31,44 @@ export const baseModelMetrics = createMetricProcessor({
     ctx.queuedModelVersions = [];
     ctx.baseModelUpdates = {};
 
-    log('starting baseModelMetrics update');
+    const jobStart = Date.now();
+    log('========== STARTING baseModelMetrics update ==========');
     log('lastUpdate:', ctx.lastUpdate.toISOString());
     log('queue size:', ctx.queue.length);
 
     // Get queued model versions for the queued models
     if (ctx.queue.length > 0) {
+      const queueStart = Date.now();
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
         SELECT id
         FROM "ModelVersion"
         WHERE "modelId" IN (${Prisma.join(ctx.queue)})
       `;
       ctx.queuedModelVersions = queuedModelVersions.map((x) => x.id);
-      log('queued model versions:', ctx.queuedModelVersions.length);
+      log(`queued model versions: ${ctx.queuedModelVersions.length} (${Date.now() - queueStart}ms)`);
     }
 
     // Get base model aggregation tasks
+    const aggStart = Date.now();
     const baseModelTasks = await getBaseModelAggregationTasks(ctx);
-    log('baseModelMetrics aggregation tasks:', baseModelTasks.length);
-    for (const task of baseModelTasks) await task();
+    log(`baseModelMetrics aggregation tasks: ${baseModelTasks.length} (task creation: ${Date.now() - aggStart}ms)`);
 
-    log('total base model updates collected:', Object.keys(ctx.baseModelUpdates).length);
+    const aggExecStart = Date.now();
+    await limitConcurrency(baseModelTasks, AGGREGATION_CONCURRENCY);
+    const aggDuration = Date.now() - aggExecStart;
+    log(`aggregation phase complete: ${Object.keys(ctx.baseModelUpdates).length} updates (${aggDuration}ms)`);
 
     // Bulk insert base model metrics
+    const insertStart = Date.now();
     await bulkInsertBaseModelMetrics(ctx);
+    const insertDuration = Date.now() - insertStart;
+    log(`insert phase complete (${insertDuration}ms)`);
 
-    log('baseModelMetrics update complete');
+    const totalDuration = Date.now() - jobStart;
+    log('========== baseModelMetrics update COMPLETE ==========');
+    log(`TOTAL TIME: ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`);
+    log(`  - Aggregation: ${aggDuration}ms (${((aggDuration / totalDuration) * 100).toFixed(1)}%)`);
+    log(`  - Insert: ${insertDuration}ms (${((insertDuration / totalDuration) * 100).toFixed(1)}%)`);
   },
   rank: {
     async refresh() {
@@ -81,6 +94,7 @@ function getAffected(ctx: BaseModelMetricContext) {
 
 async function getBaseModelAggregationTasks(ctx: BaseModelMetricContext) {
   // Find all model IDs that had version metrics updated or reviews updated
+  const affectedStart = Date.now();
   const affected = await getAffected(ctx)`
     SELECT DISTINCT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
@@ -88,99 +102,107 @@ async function getBaseModelAggregationTasks(ctx: BaseModelMetricContext) {
     WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
   `;
 
-  log('affected models found:', affected.length);
+  log(`affected models found: ${affected.length} (query: ${Date.now() - affectedStart}ms)`);
   if (affected.length > 0) {
-    log('model ID range:', affected[0], '-', affected[affected.length - 1]);
+    log(`model ID range: ${affected[0]} - ${affected[affected.length - 1]}`);
   }
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
-    log(
-      'getBaseModelAggregationTasks batch',
-      i + 1,
-      'of',
-      tasks.length,
-      '| models:',
-      ids.length,
-      '| range:',
-      ids[0],
-      '-',
-      ids[ids.length - 1]
-    );
+    const batchStart = Date.now();
+    log(`[batch ${i + 1}/${tasks.length}] starting | models: ${ids.length} | range: ${ids[0]}-${ids[ids.length - 1]}`);
 
-    // Aggregate version metrics grouped by (modelId, baseModel)
-    // - downloadCount and imageCount: sum from ModelVersionMetric
-    // - thumbsUpCount: count unique users from ResourceReview
-    const query = await ctx.pg.cancellableQuery<{
-      modelId: number;
-      baseModel: string;
-      thumbsUpCount: string;
-      downloadCount: string;
-      imageCount: string;
-    }>(
-      `-- aggregate version metrics by base model
-      WITH version_stats AS (
-        SELECT
-          mv."modelId",
-          mv."baseModel",
-          SUM(mvm."downloadCount") as "downloadCount",
-          SUM(mvm."imageCount") as "imageCount"
-        FROM "ModelVersionMetric" mvm
-        JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-        WHERE mv."modelId" = ANY($1::int[])
-          AND mv."modelId" BETWEEN $2 AND $3
-          AND mv."status" = 'Published'
-        GROUP BY mv."modelId", mv."baseModel"
-      ),
-      review_stats AS (
-        SELECT
-          mv."modelId",
-          mv."baseModel",
-          COUNT(DISTINCT r."userId") FILTER (WHERE r.recommended = true) as "thumbsUpCount"
-        FROM "ResourceReview" r
-        JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
-        WHERE mv."modelId" = ANY($1::int[])
-          AND mv."modelId" BETWEEN $2 AND $3
-          AND mv."status" = 'Published'
-          AND r.exclude = false
-          AND r."tosViolation" = false
-        GROUP BY mv."modelId", mv."baseModel"
-      )
-      SELECT
-        vs."modelId",
-        vs."baseModel",
-        COALESCE(rs."thumbsUpCount", 0) as "thumbsUpCount",
-        vs."downloadCount",
-        vs."imageCount"
-      FROM version_stats vs
-      LEFT JOIN review_stats rs ON rs."modelId" = vs."modelId" AND rs."baseModel" = vs."baseModel"`,
-      [ids, ids[0], ids[ids.length - 1]]
-    );
-    ctx.jobContext.on('cancel', query.cancel);
-    const data = await query.result();
+    // Run version stats and review stats queries in parallel for better performance
+    const queryStart = Date.now();
+    const [versionStats, reviewStats] = await Promise.all([
+      getVersionStatsForBatch(ctx, ids),
+      getReviewStatsForBatch(ctx, ids),
+    ]);
+    const queryDuration = Date.now() - queryStart;
 
-    for (const row of data) {
-      const key = `${row.modelId}:${row.baseModel}`;
+    // Merge results - version stats are the primary source (defines which baseModels exist)
+    for (const vs of versionStats) {
+      const key = `${vs.modelId}:${vs.baseModel}`;
       ctx.baseModelUpdates[key] = {
-        modelId: row.modelId,
-        baseModel: row.baseModel,
-        thumbsUpCount: parseInt(row.thumbsUpCount) || 0,
-        downloadCount: parseInt(row.downloadCount) || 0,
-        imageCount: parseInt(row.imageCount) || 0,
+        modelId: vs.modelId,
+        baseModel: vs.baseModel,
+        downloadCount: parseInt(vs.downloadCount) || 0,
+        imageCount: parseInt(vs.imageCount) || 0,
+        thumbsUpCount: 0, // Will be filled by review stats
       };
     }
 
+    // Apply review stats
+    for (const rs of reviewStats) {
+      const key = `${rs.modelId}:${rs.baseModel}`;
+      if (ctx.baseModelUpdates[key]) {
+        ctx.baseModelUpdates[key].thumbsUpCount = parseInt(rs.thumbsUpCount) || 0;
+      }
+    }
+
+    const batchDuration = Date.now() - batchStart;
     log(
-      'getBaseModelAggregationTasks batch',
-      i + 1,
-      'of',
-      tasks.length,
-      'done | rows:',
-      data.length
+      `[batch ${i + 1}/${tasks.length}] done | versionStats: ${versionStats.length} | reviewStats: ${reviewStats.length} | queries: ${queryDuration}ms | total: ${batchDuration}ms`
     );
   });
 
   return tasks;
+}
+
+async function getVersionStatsForBatch(
+  ctx: BaseModelMetricContext,
+  ids: number[]
+): Promise<{ modelId: number; baseModel: string; downloadCount: string; imageCount: string }[]> {
+  const query = await ctx.pg.cancellableQuery<{
+    modelId: number;
+    baseModel: string;
+    downloadCount: string;
+    imageCount: string;
+  }>(
+    `-- aggregate version metrics by base model (downloadCount, imageCount)
+    SELECT
+      mv."modelId",
+      mv."baseModel",
+      SUM(mvm."downloadCount") as "downloadCount",
+      SUM(mvm."imageCount") as "imageCount"
+    FROM "ModelVersionMetric" mvm
+    JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+    WHERE mv."modelId" = ANY($1::int[])
+      AND mv."modelId" BETWEEN $2 AND $3
+      AND mv."status" = 'Published'
+    GROUP BY mv."modelId", mv."baseModel"`,
+    [ids, ids[0], ids[ids.length - 1]]
+  );
+  ctx.jobContext.on('cancel', query.cancel);
+  return query.result();
+}
+
+async function getReviewStatsForBatch(
+  ctx: BaseModelMetricContext,
+  ids: number[]
+): Promise<{ modelId: number; baseModel: string; thumbsUpCount: string }[]> {
+  const query = await ctx.pg.cancellableQuery<{
+    modelId: number;
+    baseModel: string;
+    thumbsUpCount: string;
+  }>(
+    `-- aggregate review stats by base model (thumbsUpCount)
+    SELECT
+      mv."modelId",
+      mv."baseModel",
+      COUNT(DISTINCT r."userId") FILTER (WHERE r.recommended = true) as "thumbsUpCount"
+    FROM "ResourceReview" r
+    JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
+    WHERE mv."modelId" = ANY($1::int[])
+      AND mv."modelId" BETWEEN $2 AND $3
+      AND mv."status" = 'Published'
+      AND r.exclude = false
+      AND r."tosViolation" = false
+    GROUP BY mv."modelId", mv."baseModel"`,
+    [ids, ids[0], ids[ids.length - 1]]
+  );
+  ctx.jobContext.on('cancel', query.cancel);
+  return query.result();
 }
 
 async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
@@ -190,11 +212,11 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
     return;
   }
 
-  log('inserting base model metrics | total records:', updates.length);
+  log(`inserting base model metrics | total records: ${updates.length} | batches: ${Math.ceil(updates.length / 250)}`);
 
-  const tasks = chunk(updates, 100).map((batch, i) => async () => {
+  const tasks = chunk(updates, 250).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();
-    log('insert base model metrics batch', i + 1, 'of', tasks.length, '| records:', batch.length);
+    const insertStart = Date.now();
 
     // Use raw SQL for upsert with composite key
     await executeRefresh(ctx)`
@@ -235,7 +257,7 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
           "updatedAt" = NOW()
     `;
 
-    log('insert base model metrics batch', i + 1, 'of', tasks.length, 'done');
+    log(`[insert ${i + 1}/${tasks.length}] ${batch.length} records (${Date.now() - insertStart}ms)`);
   });
 
   await limitConcurrency(tasks, 10);

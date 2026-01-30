@@ -130,7 +130,7 @@ export const useGenerationStore = create<GenerationState>()(
         if (type === 'video' && !params.process) {
           params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
         } else if (type === 'image' && !params.process) {
-          params.process = params.sourceImage ? 'img2img' : 'txt2img';
+          params.process = params.sourceImage || !!params.images?.length ? 'img2img' : 'txt2img';
         }
         if (params.sourceImage) params.images = [params.sourceImage];
 

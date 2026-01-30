@@ -2,7 +2,10 @@ import type * as z from 'zod';
 import { haiperGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
 import { hunyuanGenerationConfig } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { klingGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
-import { lightricksGenerationConfig } from '~/server/orchestrator/lightricks/lightricks.schema';
+import {
+  lightricksGenerationConfig,
+  ltx2GenerationConfig,
+} from '~/server/orchestrator/lightricks/lightricks.schema';
 import { minimaxGenerationConfig } from '~/server/orchestrator/minimax/minimax.schema';
 import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
 import { veo3GenerationConfig } from '~/server/orchestrator/veo3/veo3.schema';
@@ -19,6 +22,7 @@ export const videoGenerationConfig2 = {
   minimax: minimaxGenerationConfig,
   kling: klingGenerationConfig,
   lightricks: lightricksGenerationConfig,
+  ltx2: ltx2GenerationConfig,
   haiper: haiperGenerationConfig,
   mochi: mochiGenerationConfig,
   hunyuan: hunyuanGenerationConfig,

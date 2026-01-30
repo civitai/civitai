@@ -11,7 +11,6 @@ import {
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
-import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
@@ -30,7 +29,6 @@ import {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import {
   queryGeneratedImageWorkflows,
@@ -477,11 +475,20 @@ export const orchestratorRouter = router({
     }),
   // #endregion
 
-  reportProhibitedRequest: experimentalProcedure
-    .input(reportProhibitedRequestSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (ctx.testing) return false;
-      return await reportProhibitedRequestHandler({ ctx, input });
+  // #region [moderator]
+  /** Query another user's generated images (moderator only) */
+  queryUserGeneratedImages: moderatorProcedure
+    .input(workflowQuerySchema.extend({ userId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const { userId, ...query } = input;
+      // Get token for the target user, not the moderator
+      const targetToken = await getOrchestratorToken(userId, ctx);
+      return queryGeneratedImageWorkflows({
+        ...query,
+        token: targetToken,
+        user: ctx.user,
+        hideMatureContent: false, // Moderators should see all content
+      });
     }),
 
   getFlaggedConsumers: moderatorProcedure

@@ -8,7 +8,52 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ENV_PATH = resolve(__dirname, '..', '.env');
-export const API_BASE = 'https://discord.com/api/v10';
+export const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+// Placeholder that proxy replaces with configured guild ID
+export const PROXY_GUILD_PLACEHOLDER = '{{guildId}}';
+
+// Get the API base URL - uses proxy if configured
+export function getApiBase() {
+  const proxyUrl = process.env.DISCORD_PROXY_URL;
+  if (proxyUrl) {
+    // Proxy URL should point to the /api endpoint
+    return proxyUrl.replace(/\/$/, '') + '/api';
+  }
+  return DISCORD_API_BASE;
+}
+
+// For backward compatibility
+export const API_BASE = DISCORD_API_BASE;
+
+// Cached authenticated user info (from proxy headers)
+let authenticatedUser = null;
+
+// Get the authenticated user (only available when using proxy)
+export function getAuthenticatedUser() {
+  return authenticatedUser;
+}
+
+// Check if we're using the proxy
+export function isUsingProxy() {
+  return !!(process.env.DISCORD_PROXY_URL && process.env.DISCORD_PROXY_TOKEN);
+}
+
+// Format message with user attribution (for proxy users)
+export function formatWithAttribution(content) {
+  if (authenticatedUser && authenticatedUser.username) {
+    return `**@${authenticatedUser.username}:** ${content}`;
+  }
+  return content;
+}
+
+// Get avatar URL for authenticated user
+export function getAuthenticatedUserAvatarUrl() {
+  if (authenticatedUser && authenticatedUser.userId && authenticatedUser.avatar) {
+    return `https://cdn.discordapp.com/avatars/${authenticatedUser.userId}/${authenticatedUser.avatar}.png`;
+  }
+  return null;
+}
 
 // Load .env from skill directory
 export function loadEnv() {
@@ -51,20 +96,63 @@ export function appendToEnv(key, value, comment = null) {
   }
 }
 
-// Make API request
+// Make API request - supports both direct Discord API and proxy
 export async function apiRequest(endpoint, options = {}) {
+  const proxyUrl = process.env.DISCORD_PROXY_URL;
+  const proxyToken = process.env.DISCORD_PROXY_TOKEN;
+
+  // Use proxy if configured
+  if (proxyUrl && proxyToken) {
+    const apiBase = proxyUrl.replace(/\/$/, '') + '/api';
+    const url = `${apiBase}${endpoint}`;
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${proxyToken}`,
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    // Capture user info from proxy headers
+    const userId = response.headers.get('X-Discord-User-Id');
+    const username = response.headers.get('X-Discord-Username');
+    const avatar = response.headers.get('X-Discord-Avatar');
+    if (userId && username) {
+      authenticatedUser = { userId, username, avatar };
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Discord API error: ${response.status} - ${text}`);
+    }
+
+    const text = await response.text();
+    if (!text) {
+      return {};
+    }
+    return JSON.parse(text);
+  }
+
+  // Fall back to direct Discord API with bot token
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
-    console.error('Error: DISCORD_BOT_TOKEN not configured');
+    console.error('Error: Discord API credentials not configured');
     console.error('');
-    console.error('Setup:');
-    console.error('  1. Copy .env-example to .env in the skill directory');
+    console.error('Option 1 - Use Team Proxy (recommended):');
+    console.error('  1. Get a token from your team\'s Discord Proxy');
+    console.error('  2. Add to .env: DISCORD_PROXY_URL=https://your-proxy-url');
+    console.error('  3. Add to .env: DISCORD_PROXY_TOKEN=your_token');
+    console.error('');
+    console.error('Option 2 - Use Bot Token directly:');
+    console.error('  1. Copy env.example to .env in the skill directory');
     console.error('  2. Add your Discord Bot Token');
     console.error('  3. Create a bot at: https://discord.com/developers/applications');
     process.exit(1);
   }
 
-  const url = `${API_BASE}${endpoint}`;
+  const url = `${DISCORD_API_BASE}${endpoint}`;
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -164,9 +252,15 @@ export async function findChannel(guildId, nameOrId) {
 
 // Get or cache default guild ID
 export async function getDefaultGuildId() {
-  // Check if already cached
+  // Check if explicitly configured (takes precedence)
   if (process.env.DISCORD_GUILD_ID) {
     return process.env.DISCORD_GUILD_ID;
+  }
+
+  // When using proxy without explicit guild ID, use placeholder
+  // Proxy will replace with its configured guild
+  if (isUsingProxy()) {
+    return PROXY_GUILD_PLACEHOLDER;
   }
 
   // Check if guild name is configured
@@ -312,7 +406,7 @@ export async function replyToMessageEmbed(channelId, messageId, { content, embed
 }
 
 // Send message with rich embed fields
-export async function sendRichEmbed(channelId, { content, title, description, color, fields, footer, url, thumbnail, image }) {
+export async function sendRichEmbed(channelId, { content, title, description, color, fields, footer, url, thumbnail, image, author }) {
   const embed = {};
   if (title) embed.title = title;
   if (description) embed.description = description;
@@ -322,6 +416,7 @@ export async function sendRichEmbed(channelId, { content, title, description, co
   if (url) embed.url = url;
   if (thumbnail) embed.thumbnail = { url: thumbnail };
   if (image) embed.image = { url: image };
+  if (author) embed.author = author;
   embed.timestamp = new Date().toISOString();
 
   const body = { embeds: [embed] };

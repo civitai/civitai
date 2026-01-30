@@ -24,7 +24,6 @@ import {
   getUserPurchasedRewardsHandler,
   getUserSettingsHandler,
   getUserTagsHandler,
-  reportProhibitedRequestHandler,
   setLeaderboardEligibilityHandler,
   setUserSettingHandler,
   toggleArticleEngagementHandler,
@@ -52,7 +51,6 @@ import {
   getUserCosmeticsSchema,
   getUserListSchema,
   getUserTagsSchema,
-  reportProhibitedRequestSchema,
   setLeaderboardEligbilitySchema,
   setUserSettingsInput,
   toggleBanUserSchema,
@@ -187,9 +185,6 @@ export const userRouter = router({
   toggleBountyEngagement: verifiedProcedure
     .input(toggleUserBountyEngagementSchema)
     .mutation(toggleBountyEngagementHandler),
-  reportProhibitedRequest: protectedProcedure
-    .input(reportProhibitedRequestSchema)
-    .mutation(reportProhibitedRequestHandler),
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),

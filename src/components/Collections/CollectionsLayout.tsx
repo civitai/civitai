@@ -69,28 +69,31 @@ const MyCollectionsDrawer = ({
         classNames={{ header: classes.drawerHeader, body: 'px-0' }}
       >
         <MyCollections onSelect={() => close()} sortOrder={sortOrder}>
-          {({ FilterBox, Collections }) => (
+          {({ FilterBox, TypeFilter, Collections }) => (
             <Stack gap={4}>
-              <Group gap="xs" wrap="nowrap" px="sm">
-                <div style={{ flex: 1 }}>{FilterBox}</div>
-                <Tooltip
-                  label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
-                  position="top"
-                  withArrow
-                >
-                  <LegacyActionIcon
-                    variant="light"
-                    size="sm"
-                    onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+              <Stack gap="xs" px="sm">
+                <Group gap="xs" wrap="nowrap">
+                  <div style={{ flex: 1 }}>{FilterBox}</div>
+                  <Tooltip
+                    label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
+                    position="top"
+                    withArrow
                   >
-                    {sortOrder === 'asc' ? (
-                      <IconSortDescending size={18} />
-                    ) : (
-                      <IconSortAscending size={18} />
-                    )}
-                  </LegacyActionIcon>
-                </Tooltip>
-              </Group>
+                    <LegacyActionIcon
+                      variant="light"
+                      size="sm"
+                      onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                    >
+                      {sortOrder === 'asc' ? (
+                        <IconSortDescending size={18} />
+                      ) : (
+                        <IconSortAscending size={18} />
+                      )}
+                    </LegacyActionIcon>
+                  </Tooltip>
+                </Group>
+                {TypeFilter}
+              </Stack>
               <Divider />
               <ScrollArea.Autosize mah="calc(100vh - 105px)">{Collections}</ScrollArea.Autosize>
             </Stack>
@@ -110,15 +113,15 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <Container fluid className={classes.container}>
       <MyCollections sortOrder={sortOrder}>
-        {({ FilterBox, Collections, isLoading }) => (
+        {({ FilterBox, TypeFilter, Collections, isLoading }) => (
           <Card
             className={classes.sidebar}
-            w={250}
-            mr="md"
+            w={300}
+            mr="xs"
             p={0}
             style={{
               overflow: 'hidden',
-              marginLeft: showSidebar ? 0 : -250 - 16,
+              marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
               maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
             }}
             withBorder
@@ -131,7 +134,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 {!showSidebar ? <IconLayoutSidebarLeftExpand /> : <IconLayoutSidebarLeftCollapse />}
               </LegacyActionIcon>
             </Tooltip>
-            <Card.Section p="xs" mx={0} withBorder>
+            <Card.Section p="xs" mx={0} className="border-t-0" withBorder>
               <Group justify="space-between" wrap="nowrap">
                 <Text fw={500}>My Collections</Text>
                 <Button
@@ -150,26 +153,29 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
             </Card.Section>
 
             <Card.Section p="xs" mx={0} withBorder>
-              <Group gap="xs" wrap="nowrap">
-                <div style={{ flex: 1 }}>{FilterBox}</div>
-                <Tooltip
-                  label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
-                  position="top"
-                  withArrow
-                >
-                  <LegacyActionIcon
-                    variant="light"
-                    size="sm"
-                    onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+              <Stack gap="xs">
+                <Group gap="xs" wrap="nowrap">
+                  <div style={{ flex: 1 }}>{FilterBox}</div>
+                  <Tooltip
+                    label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
+                    position="top"
+                    withArrow
                   >
-                    {sortOrder === 'asc' ? (
-                      <IconSortDescending size={18} />
-                    ) : (
-                      <IconSortAscending size={18} />
-                    )}
-                  </LegacyActionIcon>
-                </Tooltip>
-              </Group>
+                    <LegacyActionIcon
+                      variant="light"
+                      size="sm"
+                      onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                    >
+                      {sortOrder === 'asc' ? (
+                        <IconSortDescending size={18} />
+                      ) : (
+                        <IconSortAscending size={18} />
+                      )}
+                    </LegacyActionIcon>
+                  </Tooltip>
+                </Group>
+                {TypeFilter}
+              </Stack>
             </Card.Section>
             {isLoading && (
               <Center>
@@ -177,7 +183,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
               </Center>
             )}
             <Card.Section className="relative h-full" mx={0}>
-              <ScrollArea.Autosize pt="xs" pb={36} mah="calc(80vh - var(--header-height,0))">
+              <ScrollArea.Autosize mah="calc(68vh - var(--header-height,0))" pb="md">
                 {Collections}
               </ScrollArea.Autosize>
             </Card.Section>

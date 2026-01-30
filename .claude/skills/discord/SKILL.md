@@ -9,16 +9,28 @@ Post messages and announcements to Discord channels via the REST API. Navigate c
 
 ## Setup
 
-1. Copy `env.example` to `.env` in this skill directory
-2. Add your Discord Bot Token and other settings
-3. Ensure the bot is invited to your server with appropriate permissions
+Run the setup script to authenticate via Discord:
 
 ```bash
-cp .claude/skills/discord/env.example .claude/skills/discord/.env
-# Edit .env and add your token
+node .claude/skills/discord/setup.mjs https://discord-proxy.civitai.com
 ```
 
-Guild ID is auto-detected from the guild name on first use and cached.
+This will:
+1. Open your browser for Discord authentication
+2. Verify you're in the team server
+3. Save your personal API token to `.env`
+
+### Admin Only: Direct Bot Token
+
+If you manage the bot directly and need to bypass the proxy:
+
+1. Copy `.env.example` to `.env` in this skill directory
+2. Uncomment and set `DISCORD_BOT_TOKEN`
+3. Optionally set `DISCORD_GUILD` for auto-detection
+
+```bash
+cp .claude/skills/discord/.env.example .claude/skills/discord/.env
+```
 
 ## Running Commands
 
