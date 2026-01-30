@@ -3,7 +3,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, redis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
@@ -32,24 +32,24 @@ export interface BlockedPromptEntry {
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours (matches the limiter refetch interval)
 
 function getBlockedPromptsKey(userId: number) {
-  return `${REDIS_KEYS.GENERATION.BLOCKED_PROMPTS}:${userId}` as const;
+  return `${REDIS_SYS_KEYS.GENERATION.BLOCKED_PROMPTS}:${userId}` as const;
 }
 
 async function storeBlockedPrompt(userId: number, entry: BlockedPromptEntry) {
   const key = getBlockedPromptsKey(userId);
-  await redis.lPush(key, JSON.stringify(entry));
-  await redis.expire(key, BLOCKED_PROMPTS_TTL);
+  await sysRedis.lPush(key, JSON.stringify(entry));
+  await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
 }
 
 async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> {
   const key = getBlockedPromptsKey(userId);
-  const entries = await redis.lRange(key, 0, -1);
+  const entries = await sysRedis.lRange(key, 0, -1);
   return entries.map((entry) => JSON.parse(entry) as BlockedPromptEntry);
 }
 
 async function clearBlockedPrompts(userId: number) {
   const key = getBlockedPromptsKey(userId);
-  await redis.del(key);
+  await sysRedis.del(key);
 }
 
 // --- Prohibited request counter ---

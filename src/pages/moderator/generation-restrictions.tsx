@@ -35,6 +35,7 @@ import { createSelectStore } from '~/store/select.store';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { Page } from '~/components/AppLayout/Page';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -226,7 +227,7 @@ function TriggerCard({ trigger, triggerKey }: { trigger: RestrictionTrigger; tri
   );
 }
 
-export default function GenerationRestrictionsPage() {
+function GenerationRestrictionsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string | null>('Pending');
   const [usernameSearch, setUsernameSearch] = useState('');
@@ -361,7 +362,7 @@ export default function GenerationRestrictionsPage() {
   return (
     <>
       <Meta title="Generation Restrictions" deIndex />
-      <div className="flex gap-6 overflow-hidden p-4" style={{ height: 'calc(100vh - 80px)' }}>
+      <div className="flex flex-1 gap-6 overflow-hidden p-4">
         {/* Left Side */}
         <div className="flex w-[500px] flex-col">
           {/* Fixed Header */}
@@ -610,3 +611,5 @@ export default function GenerationRestrictionsPage() {
     </>
   );
 }
+
+export default Page(GenerationRestrictionsPage, { scrollable: false });
