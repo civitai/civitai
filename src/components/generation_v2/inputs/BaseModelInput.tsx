@@ -38,8 +38,8 @@ export interface BaseModelInputProps {
   disabled?: boolean;
   /** Check if an ecosystem is compatible with the current workflow */
   isCompatible?: (ecosystemKey: string) => boolean;
-  /** Target workflow label when selecting an incompatible ecosystem */
-  targetWorkflow?: string;
+  /** Get the target workflow label for an incompatible ecosystem */
+  getTargetWorkflow?: (ecosystemKey: string) => string;
   /** Current output type - only ecosystems supporting this type will be shown */
   outputType?: 'image' | 'video';
 }
@@ -120,7 +120,7 @@ interface BaseModelListContentProps {
   value?: string;
   recentItems: EcosystemItem[];
   groupedByFamily: FamilyGroup[];
-  targetWorkflow?: string;
+  getTargetWorkflow?: string;
   onSelect: (key: string) => void;
   /** Whether there are any incompatible items */
   hasIncompatibleItems?: boolean;
@@ -136,7 +136,7 @@ function BaseModelListContent({
   value,
   recentItems,
   groupedByFamily,
-  targetWorkflow,
+  getTargetWorkflow,
   onSelect,
   hasIncompatibleItems,
   activeTab,
@@ -232,11 +232,11 @@ function BaseModelListContent({
             );
 
             // Show tooltip for incompatible ecosystems
-            if (!item.compatible && targetWorkflow) {
+            if (!item.compatible && getTargetWorkflow) {
               return (
                 <Tooltip
                   key={item.key}
-                  label={`Will switch to ${targetWorkflow}`}
+                  label={`Will switch to ${getTargetWorkflow(item.key)}`}
                   position="right"
                   withArrow
                   openDelay={300}
@@ -293,11 +293,11 @@ function BaseModelListContent({
               );
 
               // Show tooltip for incompatible ecosystems
-              if (!item.compatible && targetWorkflow) {
+              if (!item.compatible && getTargetWorkflow) {
                 return (
                   <Tooltip
                     key={item.key}
-                    label={`Will switch to ${targetWorkflow}`}
+                    label={`Will switch to ${getTargetWorkflow(item.key)}`}
                     position="right"
                     withArrow
                     openDelay={300}
@@ -324,7 +324,7 @@ interface BaseModelSelectModalProps {
   value?: string;
   recentItems: EcosystemItem[];
   groupedByFamily: FamilyGroup[];
-  targetWorkflow?: string;
+  getTargetWorkflow?: string;
   onSelect: (key: string) => void;
   hasIncompatibleItems?: boolean;
   activeTab: TabValue;
@@ -336,7 +336,7 @@ function BaseModelSelectModal({
   value,
   recentItems,
   groupedByFamily,
-  targetWorkflow,
+  getTargetWorkflow,
   onSelect,
   hasIncompatibleItems,
   activeTab,
@@ -367,7 +367,7 @@ function BaseModelSelectModal({
           value={value}
           recentItems={recentItems}
           groupedByFamily={groupedByFamily}
-          targetWorkflow={targetWorkflow}
+          getTargetWorkflow={getTargetWorkflow}
           onSelect={handleSelect}
           hasIncompatibleItems={hasIncompatibleItems}
           activeTab={activeTab}
@@ -389,7 +389,7 @@ export function BaseModelInput({
   compatibleEcosystems,
   disabled,
   isCompatible,
-  targetWorkflow,
+  getTargetWorkflow,
   outputType,
 }: BaseModelInputProps) {
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -556,7 +556,7 @@ export function BaseModelInput({
         value,
         recentItems,
         groupedByFamily,
-        targetWorkflow,
+        getTargetWorkflow,
         hasIncompatibleItems,
         activeTab,
         onTabChange: handleTabChange,
@@ -616,7 +616,7 @@ export function BaseModelInput({
           value={value}
           recentItems={recentItems}
           groupedByFamily={groupedByFamily}
-          targetWorkflow={targetWorkflow}
+          getTargetWorkflow={getTargetWorkflow}
           onSelect={handleSelect}
           hasIncompatibleItems={hasIncompatibleItems}
           activeTab={activeTab}

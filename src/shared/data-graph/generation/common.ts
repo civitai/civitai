@@ -665,6 +665,10 @@ export function createCheckpointGraph(options?: {
                 }
               }
             }
+            // Ensure model.type is present for output schema conformance
+            if (!('model' in val) || !val.model) {
+              return { ...val, model: { type: 'Checkpoint' } };
+            }
             return val;
           });
 

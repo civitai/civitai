@@ -51,8 +51,8 @@ export interface CompatibilityInfo {
         displayName: string;
       }
     | undefined;
-  /** Get the target workflow when selecting an incompatible ecosystem (always 'txt2img') */
-  getTargetWorkflowForEcosystem: () => { id: string; label: string };
+  /** Get the best compatible workflow for a target ecosystem */
+  getTargetWorkflowForEcosystem: (targetEcosystemKey: string) => { id: string; label: string };
 }
 
 export interface UseCompatibilityInfoOptions {
@@ -125,12 +125,34 @@ export function useCompatibilityInfo({
       return getValidEcosystemForWorkflow(workflowId, currentEcosystemKey);
     };
 
-    const getTargetWorkflowForEcosystem = () => {
-      // When switching to an incompatible ecosystem, we always fall back to txt2img
-      const defaultWorkflow = workflowOptions.find((w) => w.id === 'txt2img');
+    const getTargetWorkflowForEcosystem = (targetEcosystemKey: string) => {
+      const targetEcosystem = ecosystemByKey.get(targetEcosystemKey);
+      const targetEcosystemId = targetEcosystem?.id;
+
+      // Find workflows that the target ecosystem supports
+      const compatibleWorkflows = workflowOptions.filter((w) => {
+        const ecosystemIds = getEcosystemsForWorkflow(w.id);
+        return ecosystemIds.length > 0 && targetEcosystemId !== undefined
+          ? ecosystemIds.includes(targetEcosystemId)
+          : false;
+      });
+
+      // Prefer a workflow of the same output type as current
+      // This way txt2vid → img2vid (not txt2img) when switching to a video ecosystem
+      if (currentOutputType) {
+        const sameOutputType = compatibleWorkflows.find(
+          (w) => getOutputTypeForWorkflow(w.id) === currentOutputType
+        );
+        if (sameOutputType) {
+          return { id: sameOutputType.id, label: sameOutputType.label };
+        }
+      }
+
+      // Fall back to the first compatible workflow, or txt2img as last resort
+      const fallback = compatibleWorkflows[0] ?? workflowOptions.find((w) => w.id === 'txt2img');
       return {
-        id: 'txt2img',
-        label: defaultWorkflow?.label ?? 'Create Image',
+        id: fallback?.id ?? 'txt2img',
+        label: fallback?.label ?? 'Create Image',
       };
     };
 

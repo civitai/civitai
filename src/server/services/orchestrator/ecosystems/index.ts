@@ -119,11 +119,11 @@ export type WanCtx = EcosystemGraphOutput & {
     | 'WanVideo14B_T2V'
     | 'WanVideo14B_I2V_480p'
     | 'WanVideo14B_I2V_720p'
-    | 'WanVideo22_TI2V_5B'
-    | 'WanVideo22_I2V_A14B'
-    | 'WanVideo22_T2V_A14B'
-    | 'WanVideo25_T2V'
-    | 'WanVideo25_I2V';
+    | 'WanVideo-22-TI2V-5B'
+    | 'WanVideo-22-I2V-A14B'
+    | 'WanVideo-22-T2V-A14B'
+    | 'WanVideo-25-T2V'
+    | 'WanVideo-25-I2V';
 };
 
 /** Vidu context */
@@ -289,11 +289,11 @@ export async function createEcosystemStepInput(
     case 'WanVideo14B_T2V':
     case 'WanVideo14B_I2V_480p':
     case 'WanVideo14B_I2V_720p':
-    case 'WanVideo22_TI2V_5B':
-    case 'WanVideo22_I2V_A14B':
-    case 'WanVideo22_T2V_A14B':
-    case 'WanVideo25_T2V':
-    case 'WanVideo25_I2V':
+    case 'WanVideo-22-TI2V-5B':
+    case 'WanVideo-22-I2V-A14B':
+    case 'WanVideo-22-T2V-A14B':
+    case 'WanVideo-25-T2V':
+    case 'WanVideo-25-I2V':
       return { $type: 'videoGen', input: await createWanInput(normalizedData, handlerCtx) };
 
     // Vidu

@@ -29,11 +29,11 @@ type WanBaseModel =
   | 'WanVideo14B_T2V'
   | 'WanVideo14B_I2V_480p'
   | 'WanVideo14B_I2V_720p'
-  | 'WanVideo22_TI2V_5B'
-  | 'WanVideo22_I2V_A14B'
-  | 'WanVideo22_T2V_A14B'
-  | 'WanVideo25_T2V'
-  | 'WanVideo25_I2V';
+  | 'WanVideo-22-TI2V-5B'
+  | 'WanVideo-22-I2V-A14B'
+  | 'WanVideo-22-T2V-A14B'
+  | 'WanVideo-25-T2V'
+  | 'WanVideo-25-I2V';
 
 type WanCtx = EcosystemGraphOutput & { baseModel: WanBaseModel };
 

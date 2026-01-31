@@ -118,7 +118,7 @@ export function GenerationForm() {
   const handleBaseModelChange = useCallback(
     (newBaseModel: string, ecosystemLabel: string) => {
       if (!compatibility.isEcosystemKeyCompatible(newBaseModel)) {
-        const target = compatibility.getTargetWorkflowForEcosystem();
+        const target = compatibility.getTargetWorkflowForEcosystem(newBaseModel);
         openCompatibilityConfirmModal({
           pendingChange: {
             type: 'ecosystem',
@@ -128,7 +128,11 @@ export function GenerationForm() {
             targetWorkflow: target.label,
           },
           onConfirm: () => {
-            graphRef.current.set({ baseModel: newBaseModel } as Parameters<typeof graph.set>[0]);
+            // Set both workflow and baseModel together to avoid validation issues
+            graphRef.current.set({
+              workflow: target.id,
+              baseModel: newBaseModel,
+            } as Parameters<typeof graph.set>[0]);
           },
         });
         return;
@@ -173,7 +177,7 @@ export function GenerationForm() {
                   }}
                   compatibleEcosystems={meta?.compatibleEcosystems}
                   isCompatible={compatibility.isEcosystemKeyCompatible}
-                  targetWorkflow={compatibility.getTargetWorkflowForEcosystem().label}
+                  getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
                   outputType={compatibility.currentOutputType}
                 />
               )}
@@ -217,7 +221,9 @@ export function GenerationForm() {
                   {showVersionSelector && meta.versions && (
                     <OverflowSegmentedControl
                       value={value?.id?.toString()}
-                      onChange={(stringId) => onChange({ id: Number(stringId) } as any)}
+                      onChange={(stringId) =>
+                        onChange({ id: Number(stringId), model: { type: 'Checkpoint' } } as any)
+                      }
                       options={meta.versions.map(({ label, value }) => ({
                         label,
                         value: value.toString(),

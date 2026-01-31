@@ -90,6 +90,7 @@ const TXT2VID_IDS = [
 /** Video ecosystems that support img2vid */
 const IMG2VID_IDS = [
   ECO.HyV1,
+  ECO.LTXV2,
   ECO.WanVideo,
   ECO.WanVideo14B_I2V_480p,
   ECO.WanVideo14B_I2V_720p,
