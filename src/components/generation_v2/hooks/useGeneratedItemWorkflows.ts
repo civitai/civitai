@@ -21,6 +21,7 @@ import {
 import { getEcosystemsForWorkflow } from '~/shared/data-graph/generation/config/workflows';
 import { openCompatibilityConfirmModal } from '~/components/generation_v2/CompatibilityConfirmModal';
 import { generationStore } from '~/store/generation.store';
+import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
 import type {
@@ -96,6 +97,12 @@ export function useGeneratedItemWorkflows({
       if (workflowEcosystems.length === 0) return true;
       // If no ecosystem info, treat as compatible
       if (ecosystemId === undefined) return true;
+
+      // Cross-media workflows (e.g., img2vid) are always "compatible" since
+      // an ecosystem switch is inherent to the workflow change
+      const workflowOutputType = getOutputTypeForWorkflow(workflowId);
+      if (outputType !== workflowOutputType) return true;
+
       return isWorkflowAvailable(workflowId, ecosystemId);
     };
 
@@ -129,13 +136,33 @@ interface ApplyWorkflowOptions {
 /**
  * Send generated output data to the generation form for a specific workflow.
  */
-async function applyWorkflowToForm({ workflowId, image, step }: ApplyWorkflowOptions) {
+async function applyWorkflowToForm({
+  workflowId,
+  image,
+  step,
+  targetEcosystemKey,
+  isIncompatible,
+}: ApplyWorkflowOptions & { targetEcosystemKey?: string; isIncompatible?: boolean }) {
   // Close lightbox if open
   dialogStore.closeById('generated-image');
 
   const outputType = getOutputTypeForWorkflow(workflowId);
   const inputType = getInputTypeForWorkflow(workflowId);
   const isStandalone = (workflowConfigByKey.get(workflowId)?.ecosystemIds.length ?? 0) === 0;
+
+  // Check if this is a cross-media workflow (output type differs from input media)
+  const currentOutputType = image.type === 'video' ? 'video' : 'image';
+  const isCrossMedia = currentOutputType !== outputType;
+
+  // Determine if we need to switch ecosystems
+  // This happens for cross-media workflows OR when current ecosystem is incompatible
+  const needsEcosystemSwitch = isCrossMedia || isIncompatible;
+
+  // Always use explicit target if provided (ensures stored preference is respected)
+  // For ecosystem switches without explicit target, fall back to stored preference
+  const baseModel =
+    targetEcosystemKey ??
+    (needsEcosystemSwitch ? workflowPreferences.getPreferredEcosystem(workflowId) : undefined);
 
   const sourceImage =
     inputType === 'image' ? await getSourceImageFromUrl({ url: image.url }) : undefined;
@@ -148,8 +175,11 @@ async function applyWorkflowToForm({ workflowId, image, step }: ApplyWorkflowOpt
       negativePrompt: (step.params as Record<string, unknown>).negativePrompt,
       ...(sourceImage ? { images: [sourceImage] } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
+      // Include baseModel when switching ecosystems to use stored preference
+      ...(baseModel ? { baseModel } : {}),
     },
-    resources: isStandalone ? [] : (step.resources as any),
+    // Don't carry over resources when switching ecosystems (different ecosystem = different resources)
+    resources: isStandalone || needsEcosystemSwitch ? [] : (step.resources as any),
     runType: 'patch',
   });
 }
@@ -166,8 +196,21 @@ export function applyWorkflowWithCheck({
   step,
   compatible,
 }: ApplyWorkflowOptions & { ecosystemKey?: string; compatible: boolean }) {
+  // For incompatible workflows, show confirmation modal
   if (!compatible) {
-    const target = getValidEcosystemForWorkflow(workflowId, ecosystemKey);
+    // First check for stored preference, then fall back to first compatible ecosystem
+    const storedPreference = workflowPreferences.getPreferredEcosystem(workflowId);
+    const storedEcosystem = storedPreference ? ecosystemByKey.get(storedPreference) : undefined;
+
+    // Use stored preference if available, otherwise get first compatible
+    const target = storedEcosystem
+      ? {
+          id: storedEcosystem.id,
+          key: storedEcosystem.key,
+          displayName: storedEcosystem.displayName,
+        }
+      : getValidEcosystemForWorkflow(workflowId, ecosystemKey);
+
     if (target && ecosystemKey) {
       openCompatibilityConfirmModal({
         pendingChange: {
@@ -177,10 +220,35 @@ export function applyWorkflowWithCheck({
           currentEcosystem: ecosystemKey,
           targetEcosystem: target.displayName,
         },
-        onConfirm: () => applyWorkflowToForm({ workflowId, image, step }),
+        onConfirm: () =>
+          applyWorkflowToForm({
+            workflowId,
+            image,
+            step,
+            targetEcosystemKey: target.key,
+            isIncompatible: true,
+          }),
       });
       return;
     }
   }
-  applyWorkflowToForm({ workflowId, image, step });
+  // Check if this is a cross-media workflow (e.g., img2vid)
+  // For cross-media, the image's ecosystem is never compatible with the workflow
+  const currentOutputType = image.type === 'video' ? 'video' : 'image';
+  const workflowOutputType = getOutputTypeForWorkflow(workflowId);
+  const isCrossMedia = currentOutputType !== workflowOutputType;
+
+  // For cross-media workflows, use stored preference (image's ecosystem can't work)
+  // For same-media compatible workflows, use image's ecosystem
+  const targetEcosystem = isCrossMedia
+    ? workflowPreferences.getPreferredEcosystem(workflowId)
+    : ecosystemKey ?? workflowPreferences.getPreferredEcosystem(workflowId);
+
+  applyWorkflowToForm({
+    workflowId,
+    image,
+    step,
+    targetEcosystemKey: targetEcosystem,
+    isIncompatible: !compatible,
+  });
 }

@@ -1,4 +1,3 @@
-import { resourceDataCache } from '~/server/redis/resource-data.redis';
 /**
  * Ecosystem Graph
  *

@@ -17,6 +17,7 @@ import {
   useGenerationFormStore,
   generationStore,
 } from '~/store/generation.store';
+import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import { ResourceDataProvider, useResourceDataContext } from './inputs/ResourceDataProvider';
 import { WhatIfProvider } from './WhatIfProvider';
@@ -204,6 +205,23 @@ function InnerProvider({
       registeredIdsRef.current.clear();
     };
   }, [unregisterResourceId]);
+
+  // Track preferred ecosystem when baseModel changes
+  // This keeps the workflow preferences store in sync with what the user is actually using
+  useEffect(() => {
+    function syncPreferredEcosystem() {
+      const snapshot = graph.getSnapshot() as Record<string, unknown>;
+      const baseModel = snapshot.baseModel as string | undefined;
+      const workflow = snapshot.workflow as string | undefined;
+      if (!baseModel || !workflow) return;
+
+      // Update the preferred ecosystem for this specific workflow
+      workflowPreferences.setPreferredEcosystem(workflow, baseModel);
+    }
+
+    // Subscribe to graph changes
+    return graph.subscribe(syncPreferredEcosystem);
+  }, [graph]);
 
   return (
     <DataGraphProvider graph={graph}>
