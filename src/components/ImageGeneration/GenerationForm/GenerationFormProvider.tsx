@@ -21,6 +21,7 @@ import {
   getClosestAspectRatio,
   getIsFluxUltra,
   getIsZImageBase,
+  getIsZImageTurbo,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
@@ -234,16 +235,16 @@ function formatGenerationData(data: FormGenerationData): PartialFormData {
   )
     params.scheduler = 'simple';
 
-  // ZImageBase uses sdcpp samplers directly (euler, heun, lcm)
+  // ZImage (Base and Turbo) uses sdcpp samplers directly (euler, heun)
   if (
-    getIsZImageBase(baseModel) &&
+    (getIsZImageBase(baseModel) || getIsZImageTurbo(baseModel)) &&
     (!params.sampler || !zImageSampleMethods.includes(params.sampler as any))
   )
     params.sampler = 'euler';
 
-  // ZImageBase needs a default scheduler
+  // ZImage (Base and Turbo) needs a default scheduler
   if (
-    getIsZImageBase(baseModel) &&
+    (getIsZImageBase(baseModel) || getIsZImageTurbo(baseModel)) &&
     (!params.scheduler || !zImageSchedules.includes(params.scheduler as any))
   )
     params.scheduler = 'simple';
