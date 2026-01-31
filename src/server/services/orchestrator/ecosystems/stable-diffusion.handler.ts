@@ -85,8 +85,8 @@ function createTextToImageInput(
     cfgScale: number;
     clipSkip?: number;
     seed: number;
-    width: number;
-    height: number;
+    width?: number;
+    height?: number;
     quantity: number;
     batchSize: number;
     outputFormat?: string;
@@ -121,7 +121,7 @@ function createTextToImageInput(
       model: ctx.airs.getOrThrow(model.id),
       additionalNetworks,
       ...rest,
-    } ,
+    },
   } as TextToImageStepTemplate;
 }
 
@@ -141,7 +141,8 @@ export const createStableDiffusionInput = defineHandler<
   TextToImageStepTemplate | ComfyStepTemplate
 >((data, ctx) => {
   if (!data.model) throw new Error('Model is required for SD family workflows');
-  if (!data.aspectRatio) throw new Error('Aspect ratio is required for SD family workflows');
+  if (!data.aspectRatio && !data.images?.length)
+    throw new Error('Aspect ratio is required for SD family workflows');
 
   const isDraft = data.workflow === 'txt2img:draft';
   const isSD1 = data.baseModel === 'SD1';
@@ -204,8 +205,8 @@ export const createStableDiffusionInput = defineHandler<
       workflowData.width = sourceImage.width;
       workflowData.height = sourceImage.height;
     } else {
-      workflowData.width = data.aspectRatio.width;
-      workflowData.height = data.aspectRatio.height;
+      workflowData.width = data.aspectRatio?.width;
+      workflowData.height = data.aspectRatio?.height;
       workflowData.denoise = data.denoise;
     }
 
@@ -237,8 +238,8 @@ export const createStableDiffusionInput = defineHandler<
       cfgScale,
       clipSkip: data.clipSkip,
       seed,
-      width: data.aspectRatio.width,
-      height: data.aspectRatio.height,
+      width: data.aspectRatio?.width,
+      height: data.aspectRatio?.height,
       quantity,
       batchSize,
       outputFormat: data.outputFormat,

@@ -212,8 +212,8 @@ export function useGraphValues<T extends DefaultGraphTypes>(): T['Ctx'] {
 type SafeValueLookup<CtxValues, K extends string> = K extends keyof CtxValues
   ? CtxValues[K]
   : CtxValues extends Record<string, infer V>
-    ? V
-    : unknown;
+  ? V
+  : unknown;
 
 /**
  * Type helper for safe meta lookup from CtxMeta.
@@ -221,8 +221,8 @@ type SafeValueLookup<CtxValues, K extends string> = K extends keyof CtxValues
 type SafeMetaLookup<CtxMeta, K extends string> = K extends keyof CtxMeta
   ? CtxMeta[K]
   : CtxMeta extends Record<string, infer V>
-    ? V
-    : unknown;
+  ? V
+  : unknown;
 
 /**
  * Subscribe to a single node's value using an explicit graph instance.

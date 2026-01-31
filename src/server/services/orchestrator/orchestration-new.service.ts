@@ -196,8 +196,7 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
   if ('model' in data && data.model?.id) {
     refs.push({
       id: data.model.id,
-      epoch:
-        'epochDetails' in data.model ? data.model.epochDetails?.epochNumber : undefined,
+      epoch: 'epochDetails' in data.model ? data.model.epochDetails?.epochNumber : undefined,
     });
   }
   if ('resources' in data && data.resources) {
@@ -488,11 +487,13 @@ export async function createWorkflowStepFromGraph(
 
   // Convert graph output to legacy {resources, params} format for storage
   // This allows the legacy-metadata-mapper to read historical data consistently
-  const stepMetadata = toStepMetadata(data as Record<string, unknown> & {
-    model?: { id: number; model: { type: string } };
-    resources?: { id: number; model: { type: string } }[];
-    vae?: { id: number; model: { type: string } };
-  });
+  const stepMetadata = toStepMetadata(
+    data as Record<string, unknown> & {
+      model?: { id: number; model: { type: string } };
+      resources?: { id: number; model: { type: string } }[];
+      vae?: { id: number; model: { type: string } };
+    }
+  );
 
   return {
     $type,

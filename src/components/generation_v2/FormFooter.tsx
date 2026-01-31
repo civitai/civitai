@@ -19,7 +19,10 @@ import {
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import { MembershipUpsell, useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
+import {
+  MembershipUpsell,
+  useMembershipUpsell,
+} from '~/components/ImageGeneration/MembershipUpsell';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -172,7 +175,11 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   return (
     <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       {generateButton}
-      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} hideCreatorTip={!hasCreatorTip} />
+      <GenerationCostPopover
+        width={300}
+        workflowCost={data?.cost ?? {}}
+        hideCreatorTip={!hasCreatorTip}
+      />
     </div>
   );
 }

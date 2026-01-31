@@ -63,18 +63,20 @@ const precisionOptions = [
 ];
 
 /** Options for variant selector (depends on precision) */
-const variantOptionsByPrecision: Record<HiDreamPrecision, Array<{ label: string; value: string }>> =
-  {
-    fp8: [
-      { label: 'Fast', value: 'fast' },
-      { label: 'Dev', value: 'dev' },
-      { label: 'Full', value: 'full' },
-    ],
-    fp16: [
-      { label: 'Fast', value: 'fast' },
-      { label: 'Dev', value: 'dev' },
-    ],
-  };
+const variantOptionsByPrecision: Record<
+  HiDreamPrecision,
+  Array<{ label: string; value: string }>
+> = {
+  fp8: [
+    { label: 'Fast', value: 'fast' },
+    { label: 'Dev', value: 'dev' },
+    { label: 'Full', value: 'full' },
+  ],
+  fp16: [
+    { label: 'Fast', value: 'fast' },
+    { label: 'Dev', value: 'dev' },
+  ],
+};
 
 /** Version options for checkpoint selector (all variants/precisions) */
 const hiDreamVersionOptions = hiDreamResources.map((r) => ({
@@ -199,9 +201,4 @@ export const hiDreamGraph = new DataGraph<
   });
 
 // Export for use in components
-export {
-  hiDreamVersionOptions,
-  hiDreamResources,
-  precisionOptions,
-  variantOptionsByPrecision,
-};
+export { hiDreamVersionOptions, hiDreamResources, precisionOptions, variantOptionsByPrecision };

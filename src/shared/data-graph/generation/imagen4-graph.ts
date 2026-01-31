@@ -10,12 +10,7 @@
 
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import {
-  aspectRatioNode,
-  createCheckpointGraph,
-  negativePromptNode,
-  seedNode,
-} from './common';
+import { aspectRatioNode, createCheckpointGraph, negativePromptNode, seedNode } from './common';
 
 // =============================================================================
 // Constants
@@ -47,10 +42,7 @@ const imagen4AspectRatios = [
  * Meta only contains dynamic props - static props like label are in components.
  * Note: Imagen4 doesn't use LoRAs, samplers, CFG scale, steps, or CLIP skip.
  */
-export const imagen4Graph = new DataGraph<
-  { baseModel: string; workflow: string },
-  GenerationCtx
->()
+export const imagen4Graph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph with model locked (single version)
   .merge(
     () =>

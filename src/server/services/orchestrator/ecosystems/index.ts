@@ -27,6 +27,7 @@ import type { GenerationHandlerCtx } from '../orchestration-new.service';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createFluxInput } from './flux.handler';
 import { createFlux2Input } from './flux2.handler';
+import { createFlux2KleinInput } from './flux2-klein.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createQwenInput } from './qwen.handler';
 import { createSeedreamInput } from './seedream.handler';
@@ -34,7 +35,7 @@ import { createImagen4Input } from './imagen4.handler';
 import { createOpenAIInput } from './openai.handler';
 import { createNanoBananaInput } from './nano-banana.handler';
 import { createChromaInput } from './chroma.handler';
-import { createZImageTurboInput } from './z-image-turbo.handler';
+import { createZImageInput } from './z-image.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 
@@ -43,6 +44,7 @@ import { createWanInput } from './wan.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createHunyuanInput } from './hunyuan.handler';
+import { createLTXV2Input } from './ltxv2.handler';
 import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
@@ -74,6 +76,11 @@ export type FluxCtx = EcosystemGraphOutput & {
 /** Flux2 context */
 export type Flux2Ctx = EcosystemGraphOutput & { baseModel: 'Flux2' };
 
+/** Flux2 Klein context */
+export type Flux2KleinCtx = EcosystemGraphOutput & {
+  baseModel: 'Flux2Klein_9B' | 'Flux2Klein_9B_base' | 'Flux2Klein_4B' | 'Flux2Klein_4B_base';
+};
+
 /** Flux Kontext context */
 export type FluxKontextCtx = EcosystemGraphOutput & { baseModel: 'Flux1Kontext' };
 
@@ -95,8 +102,8 @@ export type NanoBananaCtx = EcosystemGraphOutput & { baseModel: 'NanoBanana' };
 /** Chroma context */
 export type ChromaCtx = EcosystemGraphOutput & { baseModel: 'Chroma' };
 
-/** ZImageTurbo context */
-export type ZImageTurboCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' };
+/** ZImage context (ZImageTurbo and ZImageBase) */
+export type ZImageCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' | 'ZImageBase' };
 
 /** HiDream context */
 export type HiDreamCtx = EcosystemGraphOutput & { baseModel: 'HiDream' };
@@ -128,6 +135,9 @@ export type KlingCtx = EcosystemGraphOutput & { baseModel: 'Kling' };
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { baseModel: 'HyV1' };
 
+/** LTXV2 context */
+export type LTXV2Ctx = EcosystemGraphOutput & { baseModel: 'LTXV2' };
+
 /** Mochi context */
 export type MochiCtx = EcosystemGraphOutput & { baseModel: 'Mochi' };
 
@@ -145,6 +155,7 @@ export type Veo3Ctx = EcosystemGraphOutput & { baseModel: 'Veo3' };
 export { createStableDiffusionInput } from './stable-diffusion.handler';
 export { createFluxInput } from './flux.handler';
 export { createFlux2Input } from './flux2.handler';
+export { createFlux2KleinInput } from './flux2-klein.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
 export { createQwenInput } from './qwen.handler';
 export { createSeedreamInput } from './seedream.handler';
@@ -152,7 +163,7 @@ export { createImagen4Input } from './imagen4.handler';
 export { createOpenAIInput } from './openai.handler';
 export { createNanoBananaInput } from './nano-banana.handler';
 export { createChromaInput } from './chroma.handler';
-export { createZImageTurboInput } from './z-image-turbo.handler';
+export { createZImageInput } from './z-image.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 
@@ -161,6 +172,7 @@ export { createWanInput } from './wan.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createHunyuanInput } from './hunyuan.handler';
+export { createLTXV2Input } from './ltxv2.handler';
 export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
@@ -217,9 +229,10 @@ export async function createEcosystemStepInput(
     case 'Chroma':
       return createChromaInput(normalizedData, handlerCtx);
 
-    // ZImageTurbo
+    // ZImage Family
     case 'ZImageTurbo':
-      return createZImageTurboInput(normalizedData, handlerCtx);
+    case 'ZImageBase':
+      return createZImageInput(normalizedData, handlerCtx);
 
     // HiDream
     case 'HiDream':
@@ -236,6 +249,13 @@ export async function createEcosystemStepInput(
     // Flux2
     case 'Flux2':
       return { $type: 'imageGen', input: await createFlux2Input(normalizedData, handlerCtx) };
+
+    // Flux2 Klein Family
+    case 'Flux2Klein_9B':
+    case 'Flux2Klein_9B_base':
+    case 'Flux2Klein_4B':
+    case 'Flux2Klein_4B_base':
+      return { $type: 'imageGen', input: await createFlux2KleinInput(normalizedData, handlerCtx) };
 
     // Flux Kontext
     case 'Flux1Kontext':
@@ -287,6 +307,10 @@ export async function createEcosystemStepInput(
     // Hunyuan (HyV1)
     case 'HyV1':
       return { $type: 'videoGen', input: await createHunyuanInput(normalizedData, handlerCtx) };
+
+    // LTXV2
+    case 'LTXV2':
+      return { $type: 'videoGen', input: await createLTXV2Input(normalizedData, handlerCtx) };
 
     // Mochi
     case 'Mochi':

@@ -163,7 +163,9 @@ function BaseModelListContent({
 
   // Build available tabs
   const tabs: { value: TabValue; label: string }[] = useMemo(() => {
-    const result: { value: TabValue; label: string }[] = [{ value: 'compatible', label: 'Compatible' }];
+    const result: { value: TabValue; label: string }[] = [
+      { value: 'compatible', label: 'Compatible' },
+    ];
     if (showRecentTab) {
       result.push({ value: 'recent', label: 'Recent' });
     }

@@ -61,10 +61,7 @@ const ponyV7GuidancePresets = [
  * Note: Pony V7 doesn't use negative prompts, samplers, or CLIP skip.
  * This model works best with 40+ steps.
  */
-export const ponyV7Graph = new DataGraph<
-  { baseModel: string; workflow: string },
-  GenerationCtx
->()
+export const ponyV7Graph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph
   .merge(
     () =>

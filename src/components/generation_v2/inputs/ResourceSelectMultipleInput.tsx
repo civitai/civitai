@@ -233,7 +233,8 @@ export function ResourceSelectMultipleInput({
       groupMap.set(type, group);
 
       // Count disabled resources
-      const displayResource = resource ?? (isFullyHydrated(resourceValue) ? resourceValue : undefined);
+      const displayResource =
+        resource ?? (isFullyHydrated(resourceValue) ? resourceValue : undefined);
       if (displayResource) {
         const status = getResourceStatus(displayResource, options);
         if (isResourceDisabled(status)) {

@@ -477,7 +477,6 @@ export async function getShouldChargeForResources(
   );
 }
 
-
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
@@ -510,14 +509,15 @@ export async function getResourceData(
     // Resource is private if:
     // 1. Availability is explicitly Private, OR
     // 2. Status is Draft or Training (unpublished/training epochs)
-    const isPrivate = item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
+    const isPrivate =
+      item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
     // canGenerate is the definitive "can this user use this resource" flag
     // Requires: covered by orchestrator AND valid status AND (not private OR user owns it)
     const canGenerate = covered && hasValidStatus && (!isPrivate || isOwnedByUser);
     const epochNumber = args.find((x) => x.id === item.id)?.epoch;
 
-    if(!canGenerate) {
+    if (!canGenerate) {
       // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
       delete item.model.sfwOnly;
       delete item.model.minor;

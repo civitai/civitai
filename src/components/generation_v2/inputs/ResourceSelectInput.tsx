@@ -181,7 +181,8 @@ export function ResourceSelectInput({
   const { data: fetchedData, isLoading } = useResourceData(value?.id);
 
   // Use fetched data for display info, but preserve form value's strength
-  const resourceData = fetchedData ?? (value && !needsHydration(value) ? (value as ResourceData) : undefined);
+  const resourceData =
+    fetchedData ?? (value && !needsHydration(value) ? (value as ResourceData) : undefined);
 
   // Build options from resourceType if provided
   const resolvedOptions = resolveResourceOptions(options, resourceType);

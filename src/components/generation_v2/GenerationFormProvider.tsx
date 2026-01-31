@@ -120,12 +120,15 @@ function InnerProvider({
       if (!data || counter === prevCounterRef.current) return;
       prevCounterRef.current = counter;
 
+      // Get workflow from form store (setData stores it there, not in data.params)
+      const { workflow } = useGenerationFormStore.getState();
+
       // Split flat resources into model/resources/vae for graph nodes
       const split = splitResourcesByType(data.resources);
 
       const values = {
         ...data.params,
-        workflow: data.params.workflow,
+        workflow,
         model: split.model,
         resources: split.resources,
         vae: split.vae,

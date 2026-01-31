@@ -1,7 +1,7 @@
 /**
- * ZImageTurbo Ecosystem Handler
+ * ZImage Ecosystem Handler
  *
- * Handles ZImageTurbo workflows using textToImage step type.
+ * Handles ZImageTurbo and ZImageBase workflows using textToImage step type.
  * Fast generation, no negative prompt support.
  */
 
@@ -13,14 +13,14 @@ import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type ZImageTurboCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' };
+type ZImageCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' | 'ZImageBase' };
 
 /**
- * Creates step input for ZImageTurbo ecosystem.
+ * Creates step input for ZImage ecosystems (ZImageTurbo and ZImageBase).
  * Fast generation with no negative prompt support.
  */
-export const createZImageTurboInput = defineHandler<ZImageTurboCtx, TextToImageStepTemplate>((data, ctx) => {
-  if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImageTurbo workflows');
+export const createZImageInput = defineHandler<ZImageCtx, TextToImageStepTemplate>((data, ctx) => {
+  if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImage workflows');
 
   const quantity = data.quantity ?? 1;
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;

@@ -11,10 +11,7 @@
 import { Alert, List, Text } from '@mantine/core';
 
 import { useUnstableResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import {
-  ecosystemByKey,
-  isEcosystemExperimental,
-} from '~/shared/constants/basemodel.constants';
+import { ecosystemByKey, isEcosystemExperimental } from '~/shared/constants/basemodel.constants';
 import { useWhatIfContext } from './WhatIfProvider';
 
 // =============================================================================
@@ -55,11 +52,7 @@ function isResourceInfo(value: unknown): value is ResourceInfo {
   );
 }
 
-function getSelectedResources(
-  model: unknown,
-  resources: unknown,
-  vae: unknown
-): ResourceInfo[] {
+function getSelectedResources(model: unknown, resources: unknown, vae: unknown): ResourceInfo[] {
   const result: ResourceInfo[] = [];
 
   if (isResourceInfo(model)) result.push(model);
@@ -209,4 +202,3 @@ export function ReadyAlert() {
     </Alert>
   );
 }
-

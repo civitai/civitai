@@ -31,8 +31,9 @@ import { nanoBananaGraph } from './nano-banana-graph';
 import { seedreamGraph } from './seedream-graph';
 import { imagen4Graph } from './imagen4-graph';
 import { flux2Graph } from './flux2-graph';
+import { flux2KleinGraph } from './flux2-klein-graph';
 import { fluxKontextGraph } from './flux-kontext-graph';
-import { zImageTurboGraph } from './z-image-turbo-graph';
+import { zImageGraph } from './z-image-graph';
 import { chromaGraph } from './chroma-graph';
 import { hiDreamGraph } from './hi-dream-graph';
 import { ponyV7Graph } from './pony-v7-graph';
@@ -41,6 +42,7 @@ import { openaiGraph } from './openai-graph';
 import { klingGraph } from './kling-graph';
 import { wanGraph } from './wan-graph';
 import { hunyuanGraph } from './hunyuan-graph';
+import { ltxv2Graph } from './ltxv2-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
@@ -178,8 +180,17 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Seedream'] as const, graph: seedreamGraph },
     { values: ['Imagen4'] as const, graph: imagen4Graph },
     { values: ['Flux2'] as const, graph: flux2Graph },
+    {
+      values: [
+        'Flux2Klein_9B',
+        'Flux2Klein_9B_base',
+        'Flux2Klein_4B',
+        'Flux2Klein_4B_base',
+      ] as const,
+      graph: flux2KleinGraph,
+    },
     { values: ['Flux1Kontext'] as const, graph: fluxKontextGraph },
-    { values: ['ZImageTurbo'] as const, graph: zImageTurboGraph },
+    { values: ['ZImageTurbo', 'ZImageBase'] as const, graph: zImageGraph },
     { values: ['Chroma'] as const, graph: chromaGraph },
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
@@ -204,16 +215,21 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
+    { values: ['LTXV2'] as const, graph: ltxv2Graph },
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
   ])
-  .computed('triggerWords', (ctx) => {
-    const resources = (('resources' in ctx ? ctx.resources : undefined) ?? [])
-    const model = ('model' in ctx ? ctx.model : undefined)
-    const allResources = model ? [model, ...resources] : resources;
-    return allResources.flatMap((r) => r.trainedWords ?? []);
-  }, ['model', 'resources']);
+  .computed(
+    'triggerWords',
+    (ctx) => {
+      const resources = ('resources' in ctx ? ctx.resources : undefined) ?? [];
+      const model = 'model' in ctx ? ctx.model : undefined;
+      const allResources = model ? [model, ...resources] : resources;
+      return allResources.flatMap((r) => r.trainedWords ?? []);
+    },
+    ['model', 'resources']
+  );
 
 /**
  * Get image config from workflow configs.

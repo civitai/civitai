@@ -1,10 +1,10 @@
 /**
- * ZImageTurbo Family Graph V2
+ * ZImage Family Graph V2
  *
- * Controls for ZImageTurbo ecosystem.
+ * Controls for ZImageTurbo and ZImageBase ecosystems.
  * Meta contains only dynamic props - static props defined in components.
  *
- * ZImageTurbo is optimized for fast generation with specific parameter ranges:
+ * ZImage models are optimized for fast generation with specific parameter ranges:
  * - Steps: 1-15 (turbo mode)
  * - CFG Scale: 1-2 (low guidance for speed)
  *
@@ -25,46 +25,31 @@ import {
 } from './common';
 
 // =============================================================================
-// Constants
-// =============================================================================
-
-/** ZImageTurbo default model version ID */
-const zImageTurboVersionId = 2442439;
-
-// =============================================================================
 // Aspect Ratios
 // =============================================================================
 
-/** ZImageTurbo aspect ratios (1024px based) */
-const zImageTurboAspectRatios = [
+/** ZImage aspect ratios (1024px based) */
+const zImageAspectRatios = [
   { label: '2:3', value: '2:3', width: 832, height: 1216 },
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
   { label: '3:2', value: '3:2', width: 1216, height: 832 },
 ];
 
 // =============================================================================
-// ZImageTurbo Graph V2
+// ZImage Graph V2
 // =============================================================================
 
 /**
- * ZImageTurbo family controls.
+ * ZImage family controls.
+ * Used for ZImageTurbo and ZImageBase ecosystems.
  *
  * Meta only contains dynamic props - static props like label are in components.
- * Note: ZImageTurbo doesn't use negative prompts, samplers, or CLIP skip.
+ * Note: ZImage doesn't use negative prompts, samplers, or CLIP skip.
  * Uses turbo-optimized parameter ranges for fast generation.
  */
-export const zImageTurboGraph = new DataGraph<
-  { baseModel: string; workflow: string },
-  GenerationCtx
->()
-  // Merge checkpoint graph
-  .merge(
-    () =>
-      createCheckpointGraph({
-        defaultModelId: zImageTurboVersionId,
-      }),
-    []
-  )
+export const zImageGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
+  // Merge checkpoint graph (uses ecosystem settings for default model)
+  .merge(createCheckpointGraph())
   .node(
     'resources',
     (ctx, ext) =>
@@ -74,7 +59,7 @@ export const zImageTurboGraph = new DataGraph<
       }),
     ['baseModel']
   )
-  .node('aspectRatio', aspectRatioNode({ options: zImageTurboAspectRatios, defaultValue: '1:1' }))
+  .node('aspectRatio', aspectRatioNode({ options: zImageAspectRatios, defaultValue: '1:1' }))
   .node(
     'cfgScale',
     cfgScaleNode({

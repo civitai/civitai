@@ -30,14 +30,14 @@ export interface ControllerRenderProps<Value, Meta> {
 type SafeValueLookup<CtxValues, K extends string> = K extends keyof CtxValues
   ? CtxValues[K]
   : CtxValues extends Record<string, infer V>
-    ? V
-    : unknown;
+  ? V
+  : unknown;
 
 type SafeMetaLookup<CtxMeta, K extends string> = K extends keyof CtxMeta
   ? CtxMeta[K]
   : CtxMeta extends Record<string, infer V>
-    ? V
-    : unknown;
+  ? V
+  : unknown;
 
 /**
  * Props for the Controller component.

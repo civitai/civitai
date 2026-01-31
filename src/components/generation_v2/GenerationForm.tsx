@@ -5,7 +5,18 @@
  * Handles workflow/ecosystem selection with compatibility checks.
  */
 
-import { Button, Checkbox, Divider, Group, Input, Paper, Radio, SegmentedControl, Stack, Text } from '@mantine/core';
+import {
+  Button,
+  Checkbox,
+  Divider,
+  Group,
+  Input,
+  Paper,
+  Radio,
+  SegmentedControl,
+  Stack,
+  Text,
+} from '@mantine/core';
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 
 import { CopyButton } from '~/components/CopyButton/CopyButton';

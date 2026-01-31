@@ -194,12 +194,11 @@ export function ResourceItemContent({
               {resource.model.name}
             </Text>
           )}
-          {resource.name &&
-            resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
-              <Text size="xs" c="dimmed" className="shrink-0">
-                ({resource.name})
-              </Text>
-            )}
+          {resource.name && resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
+            <Text size="xs" c="dimmed" className="shrink-0">
+              ({resource.name})
+            </Text>
+          )}
           {epochDetails?.epochNumber && (
             <Badge size="sm" color="dark.5" variant="filled" className="shrink-0">
               Epoch {epochDetails.epochNumber}
@@ -251,9 +250,7 @@ export function ResourceItemContent({
                 </ThemeIcon>
               </HoverCard.Target>
               <HoverCard.Dropdown>
-                <Text size="sm">
-                  This resource is private. You cannot use it for generation.
-                </Text>
+                <Text size="sm">This resource is private. You cannot use it for generation.</Text>
               </HoverCard.Dropdown>
             </HoverCard>
           )}
@@ -265,14 +262,16 @@ export function ResourceItemContent({
                 </ThemeIcon>
               </HoverCard.Target>
               <HoverCard.Dropdown>
-                <Text size="sm">
-                  This resource is not available for generation.
-                </Text>
+                <Text size="sm">This resource is not available for generation.</Text>
               </HoverCard.Dropdown>
             </HoverCard>
           )}
         </Group>
-        {actions && <Group gap={4} className="shrink-0">{actions}</Group>}
+        {actions && (
+          <Group gap={4} className="shrink-0">
+            {actions}
+          </Group>
+        )}
       </Group>
       {hasStrength && (
         <div className="mt-2 flex w-full items-center gap-2">

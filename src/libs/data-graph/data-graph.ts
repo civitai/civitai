@@ -463,6 +463,16 @@ export class DataGraph<
   /** Cached full context snapshot for getSnapshot() - invalidated on changes */
   private _ctxSnapshot: Ctx | null = null;
 
+  /** Cached full output snapshot for getOutputSnapshot() - invalidated on changes */
+  private _outputSnapshot: Ctx | null = null;
+
+  /**
+   * Output cache: stores values parsed through output schemas.
+   * Key → { source: original value reference, filtered: parsed output }
+   * Used to avoid re-parsing output schemas on every getOutputValue/validate call.
+   */
+  private outputCache = new Map<string, { source: unknown; filtered: unknown }>();
+
   /** Meta keys for tracking meta changes */
   private nodeMetaKeys = new Map<string, number>();
 
@@ -601,6 +611,7 @@ export class DataGraph<
    * Validate all nodes against output schemas.
    * If saveState=true, updates nodeErrors and strips extra fields from ctx.
    * Returns errors map and set of keys where error state changed.
+   * Uses output cache to skip re-parsing nodes that already validated successfully.
    */
   private _validate(saveState = true): { errors: Map<string, NodeError>; changed: Set<string> } {
     const errors = new Map<string, NodeError>();
@@ -613,8 +624,25 @@ export class DataGraph<
       const def = this.nodeDefs.get(entry.key);
       if (!def) continue;
 
-      const result = def.output.safeParse(this._ctx[entry.key as keyof Ctx]);
+      const currentValue = this._ctx[entry.key as keyof Ctx];
       const hadError = this.nodeErrors.has(entry.key);
+
+      // Check if we have a cached output for this value
+      const cached = this.outputCache.get(entry.key);
+      if (cached && Object.is(cached.source, currentValue)) {
+        // Cache hit - node already validated successfully
+        if (saveState) {
+          (this._ctx as Record<string, unknown>)[entry.key] = cached.filtered;
+          if (hadError) {
+            this.nodeErrors.delete(entry.key);
+            changed.add(entry.key);
+          }
+        }
+        continue;
+      }
+
+      // Cache miss - parse through output schema
+      const result = def.output.safeParse(currentValue);
 
       if (!result.success) {
         const issue = result.error.issues[0];
@@ -628,6 +656,8 @@ export class DataGraph<
           if (!hadError) changed.add(entry.key);
         }
       } else {
+        // Cache the successful parse result
+        this.outputCache.set(entry.key, { source: currentValue, filtered: result.data });
         if (saveState) {
           (this._ctx as Record<string, unknown>)[entry.key] = result.data;
           if (hadError) {
@@ -798,6 +828,64 @@ export class DataGraph<
     };
     root.snapshotCache.set(key, snapshot as NodeSnapshot<unknown, unknown>);
     return snapshot;
+  }
+
+  /**
+   * Get a node's value parsed through its output schema.
+   * Returns cached value if the source hasn't changed, otherwise parses and caches.
+   * If parsing fails (validation error), returns the original value.
+   */
+  getOutputValue<K extends keyof Ctx & string>(key: K): Ctx[K] {
+    const root = this.rootGraph;
+    const currentValue = (root._ctx as Ctx)[key];
+    const cached = root.outputCache.get(key);
+
+    // Return cached if source unchanged
+    if (cached && Object.is(cached.source, currentValue)) {
+      return cached.filtered as Ctx[K];
+    }
+
+    // Cache miss - parse through output schema
+    const def = root.nodeDefs.get(key);
+    if (!def?.output) return currentValue;
+
+    const result = def.output.safeParse(currentValue);
+    if (result.success) {
+      root.outputCache.set(key, { source: currentValue, filtered: result.data });
+      return result.data as Ctx[K];
+    }
+
+    // Validation failed - return original (let validate() handle errors)
+    return currentValue;
+  }
+
+  /**
+   * Get a snapshot with all values parsed through their output schemas.
+   * Useful for sending minimal, schema-conforming data to the server.
+   * Uses cached output values to avoid redundant parsing.
+   */
+  getOutputSnapshot(): Ctx {
+    const root = this.rootGraph;
+
+    // Return cached if available
+    if (root._outputSnapshot !== null) {
+      return root._outputSnapshot;
+    }
+
+    // Build output snapshot by getting output values for all keys
+    const snapshot = { ...root._ctx } as Record<string, unknown>;
+    for (const key of Object.keys(snapshot)) {
+      // Skip computed nodes - they don't have output schemas
+      if (root.computedNodes.has(key)) continue;
+
+      const def = root.nodeDefs.get(key);
+      if (def?.output) {
+        snapshot[key] = this.getOutputValue(key as keyof Ctx & string);
+      }
+    }
+
+    root._outputSnapshot = snapshot as Ctx;
+    return root._outputSnapshot;
   }
 
   setValueProvider(provider: ValueProvider<Ctx> | undefined): void {
@@ -1687,8 +1775,12 @@ export class DataGraph<
     if (changed.size > 0) {
       // Invalidate full context snapshot cache
       this._ctxSnapshot = null;
+      // Invalidate full output snapshot cache
+      this._outputSnapshot = null;
     }
     for (const key of changed) {
+      // Invalidate output cache for this specific key
+      this.outputCache.delete(key);
       this.notifyNodeWatchers(key);
     }
     for (const callback of this.globalWatchers) {

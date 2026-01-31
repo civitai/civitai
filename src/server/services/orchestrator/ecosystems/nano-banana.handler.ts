@@ -14,7 +14,10 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import { nanoBananaVersionIds, type NanoBananaMode } from '~/shared/data-graph/generation/nano-banana-graph';
+import {
+  nanoBananaVersionIds,
+  type NanoBananaMode,
+} from '~/shared/data-graph/generation/nano-banana-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph

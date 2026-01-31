@@ -125,6 +125,10 @@ export const ECO = {
   FluxKrea: 7,
   Flux1Kontext: 8,
   Flux2: 9,
+  Flux2Klein_9B: 54,
+  Flux2Klein_9B_base: 55,
+  Flux2Klein_4B: 56,
+  Flux2Klein_4B_base: 57,
   Qwen: 10,
   Chroma: 11,
   HyDit1: 12,
@@ -140,6 +144,7 @@ export const ECO = {
   Imagen4: 22,
   Seedream: 23,
   ZImageTurbo: 24,
+  ZImageBase: 53,
   SCascade: 25,
   PlaygroundV2: 26,
   ODOR: 27,
@@ -159,6 +164,7 @@ export const ECO = {
   WanVideo25_I2V: 40,
   CogVideoX: 41,
   LTXV: 42,
+  LTXV2: 58,
   Sora2: 43,
   Veo3: 44,
   SVD: 45,
@@ -215,6 +221,38 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Flux.2',
     familyId: 1,
     sortOrder: 3,
+  },
+  {
+    id: ECO.Flux2Klein_9B,
+    key: 'Flux2Klein_9B',
+    name: 'flux2klein_9b',
+    displayName: 'Flux.2 Klein 9B',
+    familyId: 1,
+    sortOrder: 4,
+  },
+  {
+    id: ECO.Flux2Klein_9B_base,
+    key: 'Flux2Klein_9B_base',
+    name: 'flux2klein_9b_base',
+    displayName: 'Flux.2 Klein 9B Base',
+    familyId: 1,
+    sortOrder: 5,
+  },
+  {
+    id: ECO.Flux2Klein_4B,
+    key: 'Flux2Klein_4B',
+    name: 'flux2klein_4b',
+    displayName: 'Flux.2 Klein 4B',
+    familyId: 1,
+    sortOrder: 6,
+  },
+  {
+    id: ECO.Flux2Klein_4B_base,
+    key: 'Flux2Klein_4B_base',
+    name: 'flux2klein_4b_base',
+    displayName: 'Flux.2 Klein 4B Base',
+    familyId: 1,
+    sortOrder: 7,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -488,7 +526,7 @@ export const ecosystems: EcosystemRecord[] = [
   // Qwen Family (familyId: 10)
   { id: ECO.Qwen, key: 'Qwen', name: 'qwen', displayName: 'Qwen', familyId: 10, sortOrder: 90 },
 
-  // ZImageTurbo Family (familyId: 11)
+  // ZImage Family (familyId: 11)
   {
     id: ECO.ZImageTurbo,
     key: 'ZImageTurbo',
@@ -496,6 +534,14 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'ZImageTurbo',
     familyId: 11,
     sortOrder: 100,
+  },
+  {
+    id: ECO.ZImageBase,
+    key: 'ZImageBase',
+    name: 'zimagebase',
+    displayName: 'ZImageBase',
+    familyId: 11,
+    sortOrder: 101,
   },
 
   // ByteDance Family (familyId: 12)
@@ -528,7 +574,8 @@ export const ecosystems: EcosystemRecord[] = [
   },
   { id: ECO.Kolors, key: 'Kolors', name: 'kolors', displayName: 'Kolors', sortOrder: 204 },
   { id: ECO.LTXV, key: 'LTXV', name: 'ltxv', displayName: 'LTX Video', sortOrder: 205 },
-  { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 206 },
+  { id: ECO.LTXV2, key: 'LTXV2', name: 'ltxv2', displayName: 'LTX Video 2', sortOrder: 206 },
+  { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 207 },
   {
     id: ECO.Mochi,
     key: 'Mochi',
@@ -644,6 +691,12 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Flux2 - checkpoint and LORA
   { ecosystemId: ECO.Flux2, supportType: 'generation', modelTypes: checkpointAndLora },
 
+  // Flux2 Klein variants - checkpoint and LORA
+  { ecosystemId: ECO.Flux2Klein_9B, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Flux2Klein_9B_base, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Flux2Klein_4B, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Flux2Klein_4B_base, supportType: 'generation', modelTypes: checkpointAndLora },
+
   // Chroma - full addon support
   { ecosystemId: ECO.Chroma, supportType: 'generation', modelTypes: fullAddonTypes },
   { ecosystemId: ECO.Chroma, supportType: 'training', modelTypes: [ModelType.LORA] },
@@ -710,7 +763,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
-
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -723,6 +775,13 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // ZImageTurbo - checkpoint and LORA
   { ecosystemId: ECO.ZImageTurbo, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.ZImageTurbo, supportType: 'training', modelTypes: [ModelType.LORA] },
+
+  // ZImageBase - checkpoint and LORA
+  { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: [ModelType.LORA] },
+
+  // LTXV2 - checkpoint and LORA
+  { ecosystemId: ECO.LTXV2, supportType: 'generation', modelTypes: checkpointAndLora },
 ];
 
 // =============================================================================
@@ -794,6 +853,38 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Flux2,
     defaults: {
       model: { id: 2439067 },
+    },
+  },
+  {
+    ecosystemId: ECO.Flux2Klein_9B,
+    defaults: {
+      model: { id: 2612554 },
+      width: 1024,
+      height: 1024,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux2Klein_9B_base,
+    defaults: {
+      model: { id: 2612548 },
+      width: 1024,
+      height: 1024,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux2Klein_4B,
+    defaults: {
+      model: { id: 2612557 },
+      width: 1024,
+      height: 1024,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux2Klein_4B_base,
+    defaults: {
+      model: { id: 2612552 },
+      width: 1024,
+      height: 1024,
     },
   },
   {
@@ -920,6 +1011,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.LTXV2,
+    defaults: {
+      model: { id: 2734043 },
+      engine: 'ltx2',
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.Veo3,
     defaults: {
       model: { id: 1885367 },
@@ -955,6 +1054,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.ZImageTurbo,
     defaults: {
       model: { id: 2442439 },
+      width: 1024,
+      height: 1024,
+    },
+  },
+  {
+    ecosystemId: ECO.ZImageBase,
+    defaults: {
+      model: { id: 2635223 },
       width: 1024,
       height: 1024,
     },
@@ -1229,6 +1336,18 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: [ModelType.LORA],
     support: 'partial',
   },
+
+  // ==========================================================================
+  // ZImage Family Cross-Support
+  // ==========================================================================
+  // ZImageBase LORA works partially in ZImageTurbo
+  {
+    sourceEcosystemId: ECO.ZImageBase,
+    targetEcosystemId: ECO.ZImageTurbo,
+    supportType: 'generation',
+    modelTypes: [ModelType.LORA],
+    support: 'partial',
+  },
 ];
 
 // =============================================================================
@@ -1245,6 +1364,10 @@ export const BM = {
   Flux1Krea: 6,
   Flux1Kontext: 7,
   Flux2D: 8,
+  Flux2Klein_9B: 73,
+  Flux2Klein_9B_base: 74,
+  Flux2Klein_4B: 75,
+  Flux2Klein_4B_base: 76,
   HiDream: 9,
   Hunyuan1: 10,
   HunyuanVideo: 11,
@@ -1252,6 +1375,7 @@ export const BM = {
   Imagen4: 13,
   Kolors: 14,
   LTXV: 15,
+  LTXV2: 72,
   Lumina: 16,
   Mochi: 17,
   NanoBanana: 18,
@@ -1303,6 +1427,7 @@ export const BM = {
   WanVideo25T2V: 64,
   WanVideo25I2V: 65,
   ZImageTurbo: 66,
+  ZImageBase: 71,
   Vidu: 67,
   MiniMax: 68,
   Kling: 69,
@@ -1524,8 +1649,8 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   },
   {
     id: 11,
-    name: 'ZImageTurbo',
-    description: 'Fast turbo-optimized image generation models',
+    name: 'ZImage',
+    description: 'Z Image generation models',
   },
   {
     id: 12,
@@ -1614,6 +1739,38 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.Flux2,
     licenseId: 14,
   },
+  {
+    id: BM.Flux2Klein_9B,
+    name: 'Flux.2 Klein 9B',
+    description: 'Flux.2 Klein 9 billion parameter distilled model',
+    type: 'image',
+    ecosystemId: ECO.Flux2Klein_9B,
+    licenseId: 14,
+  },
+  {
+    id: BM.Flux2Klein_9B_base,
+    name: 'Flux.2 Klein 9B Base',
+    description: 'Flux.2 Klein 9 billion parameter base model',
+    type: 'image',
+    ecosystemId: ECO.Flux2Klein_9B_base,
+    licenseId: 14,
+  },
+  {
+    id: BM.Flux2Klein_4B,
+    name: 'Flux.2 Klein 4B',
+    description: 'Flux.2 Klein 4 billion parameter distilled model',
+    type: 'image',
+    ecosystemId: ECO.Flux2Klein_4B,
+    licenseId: 14,
+  },
+  {
+    id: BM.Flux2Klein_4B_base,
+    name: 'Flux.2 Klein 4B Base',
+    description: 'Flux.2 Klein 4 billion parameter base model',
+    type: 'image',
+    ecosystemId: ECO.Flux2Klein_4B_base,
+    licenseId: 14,
+  },
 
   // HiDream
   {
@@ -1681,6 +1838,14 @@ export const baseModels: BaseModelRecord[] = [
     description: "Lightricks' efficient video generation model for fast rendering",
     type: 'video',
     ecosystemId: ECO.LTXV,
+    licenseId: 16,
+  },
+  {
+    id: BM.LTXV2,
+    name: 'LTXV2',
+    description: "Lightricks' next-generation video generation model",
+    type: 'video',
+    ecosystemId: ECO.LTXV2,
     licenseId: 16,
   },
 
@@ -2168,6 +2333,16 @@ export const baseModels: BaseModelRecord[] = [
     description: 'Fast turbo-optimized image generation model',
     type: 'image',
     ecosystemId: ECO.ZImageTurbo,
+    licenseId: 13,
+  },
+
+  // ZImageBase
+  {
+    id: BM.ZImageBase,
+    name: 'ZImageBase',
+    description: 'Base image generation model',
+    type: 'image',
+    ecosystemId: ECO.ZImageBase,
     licenseId: 13,
   },
 

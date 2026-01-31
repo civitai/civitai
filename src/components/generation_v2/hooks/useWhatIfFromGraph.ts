@@ -78,10 +78,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
   // Get current snapshot for building the query
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const snapshot = useMemo(
-    () => graph.getSnapshot() as Record<string, unknown>,
-    [revision, graph]
-  );
+  const snapshot = useMemo(() => graph.getSnapshot() as Record<string, unknown>, [revision, graph]);
 
   // Update committed prompt when not focused
   useEffect(() => {
@@ -122,13 +119,17 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // Build the query payload using the lighter cost check
   // Filter out computed nodes and disabled resources
   // Use stale prompt value when prompt is focused to avoid blur race condition
+  // Uses getOutputSnapshot() to get values filtered through output schemas
   const queryPayload = useMemo(() => {
     if (!snapshot || !canEstimateCost) return null;
 
+    // Get output-schema-filtered snapshot (cached, minimal overhead)
+    const outputSnapshot = graph.getOutputSnapshot() as Record<string, unknown>;
+
     // When focused, use committed prompt value to avoid race conditions with submit
     // When not focused, use current snapshot value directly (effect updates ref for next focus)
-    const promptValue = promptFocused ? promptRef.current : (snapshot.prompt as string);
-    const snapshotForQuery = { ...snapshot, prompt: promptValue };
+    const promptValue = promptFocused ? promptRef.current : (outputSnapshot.prompt as string);
+    const snapshotForQuery = { ...outputSnapshot, prompt: promptValue };
 
     return filterSnapshotForSubmit(snapshotForQuery, {
       computedKeys: graph.getComputedKeys(),

@@ -671,7 +671,9 @@ export function createCheckpointGraph(options?: {
         return {
           input: checkpointInputSchema,
           output: resourceSchema.optional(),
-          defaultValue: modelVersionId ? { id: modelVersionId, model: { type: 'Checkpoint' } } : undefined,
+          defaultValue: modelVersionId
+            ? { id: modelVersionId, model: { type: 'Checkpoint' } }
+            : undefined,
           // Meta is computed from value to derive excludeIds
           meta: (_ctx, _ext, value: ResourceData | undefined) => ({
             options: {

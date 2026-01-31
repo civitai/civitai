@@ -51,6 +51,10 @@ const TXT2IMG_IDS = [
   ECO.FluxKrea,
   ECO.Flux1Kontext,
   ECO.Flux2,
+  ECO.Flux2Klein_9B,
+  ECO.Flux2Klein_9B_base,
+  ECO.Flux2Klein_4B,
+  ECO.Flux2Klein_4B_base,
   // Other image ecosystems
   ECO.Chroma,
   ECO.Qwen,
@@ -61,11 +65,13 @@ const TXT2IMG_IDS = [
   ECO.Seedream,
   ECO.PonyV7,
   ECO.ZImageTurbo,
+  ECO.ZImageBase,
 ];
 
 /** Video ecosystems that support txt2vid */
 const TXT2VID_IDS = [
   ECO.HyV1,
+  ECO.LTXV2,
   ECO.WanVideo,
   ECO.WanVideo14B_T2V,
   ECO.WanVideo22_TI2V_5B,
@@ -174,7 +180,18 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Image Edit',
     description: 'Edit specific parts of an image with prompts',
     category: 'image-to-image',
-    ecosystemIds: [ECO.Qwen, ECO.Seedream, ECO.NanoBanana, ECO.OpenAI, ECO.Flux2, ECO.Flux1Kontext],
+    ecosystemIds: [
+      ECO.Qwen,
+      ECO.Seedream,
+      ECO.NanoBanana,
+      ECO.OpenAI,
+      ECO.Flux2,
+      ECO.Flux2Klein_9B,
+      ECO.Flux2Klein_9B_base,
+      ECO.Flux2Klein_4B,
+      ECO.Flux2Klein_4B_base,
+      ECO.Flux1Kontext,
+    ],
     nodes: {
       images: { max: 7, min: 1 },
     },

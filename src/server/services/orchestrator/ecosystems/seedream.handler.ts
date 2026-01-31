@@ -24,26 +24,28 @@ const versionIdToVersion = new Map<number, SeedreamVersion>(
  * Creates imageGen input for Seedream ecosystem.
  * Handles both txt2img and img2img operations.
  */
-export const createSeedreamInput = defineHandler<SeedreamCtx, SeedreamImageGenInput>((data, ctx) => {
-  const quantity = data.quantity ?? 1;
+export const createSeedreamInput = defineHandler<SeedreamCtx, SeedreamImageGenInput>(
+  (data, ctx) => {
+    const quantity = data.quantity ?? 1;
 
-  // Determine version from model
-  let version: SeedreamVersion = 'v4.5';
-  if (data.model) {
-    const match = versionIdToVersion.get(data.model.id);
-    if (match) version = match;
+    // Determine version from model
+    let version: SeedreamVersion = 'v4.5';
+    if (data.model) {
+      const match = versionIdToVersion.get(data.model.id);
+      if (match) version = match;
+    }
+
+    return removeEmpty({
+      engine: 'seedream',
+      prompt: data.prompt,
+      width: data.aspectRatio?.width,
+      height: data.aspectRatio?.height,
+      version,
+      images: data.images?.map((x) => x.url),
+      guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
+      enableSafetyChecker: false,
+      seed: data.seed,
+      quantity,
+    }) as SeedreamImageGenInput;
   }
-
-  return removeEmpty({
-    engine: 'seedream',
-    prompt: data.prompt,
-    width: data.aspectRatio?.width,
-    height: data.aspectRatio?.height,
-    version,
-    images: data.images?.map((x) => x.url),
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    enableSafetyChecker: false,
-    seed: data.seed,
-    quantity,
-  }) as SeedreamImageGenInput;
-});
+);
