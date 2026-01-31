@@ -40,9 +40,11 @@ async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
   }
 }
 
-export async function refreshSession(userId: number) {
+export async function refreshSession(userId: number, { sendSignal = true } = {}) {
   const userTokens = await updateSessionState(userId, 'refresh');
-  await sendSessionSignal(userId, 'refresh');
+  if (sendSignal) {
+    await sendSessionSignal(userId, 'refresh');
+  }
 
   log(`Refreshed session for user ${userId} - ${userTokens.length} token(s) marked for refresh`);
 }
