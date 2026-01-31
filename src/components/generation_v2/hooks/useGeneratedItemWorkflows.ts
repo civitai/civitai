@@ -133,6 +133,26 @@ interface ApplyWorkflowOptions {
   step: Omit<NormalizedGeneratedImageStep, 'images'>;
 }
 
+/** Check if workflow switches media type (e.g., img2vid) */
+function isCrossMediaWorkflow(image: NormalizedGeneratedImage, workflowId: string): boolean {
+  const currentOutputType = image.type === 'video' ? 'video' : 'image';
+  return currentOutputType !== getOutputTypeForWorkflow(workflowId);
+}
+
+/**
+ * Get the target ecosystem for a workflow, respecting stored preferences.
+ * - Cross-media: use stored preference (image's ecosystem can't work for different media)
+ * - Same-media: use image's ecosystem, falling back to stored preference
+ */
+function getTargetEcosystemKey(
+  workflowId: string,
+  ecosystemKey: string | undefined,
+  isCrossMedia: boolean
+): string | undefined {
+  if (isCrossMedia) return workflowPreferences.getPreferredEcosystem(workflowId);
+  return ecosystemKey ?? workflowPreferences.getPreferredEcosystem(workflowId);
+}
+
 /**
  * Send generated output data to the generation form for a specific workflow.
  */
@@ -140,30 +160,13 @@ async function applyWorkflowToForm({
   workflowId,
   image,
   step,
-  targetEcosystemKey,
-  isIncompatible,
-}: ApplyWorkflowOptions & { targetEcosystemKey?: string; isIncompatible?: boolean }) {
-  // Close lightbox if open
+  baseModel,
+  clearResources,
+}: ApplyWorkflowOptions & { baseModel?: string; clearResources: boolean }) {
   dialogStore.closeById('generated-image');
 
   const outputType = getOutputTypeForWorkflow(workflowId);
   const inputType = getInputTypeForWorkflow(workflowId);
-  const isStandalone = (workflowConfigByKey.get(workflowId)?.ecosystemIds.length ?? 0) === 0;
-
-  // Check if this is a cross-media workflow (output type differs from input media)
-  const currentOutputType = image.type === 'video' ? 'video' : 'image';
-  const isCrossMedia = currentOutputType !== outputType;
-
-  // Determine if we need to switch ecosystems
-  // This happens for cross-media workflows OR when current ecosystem is incompatible
-  const needsEcosystemSwitch = isCrossMedia || isIncompatible;
-
-  // Always use explicit target if provided (ensures stored preference is respected)
-  // For ecosystem switches without explicit target, fall back to stored preference
-  const baseModel =
-    targetEcosystemKey ??
-    (needsEcosystemSwitch ? workflowPreferences.getPreferredEcosystem(workflowId) : undefined);
-
   const sourceImage =
     inputType === 'image' ? await getSourceImageFromUrl({ url: image.url }) : undefined;
 
@@ -175,19 +178,16 @@ async function applyWorkflowToForm({
       negativePrompt: (step.params as Record<string, unknown>).negativePrompt,
       ...(sourceImage ? { images: [sourceImage] } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
-      // Include baseModel when switching ecosystems to use stored preference
       ...(baseModel ? { baseModel } : {}),
     },
-    // Don't carry over resources when switching ecosystems (different ecosystem = different resources)
-    resources: isStandalone || needsEcosystemSwitch ? [] : (step.resources as any),
+    resources: clearResources ? [] : (step.resources as any),
     runType: 'patch',
   });
 }
 
 /**
  * Apply a workflow to the form with a compatibility check.
- * If the workflow is incompatible with the output's ecosystem, shows a
- * confirmation modal before proceeding.
+ * Shows confirmation modal for incompatible workflows before proceeding.
  */
 export function applyWorkflowWithCheck({
   workflowId,
@@ -196,22 +196,18 @@ export function applyWorkflowWithCheck({
   step,
   compatible,
 }: ApplyWorkflowOptions & { ecosystemKey?: string; compatible: boolean }) {
-  // For incompatible workflows, show confirmation modal
-  if (!compatible) {
-    // First check for stored preference, then fall back to first compatible ecosystem
-    const storedPreference = workflowPreferences.getPreferredEcosystem(workflowId);
-    const storedEcosystem = storedPreference ? ecosystemByKey.get(storedPreference) : undefined;
+  const isCrossMedia = isCrossMediaWorkflow(image, workflowId);
+  const isStandalone = (workflowConfigByKey.get(workflowId)?.ecosystemIds.length ?? 0) === 0;
 
-    // Use stored preference if available, otherwise get first compatible
-    const target = storedEcosystem
-      ? {
-          id: storedEcosystem.id,
-          key: storedEcosystem.key,
-          displayName: storedEcosystem.displayName,
-        }
+  // Show confirmation modal for incompatible same-media workflows
+  if (!compatible && ecosystemKey) {
+    const storedPref = workflowPreferences.getPreferredEcosystem(workflowId);
+    const storedEco = storedPref ? ecosystemByKey.get(storedPref) : undefined;
+    const target = storedEco
+      ? { key: storedEco.key, displayName: storedEco.displayName }
       : getValidEcosystemForWorkflow(workflowId, ecosystemKey);
 
-    if (target && ecosystemKey) {
+    if (target) {
       openCompatibilityConfirmModal({
         pendingChange: {
           type: 'workflow',
@@ -225,30 +221,22 @@ export function applyWorkflowWithCheck({
             workflowId,
             image,
             step,
-            targetEcosystemKey: target.key,
-            isIncompatible: true,
+            baseModel: target.key,
+            clearResources: true,
           }),
       });
       return;
     }
   }
-  // Check if this is a cross-media workflow (e.g., img2vid)
-  // For cross-media, the image's ecosystem is never compatible with the workflow
-  const currentOutputType = image.type === 'video' ? 'video' : 'image';
-  const workflowOutputType = getOutputTypeForWorkflow(workflowId);
-  const isCrossMedia = currentOutputType !== workflowOutputType;
 
-  // For cross-media workflows, use stored preference (image's ecosystem can't work)
-  // For same-media compatible workflows, use image's ecosystem
-  const targetEcosystem = isCrossMedia
-    ? workflowPreferences.getPreferredEcosystem(workflowId)
-    : ecosystemKey ?? workflowPreferences.getPreferredEcosystem(workflowId);
+  // Clear resources when switching ecosystems (cross-media, incompatible, or standalone)
+  const clearResources = isStandalone || isCrossMedia || !compatible;
 
   applyWorkflowToForm({
     workflowId,
     image,
     step,
-    targetEcosystemKey: targetEcosystem,
-    isIncompatible: !compatible,
+    baseModel: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia),
+    clearResources,
   });
 }
