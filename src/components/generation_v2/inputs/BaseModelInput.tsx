@@ -120,7 +120,8 @@ interface BaseModelListContentProps {
   value?: string;
   recentItems: EcosystemItem[];
   groupedByFamily: FamilyGroup[];
-  getTargetWorkflow?: string;
+  /** Get the target workflow label for an incompatible ecosystem */
+  getTargetWorkflow?: (ecosystemKey: string) => string;
   onSelect: (key: string) => void;
   /** Whether there are any incompatible items */
   hasIncompatibleItems?: boolean;
@@ -324,7 +325,8 @@ interface BaseModelSelectModalProps {
   value?: string;
   recentItems: EcosystemItem[];
   groupedByFamily: FamilyGroup[];
-  getTargetWorkflow?: string;
+  /** Get the target workflow label for an incompatible ecosystem */
+  getTargetWorkflow?: (ecosystemKey: string) => string;
   onSelect: (key: string) => void;
   hasIncompatibleItems?: boolean;
   activeTab: TabValue;
