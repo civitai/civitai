@@ -845,6 +845,8 @@ export type ComicProjectStatus = (typeof ComicProjectStatus)[keyof typeof ComicP
 export const ComicCharacterStatus = {
   Pending: 'Pending',
   Processing: 'Processing',
+  Training: 'Training',
+  GeneratingRefs: 'GeneratingRefs',
   Ready: 'Ready',
   Failed: 'Failed',
 } as const;

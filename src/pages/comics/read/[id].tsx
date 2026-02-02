@@ -15,6 +15,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import styles from '../Comics.module.scss';
 
@@ -59,9 +60,7 @@ function PublicComicReader() {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Project = NonNullable<
-  ReturnType<typeof trpc.comics.getPublicProjectForReader.useQuery>['data']
->;
+type Project = RouterOutput['comics']['getPublicProjectForReader'];
 
 // ─── Overview / Landing Page ─────────────────────────────────────────────────
 

@@ -10,6 +10,7 @@ import {
   Progress,
   SegmentedControl,
   Stack,
+  Switch,
   Text,
   TextInput,
   Title,
@@ -52,11 +53,13 @@ function CharacterUpload() {
 
   const [sourceType, setSourceType] = useState<CharacterSource>('existing');
   const [characterName, setCharacterName] = useState('');
+  const [saveToLibrary, setSaveToLibrary] = useState(false);
 
   // Upload flow state
   const [images, setImages] = useState<{ file: File; preview: string }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const { uploadToCF: uploadTrainingImageToCF } = useCFImageUpload();
 
   // Existing model flow state
   const [searchQuery, setSearchQuery] = useState('');
@@ -96,9 +99,32 @@ function CharacterUpload() {
     return map;
   }, [coverImages]);
 
+  const [newCharacterId, setNewCharacterId] = useState<string | null>(null);
+
   const createFromUploadMutation = trpc.comics.createCharacterFromUpload.useMutation({
+    onSuccess: (data) => {
+      setNewCharacterId(data.id);
+      // Auto-trigger training after character creation
+      submitTrainingMutation.mutate({ characterId: data.id });
+    },
+  });
+
+  const submitTrainingMutation = trpc.comics.submitCharacterTraining.useMutation({
     onSuccess: () => {
-      router.push(`/comics/project/${projectId}`);
+      // If this was a new character creation, redirect to project
+      if (newCharacterId) {
+        router.push(`/comics/project/${projectId}`);
+      } else {
+        // Retry case — refetch to update status
+        refetchProject();
+      }
+    },
+    onError: () => {
+      if (newCharacterId) {
+        router.push(`/comics/project/${projectId}`);
+      } else {
+        refetchProject();
+      }
     },
   });
 
@@ -107,6 +133,15 @@ function CharacterUpload() {
       router.push(`/comics/project/${projectId}`);
     },
   });
+
+  // Training cost estimate
+  const { data: trainingCostData, isLoading: isLoadingCost } =
+    trpc.comics.getTrainingCostEstimate.useQuery(
+      { imageCount: Math.max(3, images.length) },
+      { enabled: sourceType === 'upload' && images.length >= 3, staleTime: 5 * 60 * 1000 }
+    );
+  const trainingCost = trainingCostData?.cost ?? 0;
+  const trainingCostReady = trainingCostData?.ready ?? false;
 
   const utils = trpc.useUtils();
 
@@ -135,18 +170,18 @@ function CharacterUpload() {
     setUploadProgress(0);
 
     try {
-      // TODO: In production, upload images to S3 here
-      const imageUrls = images.map(
-        (_, i) => `https://placeholder.civitai.com/character/${projectId}/${i}.jpg`
-      );
-
-      for (let i = 0; i <= 100; i += 20) {
-        setUploadProgress(i);
-        await new Promise((r) => setTimeout(r, 200));
+      // Upload images to CloudFlare
+      const imageUrls: string[] = [];
+      for (let i = 0; i < images.length; i++) {
+        setUploadProgress(Math.round(((i + 1) / images.length) * 80));
+        const result = await uploadTrainingImageToCF(images[i].file);
+        imageUrls.push(result.id);
       }
 
+      setUploadProgress(90);
+
       createFromUploadMutation.mutate({
-        projectId,
+        ...(saveToLibrary ? {} : { projectId }),
         name: characterName.trim(),
         referenceImages: imageUrls,
       });
@@ -161,7 +196,7 @@ function CharacterUpload() {
     if (!selectedModel || !characterName.trim()) return;
 
     createFromModelMutation.mutate({
-      projectId,
+      ...(saveToLibrary ? {} : { projectId }),
       name: characterName.trim(),
       modelId: selectedModel.id,
       modelVersionId: selectedModel.versionId,
@@ -171,13 +206,17 @@ function CharacterUpload() {
   const characterId = router.query.characterId as string | undefined;
   const existingCharacter = characterId
     ? project?.characters?.find((c) => c.id === characterId)
+      ?? project?.libraryCharacters?.find((c) => c.id === characterId)
     : undefined;
 
   // Poll for character status when in Pending/Processing state
   useEffect(() => {
     if (
       !existingCharacter ||
-      (existingCharacter.status !== 'Pending' && existingCharacter.status !== 'Processing')
+      (existingCharacter.status !== 'Pending' &&
+       existingCharacter.status !== 'Processing' &&
+       existingCharacter.status !== 'Training' &&
+       existingCharacter.status !== 'GeneratingRefs')
     ) {
       return;
     }
@@ -252,6 +291,36 @@ function CharacterUpload() {
     });
   };
 
+  // If characterId is in URL but character not found, show not-found state
+  if (characterId && !existingCharacter && project) {
+    return (
+      <>
+        <Meta title={`Character Not Found - ${project?.name} - Civitai Comics`} />
+        <Container size="md" py="xl">
+          <Stack gap="xl">
+            <Group>
+              <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
+                <IconArrowLeft size={20} />
+              </ActionIcon>
+              <Title order={2}>Character Not Found</Title>
+            </Group>
+            <Card withBorder p="xl">
+              <Stack align="center" gap="lg">
+                <IconAlertTriangle size={40} className="text-yellow-500" />
+                <Text c="dimmed">
+                  This character could not be found in the project or your library.
+                </Text>
+                <Button component={Link} href={`/comics/project/${projectId}`}>
+                  Back to Project
+                </Button>
+              </Stack>
+            </Card>
+          </Stack>
+        </Container>
+      </>
+    );
+  }
+
   // If character already exists, show status + ref image management
   if (existingCharacter) {
     const isExistingModel = existingCharacter.sourceType === 'ExistingModel';
@@ -290,16 +359,26 @@ function CharacterUpload() {
                   </Text>
                   <Text c={isFailed ? 'red' : 'dimmed'} size="sm">
                     {isFailed
-                      ? 'Reference image generation failed'
+                      ? existingCharacter.sourceType === 'Upload' && !existingCharacter.modelVersionId
+                        ? 'Character training failed'
+                        : 'Reference image generation failed'
                       : existingCharacter.status === 'Ready'
                         ? hasRefs
                           ? 'Ready to use'
-                          : 'No reference images yet'
-                        : existingCharacter.status === 'Processing'
-                          ? isExistingModel
-                            ? 'Generating reference images...'
-                            : 'Training your character...'
-                          : 'Queued for processing'}
+                          : 'Ready to use. Generate reference images for previews.'
+                        : existingCharacter.status === 'Training'
+                          ? 'Your character LoRA is being trained...'
+                          : existingCharacter.status === 'GeneratingRefs'
+                            ? 'Generating reference images (front, side, back)...'
+                            : existingCharacter.status === 'Processing'
+                              ? isExistingModel
+                                ? 'Generating reference images...'
+                                : 'Training your character...'
+                              : existingCharacter.status === 'Pending'
+                                ? existingCharacter.sourceType === 'Upload'
+                                  ? "Training hasn't started yet."
+                                  : 'Queued for processing'
+                                : 'Queued for processing'}
                   </Text>
                 </div>
 
@@ -317,13 +396,19 @@ function CharacterUpload() {
                   </Alert>
                 )}
 
-                {existingCharacter.status === 'Processing' && (
+                {(existingCharacter.status === 'Processing' ||
+                  existingCharacter.status === 'Training' ||
+                  existingCharacter.status === 'GeneratingRefs') && (
                   <Stack gap="xs" w="100%" maw={300}>
                     <Progress value={55} animated />
                     <Text size="xs" c="dimmed" ta="center">
-                      {isExistingModel
-                        ? 'Generating front, side, and back reference views'
-                        : 'Training usually takes 5-10 minutes'}
+                      {existingCharacter.status === 'Training'
+                        ? 'Training usually takes 5-10 minutes'
+                        : existingCharacter.status === 'GeneratingRefs'
+                          ? 'Generating front, side, and back reference views'
+                          : isExistingModel
+                            ? 'Generating front, side, and back reference views'
+                            : 'Training usually takes 5-10 minutes'}
                     </Text>
                   </Stack>
                 )}
@@ -368,8 +453,38 @@ function CharacterUpload() {
                   </Stack>
                 )}
 
-                {/* Reference image actions — for Ready or Failed state with ExistingModel */}
-                {(existingCharacter.status === 'Ready' || isFailed) && isExistingModel && (
+                {/* Start Training button for Pending Upload characters */}
+                {existingCharacter.status === 'Pending' && existingCharacter.sourceType === 'Upload' && (
+                  <Stack gap="sm" w="100%" maw={400}>
+                    <Group justify="center" gap="sm">
+                      <Button
+                        color="yellow"
+                        onClick={() => submitTrainingMutation.mutate({ characterId: existingCharacter.id })}
+                        loading={submitTrainingMutation.isPending}
+                      >
+                        Start Training
+                      </Button>
+                    </Group>
+                  </Stack>
+                )}
+
+                {/* Training retry for Upload characters that failed (no model yet) */}
+                {isFailed && existingCharacter.sourceType === 'Upload' && !existingCharacter.modelVersionId && (
+                  <Stack gap="sm" w="100%" maw={400}>
+                    <Group justify="center" gap="sm">
+                      <Button
+                        color="yellow"
+                        onClick={() => submitTrainingMutation.mutate({ characterId: existingCharacter.id })}
+                        loading={submitTrainingMutation.isPending}
+                      >
+                        Retry Training
+                      </Button>
+                    </Group>
+                  </Stack>
+                )}
+
+                {/* Reference image actions — for Ready or Failed+has-model state */}
+                {(existingCharacter.status === 'Ready' || (isFailed && (isExistingModel || existingCharacter.modelVersionId))) && (
                   <Stack gap="sm" w="100%" maw={400}>
                     <Group justify="center" gap="sm">
                       <BuzzTransactionButton
@@ -620,6 +735,14 @@ function CharacterUpload() {
                   onChange={(e) => setCharacterName(e.target.value)}
                 />
 
+                <Switch
+                  label="Save to My Library"
+                  description="Library characters can be used across all your projects"
+                  checked={saveToLibrary}
+                  onChange={(e) => setSaveToLibrary(e.currentTarget.checked)}
+                  color="yellow"
+                />
+
                 <Group justify="space-between">
                   <Text c="dimmed" size="sm">
                     Free — uses your existing model
@@ -637,7 +760,7 @@ function CharacterUpload() {
                       disabled={!selectedModel || !characterName.trim()}
                       loading={createFromModelMutation.isPending}
                     >
-                      Add Character
+                      {saveToLibrary ? 'Add to Library' : 'Add Character'}
                     </Button>
                   </Group>
                 </Group>
@@ -746,9 +869,27 @@ function CharacterUpload() {
                   </Stack>
                 )}
 
+                <Switch
+                  label="Save to My Library"
+                  description="Library characters can be used across all your projects"
+                  checked={saveToLibrary}
+                  onChange={(e) => setSaveToLibrary(e.currentTarget.checked)}
+                  color="yellow"
+                  disabled={isUploading}
+                />
+
                 <Group justify="space-between">
                   <Text c="dimmed" size="sm">
-                    Cost: 50 Buzz (training)
+                    Training cost:{' '}
+                    {images.length < 3
+                      ? '~50 Buzz (est.)'
+                      : isLoadingCost
+                        ? 'Estimating...'
+                        : trainingCost > 0
+                          ? `~${trainingCost} Buzz`
+                          : trainingCostReady
+                            ? 'Free'
+                            : '~50 Buzz (est.)'}
                   </Text>
                   <Group>
                     <Button
@@ -764,7 +905,7 @@ function CharacterUpload() {
                       disabled={images.length < 3 || !characterName.trim()}
                       loading={isUploading || createFromUploadMutation.isPending}
                     >
-                      Train Character
+                      {saveToLibrary ? 'Train & Save to Library' : 'Train Character'}
                     </Button>
                   </Group>
                 </Group>
@@ -777,4 +918,4 @@ function CharacterUpload() {
   );
 }
 
-export default Page(CharacterUpload, { withScrollArea: false });
+export default Page(CharacterUpload);

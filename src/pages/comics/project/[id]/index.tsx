@@ -120,6 +120,12 @@ function ProjectWorkspace() {
     { enabled: !!projectId }
   );
 
+  // Dynamic cost estimate from orchestrator
+  const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000, // cache for 5 minutes
+  });
+  const panelCost = costEstimate?.cost ?? 25; // fallback to 25 if unavailable
+
   // Set active chapter to first chapter on load
   useEffect(() => {
     if (project?.chapters?.length && !activeChapterId) {
@@ -127,13 +133,19 @@ function ProjectWorkspace() {
     }
   }, [project?.chapters, activeChapterId]);
 
+  // Combine project characters and library characters
+  const allCharacters = useMemo(() => [
+    ...(project?.characters ?? []),
+    ...(project?.libraryCharacters ?? []),
+  ], [project?.characters, project?.libraryCharacters]);
+
   // Fetch cover images for characters that have a linked model
   const characterModelEntities = useMemo(
     () =>
-      (project?.characters ?? [])
+      allCharacters
         .filter((c) => c.modelId)
         .map((c) => ({ entityType: 'Model' as const, entityId: c.modelId! })),
-    [project?.characters]
+    [allCharacters]
   );
   const { data: characterCoverImages } = trpc.image.getEntitiesCoverImage.useQuery(
     { entities: characterModelEntities },
@@ -245,10 +257,15 @@ function ProjectWorkspace() {
   // Poll for characters in Pending/Processing state
   const processingCharacterIds = useMemo(
     () =>
-      (project?.characters ?? [])
-        .filter((c) => c.status === 'Pending' || c.status === 'Processing')
+      allCharacters
+        .filter((c) =>
+          c.status === 'Pending' ||
+          c.status === 'Processing' ||
+          c.status === 'Training' ||
+          c.status === 'GeneratingRefs'
+        )
         .map((c) => c.id),
-    [project?.characters]
+    [allCharacters]
   );
 
   useEffect(() => {
@@ -275,11 +292,11 @@ function ProjectWorkspace() {
   // Build character name map for panel cards
   const characterNameMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const c of project?.characters ?? []) {
+    for (const c of allCharacters) {
       map.set(c.id, c.name);
     }
     return map;
-  }, [project?.characters]);
+  }, [allCharacters]);
 
   if (isLoading || !project) {
     return (
@@ -292,7 +309,7 @@ function ProjectWorkspace() {
     );
   }
 
-  const activeCharacters = project.characters.filter((c) => c.status === 'Ready');
+  const activeCharacters = allCharacters.filter((c) => c.status === 'Ready');
   const activeCharacter = activeCharacters.find((c) => c.id === selectedCharacterId)
     ?? activeCharacters[0]
     ?? null;
@@ -444,6 +461,8 @@ function ProjectWorkspace() {
     if (status === 'Failed') return styles.failed;
     if (status === 'Ready' && !hasRefs) return styles.noRefs;
     if (status === 'Ready') return styles.ready;
+    if (status === 'Training') return styles.training;
+    if (status === 'GeneratingRefs') return styles.generatingRefs;
     if (status === 'Processing') return styles.processing;
     return styles.pending;
   };
@@ -451,7 +470,9 @@ function ProjectWorkspace() {
   const getStatusLabel = (status: string, hasRefs: boolean, isFailed: boolean) => {
     if (isFailed) return 'Failed';
     if (status === 'Ready' && !hasRefs) return 'No refs';
-    if (status === 'Processing') return 'Generating refs...';
+    if (status === 'Training') return 'Training...';
+    if (status === 'GeneratingRefs') return 'Generating refs...';
+    if (status === 'Processing') return 'Processing...';
     return status;
   };
 
@@ -532,7 +553,7 @@ function ProjectWorkspace() {
               </div>
 
               <Stack gap={8}>
-                {project.characters.length === 0 ? (
+                {allCharacters.length === 0 ? (
                   <div className="flex flex-col items-center py-8 text-center">
                     <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
                     <Text size="sm" c="dimmed" mb="md">No characters yet</Text>
@@ -545,77 +566,47 @@ function ProjectWorkspace() {
                     </button>
                   </div>
                 ) : (
-                  project.characters.map((character) => {
-                    const coverImage = character.modelId ? characterImageMap.get(character.modelId) : undefined;
-                    const charRefs = character.generatedReferenceImages as any[] | null;
-                    const charHasRefs = (charRefs?.length ?? 0) > 0 ||
-                      ((character.referenceImages as any[] | null)?.length ?? 0) > 0;
-                    const isFailed = character.status === 'Failed';
-                    const isReady = character.status === 'Ready';
-                    const isSelected = selectedCharacterId === character.id ||
-                      (!selectedCharacterId && activeCharacter?.id === character.id);
+                  <>
+                    {/* Project characters */}
+                    {(project.characters ?? []).length > 0 && (
+                      <>
+                        <Text size="xs" c="dimmed" fw={600} mt={4} mb={-4} px={4}>Project</Text>
+                        {project.characters.map((character) => (
+                          <CharacterSidebarItem
+                            key={character.id}
+                            character={character}
+                            projectId={projectId}
+                            isSelected={selectedCharacterId === character.id || (!selectedCharacterId && activeCharacter?.id === character.id)}
+                            characterImageMap={characterImageMap}
+                            onSelect={setSelectedCharacterId}
+                            onDelete={handleDeleteCharacter}
+                            getStatusDotClass={getStatusDotClass}
+                            getStatusLabel={getStatusLabel}
+                          />
+                        ))}
+                      </>
+                    )}
 
-                    return (
-                      <div
-                        key={character.id}
-                        className={clsx(
-                          styles.characterCard,
-                          isSelected && isReady && styles.characterCardSelected
-                        )}
-                        onClick={() => { if (isReady) setSelectedCharacterId(character.id); }}
-                      >
-                        <Link
-                          href={`/comics/project/${projectId}/character?characterId=${character.id}`}
-                          className={styles.characterAvatar}
-                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                        >
-                          {isFailed ? (
-                            <IconAlertTriangle size={18} style={{ color: '#fa5252' }} />
-                          ) : coverImage ? (
-                            <EdgeMedia2
-                              src={coverImage.url}
-                              type={coverImage.type as any}
-                              metadata={coverImage.metadata}
-                              name={character.name}
-                              alt={character.name}
-                              width={80}
-                              style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', display: 'block' }}
-                            />
-                          ) : (
-                            <IconUser size={18} style={{ color: '#909296' }} />
-                          )}
-                        </Link>
-
-                        <div className={styles.characterInfo}>
-                          <Link
-                            href={`/comics/project/${projectId}/character?characterId=${character.id}`}
-                            className={styles.characterName}
-                            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                          >
-                            {character.name}
-                          </Link>
-                          <p className={styles.characterStatus}>
-                            <span className={clsx(styles.statusDot, getStatusDotClass(character.status, charHasRefs))} />
-                            {getStatusLabel(character.status, charHasRefs, isFailed)}
-                          </p>
-                        </div>
-
-                        <div className={styles.characterDelete}>
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            size="sm"
-                            onClick={(e: React.MouseEvent) => {
-                              e.stopPropagation();
-                              handleDeleteCharacter(character.id, character.name);
-                            }}
-                          >
-                            <IconTrash size={14} />
-                          </ActionIcon>
-                        </div>
-                      </div>
-                    );
-                  })
+                    {/* Library characters */}
+                    {(project.libraryCharacters ?? []).length > 0 && (
+                      <>
+                        <Text size="xs" c="dimmed" fw={600} mt={8} mb={-4} px={4}>My Library</Text>
+                        {project.libraryCharacters!.map((character) => (
+                          <CharacterSidebarItem
+                            key={character.id}
+                            character={character}
+                            projectId={projectId}
+                            isSelected={selectedCharacterId === character.id || (!selectedCharacterId && activeCharacter?.id === character.id)}
+                            characterImageMap={characterImageMap}
+                            onSelect={setSelectedCharacterId}
+                            onDelete={handleDeleteCharacter}
+                            getStatusDotClass={getStatusDotClass}
+                            getStatusLabel={getStatusLabel}
+                          />
+                        ))}
+                      </>
+                    )}
+                  </>
                 )}
               </Stack>
             </div>
@@ -721,7 +712,7 @@ function ProjectWorkspace() {
             {/* ── Main: Panels ───────────────────── */}
             <div>
               {/* Status messages */}
-              {!activeCharacter && project.characters.length === 0 && (
+              {!activeCharacter && allCharacters.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
                   <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
                   <Text c="dimmed" mb="md">Add a character first to start generating panels</Text>
@@ -735,7 +726,7 @@ function ProjectWorkspace() {
                 </div>
               )}
 
-              {!activeCharacter && project.characters.length > 0 && (
+              {!activeCharacter && allCharacters.length > 0 && (
                 <div className="py-8 text-center">
                   <Text c="dimmed" size="sm">
                     Wait for your character to finish processing before generating panels.
@@ -1001,7 +992,9 @@ function ProjectWorkspace() {
           />
 
           <Group justify="space-between">
-            <Text size="sm" c="dimmed">Cost: 25 Buzz</Text>
+            <Text size="sm" c="dimmed">
+              Cost: {panelCost > 0 ? `${panelCost} Buzz` : 'Estimating...'}
+            </Text>
             <Group>
               <Button variant="default" onClick={() => { closePanelModal(); setRegeneratingPanelId(null); }}>
                 Cancel
@@ -1142,8 +1135,8 @@ function ProjectWorkspace() {
             />
 
             <Text size="sm" c="dimmed">
-              Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x 25 ={' '}
-              {smartPanels.filter((p) => p.prompt.trim()).length * 25} Buzz
+              Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x {panelCost > 0 ? panelCost : '...'} ={' '}
+              {panelCost > 0 ? smartPanels.filter((p) => p.prompt.trim()).length * panelCost : 'Estimating...'} Buzz
             </Text>
 
             <Group justify="space-between">
@@ -1229,6 +1222,94 @@ function ProjectWorkspace() {
       {/* ── Debug Modal ──────────────────────────── */}
       <PanelDebugModal panelId={debugPanelId} opened={debugModalOpened} onClose={closeDebugModal} />
     </>
+  );
+}
+
+// ── Character sidebar item ─────────────────────────
+function CharacterSidebarItem({
+  character,
+  projectId,
+  isSelected,
+  characterImageMap,
+  onSelect,
+  onDelete,
+  getStatusDotClass,
+  getStatusLabel,
+}: {
+  character: { id: string; name: string; status: string; modelId: number | null; generatedReferenceImages: any; referenceImages: any };
+  projectId: string;
+  isSelected: boolean;
+  characterImageMap: Map<number, { url: string; type: string; metadata?: any }>;
+  onSelect: (id: string) => void;
+  onDelete: (id: string, name: string) => void;
+  getStatusDotClass: (status: string, hasRefs: boolean) => string;
+  getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
+}) {
+  const coverImage = character.modelId ? characterImageMap.get(character.modelId) : undefined;
+  const charRefs = character.generatedReferenceImages as any[] | null;
+  const charHasRefs = (charRefs?.length ?? 0) > 0 ||
+    ((character.referenceImages as any[] | null)?.length ?? 0) > 0;
+  const isFailed = character.status === 'Failed';
+  const isReady = character.status === 'Ready';
+
+  return (
+    <div
+      className={clsx(
+        styles.characterCard,
+        isSelected && isReady && styles.characterCardSelected
+      )}
+      onClick={() => { if (isReady) onSelect(character.id); }}
+    >
+      <Link
+        href={`/comics/project/${projectId}/character?characterId=${character.id}`}
+        className={styles.characterAvatar}
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      >
+        {isFailed ? (
+          <IconAlertTriangle size={18} style={{ color: '#fa5252' }} />
+        ) : coverImage ? (
+          <EdgeMedia2
+            src={coverImage.url}
+            type={coverImage.type as any}
+            metadata={coverImage.metadata}
+            name={character.name}
+            alt={character.name}
+            width={80}
+            style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', display: 'block' }}
+          />
+        ) : (
+          <IconUser size={18} style={{ color: '#909296' }} />
+        )}
+      </Link>
+
+      <div className={styles.characterInfo}>
+        <Link
+          href={`/comics/project/${projectId}/character?characterId=${character.id}`}
+          className={styles.characterName}
+          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+        >
+          {character.name}
+        </Link>
+        <p className={styles.characterStatus}>
+          <span className={clsx(styles.statusDot, getStatusDotClass(character.status, charHasRefs))} />
+          {getStatusLabel(character.status, charHasRefs, isFailed)}
+        </p>
+      </div>
+
+      <div className={styles.characterDelete}>
+        <ActionIcon
+          variant="subtle"
+          color="red"
+          size="sm"
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            onDelete(character.id, character.name);
+          }}
+        >
+          <IconTrash size={14} />
+        </ActionIcon>
+      </div>
+    </div>
   );
 }
 
@@ -1462,4 +1543,4 @@ function PanelDebugModal({ panelId, opened, onClose }: { panelId: string | null;
   );
 }
 
-export default Page(ProjectWorkspace, { withScrollArea: false });
+export default Page(ProjectWorkspace);

@@ -163,6 +163,8 @@
 
   &.ready { background: #40c057; }
   &.processing { background: #fab005; animation: pulse 2s ease-in-out infinite; }
+  &.training { background: #339af0; animation: pulse 2s ease-in-out infinite; }
+  &.generatingRefs { background: #fab005; animation: pulse 2s ease-in-out infinite; }
   &.failed { background: #fa5252; }
   &.noRefs { background: #fd7e14; }
   &.pending { background: #909296; }

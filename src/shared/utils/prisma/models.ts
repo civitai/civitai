@@ -176,7 +176,7 @@ export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "R
 
 export type ComicProjectStatus = "Active" | "Deleted";
 
-export type ComicCharacterStatus = "Pending" | "Processing" | "Ready" | "Failed";
+export type ComicCharacterStatus = "Pending" | "Processing" | "Training" | "GeneratingRefs" | "Ready" | "Failed";
 
 export type ComicCharacterSourceType = "Upload" | "ExistingModel";
 
@@ -3733,8 +3733,8 @@ export interface ComicChapter {
 
 export interface ComicCharacter {
   id: string;
-  projectId: string;
-  project?: ComicProject;
+  projectId: string | null;
+  project?: ComicProject | null;
   userId: number;
   user?: User;
   name: string;

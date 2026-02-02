@@ -4778,6 +4778,8 @@ enum ComicProjectStatus {
 enum ComicCharacterStatus {
   Pending
   Processing
+  Training
+  GeneratingRefs
   Ready
   Failed
 }
@@ -4832,8 +4834,8 @@ model ComicChapter {
 
 model ComicCharacter {
   id         String                     @id @default(cuid())
-  projectId  String
-  project    ComicProject               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId  String?
+  project    ComicProject?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
   userId     Int
   user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   name       String                     @db.VarChar(255)

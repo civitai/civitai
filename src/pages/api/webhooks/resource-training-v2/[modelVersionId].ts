@@ -2,6 +2,7 @@ import { WorkflowStatus } from '@civitai/client';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
@@ -70,6 +71,48 @@ export default WebhookEndpoint(async (req, res) => {
         console.log(workflow);
 
         const result = await updateTrainingWorkflowRecords(workflow, status);
+
+        // Update any comic characters linked to this model version
+        try {
+          const mvId = parseInt(req.query.modelVersionId as string, 10);
+          if (!isNaN(mvId)) {
+            const comicCharacter = await dbWrite.comicCharacter.findFirst({
+              where: { trainedModelVersionId: mvId },
+            });
+
+            if (comicCharacter) {
+              const isSucceeded = status === 'succeeded';
+              const isFailed = status === 'failed' || status === 'expired' || status === 'canceled';
+
+              if (isSucceeded) {
+                // Training succeeded — mark character as Ready and set model references
+                await dbWrite.comicCharacter.update({
+                  where: { id: comicCharacter.id },
+                  data: {
+                    status: 'Ready',
+                    sourceType: 'ExistingModel',
+                    modelId: result.modelId,
+                    modelVersionId: mvId,
+                    errorMessage: null,
+                  },
+                });
+              } else if (isFailed) {
+                await dbWrite.comicCharacter.update({
+                  where: { id: comicCharacter.id },
+                  data: {
+                    status: 'Failed',
+                    errorMessage: `Training ${status}`,
+                  },
+                });
+              }
+            }
+          }
+        } catch (e) {
+          logWebhook({
+            message: 'Failed to update comic character from training webhook',
+            data: { error: (e as Error)?.message, workflowId },
+          });
+        }
 
         // Handle notifications only on status change
         if (result.statusChanged) {

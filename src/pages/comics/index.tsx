@@ -16,6 +16,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import styles from './Comics.module.scss';
 
@@ -130,9 +131,7 @@ function ComicsDashboard() {
   );
 }
 
-type ProjectItem = NonNullable<
-  ReturnType<typeof trpc.comics.getMyProjects.useQuery>['data']
->[number];
+type ProjectItem = RouterOutput['comics']['getMyProjects'][number];
 
 function ProjectCard({ project }: { project: ProjectItem }) {
   const imageUrl = project.coverImageUrl ?? project.thumbnailUrl;
@@ -183,4 +182,4 @@ function formatDate(date: Date): string {
   return d.toLocaleDateString();
 }
 
-export default Page(ComicsDashboard, { withScrollArea: false });
+export default Page(ComicsDashboard);

@@ -6,6 +6,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import styles from './Comics.module.scss';
 
@@ -73,9 +74,7 @@ function ComicsBrowse() {
   );
 }
 
-type ComicItem = ReturnType<
-  typeof trpc.comics.getPublicProjects.useInfiniteQuery
->['data']['pages'][number]['items'][number];
+type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
 
 function ComicCard({ comic }: { comic: ComicItem }) {
   return (
@@ -112,4 +111,4 @@ function ComicCard({ comic }: { comic: ComicItem }) {
   );
 }
 
-export default Page(ComicsBrowse, { withScrollArea: false });
+export default Page(ComicsBrowse);
