@@ -1527,7 +1527,7 @@ export function ModelVersionDetails({
           )}
           {model.description ? (
             <ContentClamp maxHeight={460}>
-              <RenderHtml html={model.description} withMentions />
+              <RenderHtml html={model.description} />
             </ContentClamp>
           ) : null}
         </Stack>

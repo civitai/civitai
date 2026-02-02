@@ -3,6 +3,7 @@ import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useChatNewMessageSignal, useChatNewRoomSignal } from '~/components/Chat/ChatSignals';
 import { useTextToImageSignalUpdate } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 import { useNotificationSignal } from '~/components/Notifications/notifications.utils';
+import { useSessionRefreshSignal } from '~/components/Signals/SessionRefreshSignal';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useMetricSignalsListener } from '~/components/Signals/MetricSignalsRegistrar';
 import {
@@ -18,6 +19,7 @@ export function SignalsRegistrar() {
   useSchedulerDownloadSignal();
 
   useBuzzSignalUpdate();
+  useSessionRefreshSignal();
 
   useTrainingSignals();
   useOrchestratorUpdateSignal();

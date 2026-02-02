@@ -140,6 +140,7 @@ export enum SignalMessages {
   NewOrderQueueUpdate = 'new-order:queue-update',
   NewOrderPlayerUpdate = 'new-order:player-update',
   MetricUpdate = 'metric:update',
+  SessionRefresh = 'session:refresh',
 }
 
 export enum BountySort {

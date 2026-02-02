@@ -145,9 +145,15 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
+    const isTxt2Img = step.params.process === 'txt2img';
     generationStore.setData({
       resources: (step.resources as any) ?? [],
-      params: { ...(step.params as any), seed: null },
+      params: {
+        ...(step.params as any),
+        seed: null,
+        // Clear images for txt2img to avoid stale data
+        ...(isTxt2Img ? { images: null } : {}),
+      },
       remixOfId: step.metadata?.remixOfId,
       type: images[0].type, // TODO - type based off type of media
       workflow: step.params.workflow,

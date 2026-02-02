@@ -66,10 +66,12 @@ const checkFns: Record<string, CancellableCheckFn> = {
   async pgWrite(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
-      const result = await pgDbWrite.query(
+      // Multi-statement queries through PgBouncer return rowCount: undefined,
+      // so we just check that the query resolves without throwing
+      await pgDbWrite.query(
         `SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`
       );
-      return result.rowCount !== null && result.rowCount > 0;
+      return true;
     } catch (e) {
       logError({ error: e as Error, name: 'pgWrite', details: null });
       return false;
@@ -79,10 +81,10 @@ const checkFns: Record<string, CancellableCheckFn> = {
   async pgRead(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
-      const result = await pgDbRead.query(
+      await pgDbRead.query(
         `SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`
       );
-      return result.rowCount !== null && result.rowCount > 0;
+      return true;
     } catch (e) {
       logError({ error: e as Error, name: 'pgRead', details: null });
       return false;

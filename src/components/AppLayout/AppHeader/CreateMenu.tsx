@@ -1,10 +1,11 @@
-import { Button, Menu, Popover, Text } from '@mantine/core';
+import { Button, Menu, Text, Popover } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBrush, IconChevronDown } from '@tabler/icons-react';
 import type { MouseEventHandler } from 'react';
 import { forwardRef } from 'react';
 import { useGetActionMenuItems } from '~/components/AppLayout/AppHeader/hooks';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { GenerationMutedNotice } from '~/components/Generation/GenerationMutedNotice';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -81,9 +82,7 @@ export function CreateMenu() {
         </Popover.Target>
         <Popover.Dropdown maw={300}>
           <Text size="sm">
-            Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within two business days. You do not need to contact us.
+            <GenerationMutedNotice />
           </Text>
         </Popover.Dropdown>
       </Popover>

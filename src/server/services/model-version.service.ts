@@ -583,12 +583,14 @@ export const publishModelVersionsWithEarlyAccess = async ({
   meta,
   tx,
   continueOnError = false,
+  republishing = false,
 }: {
   modelVersionIds: number[];
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
   continueOnError?: boolean;
+  republishing?: boolean;
 }) => {
   if (modelVersionIds.length === 0) return [];
   const dbClient = tx ?? dbWrite;
@@ -663,7 +665,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
           where: { id: currentVersion.id },
           data: {
             status: ModelStatus.Published,
-            publishedAt: publishedAt,
+            publishedAt: !republishing ? publishedAt : undefined,
             earlyAccessConfig: earlyAccessConfig ?? undefined,
             meta,
             // Will be overwritten anyway by EA.
@@ -787,6 +789,7 @@ export const publishModelVersionById = async ({
           publishedAt,
           meta,
           tx,
+          republishing,
         });
 
         if (!updated) {
@@ -819,7 +822,7 @@ export const publishModelVersionById = async ({
         SET
           "publishedAt" = CASE
             WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
-            THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'

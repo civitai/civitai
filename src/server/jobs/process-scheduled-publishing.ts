@@ -100,8 +100,15 @@ export const processScheduledPublishing = createJob(
 
           await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
+          -- Respect prevPublishedAt metadata to preserve original date on republish
           UPDATE "Post" p
-          SET "publishedAt" = mv."publishedAt"
+          SET
+            "publishedAt" = CASE
+              WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
+              THEN (p."metadata"->>'prevPublishedAt')::timestamptz
+              ELSE mv."publishedAt"
+            END,
+            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
