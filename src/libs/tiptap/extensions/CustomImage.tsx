@@ -135,11 +135,14 @@ function CustomImageEditComponent({ node, updateAttributes }: ReactNodeViewProps
         uploadToCF(file)
           .then((result) => {
             URL.revokeObjectURL(src);
-            updateAttributes({ src: getEdgeUrl(result.id, { original: true }) });
             hideNotification(UPLOAD_NOTIFICATION_ID);
+            updateAttributes({ src: getEdgeUrl(result.id, { original: true }) });
           })
           .catch((error) => {
             console.error(error);
+            URL.revokeObjectURL(src);
+            hideNotification(UPLOAD_NOTIFICATION_ID);
+            updateAttributes({ src: '' });
             showErrorNotification({
               title: 'Upload Failed',
               error: new Error('Failed to upload image. Please try again'),

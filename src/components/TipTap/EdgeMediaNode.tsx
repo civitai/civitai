@@ -168,6 +168,7 @@ function EdgeMediaEditComponent({
           .catch(() => {
             hideNotification(UPLOAD_NOTIFICATION_ID);
             URL.revokeObjectURL(url);
+            updateAttributes({ url: '' });
             showErrorNotification({
               title: `Upload Failed`,
               error: new Error(`Failed to upload ${type}. Please try again`),
