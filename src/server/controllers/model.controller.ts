@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { generateJSON } from '@tiptap/html/server';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
@@ -133,7 +132,6 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -216,16 +214,8 @@ export const getModelHandler = async ({
       [];
     const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
 
-    let descriptionJson: MixedObject | undefined;
-    if (model.description) {
-      descriptionJson = model.description.startsWith('{')
-        ? JSON.parse(model.description)
-        : generateJSON(model.description, tiptapExtensions);
-    }
-
     return {
       ...model,
-      descriptionJson,
       metrics: undefined,
       rank: {
         downloadCountAllTime: metrics?.downloadCount ?? 0,
