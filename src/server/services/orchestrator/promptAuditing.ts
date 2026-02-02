@@ -8,7 +8,6 @@ import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { createLimiter } from '~/server/utils/rate-limiting';
 import {
   auditPromptEnriched,
   type PromptTrigger,
@@ -16,8 +15,11 @@ import {
 } from '~/utils/metadata/audit';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
-// --- Blocked Prompt Storage ---
-// Stores each blocked prompt in Redis so we can retrieve all of them when creating a UserRestriction
+// --- Blocked Prompt Store ---
+// Single Redis list stores both count (list length) and prompt data.
+// If key doesn't exist, seeds from ClickHouse. Uses a reset marker to
+// distinguish "empty because reset" from "doesn't exist".
+
 export interface BlockedPromptEntry {
   prompt: string;
   negativePrompt: string;
@@ -29,45 +31,122 @@ export interface BlockedPromptEntry {
   time: string;
 }
 
-const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours (matches the limiter refetch interval)
+const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours
+const RESET_MARKER = '__RESET__';
 
 function getBlockedPromptsKey(userId: number) {
   return `${REDIS_SYS_KEYS.GENERATION.BLOCKED_PROMPTS}:${userId}` as const;
 }
 
-async function storeBlockedPrompt(userId: number, entry: BlockedPromptEntry) {
+/** Seed the blocked prompts list from ClickHouse for today's violations */
+async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
   const key = getBlockedPromptsKey(userId);
-  await sysRedis.lPush(key, JSON.stringify(entry));
+  const { clickhouse } = await import('~/server/clickhouse/client');
+
+  if (!clickhouse) {
+    // No ClickHouse available, set reset marker so we don't keep trying
+    await sysRedis.lPush(key, RESET_MARKER);
+    await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
+    return;
+  }
+
+  const data = await clickhouse.$query<{
+    prompt: string;
+    negativePrompt: string;
+    source: string;
+    time: string;
+  }>`
+    SELECT prompt, negativePrompt, source, time
+    FROM prohibitedRequests
+    WHERE toDate(time) = today() AND userId = ${userId}
+    ORDER BY time ASC
+  `;
+
+  if (data.length === 0) {
+    // No violations today, set reset marker
+    await sysRedis.lPush(key, RESET_MARKER);
+  } else {
+    // Add all violations (oldest first, so newest ends up at head)
+    for (const row of data) {
+      const entry: BlockedPromptEntry = {
+        prompt: row.prompt,
+        negativePrompt: row.negativePrompt,
+        source: row.source,
+        category: undefined,
+        matchedWord: undefined,
+        matchedRegex: undefined,
+        imageId: null,
+        time: row.time,
+      };
+      await sysRedis.rPush(key, JSON.stringify(entry));
+    }
+  }
   await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
 }
 
+/** Get blocked prompt count, seeding from ClickHouse if key doesn't exist */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function getBlockedPromptCount(userId: number): Promise<number> {
+  const key = getBlockedPromptsKey(userId);
+  const exists = await sysRedis.exists(key);
+
+  if (!exists) {
+    await seedBlockedPromptsFromClickHouse(userId);
+  }
+
+  const entries = await sysRedis.lRange(key, 0, -1);
+  return entries.filter((e) => e !== RESET_MARKER).length;
+}
+
+/** Add a blocked prompt and return the new count */
+async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Promise<number> {
+  const key = getBlockedPromptsKey(userId);
+  const exists = await sysRedis.exists(key);
+
+  if (!exists) {
+    await seedBlockedPromptsFromClickHouse(userId);
+  }
+
+  // Check if list only contains reset marker - if so, remove it first
+  const currentEntries = await sysRedis.lRange(key, 0, -1);
+  if (currentEntries.length === 1 && currentEntries[0] === RESET_MARKER) {
+    await sysRedis.del(key);
+  }
+
+  await sysRedis.lPush(key, JSON.stringify(entry));
+  await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
+
+  // Return count (lLen is faster than fetching all entries)
+  return await sysRedis.lLen(key);
+}
+
+/** Get all blocked prompts (excludes reset marker) */
 async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> {
   const key = getBlockedPromptsKey(userId);
   const entries = await sysRedis.lRange(key, 0, -1);
-  return entries.map((entry) => JSON.parse(entry) as BlockedPromptEntry);
+  return entries
+    .filter((e) => e !== RESET_MARKER)
+    .map((entry) => JSON.parse(entry) as BlockedPromptEntry);
 }
-
-async function clearBlockedPrompts(userId: number) {
-  const key = getBlockedPromptsKey(userId);
-  await sysRedis.del(key);
-}
-
-// --- Prohibited request counter ---
-// Redis is the sole authority for the 24h mute threshold.
-// ClickHouse is used only for audit logging.
-export const blockedPromptLimiter = createLimiter({
-  counterKey: REDIS_SYS_KEYS.GENERATION.COUNT,
-  limitKey: REDIS_SYS_KEYS.GENERATION.LIMITS,
-  fetchCount: async () => 0,
-  refetchInterval: 60 * 60 * 24, // 24h
-});
 
 /**
- * Reset a user's prohibited request count and clear stored blocked prompts.
- * Call this when a ban is overturned so the user isn't immediately re-muted.
+ * Reset a user's blocked prompts (e.g., when unmuting).
+ * Sets to empty (reset marker) instead of deleting, so ClickHouse won't be queried again.
  */
 export async function resetProhibitedRequestCount(userId: number) {
-  await Promise.all([blockedPromptLimiter.reset(userId.toString()), clearBlockedPrompts(userId)]);
+  const key = getBlockedPromptsKey(userId);
+  await sysRedis.del(key);
+  await sysRedis.lPush(key, RESET_MARKER);
+  await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
+}
+
+/**
+ * Clear blocked prompts after they've been stored in the DB (e.g., after muting).
+ * Deletes the key entirely - different from reset which leaves a marker.
+ */
+async function clearBlockedPromptsAfterMute(userId: number) {
+  const key = getBlockedPromptsKey(userId);
+  await sysRedis.del(key);
 }
 
 // --- Prompt Allowlist Cache ---
@@ -200,8 +279,19 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 
-      // Increment Redis counter (sole authority for mute threshold)
-      const count = await blockedPromptLimiter.increment(userId.toString());
+      // Create blocked prompt entry
+      const blockedEntry: BlockedPromptEntry = {
+        prompt: prompt ?? '',
+        negativePrompt: negativePrompt ?? '',
+        source,
+        category: error.triggers[0]?.category,
+        matchedWord: error.triggers[0]?.matchedWord,
+        imageId: imageId ?? null,
+        time: new Date().toISOString(),
+      };
+
+      // Add to blocked prompts store and get count
+      const count = await addBlockedPrompt(userId, blockedEntry);
 
       // Report to ClickHouse for audit logging and handle auto-mute
       await reportProhibitedRequest({
@@ -211,8 +301,6 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         isModerator,
         track,
         source,
-        triggers: error.triggers,
-        imageId,
         count,
       });
 
@@ -245,12 +333,9 @@ async function reportProhibitedRequest(options: {
   isModerator?: boolean;
   track?: any;
   source: string;
-  triggers: PromptTrigger[];
-  imageId?: number;
   count: number;
 }) {
-  const { prompt, negativePrompt, userId, isModerator, track, source, triggers, imageId, count } =
-    options;
+  const { prompt, negativePrompt, userId, isModerator, track, source, count } = options;
 
   // Track the prohibited request in ClickHouse (audit log only)
   if (track) {
@@ -267,18 +352,6 @@ async function reportProhibitedRequest(options: {
 
   // Skip muting for moderators
   if (isModerator) return;
-
-  // Store this blocked prompt in Redis for later retrieval
-  const blockedEntry: BlockedPromptEntry = {
-    prompt: prompt ?? '',
-    negativePrompt: negativePrompt ?? '',
-    source,
-    category: triggers[0]?.category,
-    matchedWord: triggers[0]?.matchedWord,
-    imageId: imageId ?? null,
-    time: new Date().toISOString(),
-  };
-  await storeBlockedPrompt(userId, blockedEntry);
 
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
@@ -304,7 +377,7 @@ async function reportProhibitedRequest(options: {
       });
 
       // Clear the blocked prompts from Redis now that they're stored in the DB
-      await clearBlockedPrompts(userId);
+      await clearBlockedPromptsAfterMute(userId);
 
       // Notify the user about the restriction
       await createNotification({

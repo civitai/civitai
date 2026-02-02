@@ -192,7 +192,8 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         if (trigger === 'update') {
           // Clear cache first, then fetch fresh user data to avoid getting stale cached data
           // Also mark all user's tokens for refresh in case they have multiple sessions
-          await refreshSession(Number(token.sub));
+          // Don't send signal here - this IS the response to a signal, sending another would create a loop
+          await refreshSession(Number(token.sub), { sendSignal: false });
           // Now fetch fresh user data (cache is cleared, so this will hit the database)
           const freshUser = await getSessionUser({ userId: Number(token.sub) });
           if (freshUser) {

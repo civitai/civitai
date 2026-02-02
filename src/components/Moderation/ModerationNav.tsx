@@ -20,6 +20,11 @@ export function ModerationNav() {
           href: '/moderator/training-models',
           hidden: !features.trainingModelsModeration,
         },
+        {
+          label: 'Training Data Review',
+          href: '/moderator/review/training-data',
+          hidden: !features.reviewTrainingData,
+        },
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },

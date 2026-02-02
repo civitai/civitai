@@ -5,14 +5,12 @@ import type {
   SdCppSchedule,
 } from '@civitai/client';
 import * as z from 'zod';
-import type { Sampler } from '~/server/common/constants';
 import {
   negativePromptSchema,
   promptSchema,
   seedSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { samplerToSdCpp } from '~/shared/constants/generation.constants';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 type Flux2KleinModelVariant = (typeof flux2KleinModelVariants)[number];
@@ -97,30 +95,18 @@ export function getIsFlux2KleinGroup(baseModel: string) {
   return flux2KleinGroups.includes(baseModel);
 }
 
-export const flux2KleinDisabledSamplers = [
-  'Euler A',
-  'DPM++ 2M Karras',
-  'DDIM',
-  'DPM2',
-  'DPM2 a',
-  'undefined',
-];
-
-const sdCppSampleMethods = [
+export const flux2KleinSampleMethods = [
   'euler',
   'heun',
-  'dpm2',
   'dpm++2s_a',
   'dpm++2m',
   'dpm++2mv2',
   'ipndm',
   'ipndm_v',
-  'ddim_trailing',
-  'euler_a',
   'lcm',
 ] as const satisfies SdCppSampleMethod[];
 
-const sdCppSchedules = [
+export const flux2KleinSchedules = [
   'simple',
   'discrete',
   'karras',
@@ -138,8 +124,8 @@ const baseSchema = z.object({
   height: z.number(),
   cfgScale: z.number().optional(),
   steps: z.number().optional(),
-  sampleMethod: z.enum(sdCppSampleMethods).optional(),
-  schedule: z.enum(sdCppSchedules).optional(),
+  sampleMethod: z.enum(flux2KleinSampleMethods).optional(),
+  schedule: z.enum(flux2KleinSchedules).optional(),
   quantity: z.number().optional(),
   seed: seedSchema,
   loras: z.record(z.string(), z.number()).optional(),
@@ -185,6 +171,7 @@ export const flux2KleinConfig = ImageGenConfig({
       cfgScale,
       steps,
       sampler: params.sampler,
+      scheduler: params.scheduler,
     };
   },
   inputFn: ({ params, resources }): Flux2KleinCreateImageInput | Flux2KleinEditImageInput => {
@@ -205,15 +192,12 @@ export const flux2KleinConfig = ImageGenConfig({
           }, {} as Record<string, number>)
         : undefined;
 
-    // Convert UI sampler to SdCpp sampleMethod and schedule
-    const { sampleMethod, schedule } = samplerToSdCpp(params.sampler as Sampler | undefined);
-
     return schema.parse({
       ...params,
       operation: params.images?.length ? 'editImage' : 'createImage',
       modelVersion,
-      sampleMethod,
-      schedule,
+      sampleMethod: params.sampler ?? 'euler',
+      schedule: params.scheduler ?? 'simple',
       loras,
     }) as Flux2KleinCreateImageInput | Flux2KleinEditImageInput;
   },

@@ -933,16 +933,22 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['ZImageTurbo'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['ZImageBase'],
+      },
+    ],
   },
-  // {
-  //   group: 'ZImageBase',
-  //   support: [
-  //     {
-  //       modelTypes: [ModelType.Checkpoint, ModelType.LORA],
-  //       baseModels: ['ZImageBase'],
-  //     },
-  //   ],
-  // },
+  {
+    group: 'ZImageBase',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['ZImageBase'],
+      },
+    ],
+  },
 ];
 
 type BaseModelSupportType = 'full' | 'partial';
