@@ -41,3 +41,12 @@ export const compensationPoolInputSchema = z.object({
   month: z.date().optional(),
   buzzType: z.preprocess(preprocessAccountType, z.enum(buzzBankTypes).optional()),
 });
+
+export type ModCashAdjustmentInput = z.infer<typeof modCashAdjustmentSchema>;
+export const modCashAdjustmentSchema = z.object({
+  userId: z.number().int().positive(),
+  amount: z.number().int().positive().max(10_000_000, 'Amount cannot exceed $100,000'),
+  accountType: z.enum(['cashPending', 'cashSettled']),
+  direction: z.enum(['grant', 'deduct']),
+  note: z.string().min(1, 'A reason/note is required'),
+});

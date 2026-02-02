@@ -22,6 +22,7 @@ import { researchRouter } from '~/server/routers/research.router';
 import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
 import { toolRouter } from '~/server/routers/tool.router';
+import { userRestrictionRouter } from '~/server/routers/user-restriction.router';
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { vimeoRouter } from '~/server/routers/vimeo.router';
@@ -120,6 +121,7 @@ export const appRouter = router({
   track: trackRouter,
   training: trainingRouter,
   user: userRouter,
+  userRestriction: userRestrictionRouter,
   userLink: userLinkRouter,
   leaderboard: leaderboardRouter,
   generation: generationRouter,

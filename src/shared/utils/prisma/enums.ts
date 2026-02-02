@@ -866,3 +866,11 @@ export const ComicPanelStatus = {
 } as const;
 
 export type ComicPanelStatus = (typeof ComicPanelStatus)[keyof typeof ComicPanelStatus];
+
+export const UserRestrictionStatus = {
+  Pending: 'Pending',
+  Upheld: 'Upheld',
+  Overturned: 'Overturned',
+} as const;
+
+export type UserRestrictionStatus = (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];

@@ -98,6 +98,8 @@ export const serverSchema = z.object({
   IMAGE_SCANNER_NEW: zc.booleanString.default(false),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
+  STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
+  STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),

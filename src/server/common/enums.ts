@@ -139,6 +139,7 @@ export enum SignalMessages {
   TopicUpdate = 'topic:connections',
   NewOrderQueueUpdate = 'new-order:queue-update',
   NewOrderPlayerUpdate = 'new-order:player-update',
+  SessionRefresh = 'session:refresh',
 }
 
 export enum BountySort {

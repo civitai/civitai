@@ -127,8 +127,7 @@ function CollectionCheckboxItem({
       <Checkbox
         classNames={classes}
         checked={!!selectedItem}
-        onChange={(e) => {
-          e.preventDefault();
+        onChange={() => {
           onToggle(!!selectedItem);
         }}
         label={

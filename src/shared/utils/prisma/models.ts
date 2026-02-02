@@ -181,6 +181,7 @@ export type ComicCharacterStatus = "Pending" | "Processing" | "Ready" | "Failed"
 export type ComicCharacterSourceType = "Upload" | "ExistingModel";
 
 export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
+export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
 export interface Account {
   id: number;
@@ -448,6 +449,7 @@ export interface User {
   CryptoTransaction?: CryptoTransaction[];
   comicProjects?: ComicProject[];
   comicCharacters?: ComicCharacter[];
+  userRestrictions?: UserRestriction[];
 }
 
 export interface CustomerSubscription {
@@ -3770,6 +3772,31 @@ export interface ComicPanel {
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
+}
+export interface UserRestriction {
+  id: number;
+  userId: number;
+  user?: User;
+  type: string;
+  status: UserRestrictionStatus;
+  triggers: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  resolvedMessage: string | null;
+  userMessage: string | null;
+  userMessageAt: Date | null;
+}
+
+export interface PromptAllowlist {
+  id: number;
+  trigger: string;
+  category: string;
+  addedBy: number;
+  reason: string | null;
+  userRestrictionId: number | null;
+  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

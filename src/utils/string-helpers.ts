@@ -45,7 +45,7 @@ const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
   DoRA: 'DoRA',
-  scheduler: 'Sampler',
+  scheduler: 'Scheduler',
   TextualInversion: 'Embedding',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
