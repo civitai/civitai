@@ -44,7 +44,6 @@ import { SeedInput } from './inputs/SeedInput';
 import { ImageUploadMultipleInput } from './inputs/ImageUploadMultipleInput';
 import { VideoInput } from './inputs/VideoInput';
 import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
-import { OverflowSegmentedControl } from './inputs/OverflowSegmentedControl';
 import { PriorityInput } from './inputs/PriorityInput';
 import { OutputFormatInput } from './inputs/OutputFormatInput';
 import { ScaleFactorInput } from './inputs/ScaleFactorInput';
@@ -177,7 +176,9 @@ export function GenerationForm() {
                   }}
                   compatibleEcosystems={meta?.compatibleEcosystems}
                   isCompatible={compatibility.isEcosystemKeyCompatible}
-                  getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
+                  getTargetWorkflow={(key) =>
+                    compatibility.getTargetWorkflowForEcosystem(key).label
+                  }
                   outputType={compatibility.currentOutputType}
                 />
               )}
@@ -195,45 +196,24 @@ export function GenerationForm() {
           <Controller
             graph={graph}
             name="model"
-            render={({ value, meta, onChange }) => {
-              const versionIds = meta.versions?.map((x) => x.value) ?? [];
-              const showVersionSelector = value?.id !== undefined && versionIds.includes(value.id);
-
-              return (
-                <>
-                  <ResourceSelectInput
-                    value={value as any}
-                    onChange={onChange as any}
-                    label="Model"
-                    buttonLabel="Select Model"
-                    modalTitle="Select Model"
-                    options={meta.options}
-                    allowRemove={false}
-                    allowSwap={!meta.modelLocked}
-                    onRevertToDefault={
-                      meta.defaultModelId
-                        ? () => onChange({ id: meta.defaultModelId } as any)
-                        : undefined
-                    }
-                  />
-                  {/* Version selector (for models with multiple versions like Flux modes) */}
-
-                  {showVersionSelector && meta.versions && (
-                    <OverflowSegmentedControl
-                      value={value?.id?.toString()}
-                      onChange={(stringId) =>
-                        onChange({ id: Number(stringId), model: { type: 'Checkpoint' } } as any)
-                      }
-                      options={meta.versions.map(({ label, value }) => ({
-                        label,
-                        value: value.toString(),
-                      }))}
-                      maxVisible={5}
-                    />
-                  )}
-                </>
-              );
-            }}
+            render={({ value, meta, onChange }) => (
+              <ResourceSelectInput
+                value={value as any}
+                onChange={onChange as any}
+                label="Model"
+                buttonLabel="Select Model"
+                modalTitle="Select Model"
+                options={meta.options}
+                allowRemove={false}
+                allowSwap={!meta.modelLocked}
+                onRevertToDefault={
+                  meta.defaultModelId
+                    ? () => onChange({ id: meta.defaultModelId } as any)
+                    : undefined
+                }
+                versions={meta.versions}
+              />
+            )}
           />
 
           {/* API version selector (e.g., Veo 3.0 vs 3.1) */}

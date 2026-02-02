@@ -24,7 +24,8 @@ export {
 export {
   wanGraph,
   wanVersions,
-  wanVersionOptions,
+  wanVersionDefs,
+  versionIdToWanVersion,
   wanAspectRatios,
   wan21AspectRatios,
   wan21Resolutions,

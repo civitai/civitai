@@ -17,6 +17,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { versionIdToWanVersion } from '~/shared/data-graph/generation/wan-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -51,12 +52,24 @@ type WanInput =
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5';
 
 /**
+ * Determines the Wan version from the model version ID.
+ */
+function getWanVersion(modelId?: number): WanVersion {
+  if (!modelId) return 'v2.1';
+  const version = versionIdToWanVersion.get(modelId);
+  return version ?? 'v2.1';
+}
+
+/**
  * Creates videoGen input for Wan ecosystem.
  * Handles multiple versions with version-specific parameters.
  */
 export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
   const hasImages = !!data.images?.length;
-  const version: WanVersion = 'version' in data ? (data.version as WanVersion) : 'v2.1';
+  // Derive version from model.id, falling back to wanVersion computed field if available
+  const modelId = data.model?.id;
+  const version: WanVersion =
+    'wanVersion' in data ? (data.wanVersion as WanVersion) : getWanVersion(modelId);
 
   // Build loras from additional resources
   const loras: { air: string; strength: number }[] = [];

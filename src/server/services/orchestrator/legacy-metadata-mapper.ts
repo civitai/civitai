@@ -251,6 +251,7 @@ function toResourceData(
   // Return minimal ResourceData - extra fields from enriched are used via enrichedResources
   return {
     id: enriched.id,
+    baseModel: enriched.baseModel,
     model: { type: enriched.model.type },
     strength: legacyStrength ?? enriched.strength ?? undefined,
     epochDetails: epochNumber != null ? { epochNumber } : undefined,

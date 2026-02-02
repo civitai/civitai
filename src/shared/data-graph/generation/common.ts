@@ -402,15 +402,17 @@ export function quantityNode(config?: QuantityNodeConfig) {
  *
  * Only validates fields that the client needs to send:
  * - id: Required to identify the resource
+ * - baseModel: Required for ecosystem switching when model changes
  * - model.type: Required for routing resources to appropriate graph nodes
  * - strength: Optional LoRA/LoCon/DoRA strength
  * - epochDetails: Optional epoch training info
  *
- * Server-side enrichment (via getResourceData) adds baseModel, model.name, air, etc.
+ * Server-side enrichment (via getResourceData) adds model.name, air, etc.
  * Handlers receive AIR strings via GenerationHandlerCtx instead of computing them.
  */
 const resourceSchema = z.object({
   id: z.number(),
+  baseModel: z.string().optional(),
   model: z.object({
     type: z.string(),
   }),
@@ -451,6 +453,8 @@ function getResourceSelectOptions(baseModel: string, resourceTypes: ModelType[])
 export type CheckpointVersionOption = {
   label: string;
   value: number;
+  /** Base model name for this version (used for ecosystem switching) */
+  baseModel?: string;
 };
 
 /**
@@ -625,7 +629,11 @@ export function createCheckpointGraph(options?: {
       const mapping = versionMappings.get(model.id);
       const equivalentVersion = mapping?.[workflow];
       if (equivalentVersion) {
-        return { id: equivalentVersion } as any;
+        return {
+          id: equivalentVersion.id,
+          baseModel: equivalentVersion.baseModel,
+          model: { type: 'Checkpoint' },
+        } as any;
       }
 
       return model;
@@ -652,19 +660,11 @@ export function createCheckpointGraph(options?: {
           .optional()
           .transform((val) => {
             if (!val) return undefined;
-            const modelBaseModel = 'baseModel' in val ? val.baseModel : undefined;
-            if (modelBaseModel) {
-              if (compatibleBaseModels.length > 0) {
-                if (!compatibleBaseModels.includes(modelBaseModel)) {
-                  return undefined;
-                }
-              } else {
-                const modelEcosystemKey = getEcosystemKeyForBaseModel(modelBaseModel);
-                if (modelEcosystemKey && modelEcosystemKey !== ctx.baseModel) {
-                  return undefined;
-                }
-              }
-            }
+            // Note: We intentionally do NOT reject models from different ecosystems here.
+            // The ecosystem-switching effect will handle updating baseModel when needed.
+            // This allows version selectors to switch between versions that may have
+            // different base models (e.g., Wan 2.1 → Wan 2.2).
+            //
             // Ensure model.type is present for output schema conformance
             if (!('model' in val) || !val.model) {
               return { ...val, model: { type: 'Checkpoint' } };
@@ -712,14 +712,18 @@ export function createCheckpointGraph(options?: {
     );
 }
 
+/** Version mapping with id and optional baseModel */
+type VersionMapping = { id: number; baseModel?: string };
+
 /**
  * Builds a mapping from each version ID to its equivalent versions in other workflows.
  * Equivalence is determined by array index (e.g., first version maps to first version).
+ * Now includes baseModel for ecosystem switching support.
  */
 function buildVersionMappings(
   workflowVersions: WorkflowVersionConfig
-): Map<number, Record<string, number>> {
-  const mappings = new Map<number, Record<string, number>>();
+): Map<number, Record<string, VersionMapping>> {
+  const mappings = new Map<number, Record<string, VersionMapping>>();
   const workflows = Object.keys(workflowVersions);
 
   // For each workflow's versions, map to equivalent versions in other workflows
@@ -728,14 +732,18 @@ function buildVersionMappings(
 
     for (let i = 0; i < sourceVersions.length; i++) {
       const sourceId = sourceVersions[i].value;
-      const equivalents: Record<string, number> = {};
+      const equivalents: Record<string, VersionMapping> = {};
 
       // Find equivalent version in each other workflow (same index)
       for (const targetWorkflow of workflows) {
         if (targetWorkflow === sourceWorkflow) continue;
         const targetVersions = workflowVersions[targetWorkflow].versions;
         if (i < targetVersions.length) {
-          equivalents[targetWorkflow] = targetVersions[i].value;
+          const targetVersion = targetVersions[i];
+          equivalents[targetWorkflow] = {
+            id: targetVersion.value,
+            baseModel: targetVersion.baseModel,
+          };
         }
       }
 

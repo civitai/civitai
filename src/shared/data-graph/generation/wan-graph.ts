@@ -11,7 +11,7 @@
  * - v2.5: Latest version with extended duration options
  *
  * Nodes:
- * - version: Wan version selector
+ * - model: Wan version selector (merged from checkpoint graph with workflowVersions)
  * - seed: Optional seed for reproducibility
  * - prompt: Text prompt
  * - aspectRatio: Output aspect ratio (txt2vid only)
@@ -31,22 +31,72 @@ import {
   stepsNode,
   resourcesNode,
   createCheckpointGraph,
+  type ResourceData,
 } from './common';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** Wan version options */
-const wanVersions = ['v2.1', 'v2.2', 'v2.2-5b', 'v2.5'] as const;
-type WanVersion = (typeof wanVersions)[number];
+/** Wan version definitions - single source of truth */
+const wanVersionDefs = [
+  {
+    version: 'v2.1',
+    label: 'Wan 2.1',
+    txt2vid: { id: 1707796, baseModel: 'Wan Video 14B t2v' },
+    img2vid: { id: 1501125, baseModel: 'Wan Video 14B i2v 480p' },
+  },
+  {
+    version: 'v2.2',
+    label: 'Wan 2.2',
+    txt2vid: { id: 2114154, baseModel: 'Wan Video 2.2 T2V-A14B' },
+    img2vid: { id: 2114157, baseModel: 'Wan Video 2.2 I2V-A14B' },
+  },
+  {
+    version: 'v2.2-5b',
+    label: 'Wan 2.2 5B',
+    txt2vid: { id: 2114110, baseModel: 'Wan Video 2.2 TI2V-5B' },
+    img2vid: { id: 2114110, baseModel: 'Wan Video 2.2 TI2V-5B' },
+  },
+  {
+    version: 'v2.5',
+    label: 'Wan 2.5',
+    txt2vid: { id: 2254989, baseModel: 'Wan Video 2.5 T2V' },
+    img2vid: { id: 2254963, baseModel: 'Wan Video 2.5 I2V' },
+  },
+] as const;
 
-const wanVersionOptions = [
-  { label: 'Wan 2.1', value: 'v2.1' },
-  { label: 'Wan 2.2', value: 'v2.2' },
-  { label: 'Wan 2.2 5B', value: 'v2.2-5b' },
-  { label: 'Wan 2.5', value: 'v2.5' },
-];
+/** Wan version type */
+const wanVersions = wanVersionDefs.map((d) => d.version);
+type WanVersion = (typeof wanVersionDefs)[number]['version'];
+
+/** Map from version ID to Wan version name */
+const versionIdToWanVersion = new Map<number, WanVersion>(
+  wanVersionDefs.flatMap((d) => [
+    [d.txt2vid.id, d.version],
+    [d.img2vid.id, d.version],
+  ])
+);
+
+/** Workflow-specific version configuration for Wan */
+const wanWorkflowVersions = {
+  txt2vid: {
+    versions: wanVersionDefs.map((d) => ({
+      label: d.label,
+      value: d.txt2vid.id,
+      baseModel: d.txt2vid.baseModel,
+    })),
+    defaultModelId: wanVersionDefs[0].txt2vid.id,
+  },
+  img2vid: {
+    versions: wanVersionDefs.map((d) => ({
+      label: d.label,
+      value: d.img2vid.id,
+      baseModel: d.img2vid.baseModel,
+    })),
+    defaultModelId: wanVersionDefs[0].img2vid.id,
+  },
+};
 
 /** Wan aspect ratio options */
 const wanAspectRatios = [
@@ -112,7 +162,8 @@ const wanInterpolatorModels = [
 type WanVersionCtx = {
   baseModel: string;
   workflow: string;
-  version: WanVersion;
+  model: ResourceData | undefined;
+  wanVersion: WanVersion;
 };
 
 /**
@@ -276,24 +327,39 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
 // =============================================================================
 
 /** Context shape for wan graph */
-type WanCtx = { baseModel: string; workflow: string };
+type WanCtx = { baseModel: string; workflow: string; model: ResourceData | undefined };
 
 /**
  * Wan video generation controls.
  *
- * Uses discriminator on 'version' to select version-specific controls.
+ * Uses workflowVersions in createCheckpointGraph to show version options per workflow.
+ * Computes wanVersion from model.id for discriminator-based version-specific controls.
  */
 export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
-  // Merge checkpoint graph (model node with locked model from ecosystem settings)
-  .merge(createCheckpointGraph())
+  // Merge checkpoint graph with workflow-specific versions
+  // The workflowVersions option handles automatic model syncing when workflow changes
+  .merge(
+    (ctx) =>
+      createCheckpointGraph({
+        workflowVersions: wanWorkflowVersions,
+        currentWorkflow: ctx.workflow,
+      }),
+    ['workflow']
+  )
 
-  // Version selector node
-  .node('version', {
-    input: z.enum(wanVersions).optional(),
-    output: z.enum(wanVersions),
-    defaultValue: 'v2.1' as WanVersion,
-    meta: { options: wanVersionOptions },
-  })
+  // Computed: derive wan version from model.id (version ID)
+  .computed(
+    'wanVersion',
+    (ctx): WanVersion => {
+      const modelId = ctx.model?.id;
+      if (modelId) {
+        const version = versionIdToWanVersion.get(modelId);
+        if (version) return version;
+      }
+      return 'v2.1'; // Default to v2.1 if unknown
+    },
+    ['model']
+  )
 
   // Seed node (common to all versions)
   .node('seed', seedNode())
@@ -315,7 +381,7 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
   )
 
   // Version-specific controls via discriminator
-  .discriminator('version', {
+  .discriminator('wanVersion', {
     'v2.1': wan21Graph,
     'v2.2': wan22Graph,
     'v2.2-5b': wan225bGraph,
@@ -325,7 +391,8 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
 // Export constants for use in components
 export {
   wanVersions,
-  wanVersionOptions,
+  wanVersionDefs,
+  versionIdToWanVersion,
   wanAspectRatios,
   wan21AspectRatios,
   wan21Resolutions,

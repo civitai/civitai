@@ -35,6 +35,9 @@ import {
 // Constants
 // =============================================================================
 
+/** Veo3 base model name */
+const veo3BaseModel = 'Veo 3';
+
 /** Veo3 model version mapping */
 const veo3VersionIds = {
   // txt2vid versions
@@ -47,14 +50,14 @@ const veo3VersionIds = {
 
 /** Veo3 version options for txt2vid */
 const veo3Txt2VidVersionOptions = [
-  { label: 'Fast Mode', value: veo3VersionIds.txt2vid_fast },
-  { label: 'Standard', value: veo3VersionIds.txt2vid_standard },
+  { label: 'Fast Mode', value: veo3VersionIds.txt2vid_fast, baseModel: veo3BaseModel },
+  { label: 'Standard', value: veo3VersionIds.txt2vid_standard, baseModel: veo3BaseModel },
 ];
 
 /** Veo3 version options for img2vid */
 const veo3Img2VidVersionOptions = [
-  { label: 'Fast Mode', value: veo3VersionIds.img2vid_fast },
-  { label: 'Standard', value: veo3VersionIds.img2vid_standard },
+  { label: 'Fast Mode', value: veo3VersionIds.img2vid_fast, baseModel: veo3BaseModel },
+  { label: 'Standard', value: veo3VersionIds.img2vid_standard, baseModel: veo3BaseModel },
 ];
 
 /** Veo3 aspect ratio options */

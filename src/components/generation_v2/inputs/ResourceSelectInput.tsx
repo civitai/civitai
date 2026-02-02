@@ -8,9 +8,12 @@
  *
  * The input accepts minimal values (just { id }) and hydrates them with full resource data
  * when fetched. This allows URL params to pass just an id while handlers get full context.
+ *
+ * When `versions` prop is provided, displays a version selector (segmented control) for
+ * switching between model versions (e.g., Flux Dev/Schnell, Wan 2.1/2.2).
  */
 
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
@@ -21,7 +24,8 @@ import type {
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { useResourceData } from './ResourceDataProvider';
+import { useResourceDataContext, useResourceData } from './ResourceDataProvider';
+import { OverflowSegmentedControl } from './OverflowSegmentedControl';
 import {
   ResourceItemContent,
   getResourceStatus,
@@ -43,6 +47,14 @@ export type { ResourceSelectValue, PartialResourceValue } from './resource-selec
 // =============================================================================
 // Types
 // =============================================================================
+
+/** Version option for the version selector */
+export interface VersionOption {
+  label: string;
+  value: number;
+  /** Optional baseModel override (for backwards compatibility with hardcoded values) */
+  baseModel?: string;
+}
 
 export interface ResourceSelectInputProps extends Omit<InputWrapperProps, 'children' | 'onChange'> {
   /** Value can be a full GenerationResource or partial with just { id } for hydration */
@@ -66,6 +78,14 @@ export interface ResourceSelectInputProps extends Omit<InputWrapperProps, 'child
   resourceType?: 'Checkpoint' | 'LORA' | 'VAE' | 'TextualInversion';
   /** Callback to revert to default model (shown when resource is disabled) */
   onRevertToDefault?: () => void;
+  /**
+   * Version options for models with multiple versions (e.g., Flux Dev/Schnell, Wan 2.1/2.2).
+   * When provided and the current value's ID matches one of the versions, a segmented
+   * control is shown to switch between versions.
+   */
+  versions?: VersionOption[];
+  /** Maximum visible options in version selector before overflow (default: 5) */
+  versionsMaxVisible?: number;
 }
 
 // =============================================================================
@@ -174,8 +194,12 @@ export function ResourceSelectInput({
   disabled,
   resourceType,
   onRevertToDefault,
+  versions,
+  versionsMaxVisible = 5,
   ...inputWrapperProps
 }: ResourceSelectInputProps) {
+  const { registerResourceId, unregisterResourceId, getResourceData } = useResourceDataContext();
+
   // Fetch resource data for display (registration handled by form provider)
   // If value is already hydrated, use it directly; otherwise fetch via provider
   const { data: fetchedData, isLoading } = useResourceData(value?.id);
@@ -186,6 +210,26 @@ export function ResourceSelectInput({
 
   // Build options from resourceType if provided
   const resolvedOptions = resolveResourceOptions(options, resourceType);
+
+  // Register all version IDs for pre-fetching so baseModel data is available when switching
+  const versionIds = useMemo(() => versions?.map((v) => v.value) ?? [], [versions]);
+  useEffect(() => {
+    if (versionIds.length === 0) return;
+    versionIds.forEach(registerResourceId);
+    return () => {
+      versionIds.forEach(unregisterResourceId);
+    };
+  }, [versionIds, registerResourceId, unregisterResourceId]);
+
+  // Check if current value is one of the versions (show version selector)
+  const showVersionSelector = value?.id !== undefined && versionIds.includes(value.id);
+
+  // Handle version selection from segmented control
+  const handleVersionChange = (stringId: string) => {
+    const numericId = Number(stringId);
+    const versionResourceData = getResourceData(numericId);
+    onChange?.(versionResourceData);
+  };
 
   const handleOpenResourceSearch = () => {
     openResourceSelectModal({
@@ -249,6 +293,19 @@ export function ResourceSelectInput({
         allowSwap={allowSwap}
         options={options}
       />
+      {/* Version selector for models with multiple versions */}
+      {showVersionSelector && versions && (
+        <OverflowSegmentedControl
+          value={value?.id?.toString()}
+          onChange={handleVersionChange}
+          options={versions.map(({ label, value: versionValue }) => ({
+            label,
+            value: versionValue.toString(),
+          }))}
+          maxVisible={versionsMaxVisible}
+          className="mt-2"
+        />
+      )}
     </Input.Wrapper>
   );
 }
