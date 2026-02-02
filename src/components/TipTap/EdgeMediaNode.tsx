@@ -101,16 +101,18 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
             const items = event.clipboardData?.items;
             if (!items) return false;
 
+            let handled = false;
             for (const item of items) {
-              if (!(constants.richTextEditor.accept as string[]).includes(item.type)) return false;
+              if (!(constants.richTextEditor.accept as string[]).includes(item.type)) continue;
 
               const file = item.getAsFile();
               if (file) {
                 this.editor.commands.addMedia(file);
+                handled = true;
               }
             }
 
-            return true;
+            return handled;
           },
           handleDrop: (view, event) => {
             const files = event.dataTransfer?.files;
@@ -127,7 +129,7 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
   },
 });
 
-const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
+const getUploadNotificationId = (url: string) => `upload-media-${url}`;
 
 function EdgeMediaEditComponent({
   node,
@@ -142,39 +144,36 @@ function EdgeMediaEditComponent({
   useEffect(() => {
     if (isObjectUrl && !uploadingRef.current) {
       uploadingRef.current = true;
+      const notificationId = getUploadNotificationId(url);
       showNotification({
-        id: UPLOAD_NOTIFICATION_ID,
+        id: notificationId,
         loading: true,
         withCloseButton: false,
         autoClose: false,
         message: `Uploading ${type}...`,
       });
-      fetchBlobAsFile(url, filename).then((file) => {
-        if (!file) {
-          hideNotification(UPLOAD_NOTIFICATION_ID);
-          URL.revokeObjectURL(url);
-          return;
-        }
-        uploadToCF(file)
-          .then((result) => {
-            URL.revokeObjectURL(url);
-            updateAttributes({
-              url: result.id,
-              type,
-              filename,
-            });
-            hideNotification(UPLOAD_NOTIFICATION_ID);
-          })
-          .catch(() => {
-            hideNotification(UPLOAD_NOTIFICATION_ID);
-            URL.revokeObjectURL(url);
-            updateAttributes({ url: '' });
-            showErrorNotification({
-              title: `Upload Failed`,
-              error: new Error(`Failed to upload ${type}. Please try again`),
-            });
-          });
-      });
+      const handleUploadError = () => {
+        hideNotification(notificationId);
+        URL.revokeObjectURL(url);
+        updateAttributes({ url: '' });
+        showErrorNotification({
+          title: `Upload Failed`,
+          error: new Error(`Failed to upload ${type}. Please try again`),
+        });
+      };
+
+      fetchBlobAsFile(url, filename)
+        .then((file) => {
+          if (!file) return handleUploadError();
+          uploadToCF(file)
+            .then((result) => {
+              URL.revokeObjectURL(url);
+              updateAttributes({ url: result.id, type, filename });
+              hideNotification(notificationId);
+            })
+            .catch(handleUploadError);
+        })
+        .catch(handleUploadError);
     }
   }, [url, isObjectUrl]);
 

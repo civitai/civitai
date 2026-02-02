@@ -9,7 +9,7 @@ import { useEffect, useRef } from 'react';
 import { getEdgeUrl, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { getExtensionsFromMimeTypes, IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
@@ -19,7 +19,7 @@ type CustomImageOptions = ImageOptions & {
   accept: string[];
 };
 
-const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
+const getUploadNotificationId = (url: string) => `upload-image-${url}`;
 
 export const CustomImage = ImageExtension.configure({ inline: true }).extend<CustomImageOptions>({
   draggable: true,
@@ -52,18 +52,19 @@ export const CustomImage = ImageExtension.configure({ inline: true }).extend<Cus
             const items = event.clipboardData?.items;
             if (!items) return false;
 
+            let handled = false;
             for (const item of items) {
-              if (!this.options.accept.includes(item.type)) return false;
+              if (!this.options.accept.includes(item.type)) continue;
 
               const file = item.getAsFile();
-              if (!file) return false;
+              if (!file) continue;
               if (file.size > this.options.maxFileSize) {
                 showWarningNotification({
                   message: `File is too big. Max file size is ${formatBytes(
                     this.options.maxFileSize
                   )}`,
                 });
-                return false;
+                continue;
               }
 
               const blobUrl = URL.createObjectURL(file);
@@ -71,9 +72,10 @@ export const CustomImage = ImageExtension.configure({ inline: true }).extend<Cus
                 type: this.name,
                 attrs: { src: blobUrl, filename: file.name },
               });
+              handled = true;
             }
 
-            return true;
+            return handled;
           },
           handleDrop: (view, event) => {
             const files = event.dataTransfer?.files;
@@ -83,8 +85,8 @@ export const CustomImage = ImageExtension.configure({ inline: true }).extend<Cus
               if (!file.type.startsWith('image')) continue;
               if (!this.options.accept.includes(file.type)) {
                 showWarningNotification({
-                  message: `Unsupported file type. Supported types: ${this.options.accept.join(
-                    ', '
+                  message: `Unsupported file type. Supported types: ${getExtensionsFromMimeTypes(
+                    this.options.accept
                   )}`,
                 });
                 return false;
@@ -123,32 +125,36 @@ function CustomImageEditComponent({ node, updateAttributes }: ReactNodeViewProps
   useEffect(() => {
     if (isBlobUrl && !uploadingRef.current) {
       uploadingRef.current = true;
+      const notificationId = getUploadNotificationId(src);
       showNotification({
-        id: UPLOAD_NOTIFICATION_ID,
+        id: notificationId,
         loading: true,
         withCloseButton: false,
         autoClose: false,
         message: 'Uploading image...',
       });
-      fetchBlobAsFile(src, filename).then((file) => {
-        if (!file) return;
-        uploadToCF(file)
-          .then((result) => {
-            URL.revokeObjectURL(src);
-            hideNotification(UPLOAD_NOTIFICATION_ID);
-            updateAttributes({ src: getEdgeUrl(result.id, { original: true }) });
-          })
-          .catch((error) => {
-            console.error(error);
-            URL.revokeObjectURL(src);
-            hideNotification(UPLOAD_NOTIFICATION_ID);
-            updateAttributes({ src: '' });
-            showErrorNotification({
-              title: 'Upload Failed',
-              error: new Error('Failed to upload image. Please try again'),
-            });
-          });
-      });
+      const handleUploadError = () => {
+        hideNotification(notificationId);
+        URL.revokeObjectURL(src);
+        updateAttributes({ src: '' });
+        showErrorNotification({
+          title: 'Upload Failed',
+          error: new Error('Failed to upload image. Please try again'),
+        });
+      };
+
+      fetchBlobAsFile(src, filename)
+        .then((file) => {
+          if (!file) return handleUploadError();
+          uploadToCF(file)
+            .then((result) => {
+              URL.revokeObjectURL(src);
+              hideNotification(notificationId);
+              updateAttributes({ src: getEdgeUrl(result.id, { original: true }) });
+            })
+            .catch(handleUploadError);
+        })
+        .catch(handleUploadError);
     }
   }, [src, isBlobUrl]);
 

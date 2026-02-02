@@ -2,7 +2,10 @@ import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
+import {
+  getExtensionsFromMimeTypes,
+  getMimeTypesFromMediaTypes,
+} from '~/shared/constants/mime-types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatBytes } from '~/utils/number-helpers';
 import { showWarningNotification } from '~/utils/notifications';
@@ -27,7 +30,9 @@ export function InsertImageControl({ accepts = ['image'], maxFileSize, ...props 
     for (const file of Array.from(fileList)) {
       if (!acceptedMimeTypes.includes(file.type)) {
         showWarningNotification({
-          message: `Unsupported file type. Supported types: ${accepts.join(', ')}`,
+          message: `Unsupported file type. Supported types: ${getExtensionsFromMimeTypes(
+            acceptedMimeTypes
+          )}`,
         });
         continue;
       }
@@ -76,7 +81,9 @@ export function InsertImageControlLegacy({ accepts = ['image'], maxFileSize, ...
     for (const file of Array.from(fileList)) {
       if (!acceptedMimeTypes.includes(file.type)) {
         showWarningNotification({
-          message: `Unsupported file type. Supported types: ${accepts.join(', ')}`,
+          message: `Unsupported file type. Supported types: ${getExtensionsFromMimeTypes(
+            acceptedMimeTypes
+          )}`,
         });
         continue;
       }
