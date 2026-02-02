@@ -6,6 +6,7 @@ import {
   Container,
   Divider,
   Group,
+  Menu,
   ScrollArea,
   Spoiler,
   Stack,
@@ -16,7 +17,7 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useState } from 'react';
+import { useState } from 'react';
 import * as z from 'zod';
 
 import { Page } from '~/components/AppLayout/Page';
@@ -37,11 +38,16 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconClockHour4,
   IconCrown,
+  IconCube,
+  IconDotsVertical,
   IconGift,
+  IconPencil,
   IconPhoto,
   IconShare3,
   IconSparkles,
+  IconTrash,
   IconTrophy,
+  IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -63,13 +69,25 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationFormStore, generationPanel } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants as appConstants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+
+/** Open the generation panel for a challenge's model versions. */
+function openChallengeGenerator(modelVersionIds: number[]) {
+  if (modelVersionIds.length) {
+    generationPanel.open({ type: 'modelVersions', ids: modelVersionIds });
+  } else {
+    generationPanel.open();
+  }
+  generationFormStore.setType('image');
+}
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -94,6 +112,99 @@ export const getServerSideProps = createServerSideProps({
 
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+  const queryUtils = trpc.useUtils();
+
+  const handleMutationError = (error: { message: string }) => {
+    showErrorNotification({ error: new Error(error.message) });
+  };
+
+  const endAndPickWinnersMutation = trpc.challenge.endAndPickWinners.useMutation({
+    onSuccess: (data) => {
+      queryUtils.challenge.getById.invalidate({ id });
+      showSuccessNotification({
+        message: `Challenge ended. ${data.winnersCount} winner(s) selected.`,
+      });
+    },
+    onError: handleMutationError,
+  });
+
+  const voidChallengeMutation = trpc.challenge.voidChallenge.useMutation({
+    onSuccess: () => {
+      queryUtils.challenge.getById.invalidate({ id });
+      showSuccessNotification({ message: 'Challenge cancelled' });
+    },
+    onError: handleMutationError,
+  });
+
+  const deleteMutation = trpc.challenge.delete.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({ message: 'Challenge deleted' });
+      router.push('/challenges');
+    },
+    onError: handleMutationError,
+  });
+
+  const handleEndAndPickWinners = () => {
+    if (!challenge) return;
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'End & Pick Winners',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Are you sure you want to end <strong>&ldquo;{challenge.title}&rdquo;</strong> and pick
+              winners now?
+            </Text>
+            <Text size="sm" c="dimmed">
+              This will close the collection, run the winner selection process, and award prizes.
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
+        onConfirm: () => endAndPickWinnersMutation.mutate({ id }),
+      },
+    });
+  };
+
+  const handleVoidChallenge = () => {
+    if (!challenge) return;
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Void Challenge',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Are you sure you want to void <strong>&ldquo;{challenge.title}&rdquo;</strong>?
+            </Text>
+            <Text size="sm" c="dimmed">
+              This will cancel the challenge without picking winners. Users will keep their entry
+              prizes (if any were awarded).
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => voidChallengeMutation.mutate({ id }),
+      },
+    });
+  };
+
+  const handleDelete = () => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Delete Challenge',
+        message: <Text>Are you sure you want to delete this challenge?</Text>,
+        labels: { cancel: 'Cancel', confirm: 'Delete' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => deleteMutation.mutate({ id }),
+      },
+    });
+  };
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
@@ -121,11 +232,73 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       <SensitiveShield contentNsfwLevel={challenge.nsfwLevel}>
         <Container size="xl" mb={{ base: 'md', sm: 32 }}>
           <Stack gap="xs" mb="xl">
-            {/* Row 1: Title + Prize (right-aligned) */}
+            {/* Row 1: Title + context menu */}
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Title fw="bold" lineClamp={2} order={1} fz={{ base: 'h2', sm: 'h1' }}>
                 {challenge.title}
               </Title>
+              {currentUser?.isModerator && (
+                <Menu position="bottom-end" withArrow>
+                  <Menu.Target>
+                    <ActionIcon variant="light" size="lg">
+                      <IconDotsVertical size={20} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Label>Actions</Menu.Label>
+                    <Menu.Item
+                      leftSection={<IconPencil size={14} stroke={1.5} />}
+                      component={Link}
+                      href={`/moderator/challenges/${challenge.id}/edit`}
+                    >
+                      Edit Challenge
+                    </Menu.Item>
+
+                    {isActive && (
+                      <>
+                        <Menu.Divider />
+                        <Menu.Label>Quick Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconTrophy size={14} />}
+                          onClick={handleEndAndPickWinners}
+                        >
+                          End & Pick Winners
+                        </Menu.Item>
+                        <Menu.Item
+                          leftSection={<IconX size={14} />}
+                          color="red"
+                          onClick={handleVoidChallenge}
+                        >
+                          Void Challenge
+                        </Menu.Item>
+                      </>
+                    )}
+
+                    {isScheduled && (
+                      <>
+                        <Menu.Divider />
+                        <Menu.Label>Quick Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconX size={14} />}
+                          color="red"
+                          onClick={handleVoidChallenge}
+                        >
+                          Cancel Challenge
+                        </Menu.Item>
+                      </>
+                    )}
+
+                    <Menu.Divider />
+                    <Menu.Item
+                      leftSection={<IconTrash size={14} />}
+                      color="red"
+                      onClick={handleDelete}
+                    >
+                      Delete
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
+              )}
             </Group>
 
             {/* Row 2: Theme + Status + Stats (inline with dividers) */}
@@ -179,7 +352,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <Stack gap="md">
                 {/* Cover Image */}
                 {challenge.coverImage && (
-                  <div className="relative overflow-hidden rounded-lg">
+                  <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
                     <ImageGuard2 image={challenge.coverImage}>
                       {(safe) => (
                         <>
@@ -281,20 +454,6 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           },
         ]
       : []),
-    {
-      label: 'Featured Model',
-      value: challenge.model ? (
-        <Link href={`/models/${challenge.model.id}`}>
-          <Text size="sm" c="blue">
-            {challenge.model.name}
-          </Text>
-        </Link>
-      ) : (
-        <Text size="sm" c="dimmed">
-          Any model
-        </Text>
-      ),
-    },
   ];
 
   // Prize breakdown
@@ -320,6 +479,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       />
     ),
   }));
+
+  // Shared props for DescriptionTable inside accordion panels (no outer borders)
+  const accordionTableProps = {
+    withBorder: true,
+    paperProps: {
+      style: { borderLeft: 0, borderRight: 0, borderBottom: 0 },
+      radius: 0,
+    },
+  } as const;
 
   if (challenge.entryPrize) {
     prizeItems.push({
@@ -347,20 +515,9 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     <Stack gap="md">
       {/* Action buttons - hidden on mobile, replaced by sticky CTA */}
       <Group gap={8} wrap="nowrap" visibleFrom="md">
-        {isActive && !currentUser?.muted && (
+        {isActive && !currentUser?.muted ? (
           <Button
-            onClick={() => {
-              if (challenge.modelVersionIds.length) {
-                generationPanel.open({
-                  type: 'modelVersions',
-                  ids: challenge.modelVersionIds,
-                });
-              } else {
-                generationPanel.open();
-              }
-              // Set generator type based on model (image by default)
-              generationFormStore.setType('image');
-            }}
+            onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
             leftSection={<IconSparkles size={16} />}
             variant="filled"
             color="blue"
@@ -368,7 +525,17 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           >
             Enter Challenge
           </Button>
-        )}
+        ) : challenge.status === ChallengeStatus.Completed ? (
+          <IconBadge
+            size="lg"
+            radius="sm"
+            color="yellow.7"
+            icon={<IconTrophy size={16} fill="currentColor" />}
+            style={{ flex: 1 }}
+          >
+            Completed
+          </IconBadge>
+        ) : null}
         <ShareButton url={router.asPath} title={challenge.title}>
           <Button
             style={{ paddingLeft: 0, paddingRight: 0, width: '36px' }}
@@ -379,22 +546,10 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
         </ShareButton>
       </Group>
 
-      {/* Moderator link */}
-      {currentUser?.isModerator && (
-        <Button
-          component={Link}
-          href={`/moderator/challenges/${challenge.id}/edit`}
-          variant="light"
-          size="xs"
-        >
-          Manage Challenge
-        </Button>
-      )}
-
       <Accordion
         variant="separated"
         multiple
-        defaultValue={['details', 'prizes']}
+        defaultValue={['details', 'models', 'prizes']}
         styles={(theme) => ({
           content: { padding: 0 },
           item: {
@@ -412,19 +567,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
             <Group justify="space-between">Overview</Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <DescriptionTable
-              items={challengeDetails}
-              labelWidth="40%"
-              withBorder
-              paperProps={{
-                style: {
-                  borderLeft: 0,
-                  borderRight: 0,
-                  borderBottom: 0,
-                },
-                radius: 0,
-              }}
-            />
+            <DescriptionTable items={challengeDetails} labelWidth="40%" {...accordionTableProps} />
           </Accordion.Panel>
         </Accordion.Item>
 
@@ -434,22 +577,77 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel>
             <ScrollArea.Autosize mah={300}>
-              <DescriptionTable
-                items={prizeItems}
-                labelWidth="50%"
-                withBorder
-                paperProps={{
-                  style: {
-                    borderLeft: 0,
-                    borderRight: 0,
-                    borderBottom: 0,
-                  },
-                  radius: 0,
-                }}
-              />
+              <DescriptionTable items={prizeItems} labelWidth="50%" {...accordionTableProps} />
             </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
+
+        {challenge.models.length > 0 && (
+          <Accordion.Item value="models">
+            <Accordion.Control>
+              <Group justify="space-between">Eligible Models</Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <ScrollArea.Autosize mah={300}>
+                {challenge.models.map((m) => (
+                  <div
+                    key={m.versionId}
+                    className="flex items-center gap-3 px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-5"
+                  >
+                    <Link
+                      href={`/models/${m.id}?modelVersionId=${m.versionId}`}
+                      className="flex min-w-0 flex-1 items-center gap-3 no-underline"
+                      target="_blank"
+                    >
+                      {m.image ? (
+                        <ImageGuard2 image={m.image} explain={false}>
+                          {(safe) => (
+                            <div className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-gray-2 dark:bg-dark-3">
+                              {safe ? (
+                                <EdgeMedia2
+                                  src={m.image!.url}
+                                  width={96}
+                                  type={m.image!.type}
+                                  className="size-full object-cover"
+                                />
+                              ) : (
+                                <MediaHash {...m.image!} />
+                              )}
+                            </div>
+                          )}
+                        </ImageGuard2>
+                      ) : (
+                        <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-gray-2 dark:bg-dark-3">
+                          <IconCube size={20} className="text-dimmed" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <Text size="sm" fw={500} lineClamp={1}>
+                          {m.name}
+                        </Text>
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {m.versionName}
+                        </Text>
+                      </div>
+                    </Link>
+                    <ActionIcon
+                      variant="subtle"
+                      color="blue"
+                      size="md"
+                      onClick={() => {
+                        generationPanel.open({ type: 'modelVersion', id: m.versionId });
+                        generationFormStore.setType('image');
+                      }}
+                      aria-label={`Generate with ${m.name}`}
+                    >
+                      <IconSparkles size={16} />
+                    </ActionIcon>
+                  </div>
+                ))}
+              </ScrollArea.Autosize>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
 
         {challenge.judge && (
           <Accordion.Item value="judge">
@@ -879,15 +1077,7 @@ function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
   return (
     <Group gap="xs" wrap="nowrap" hiddenFrom="md" mt="md">
       <Button
-        onClick={() => {
-          const modelVersionId = challenge.modelVersionIds?.[0];
-          if (modelVersionId) {
-            generationPanel.open({ type: 'modelVersion', id: modelVersionId });
-          } else {
-            generationPanel.open();
-          }
-          generationFormStore.setType('image');
-        }}
+        onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
         leftSection={<IconSparkles size={16} />}
         variant="filled"
         color="blue"

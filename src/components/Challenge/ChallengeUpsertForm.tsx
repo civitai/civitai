@@ -1,5 +1,15 @@
 import type { SelectProps } from '@mantine/core';
-import { Button, Divider, Group, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Divider,
+  Group,
+  Paper,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -24,8 +34,8 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { ChallengeSource, Currency } from '~/shared/utils/prisma/enums';
-import { upsertChallengeSchema, type Prize } from '~/server/schema/challenge.schema';
+import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
+import { upsertChallengeBaseSchema, type Prize } from '~/server/schema/challenge.schema';
 import type { GetActiveJudgesItem } from '~/types/router';
 import { IconCheck } from '@tabler/icons-react';
 
@@ -36,7 +46,8 @@ const InputNumberWrapper = withController(NumberInputWrapper);
 
 // Form schema - extends server schema with flattened prize fields for UI
 // judgeId is overridden to string|null because Mantine Select uses string values
-const schema = upsertChallengeSchema
+// Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
+const schema = upsertChallengeBaseSchema
   .omit({ prizes: true, entryPrize: true, judgeId: true })
   .extend({
     judgeId: z.string().nullable().optional(),
@@ -66,6 +77,7 @@ type ChallengeForEdit = {
   startsAt: Date;
   endsAt: Date;
   visibleAt: Date;
+  status: ChallengeStatus;
   source: ChallengeSource;
   prizes: Prize[];
   entryPrize: Prize | null;
@@ -79,6 +91,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const isEditing = !!challenge;
+  const isActive = challenge?.status === ChallengeStatus.Active;
+  const isTerminal =
+    challenge?.status === ChallengeStatus.Completed ||
+    challenge?.status === ChallengeStatus.Cancelled;
 
   // Fetch available judges for dropdown
   const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
@@ -92,7 +108,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const existingPrizes = challenge?.prizes ?? [];
   const existingEntryPrize = challenge?.entryPrize;
 
-  const form = useForm({
+  const form = useForm<typeof schema>({
     schema,
     defaultValues: {
       title: challenge?.title ?? '',
@@ -135,6 +151,12 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
+    // Cross-field date validation (can't use .refine() because useForm accesses .shape)
+    if (data.endsAt <= data.startsAt) {
+      form.setError('endsAt', { message: 'End date must be after start date' });
+      return;
+    }
+
     // Build prizes array
     const prizes: Prize[] = [
       { buzz: data.prize1Buzz, points: 150 },
@@ -189,6 +211,19 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Title>
         </Group>
 
+        {isTerminal && (
+          <Alert color="red" title="Challenge is read-only">
+            This challenge is {challenge?.status?.toLowerCase()} and cannot be edited.
+          </Alert>
+        )}
+
+        {isActive && (
+          <Alert color="yellow" title="Limited editing">
+            Some fields are locked because this challenge is active. Fields that affect fairness for
+            existing entries cannot be changed.
+          </Alert>
+        )}
+
         {/* Main Content */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
@@ -199,18 +234,21 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               label="Title"
               placeholder="Enter challenge title"
               withAsterisk
+              disabled={isTerminal}
             />
 
             <InputText
               name="theme"
               label="Theme"
               placeholder="1-2 word theme (e.g., 'Neon Dreams')"
+              disabled={isTerminal}
             />
 
             <InputText
               name="invitation"
               label="Invitation"
               placeholder="Short tagline to invite participants"
+              disabled={isTerminal}
             />
 
             <InputRTE
@@ -221,6 +259,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               includeControls={['heading', 'formatting', 'list', 'link']}
               editorSize="lg"
               stickyToolbar
+              disabled={isTerminal}
             />
 
             <InputSimpleImageUpload
@@ -228,6 +267,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               label="Cover Image"
               description="Suggested resolution: 1024 x 768 (4:3 aspect ratio, optional)"
               withNsfwLevel={false}
+              disabled={isTerminal}
             />
           </Stack>
         </Paper>
@@ -238,6 +278,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             name="modelVersionIds"
             label="Eligible Models"
             description="Specify which models are allowed for this challenge. Entries must use at least one. Leave empty to allow any model."
+            disabled={isActive || isTerminal}
           />
         </Paper>
 
@@ -252,18 +293,21 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 name="visibleAt"
                 label="Visible From"
                 placeholder="When challenge appears in feed"
+                disabled={isTerminal}
               />
 
               <InputDateTimePicker
                 name="startsAt"
                 label="Starts At"
                 placeholder="When submissions open"
+                disabled={isActive || isTerminal}
               />
 
               <InputDateTimePicker
                 name="endsAt"
                 label="Ends At"
                 placeholder="When submissions close"
+                disabled={isTerminal}
               />
             </SimpleGrid>
 
@@ -293,6 +337,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 currency={Currency.BUZZ}
                 min={0}
                 step={100}
+                disabled={isTerminal}
               />
               <InputNumberWrapper
                 name="prize2Buzz"
@@ -301,6 +346,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 currency={Currency.BUZZ}
                 min={0}
                 step={100}
+                disabled={isTerminal}
               />
               <InputNumberWrapper
                 name="prize3Buzz"
@@ -309,6 +355,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 currency={Currency.BUZZ}
                 min={0}
                 step={100}
+                disabled={isTerminal}
               />
             </SimpleGrid>
 
@@ -322,6 +369,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               currency={Currency.BUZZ}
               min={0}
               step={10}
+              disabled={isTerminal}
             />
           </Stack>
         </Paper>
@@ -332,7 +380,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Title order={4}>Entry Requirements</Title>
 
             {/* Content Rating Selection */}
-            <InputContentRatingSelect name="allowedNsfwLevel" />
+            <InputContentRatingSelect name="allowedNsfwLevel" disabled={isActive || isTerminal} />
 
             <Divider />
 
@@ -344,6 +392,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 description="Maximum submissions per participant"
                 min={1}
                 max={100}
+                disabled={isActive || isTerminal}
               />
 
               <InputNumber
@@ -352,6 +401,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 description="Min entries to qualify for participation prize"
                 min={1}
                 max={100}
+                disabled={isActive || isTerminal}
               />
             </SimpleGrid>
           </Stack>
@@ -379,6 +429,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               }}
               allowDeselect={false}
               clearable
+              disabled={isTerminal}
             />
             <InputTextArea
               name="judgingPrompt"
@@ -388,6 +439,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               autosize
               minRows={3}
               maxRows={8}
+              disabled={isTerminal}
             />
           </Stack>
         </Paper>
@@ -405,6 +457,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 { value: ChallengeSource.Mod, label: 'Moderator' },
                 { value: ChallengeSource.User, label: 'User' },
               ]}
+              disabled={isActive || isTerminal}
             />
           </Stack>
         </Paper>
@@ -422,6 +475,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           <Button
             type="submit"
             loading={form.formState.isSubmitting || upsertMutation.isPending}
+            disabled={isTerminal}
             fullWidth
             className="sm:w-auto"
           >

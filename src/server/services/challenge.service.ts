@@ -27,7 +27,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import { createImage } from '~/server/services/image.service';
+import { createImage, imagesForModelVersionsCache } from '~/server/services/image.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -375,16 +375,41 @@ export async function getChallengeDetail(
     getCosmeticsForUsers([challenge.createdById]),
   ]);
 
-  // Get model info from first modelVersionId if present
-  let model: { id: number; name: string } | null = null;
+  // Get model info for all modelVersionIds
+  let models: ChallengeDetail['models'] = [];
   if (challenge.modelVersionIds.length > 0) {
-    const [modelResult] = await dbRead.$queryRaw<[{ id: number; name: string }]>`
-      SELECT m.id, m.name
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.id = ${challenge.modelVersionIds[0]}
-    `;
-    model = modelResult || null;
+    const versions = await dbRead.modelVersion.findMany({
+      where: { id: { in: challenge.modelVersionIds } },
+      select: {
+        id: true,
+        name: true,
+        model: { select: { id: true, name: true } },
+      },
+    });
+
+    // Batch-fetch images for all versions via cache (keyed by modelVersionId)
+    const imageCache = await imagesForModelVersionsCache.fetch(challenge.modelVersionIds);
+
+    models = versions.map((v) => {
+      const img = imageCache[v.id]?.images?.[0] ?? null;
+      return {
+        id: v.model.id,
+        name: v.model.name,
+        versionId: v.id,
+        versionName: v.name,
+        image: img
+          ? {
+              id: img.id,
+              url: img.url,
+              nsfwLevel: img.nsfwLevel,
+              hash: img.hash,
+              width: img.width,
+              height: img.height,
+              type: img.type,
+            }
+          : null,
+      };
+    });
   }
 
   // Fetch cover image
@@ -468,7 +493,7 @@ export async function getChallengeDetail(
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
     modelVersionIds: challenge.modelVersionIds,
-    model,
+    models,
     collectionId: challenge.collectionId,
     judgingPrompt: challenge.judgingPrompt,
     reviewPercentage: challenge.reviewPercentage,
@@ -611,6 +636,14 @@ export async function upsertChallenge({
 }: UpsertChallengeInput & { userId: number }) {
   const { id, coverImage, judgeId, ...data } = input;
 
+  // Defense-in-depth: validate endsAt > startsAt (also validated by Zod schema)
+  if (data.endsAt <= data.startsAt) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'End date must be after start date',
+    });
+  }
+
   // Handle cover image - create Image record if needed (like Article does)
   let coverImageId: number | null = null;
   if (coverImage) {
@@ -628,9 +661,48 @@ export async function upsertChallenge({
     // Update existing challenge
     const challenge = await dbRead.challenge.findUnique({
       where: { id },
-      select: { collectionId: true, metadata: true },
+      select: {
+        collectionId: true,
+        metadata: true,
+        status: true,
+        startsAt: true,
+        modelVersionIds: true,
+        allowedNsfwLevel: true,
+        source: true,
+        maxEntriesPerUser: true,
+        entryPrizeRequirement: true,
+      },
     });
     if (!challenge) throw throwNotFoundError('Challenge not found');
+
+    // Block edits to terminal challenges
+    if (
+      challenge.status === ChallengeStatus.Completed ||
+      challenge.status === ChallengeStatus.Cancelled
+    ) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: `Cannot edit a ${challenge.status.toLowerCase()} challenge.`,
+      });
+    }
+
+    // For Active challenges: restore locked fields from DB (silently override attempted changes)
+    if (challenge.status === ChallengeStatus.Active) {
+      data.startsAt = challenge.startsAt;
+      data.modelVersionIds = challenge.modelVersionIds;
+      data.allowedNsfwLevel = challenge.allowedNsfwLevel;
+      data.source = challenge.source as typeof data.source;
+      data.maxEntriesPerUser = challenge.maxEntriesPerUser;
+      data.entryPrizeRequirement = challenge.entryPrizeRequirement;
+
+      // Validate endsAt > now() for Active challenges (can't set end date to the past)
+      if (data.endsAt <= new Date()) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'End date must be in the future for an active challenge.',
+        });
+      }
+    }
 
     // Use transaction to update both challenge and collection metadata atomically
     const updatedChallenge = await dbWrite.$transaction(async (tx) => {
@@ -674,6 +746,9 @@ export async function upsertChallenge({
 
     return updatedChallenge;
   } else {
+    // Auto-activate if startsAt is in the past or now
+    const status = data.startsAt <= new Date() ? ChallengeStatus.Active : data.status;
+
     // Create new challenge with a Contest Collection for entries
     const challenge = await dbWrite.$transaction(async (tx) => {
       // First create the collection with proper Contest Mode settings
@@ -702,6 +777,7 @@ export async function upsertChallenge({
       return await tx.challenge.create({
         data: {
           ...data,
+          status,
           coverImageId,
           judgeId: judgeId ?? null,
           collectionId: collection.id,

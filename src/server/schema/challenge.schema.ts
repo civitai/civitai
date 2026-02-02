@@ -89,10 +89,21 @@ export type ChallengeDetail = {
   nsfwLevel: number;
   allowedNsfwLevel: number;
   modelVersionIds: number[];
-  model: {
+  models: Array<{
     id: number;
     name: string;
-  } | null;
+    versionId: number;
+    versionName: string;
+    image: {
+      id: number;
+      url: string;
+      nsfwLevel: number;
+      hash: string;
+      width: number;
+      height: number;
+      type: MediaType;
+    } | null;
+  }>;
   collectionId: number | null;
   judgingPrompt: string | null;
   reviewPercentage: number;
@@ -204,8 +215,8 @@ export const getModeratorChallengesSchema = infiniteQuerySchema.merge(
 );
 
 // Moderator: Create/Update challenge
-export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
-export const upsertChallengeSchema = z.object({
+// Base schema is a ZodObject so the form can use .omit().extend()
+export const upsertChallengeBaseSchema = z.object({
   id: z.number().optional(),
   title: z.string().min(3).max(200),
   description: z.string().optional(),
@@ -231,6 +242,13 @@ export const upsertChallengeSchema = z.object({
   status: z.enum(ChallengeStatus).default(ChallengeStatus.Scheduled),
   source: z.enum(ChallengeSource).default(ChallengeSource.System),
 });
+
+// Refined schema with cross-field validation (used by tRPC router)
+export const upsertChallengeSchema = upsertChallengeBaseSchema.refine(
+  (data) => data.endsAt > data.startsAt,
+  { message: 'End date must be after start date', path: ['endsAt'] }
+);
+export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
 
 // Moderator: Delete challenge
 export type DeleteChallengeInput = z.infer<typeof deleteChallengeSchema>;

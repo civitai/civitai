@@ -23,6 +23,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number[];
   onChange?: (ids: number[]) => void;
   maxSelections?: number;
+  disabled?: boolean;
 };
 
 /**
@@ -34,6 +35,7 @@ export function ModelVersionMultiSelect({
   value = [],
   onChange,
   maxSelections = 10,
+  disabled,
   ...inputWrapperProps
 }: Props) {
   // Track selected resources for display
@@ -138,16 +140,18 @@ export function ModelVersionMultiSelect({
                       </Group>
                     </div>
                   </Group>
-                  <Tooltip label="Remove">
-                    <ActionIcon
-                      size="sm"
-                      variant="subtle"
-                      color="red"
-                      onClick={() => handleRemove(resource.id)}
-                    >
-                      <IconX size={14} />
-                    </ActionIcon>
-                  </Tooltip>
+                  {!disabled && (
+                    <Tooltip label="Remove">
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color="red"
+                        onClick={() => handleRemove(resource.id)}
+                      >
+                        <IconX size={14} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
                 </Group>
               ))}
             </Stack>
@@ -158,7 +162,7 @@ export function ModelVersionMultiSelect({
           </Text>
         )}
 
-        {canAdd && (
+        {canAdd && !disabled && (
           <Button
             variant="light"
             leftSection={<IconPlus size={16} />}

@@ -11,6 +11,7 @@ import {
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
   onChange?: (value: number) => void;
+  disabled?: boolean;
 };
 
 // Levels that can be selected (excluding Blocked)
@@ -46,7 +47,12 @@ const presets = [
  * Allows selecting which NSFW levels are allowed for entries.
  * Compatible with withController HOC for form integration.
  */
-export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps }: Props) {
+export function ContentRatingSelect({
+  value = 1,
+  onChange,
+  disabled,
+  ...inputWrapperProps
+}: Props) {
   const selectedLevels = parseBitwiseBrowsingLevel(value);
 
   const handleLevelToggle = (level: (typeof selectableLevels)[number], checked: boolean) => {
@@ -84,8 +90,8 @@ export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps 
               key={preset.label}
               variant={value === preset.value ? 'filled' : 'light'}
               color={value === preset.value ? 'blue' : 'gray'}
-              style={{ cursor: 'pointer' }}
-              onClick={() => handlePreset(preset.value)}
+              style={{ cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1 }}
+              onClick={disabled ? undefined : () => handlePreset(preset.value)}
             >
               {preset.label}
             </Badge>
@@ -107,6 +113,7 @@ export function ContentRatingSelect({ value = 1, onChange, ...inputWrapperProps 
                     <Checkbox
                       checked={isChecked}
                       onChange={(e) => handleLevelToggle(level, e.currentTarget.checked)}
+                      disabled={disabled}
                     />
                     <Badge color={color} variant="light" size="sm" w={55}>
                       {label}
