@@ -181,6 +181,7 @@ export type ComicCharacterStatus = "Pending" | "Processing" | "Ready" | "Failed"
 export type ComicCharacterSourceType = "Upload" | "ExistingModel";
 
 export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
+
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
 export interface Account {
@@ -447,9 +448,9 @@ export interface User {
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
+  userRestrictions?: UserRestriction[];
   comicProjects?: ComicProject[];
   comicCharacters?: ComicCharacter[];
-  userRestrictions?: UserRestriction[];
 }
 
 export interface CustomerSubscription {
@@ -3773,6 +3774,7 @@ export interface ComicPanel {
   createdAt: Date;
   updatedAt: Date;
 }
+
 export interface UserRestriction {
   id: number;
   userId: number;
