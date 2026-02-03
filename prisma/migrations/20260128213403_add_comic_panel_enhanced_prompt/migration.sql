@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "comic_panels" ADD COLUMN "enhancedPrompt" TEXT;
+ALTER TABLE "ComicPanel" ADD COLUMN "enhancedPrompt" TEXT;

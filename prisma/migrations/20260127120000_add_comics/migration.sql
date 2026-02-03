@@ -4,8 +4,8 @@ CREATE TYPE "ComicProjectStatus" AS ENUM ('Active', 'Deleted');
 CREATE TYPE "ComicCharacterStatus" AS ENUM ('Pending', 'Processing', 'Ready', 'Failed');
 CREATE TYPE "ComicPanelStatus" AS ENUM ('Pending', 'Generating', 'Ready', 'Failed');
 
--- Create comic_projects table
-CREATE TABLE "comic_projects" (
+-- Create ComicProject table
+CREATE TABLE "ComicProject" (
     "id" TEXT NOT NULL,
     "userId" INTEGER NOT NULL,
     "name" VARCHAR(255) NOT NULL,
@@ -13,11 +13,11 @@ CREATE TABLE "comic_projects" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_projects_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicProject_pkey" PRIMARY KEY ("id")
 );
 
--- Create comic_characters table
-CREATE TABLE "comic_characters" (
+-- Create ComicCharacter table
+CREATE TABLE "ComicCharacter" (
     "id" TEXT NOT NULL,
     "projectId" TEXT NOT NULL,
     "userId" INTEGER NOT NULL,
@@ -32,11 +32,11 @@ CREATE TABLE "comic_characters" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_characters_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicCharacter_pkey" PRIMARY KEY ("id")
 );
 
--- Create comic_panels table
-CREATE TABLE "comic_panels" (
+-- Create ComicPanel table
+CREATE TABLE "ComicPanel" (
     "id" TEXT NOT NULL,
     "projectId" TEXT NOT NULL,
     "characterId" TEXT,
@@ -50,26 +50,26 @@ CREATE TABLE "comic_panels" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_panels_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicPanel_pkey" PRIMARY KEY ("id")
 );
 
 -- Add indexes
-CREATE INDEX "comic_projects_userId_idx" ON "comic_projects"("userId");
-CREATE INDEX "comic_projects_status_idx" ON "comic_projects"("status");
+CREATE INDEX "ComicProject_userId_idx" ON "ComicProject"("userId");
+CREATE INDEX "ComicProject_status_idx" ON "ComicProject"("status");
 
-CREATE INDEX "comic_characters_projectId_idx" ON "comic_characters"("projectId");
-CREATE INDEX "comic_characters_userId_idx" ON "comic_characters"("userId");
-CREATE INDEX "comic_characters_status_idx" ON "comic_characters"("status");
+CREATE INDEX "ComicCharacter_projectId_idx" ON "ComicCharacter"("projectId");
+CREATE INDEX "ComicCharacter_userId_idx" ON "ComicCharacter"("userId");
+CREATE INDEX "ComicCharacter_status_idx" ON "ComicCharacter"("status");
 
-CREATE INDEX "comic_panels_projectId_position_idx" ON "comic_panels"("projectId", "position");
-CREATE INDEX "comic_panels_characterId_idx" ON "comic_panels"("characterId");
-CREATE INDEX "comic_panels_status_idx" ON "comic_panels"("status");
+CREATE INDEX "ComicPanel_projectId_position_idx" ON "ComicPanel"("projectId", "position");
+CREATE INDEX "ComicPanel_characterId_idx" ON "ComicPanel"("characterId");
+CREATE INDEX "ComicPanel_status_idx" ON "ComicPanel"("status");
 
 -- Add foreign keys
-ALTER TABLE "comic_projects" ADD CONSTRAINT "comic_projects_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
-ALTER TABLE "comic_characters" ADD CONSTRAINT "comic_characters_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "comic_projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_characters" ADD CONSTRAINT "comic_characters_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicCharacter" ADD CONSTRAINT "ComicCharacter_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicCharacter" ADD CONSTRAINT "ComicCharacter_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
-ALTER TABLE "comic_panels" ADD CONSTRAINT "comic_panels_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "comic_projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_panels" ADD CONSTRAINT "comic_panels_characterId_fkey" FOREIGN KEY ("characterId") REFERENCES "comic_characters"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_characterId_fkey" FOREIGN KEY ("characterId") REFERENCES "ComicCharacter"("id") ON DELETE SET NULL ON UPDATE CASCADE;

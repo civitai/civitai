@@ -4813,7 +4813,6 @@ model ComicProject {
 
   @@index([userId])
   @@index([status])
-  @@map("comic_projects")
 }
 
 model ComicChapter {
@@ -4829,7 +4828,6 @@ model ComicChapter {
 
   @@index([projectId])
   @@index([projectId, position])
-  @@map("comic_chapters")
 }
 
 model ComicCharacter {
@@ -4868,7 +4866,6 @@ model ComicCharacter {
   @@index([userId])
   @@index([status])
   @@index([modelVersionId])
-  @@map("comic_characters")
 }
 
 model ComicPanel {
@@ -4893,7 +4890,6 @@ model ComicPanel {
   @@index([chapterId, position])
   @@index([characterId])
   @@index([status])
-  @@map("comic_panels")
 } 
 // Generation restriction system — tracks restrictions issued for prohibited prompt violations
 model UserRestriction {

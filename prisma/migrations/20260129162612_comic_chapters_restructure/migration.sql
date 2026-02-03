@@ -2,13 +2,13 @@
 -- Dev phase only — no data preservation needed
 
 -- Drop tables in dependency order
-DROP TABLE IF EXISTS "comic_panels";
-DROP TABLE IF EXISTS "comic_chapters";
-DROP TABLE IF EXISTS "comic_characters";
-DROP TABLE IF EXISTS "comic_projects";
+DROP TABLE IF EXISTS "ComicPanel";
+DROP TABLE IF EXISTS "ComicChapter";
+DROP TABLE IF EXISTS "ComicCharacter";
+DROP TABLE IF EXISTS "ComicProject";
 
 -- Recreate ComicProject
-CREATE TABLE "comic_projects" (
+CREATE TABLE "ComicProject" (
     "id" TEXT NOT NULL,
     "userId" INTEGER NOT NULL,
     "name" VARCHAR(255) NOT NULL,
@@ -17,14 +17,14 @@ CREATE TABLE "comic_projects" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_projects_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicProject_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "comic_projects_userId_idx" ON "comic_projects"("userId");
-CREATE INDEX "comic_projects_status_idx" ON "comic_projects"("status");
+CREATE INDEX "ComicProject_userId_idx" ON "ComicProject"("userId");
+CREATE INDEX "ComicProject_status_idx" ON "ComicProject"("status");
 
 -- Recreate ComicChapter (NEW)
-CREATE TABLE "comic_chapters" (
+CREATE TABLE "ComicChapter" (
     "id" TEXT NOT NULL,
     "projectId" TEXT NOT NULL,
     "name" VARCHAR(255) NOT NULL DEFAULT 'Chapter 1',
@@ -32,14 +32,14 @@ CREATE TABLE "comic_chapters" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_chapters_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicChapter_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "comic_chapters_projectId_idx" ON "comic_chapters"("projectId");
-CREATE INDEX "comic_chapters_projectId_position_idx" ON "comic_chapters"("projectId", "position");
+CREATE INDEX "ComicChapter_projectId_idx" ON "ComicChapter"("projectId");
+CREATE INDEX "ComicChapter_projectId_position_idx" ON "ComicChapter"("projectId", "position");
 
 -- Recreate ComicCharacter with new fields
-CREATE TABLE "comic_characters" (
+CREATE TABLE "ComicCharacter" (
     "id" TEXT NOT NULL,
     "projectId" TEXT NOT NULL,
     "userId" INTEGER NOT NULL,
@@ -59,16 +59,16 @@ CREATE TABLE "comic_characters" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_characters_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicCharacter_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "comic_characters_projectId_idx" ON "comic_characters"("projectId");
-CREATE INDEX "comic_characters_userId_idx" ON "comic_characters"("userId");
-CREATE INDEX "comic_characters_status_idx" ON "comic_characters"("status");
-CREATE INDEX "comic_characters_modelVersionId_idx" ON "comic_characters"("modelVersionId");
+CREATE INDEX "ComicCharacter_projectId_idx" ON "ComicCharacter"("projectId");
+CREATE INDEX "ComicCharacter_userId_idx" ON "ComicCharacter"("userId");
+CREATE INDEX "ComicCharacter_status_idx" ON "ComicCharacter"("status");
+CREATE INDEX "ComicCharacter_modelVersionId_idx" ON "ComicCharacter"("modelVersionId");
 
 -- Recreate ComicPanel with chapterId instead of projectId
-CREATE TABLE "comic_panels" (
+CREATE TABLE "ComicPanel" (
     "id" TEXT NOT NULL,
     "chapterId" TEXT NOT NULL,
     "characterId" TEXT,
@@ -84,17 +84,17 @@ CREATE TABLE "comic_panels" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "comic_panels_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicPanel_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "comic_panels_chapterId_position_idx" ON "comic_panels"("chapterId", "position");
-CREATE INDEX "comic_panels_characterId_idx" ON "comic_panels"("characterId");
-CREATE INDEX "comic_panels_status_idx" ON "comic_panels"("status");
+CREATE INDEX "ComicPanel_chapterId_position_idx" ON "ComicPanel"("chapterId", "position");
+CREATE INDEX "ComicPanel_characterId_idx" ON "ComicPanel"("characterId");
+CREATE INDEX "ComicPanel_status_idx" ON "ComicPanel"("status");
 
 -- Foreign keys
-ALTER TABLE "comic_projects" ADD CONSTRAINT "comic_projects_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_chapters" ADD CONSTRAINT "comic_chapters_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "comic_projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_characters" ADD CONSTRAINT "comic_characters_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "comic_projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_characters" ADD CONSTRAINT "comic_characters_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_panels" ADD CONSTRAINT "comic_panels_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "comic_chapters"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "comic_panels" ADD CONSTRAINT "comic_panels_characterId_fkey" FOREIGN KEY ("characterId") REFERENCES "comic_characters"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicChapter" ADD CONSTRAINT "ComicChapter_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicCharacter" ADD CONSTRAINT "ComicCharacter_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicCharacter" ADD CONSTRAINT "ComicCharacter_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "ComicChapter"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_characterId_fkey" FOREIGN KEY ("characterId") REFERENCES "ComicCharacter"("id") ON DELETE SET NULL ON UPDATE CASCADE;

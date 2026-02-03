@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "comic_panels" ADD COLUMN "metadata" JSONB;
+ALTER TABLE "ComicPanel" ADD COLUMN "metadata" JSONB;
