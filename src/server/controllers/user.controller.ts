@@ -977,9 +977,15 @@ export const toggleMuteHandler = async ({
   const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
+  const date = new Date();
+
   const updatedUser = await updateUserById({
     id,
-    data: { muted: !user.muted, bannedAt: !user.muted ? new Date() : null },
+    data: {
+      muted: !user.muted,
+      mutedAt: !user.muted ? date : undefined,
+      muteConfirmedAt: !user.muted ? date : undefined,
+    },
     updateSource: 'toggleMute',
   });
   await invalidateSession(id);
