@@ -9,6 +9,7 @@ export {
   generationGraph,
   type GenerationGraphCtx,
   type GenerationGraphTypes,
+  type GenerationGraphValues,
 } from './generation-graph';
 export { stableDiffusionGraph } from './stable-diffusion-graph';
 export { fluxGraph } from './flux-graph';

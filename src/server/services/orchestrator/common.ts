@@ -15,7 +15,6 @@ import type {
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -34,7 +33,6 @@ import type {
 } from '~/server/services/orchestrator/types';
 import {
   getWorkflow,
-  queryWorkflows,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -84,9 +82,6 @@ type WorkflowStepAggregate =
   | VideoEnhancementStep
   | VideoUpscalerStep
   | VideoInterpolationStep;
-
-// Re-export for backward compatibility
-export { createOrchestratorClient, internalOrchestratorClient };
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
@@ -727,25 +722,6 @@ export function formatComfyStep({
   };
 }
 
-export type GeneratedImageWorkflowModel = AsyncReturnType<
-  typeof queryGeneratedImageWorkflows
->['items'][0];
-export async function queryGeneratedImageWorkflows({
-  user,
-  ...props
-}: Parameters<typeof queryWorkflows>[0] & {
-  token: string;
-  user?: SessionUser;
-  hideMatureContent: boolean;
-}) {
-  const { nextCursor, items } = await queryWorkflows(props);
-
-  return {
-    items: await formatGenerationResponse(items as GeneratedImageWorkflow[], user),
-    nextCursor,
-  };
-}
-
 export async function updateWorkflow({
   user,
   ...props
@@ -798,6 +774,8 @@ export interface NormalizedWorkflowStepOutput {
   blockedReason?: string | null;
   previewUrl?: string | null;
   previewUrlExpiresAt?: string | null;
+  width: number;
+  height: number;
 }
 
 function formatWorkflowStepOutput({
@@ -874,6 +852,8 @@ function formatWorkflowStepOutput({
       seed: seed ? seed + index : undefined,
       status: item.available ? 'succeeded' : job?.status ?? ('unassignend' as WorkflowStatus),
       aspect,
+      width,
+      height,
     };
   });
   const errors: string[] = [];

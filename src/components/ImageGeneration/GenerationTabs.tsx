@@ -19,7 +19,6 @@ import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedIma
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationFormV2 } from '~/components/generation_v2';
-import { GenerationForm } from '~/components/Generate/GenerationForm';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -44,13 +43,12 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
     if (isImageFeedSeparate && view === 'generate') setView('queue');
   }, [isImageFeedSeparate, view]);
 
-  // Build tabs based on current user (moderators get v2 form)
   const tabs = useMemo<Tabs>(
     () => ({
       generate: {
         Icon: IconBrush,
         label: 'Generate',
-        Component: currentUser?.isModerator ? GenerationFormV2 : GenerationForm,
+        Component: GenerationFormV2,
       },
       queue: {
         Icon: IconClockHour9,
@@ -63,7 +61,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
         Component: ScrollableFeed,
       },
     }),
-    [currentUser?.isModerator]
+    []
   );
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;

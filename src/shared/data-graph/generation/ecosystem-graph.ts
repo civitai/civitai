@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { ecosystemById, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   getEcosystemsForWorkflow,
+  getWorkflowsForEcosystem,
   isWorkflowAvailable,
   getDefaultEcosystemForWorkflow,
 } from './config';
@@ -131,8 +132,15 @@ export const ecosystemGraph = new DataGraph<
         return;
       }
 
-      // Workflow not supported - switch to 'txt2img' which is universal
-      set('workflow', 'txt2img');
+      // Workflow not supported - find a compatible workflow for this ecosystem
+      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id);
+      if (compatibleWorkflows.length > 0) {
+        // Pick the first compatible workflow (primary workflow for this ecosystem)
+        set('workflow', compatibleWorkflows[0].id);
+      } else {
+        // Fallback to 'txt2img' if no compatible workflows found (shouldn't happen)
+        set('workflow', 'txt2img');
+      }
     },
     ['baseModel']
   )

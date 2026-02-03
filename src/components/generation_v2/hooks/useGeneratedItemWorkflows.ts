@@ -20,14 +20,14 @@ import {
 } from '~/shared/data-graph/generation/config/workflows';
 import { getEcosystemsForWorkflow } from '~/shared/data-graph/generation/config/workflows';
 import { openCompatibilityConfirmModal } from '~/components/generation_v2/CompatibilityConfirmModal';
-import { generationStore } from '~/store/generation.store';
+import { generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { getSourceImageFromUrl } from '~/utils/image-utils';
 import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 // =============================================================================
 // Types
@@ -156,7 +156,7 @@ function getTargetEcosystemKey(
 /**
  * Send generated output data to the generation form for a specific workflow.
  */
-async function applyWorkflowToForm({
+function applyWorkflowToForm({
   workflowId,
   image,
   step,
@@ -165,22 +165,25 @@ async function applyWorkflowToForm({
 }: ApplyWorkflowOptions & { baseModel?: string; clearResources: boolean }) {
   dialogStore.closeById('generated-image');
 
-  const outputType = getOutputTypeForWorkflow(workflowId);
   const inputType = getInputTypeForWorkflow(workflowId);
-  const sourceImage =
-    inputType === 'image' ? await getSourceImageFromUrl({ url: image.url }) : undefined;
+  const stepParams = step.params;
 
-  generationStore.setData({
-    type: outputType === 'video' ? 'video' : 'image',
-    workflow: workflowId,
+  // Build images in graph format { url, width, height }[]
+  const images =
+    inputType === 'image'
+      ? [{ url: image.url, width: image.width, height: image.height }]
+      : undefined;
+
+  generationGraphStore.setData({
     params: {
-      prompt: (step.params as Record<string, unknown>).prompt,
-      negativePrompt: (step.params as Record<string, unknown>).negativePrompt,
-      ...(sourceImage ? { images: [sourceImage] } : {}),
+      workflow: workflowId,
+      prompt: stepParams.prompt,
+      negativePrompt: stepParams.negativePrompt,
+      ...(images ? { images } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
       ...(baseModel ? { baseModel } : {}),
     },
-    resources: clearResources ? [] : (step.resources as any),
+    resources: clearResources ? [] : (step.resources as GenerationResource[]),
     runType: 'patch',
   });
 }

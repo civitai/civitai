@@ -25,10 +25,10 @@ import type {
 } from '~/server/schema/orchestrator/workflows.schema';
 import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import type {
-  queryGeneratedImageWorkflows,
   WorkflowStatusUpdate,
   WorkflowStepFormatted,
 } from '~/server/services/orchestrator/common';
+import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,
   IWorkflowsInfinite,
@@ -45,7 +45,7 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 
 export type InfiniteTextToImageRequests = InfiniteData<
-  AsyncReturnType<typeof queryGeneratedImageWorkflows>
+  AsyncReturnType<typeof queryGeneratedImageWorkflows2>
 >;
 export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
 
@@ -207,10 +207,12 @@ function updateTextToImageRequests({
 export function useSubmitCreateImage() {
   return trpc.orchestrator.generateImage.useMutation({
     onSuccess: (data, input) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const item = data as any;
       updateTextToImageRequests({
         input: { ascending: false },
         cb: (old) => {
-          old.pages[0].items.unshift(data);
+          old.pages[0].items.unshift(item);
         },
       });
       updateTextToImageRequests({
@@ -218,7 +220,7 @@ export function useSubmitCreateImage() {
         cb: (old) => {
           const index = old.pages.length - 1;
           if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
+            old.pages[index].items.push(item);
           }
         },
       });
@@ -242,7 +244,7 @@ export function useUpdateWorkflow() {
           for (const page of data.pages) {
             const index = page.items.findIndex((x) => x.id === workflowId);
             if (index > -1) {
-              page.items[index] = response;
+              page.items[index] = response as any;
               break;
             }
           }
@@ -258,7 +260,7 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
       updateTextToImageRequests({
         input: { ascending: false },
         cb: (old) => {
-          old.pages[0].items.unshift(data);
+          old.pages[0].items.unshift(data as any);
         },
       });
       updateTextToImageRequests({
@@ -266,7 +268,7 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
         cb: (old) => {
           const index = old.pages.length - 1;
           if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
+            old.pages[index].items.push(data as any);
           }
         },
       });

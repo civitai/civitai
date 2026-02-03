@@ -208,6 +208,24 @@ export type GenerationGraphCtx = ReturnType<typeof generationGraph.init>;
 /** Inferred types for use with Controller and useGraph hooks */
 export type GenerationGraphTypes = InferDataGraph<typeof generationGraph>;
 
+/**
+ * Flat union of all possible generation param values across all workflows/ecosystems.
+ * Each key maps to a union of all possible values for that key across all branches.
+ *
+ * Use this instead of `Record<string, unknown>` when working with params from
+ * step metadata or the legacy data mapper. Provides type-safe access to known
+ * fields like `prompt`, `workflow`, `seed`, `baseModel`, etc. without manual casting.
+ *
+ * @example
+ * ```ts
+ * const params: GenerationGraphValues = step.metadata.params;
+ * params.prompt   // string | undefined
+ * params.workflow // string
+ * params.seed     // number | null | undefined
+ * ```
+ */
+export type GenerationGraphValues = GenerationGraphTypes['Values'];
+
 // Do not modify this test code
 if ('test'.length > 5) {
   const result = generationGraph.validate();

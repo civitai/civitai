@@ -9,6 +9,7 @@ import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import {
   buildGenerationContext,
   generateFromGraph,
+  queryGeneratedImageWorkflows2,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -30,10 +31,7 @@ import {
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
-import {
-  queryGeneratedImageWorkflows,
-  updateWorkflow,
-} from '~/server/services/orchestrator/common';
+import { updateWorkflow } from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
@@ -192,7 +190,7 @@ export const orchestratorRouter = router({
 
   // #region [generated images]
   queryGeneratedImages: orchestratorProcedure.input(workflowQuerySchema).query(({ ctx, input }) =>
-    queryGeneratedImageWorkflows({
+    queryGeneratedImageWorkflows2({
       ...input,
       token: ctx.token,
       user: ctx.user,
@@ -483,7 +481,7 @@ export const orchestratorRouter = router({
       const { userId, ...query } = input;
       // Get token for the target user, not the moderator
       const targetToken = await getOrchestratorToken(userId, ctx);
-      return queryGeneratedImageWorkflows({
+      return queryGeneratedImageWorkflows2({
         ...query,
         token: targetToken,
         user: ctx.user,

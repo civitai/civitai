@@ -12,11 +12,7 @@ import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
-import {
-  useGenerationStore,
-  useGenerationFormStore,
-  generationStore,
-} from '~/store/generation.store';
+import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import { ResourceDataProvider, useResourceDataContext } from './inputs/ResourceDataProvider';
@@ -111,25 +107,22 @@ function InnerProvider({
     skipStorage,
   });
 
-  // Sync generation store data into the graph
+  // Sync generation graph store data into the graph
   // - Remix/Replay: full override (reset + set)
   // - Run/Patch: partial update (set only)
   const prevCounterRef = useRef(0);
   useEffect(() => {
     function applyStoreData() {
-      const { data, counter } = useGenerationStore.getState();
+      const { data, counter } = useGenerationGraphStore.getState();
       if (!data || counter === prevCounterRef.current) return;
       prevCounterRef.current = counter;
 
-      // Get workflow from form store (setData stores it there, not in data.params)
-      const { workflow } = useGenerationFormStore.getState();
-
-      // Split flat resources into model/resources/vae for graph nodes
+      // Params are already mapped via mapDataToGraphInput (workflow, baseModel, aspectRatio, etc.)
+      // Just need to split flat resources into model/resources/vae for graph nodes
       const split = splitResourcesByType(data.resources);
 
       const values = {
         ...data.params,
-        workflow,
         model: split.model,
         resources: split.resources,
         vae: split.vae,
@@ -141,14 +134,14 @@ function InnerProvider({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
       graph.set(values as any);
 
-      generationStore.clearData();
+      generationGraphStore.clearData();
     }
 
     // Check on mount (data may arrive before component mounts)
     applyStoreData();
 
     // Subscribe to future changes
-    return useGenerationStore.subscribe(applyStoreData);
+    return useGenerationGraphStore.subscribe(applyStoreData);
   }, [graph]);
 
   // Register resource IDs from graph for hydration

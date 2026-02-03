@@ -408,15 +408,6 @@ export function mapLegacyMetadata(
 ): Partial<GenerationGraphCtx> | undefined {
   const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
-  // If the step already has input in new format, skip mapping
-  if (
-    metadata.input &&
-    typeof metadata.input === 'object' &&
-    'workflow' in (metadata.input as object)
-  ) {
-    return undefined;
-  }
-
   const legacyMetadata = metadata as GeneratedImageStepMetadata;
   const params = legacyMetadata.params;
   const legacyResources = legacyMetadata.resources ?? [];

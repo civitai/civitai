@@ -51,7 +51,8 @@ import type {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationPanel } from '~/store/generation.store';
+import { generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -145,19 +146,18 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const isTxt2Img = step.params.process === 'txt2img';
-    generationStore.setData({
-      resources: (step.resources as any) ?? [],
+    const isTxt2Img = step.params.workflow === 'txt2img';
+    // Params are already mapped via mapDataToGraphInput (workflow, baseModel, aspectRatio, etc.)
+    generationGraphStore.setData({
       params: {
-        ...(step.params as any),
+        ...step.metadata.params,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
       },
+      resources: step.resources,
+      runType: 'replay',
       remixOfId: step.metadata?.remixOfId,
-      type: images[0].type, // TODO - type based off type of media
-      workflow: step.params.workflow,
-      engine: (step.params as any).engine,
     });
   };
 
@@ -177,19 +177,13 @@ export function QueueItem({
   const canRemix =
     (step.params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow)) ||
-    (!!(step.params as any).engine && step.images.length > 0);
+    (!!step.params.engine && step.images.length > 0);
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
 
-  const engine =
-    step.metadata.params && 'engine' in step.metadata.params
-      ? (step.metadata.params.engine as string)
-      : undefined;
-  const version =
-    step.metadata.params && 'version' in step.metadata.params
-      ? (step.metadata.params.version as string)
-      : undefined;
+  const engine = step.metadata.params.engine as string | undefined;
+  const version = step.metadata.params.version as string | undefined;
 
   const transformations = step.metadata.transformations ?? [];
 
@@ -321,7 +315,7 @@ export function QueueItem({
                   <Text size="sm">Transformations:</Text>
                   {transformations.map((transformation, i) => (
                     <Badge key={i} size="sm">
-                      {transformation.type}
+                      {(transformation as { type: string }).type}
                     </Badge>
                   ))}
                 </div>
@@ -329,7 +323,12 @@ export function QueueItem({
               {resources.length > 0 && (
                 <div className="flex items-center gap-1">
                   <Text size="sm">Resources:</Text>
-                  <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+                  <Collection
+                    items={resources as unknown as GenerationResource[]}
+                    limit={3}
+                    renderItem={ResourceBadge}
+                    grouped
+                  />
                 </div>
               )}
             </div>
@@ -565,9 +564,9 @@ function SubmitBlockedImagesForReviewButton({
         href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
           currentUser.username
         )}&Prompt=${encodeURIComponent(
-          (step.params as any).prompt
+          step.params.prompt ?? ''
         )}&Negative%20Prompt=${encodeURIComponent(
-          (step.params as any).negativePrompt
+          step.params.negativePrompt ?? ''
         )}&Workflow%20ID=${workflowId}`}
       >
         <IconFlagQuestion size={20} />

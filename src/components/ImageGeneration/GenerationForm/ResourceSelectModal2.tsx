@@ -333,7 +333,7 @@ function ResourceSelectModalContent() {
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources?.map((r) => r.model.id))
+          steps.flatMap(({ resources }) => resources?.map((r) => (r.model as { id?: number }).id))
         );
         meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }

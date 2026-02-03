@@ -79,6 +79,7 @@ export function VideoInput({
   const videoUrl = value?.url;
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [videoLoadError, setVideoLoadError] = useState<string | null>(null);
   const [videoDimensions, setVideoDimensions] = useState<{
     width: number;
     height: number;
@@ -101,8 +102,12 @@ export function VideoInput({
   useEffect(() => {
     if (!videoUrl) {
       setVideoDimensions(undefined);
+      setVideoLoadError(null);
       return;
     }
+
+    // Clear previous error when URL changes
+    setVideoLoadError(null);
 
     getVideoData(videoUrl).then((videoEl) => {
       if (videoEl) {
@@ -182,7 +187,13 @@ export function VideoInput({
     onChange?.(undefined);
     setVideoDimensions(undefined);
     setUploadError(null);
+    setVideoLoadError(null);
   }, [onChange]);
+
+  // Handle video load error
+  const handleVideoError = useCallback(() => {
+    setVideoLoadError('Failed to load video. The video may be unavailable or in an unsupported format.');
+  }, []);
 
   const isLoading = isUploading;
 
@@ -255,6 +266,7 @@ export function VideoInput({
             options={{ anim: true }}
             style={{ maxHeight }}
             wrapperProps={{ className: 'w-full' }}
+            onError={handleVideoError}
           />
 
           {/* Loading overlay */}
@@ -301,9 +313,9 @@ export function VideoInput({
       )}
 
       {/* Error states */}
-      {(metadataError || uploadError) && (
+      {(metadataError || uploadError || videoLoadError) && (
         <Alert color="red" className="mt-2">
-          {uploadError ?? `Failed to load video metadata: ${metadataError?.message}`}
+          {uploadError ?? videoLoadError ?? `Failed to load video metadata: ${metadataError?.message}`}
         </Alert>
       )}
     </Input.Wrapper>

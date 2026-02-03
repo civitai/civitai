@@ -18,6 +18,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import { isWorkflowAvailable, getWorkflowsForEcosystem } from './config';
 
 // =============================================================================
 // Helper Functions
@@ -640,7 +641,7 @@ export function createCheckpointGraph(options?: {
     };
   };
 
-  return new DataGraph<{ baseModel: string }, GenerationCtx>()
+  return new DataGraph<{ workflow: string; baseModel: string }, GenerationCtx>()
     .node(
       'model',
       (ctx, ext) => {
@@ -704,9 +705,31 @@ export function createCheckpointGraph(options?: {
         if (!model?.baseModel || !model.id) return;
 
         const modelEcosystemKey = getEcosystemKeyForBaseModel(model.baseModel);
+        // Only switch ecosystem if the model's ecosystem differs from current
         if (!modelEcosystemKey || modelEcosystemKey === ctx.baseModel) return;
 
-        set('baseModel', modelEcosystemKey);
+        const targetEcosystem = ecosystemByKey.get(modelEcosystemKey);
+        if (!targetEcosystem) return;
+
+        const workflow = (ctx as { workflow?: string }).workflow ?? '';
+        const workflowCompatible = isWorkflowAvailable(workflow, targetEcosystem.id);
+
+        if (workflowCompatible) {
+          // Current workflow is compatible - just switch ecosystem
+          set('baseModel', modelEcosystemKey);
+        } else {
+          // Current workflow is NOT compatible with model's ecosystem.
+          // Find a compatible workflow for the model's ecosystem and switch both.
+          const compatibleWorkflows = getWorkflowsForEcosystem(targetEcosystem.id);
+          if (compatibleWorkflows.length > 0) {
+            // Pick the first compatible workflow (usually the primary one like txt2vid or txt2img)
+            const newWorkflow = compatibleWorkflows[0].id;
+            // Set workflow first, then baseModel - order matters for effect ordering
+            set('workflow', newWorkflow);
+            set('baseModel', modelEcosystemKey);
+          }
+          // If no compatible workflows found, don't switch (shouldn't happen in practice)
+        }
       },
       ['model']
     );

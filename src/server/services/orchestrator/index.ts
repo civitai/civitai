@@ -1,11 +1,10 @@
 import type {
+  NormalizedWorkflow,
+  NormalizedStep,
   NormalizedWorkflowStepOutput,
-  formatGenerationResponse,
-} from '~/server/services/orchestrator/common';
+} from '~/server/services/orchestrator/orchestration-new.service';
 
-export type NormalizedGeneratedImageResponse = AsyncReturnType<
-  typeof formatGenerationResponse
->[number];
-export type NormalizedGeneratedImageStep = NormalizedGeneratedImageResponse['steps'][number];
+export type NormalizedGeneratedImageResponse = NormalizedWorkflow;
+export type NormalizedGeneratedImageStep = NormalizedStep;
 
 export type NormalizedGeneratedImage = NormalizedWorkflowStepOutput;

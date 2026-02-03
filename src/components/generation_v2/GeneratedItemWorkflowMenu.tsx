@@ -22,12 +22,13 @@ import {
 
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { generationStore } from '~/store/generation.store';
+import { generationGraphStore } from '~/store/generation-graph.store';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   useGeneratedItemWorkflows,
   applyWorkflowWithCheck,
@@ -59,14 +60,12 @@ export function GeneratedItemWorkflowMenu({
 
   const outputType = image.type === 'video' ? 'video' : 'image';
   const ecosystemKey =
-    'baseModel' in step.params ? (step.params.baseModel as string | undefined) : undefined;
+    step.params.baseModel;
 
   const { groups, isCompatible } = useGeneratedItemWorkflows({
     outputType,
     ecosystemKey,
   });
-
-  const canRemix = !!(step.params.workflow ?? (step.params as Record<string, unknown>).engine);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -74,13 +73,13 @@ export function GeneratedItemWorkflowMenu({
 
   function handleRemix(seed?: number | null) {
     dialogStore.closeById('generated-image');
-    generationStore.setData({
-      resources: step.resources as any,
-      params: { ...(step.params as any), seed: seed ?? null },
+    // Params are already mapped via mapDataToGraphInput (workflow, baseModel, aspectRatio, etc.)
+    // Use step.resources (enriched) for splitResourcesByType to work correctly
+    generationGraphStore.setData({
+      params: { ...step.metadata.params, seed: seed ?? null },
+      resources: step.resources as GenerationResource[],
+      runType: 'remix',
       remixOfId: step.metadata?.remixOfId,
-      type: image.type,
-      workflow: step.params.workflow,
-      engine: (step.params as any).engine,
     });
   }
 
@@ -117,7 +116,7 @@ export function GeneratedItemWorkflowMenu({
   return (
     <>
       {/* Remix actions */}
-      {canRemix && !workflowsOnly && (
+      {!workflowsOnly && (
         <>
           <Menu.Item
             onClick={() => handleRemix()}

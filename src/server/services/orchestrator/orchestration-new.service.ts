@@ -23,18 +23,19 @@ import { TimeSpan } from '@civitai/client';
 import {
   generationGraph,
   type GenerationGraphTypes,
+  type GenerationGraphValues,
 } from '~/shared/data-graph/generation/generation-graph';
 import {
   getInputTypeForWorkflow,
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import {
-  formatGenerationResponse,
-  getGenerationStatus,
-} from '~/server/services/orchestrator/common';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
+import type { GenerationStatus } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -147,6 +148,15 @@ export type GenerationContextResult = {
     message?: string;
   };
 };
+
+async function getGenerationStatus(): Promise<GenerationStatus> {
+  return generationStatusSchema.parse(
+    JSON.parse(
+      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
+        '{}'
+    )
+  ) as GenerationStatus;
+}
 
 /**
  * Builds the GenerationCtx from user tier information.
@@ -495,6 +505,11 @@ export async function createWorkflowStepFromGraph(
     }
   );
 
+  // Remove empty/undefined fields from each resource to keep metadata clean
+  const cleanResources = stepMetadata.resources.map((r) =>
+    Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined && v !== null))
+  );
+
   return {
     $type,
     input: { ...(input as object), outputFormat: data.outputFormat },
@@ -505,6 +520,7 @@ export async function createWorkflowStepFromGraph(
       : {
           isPrivateGeneration,
           ...stepMetadata,
+          resources: cleanResources,
         },
   } as WorkflowStepTemplate;
 }
@@ -578,7 +594,7 @@ export async function generateFromGraph({
   })) as TextToImageResponse;
 
   // Format and return response
-  const [formatted] = await formatGenerationResponse([workflow], { id: userId } as any);
+  const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
   return formatted;
 }
 
@@ -681,5 +697,423 @@ export async function whatIfFromGraph({
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
+  };
+}
+
+// =============================================================================
+// Simplified Generation Response Formatting
+// =============================================================================
+
+import type {
+  ImageBlob,
+  NsfwLevel,
+  TransactionInfo,
+  VideoBlob,
+  Workflow,
+  WorkflowStatus,
+  WorkflowStep,
+  WorkflowStepJobQueuePosition,
+} from '@civitai/client';
+import type { SessionUser } from 'next-auth';
+import type * as z from 'zod';
+import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
+import { mapDataToGraphInput } from './legacy-metadata-mapper';
+import { queryWorkflows } from './workflows';
+import { parseAIR } from '~/shared/utils/air';
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/** Normalized output (image or video) from a workflow step */
+export interface NormalizedWorkflowStepOutput {
+  url: string;
+  workflowId: string;
+  stepName: string;
+  seed?: number | null;
+  status: WorkflowStatus;
+  aspect: number;
+  type: 'image' | 'video';
+  id: string;
+  available: boolean;
+  urlExpiresAt?: string | null;
+  jobId?: string | null;
+  nsfwLevel?: NsfwLevel;
+  blockedReason?: string | null;
+  previewUrl?: string | null;
+  previewUrlExpiresAt?: string | null;
+  width: number;
+  height: number;
+}
+
+/** Step metadata with mapped params and enriched resources */
+export interface NormalizedStepMetadata {
+  /** Mapped params ready for the generation graph (workflow, baseModel, aspectRatio resolved) */
+  params: Partial<GenerationGraphValues> & Record<string, unknown>;
+  /** Resources in ResourceData format (matching data-graph resourceSchema) */
+  resources: ResourceData[];
+  /** Remix reference */
+  remixOfId?: number;
+  /** Per-image metadata (favorite, feedback, hidden, etc.) */
+  images?: Record<
+    string,
+    {
+      hidden?: boolean;
+      feedback?: 'liked' | 'disliked';
+      favorite?: boolean;
+      comments?: string;
+      postId?: number;
+    }
+  >;
+  /** Transformations applied */
+  transformations?: unknown[];
+}
+
+/** Normalized workflow step */
+export interface NormalizedStep {
+  $type: string;
+  name: string;
+  status?: WorkflowStatus;
+  timeout?: string | null;
+  completedAt?: string | null;
+  queuePosition?: WorkflowStepJobQueuePosition;
+  /** Original params (for backward compatibility) */
+  params: Partial<GenerationGraphValues> & Record<string, unknown>;
+  /** Resources in ResourceData format (matching data-graph resourceSchema) */
+  resources: ResourceData[];
+  /** Metadata with mapped params */
+  metadata: NormalizedStepMetadata;
+  /** Output images/videos */
+  images: NormalizedWorkflowStepOutput[];
+  /** Step errors */
+  errors?: string[];
+}
+
+/** Normalized workflow response */
+export interface NormalizedWorkflow {
+  id: string;
+  status: WorkflowStatus;
+  createdAt: Date;
+  transactions: TransactionInfo[];
+  cost?: { type?: string; currency?: string; total?: number; base?: number };
+  tags: string[];
+  allowMatureContent?: boolean | null;
+  duration?: number;
+  steps: NormalizedStep[];
+}
+
+// =============================================================================
+// Resource Helpers
+// =============================================================================
+
+/**
+ * Extracts resource refs from step metadata (IDs + step-level overrides).
+ * Checks metadata.params.resources first (video format with AIR strings),
+ * then falls back to metadata.resources (standard format with IDs).
+ */
+function getResourceRefsFromStep(
+  step: WorkflowStep
+): Array<{ id: number; strength?: number | null; epochNumber?: number }> {
+  const metadata = (step.metadata ?? {}) as Record<string, unknown>;
+  const params = (metadata.params ?? {}) as Record<string, unknown>;
+
+  // Try params.resources first (video workflows store resources here)
+  const paramsResources = params.resources as
+    | Array<{ air?: string; id?: number; strength?: number; epochNumber?: number }>
+    | undefined;
+  if (paramsResources && paramsResources.length > 0) {
+    return paramsResources.map((r) => {
+      // Handle AIR format (video workflows use { air, strength })
+      if (r.air && !r.id) {
+        const { version } = parseAIR(r.air);
+        return { id: version, strength: r.strength };
+      }
+      // Handle ID format (standard format)
+      return { id: r.id!, strength: r.strength, epochNumber: r.epochNumber };
+    });
+  }
+
+  // Fall back to metadata.resources (standard format)
+  const metadataResources = metadata.resources as
+    | Array<{ id: number; strength?: number | null; epochNumber?: number }>
+    | undefined;
+  return metadataResources ?? [];
+}
+
+/**
+ * Returns resources in ResourceData format (matching data-graph resourceSchema).
+ * Uses enriched resources from getResourceData to populate baseModel, model.type,
+ * trainedWords, and epochDetails.
+ */
+function getResourcesFromStep(
+  step: WorkflowStep,
+  allResources: GenerationResource[]
+): ResourceData[] {
+  const refs = getResourceRefsFromStep(step);
+  return refs
+    .map((ref) => {
+      const enriched = allResources.find((r) => r.id === ref.id);
+      if (!enriched) return null;
+      return {
+        id: enriched.id,
+        baseModel: enriched.baseModel,
+        model: { type: enriched.model.type },
+        strength: ref.strength ?? enriched.strength,
+        trainedWords: enriched.trainedWords.length > 0 ? enriched.trainedWords : undefined,
+        epochDetails: enriched.epochDetails
+          ? { epochNumber: enriched.epochDetails.epochNumber }
+          : ref.epochNumber
+          ? { epochNumber: ref.epochNumber }
+          : undefined,
+      } satisfies ResourceData;
+    })
+    .filter(isDefined);
+}
+
+// =============================================================================
+// Output Formatting
+// =============================================================================
+
+type StepWithOutput = WorkflowStep & {
+  input?: { seed?: number };
+  output?: {
+    images?: ImageBlob[];
+    video?: VideoBlob;
+    blobs?: ImageBlob[];
+    errors?: string[];
+    externalTOSViolation?: boolean;
+    message?: string;
+  };
+};
+
+/**
+ * Normalizes step output (images/videos) to a common format
+ */
+function normalizeStepOutput(step: StepWithOutput): Array<ImageBlob | VideoBlob> {
+  const output = step.output;
+  if (!output) return [];
+
+  switch (step.$type) {
+    case 'comfy':
+      return output.blobs?.map((blob) => ({ ...blob, type: 'image' as const })) ?? [];
+    case 'imageGen':
+    case 'textToImage':
+      return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
+    case 'videoGen':
+    case 'videoUpscaler':
+    case 'videoEnhancement':
+    case 'videoInterpolation':
+      return output.video ? [{ ...output.video, type: 'video' as const }] : [];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Formats step outputs into normalized images array
+ */
+function formatStepOutputs(
+  workflowId: string,
+  step: StepWithOutput
+): { images: NormalizedWorkflowStepOutput[]; errors: string[] } {
+  const items = normalizeStepOutput(step);
+  const seed = 'seed' in (step.input ?? {}) ? (step.input as { seed?: number }).seed : undefined;
+  const params = ((step.metadata as Record<string, unknown>)?.params ?? {}) as Record<
+    string,
+    unknown
+  >;
+
+  const images: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
+    const job = step.jobs?.find((j) => j.id === item.jobId);
+    let { width, height } = item;
+
+    // Try to get dimensions from various sources
+    if (!width || !height) {
+      width = params.width as number | undefined;
+      height = params.height as number | undefined;
+
+      if (!width || !height) {
+        const aspectRatio = params.aspectRatio as string | undefined;
+        if (aspectRatio) {
+          const [w, h] = aspectRatio.split(':').map(Number);
+          width = w;
+          height = h;
+        } else {
+          const sourceImage = (params.sourceImage ?? (params.images as unknown[])?.[0]) as
+            | { width?: number; height?: number }
+            | undefined;
+          if (sourceImage) {
+            width = sourceImage.width;
+            height = sourceImage.height;
+          }
+        }
+      }
+    }
+
+    if (!width || !height) {
+      width = 512;
+      height = 512;
+    }
+
+    const aspect = width / height;
+
+    return {
+      ...(item as ImageBlob | VideoBlob),
+      url: item.url && item.type === 'video' ? `${item.url}.mp4` : (item.url as string),
+      workflowId,
+      stepName: step.name,
+      seed: seed ? seed + index : undefined,
+      status: item.available ? 'succeeded' : ((job?.status ?? 'unassigned') as WorkflowStatus),
+      aspect,
+      width,
+      height,
+    };
+  });
+
+  // Collect errors
+  const errors: string[] = [];
+  const output = step.output;
+  if (output) {
+    if ('errors' in output && output.errors) errors.push(...output.errors);
+    if (
+      'externalTOSViolation' in output &&
+      'message' in output &&
+      typeof output.message === 'string'
+    ) {
+      errors.push(output.message);
+    }
+  }
+
+  return { images, errors };
+}
+
+// =============================================================================
+// Main Formatting Functions
+// =============================================================================
+
+/**
+ * Simplified step formatting that works for all step types.
+ * Uses mapDataToGraphInput to handle workflow/baseModel/aspectRatio resolution uniformly.
+ */
+function formatStep(
+  workflowId: string,
+  step: WorkflowStep,
+  allResources: GenerationResource[]
+): NormalizedStep {
+  const metadata = (step.metadata ?? {}) as Record<string, unknown>;
+  const rawParams = (metadata.params ?? {}) as Record<string, unknown>;
+
+  // Get step resources in ResourceData format (matching data-graph resourceSchema)
+  const resources = getResourcesFromStep(step, allResources);
+
+  // Map params to graph format (resolves workflow, baseModel, aspectRatio, etc.)
+  // mapDataToGraphInput needs the full GenerationResource[] for model lookup
+  const stepGenerationResources = getResourceRefsFromStep(step)
+    .map((ref) => {
+      const enriched = allResources.find((r) => r.id === ref.id);
+      if (!enriched) return null;
+      return { ...enriched, strength: ref.strength ?? enriched.strength };
+    })
+    .filter((r): r is GenerationResource => r !== null);
+
+  const mappedParams = mapDataToGraphInput(rawParams, stepGenerationResources, {
+    stepType: step.$type,
+  });
+
+  // Format outputs
+  const { images, errors } = formatStepOutputs(workflowId, step as StepWithOutput);
+
+  return {
+    $type: step.$type,
+    name: step.name,
+    status: step.status,
+    timeout: step.timeout,
+    completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0]?.queuePosition,
+    params: { ...rawParams, ...mappedParams },
+    resources,
+    metadata: {
+      params: { ...rawParams, ...mappedParams },
+      resources,
+      remixOfId: metadata.remixOfId as number | undefined,
+      images: metadata.images as NormalizedStepMetadata['images'],
+      transformations: metadata.transformations as unknown[],
+    },
+    images,
+    errors: errors.length > 0 ? errors : undefined,
+  };
+}
+
+/**
+ * Simplified formatGenerationResponse.
+ * Replaces the complex switch-based formatting in common.ts.
+ */
+export async function formatGenerationResponse2(
+  workflows: Workflow[],
+  user?: SessionUser
+): Promise<NormalizedWorkflow[]> {
+  // Collect all resource IDs from all steps
+  // getResourceRefsFromStep handles both regular format and video format (AIR strings)
+  const allResourceRefs: Array<{ id: number; epoch?: number }> = [];
+  for (const workflow of workflows) {
+    for (const step of workflow.steps ?? []) {
+      const refs = getResourceRefsFromStep(step);
+      allResourceRefs.push(...refs.map((r) => ({ id: r.id, epoch: r.epochNumber })));
+    }
+  }
+
+  // Deduplicate and fetch all resources
+  const uniqueRefs = Array.from(new Map(allResourceRefs.map((r) => [r.id, r])).values());
+  const enrichedResources = uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, user) : [];
+
+  // Format each workflow
+  return workflows.map((workflow) => {
+    const transactions = workflow.transactions?.list ?? [];
+
+    return {
+      id: workflow.id as string,
+      status: workflow.status ?? ('unassigned' as WorkflowStatus),
+      createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
+      transactions,
+      cost: workflow.cost,
+      tags: workflow.tags ?? [],
+      allowMatureContent: workflow.allowMatureContent,
+      duration:
+        workflow.startedAt && workflow.completedAt
+          ? Math.round(
+              new Date(workflow.completedAt).getTime() / 1000 -
+                new Date(workflow.startedAt).getTime() / 1000
+            )
+          : undefined,
+      steps: (workflow.steps ?? []).map((step) =>
+        formatStep(workflow.id as string, step, enrichedResources)
+      ),
+    };
+  });
+}
+
+// =============================================================================
+// Query Functions
+// =============================================================================
+
+export type GeneratedImageWorkflowModel = NormalizedWorkflow;
+
+/**
+ * Simplified queryGeneratedImageWorkflows.
+ * Replaces the version in common.ts.
+ */
+export async function queryGeneratedImageWorkflows2({
+  user,
+  ...props
+}: z.output<typeof workflowQuerySchema> & {
+  token: string;
+  user?: SessionUser;
+  hideMatureContent: boolean;
+}) {
+  const { nextCursor, items } = await queryWorkflows(props);
+
+  return {
+    items: await formatGenerationResponse2(items as Workflow[], user),
+    nextCursor,
   };
 }
