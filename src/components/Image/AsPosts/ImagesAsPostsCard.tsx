@@ -42,7 +42,7 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import classes from './ImagesAsPostsCard.module.css';
@@ -245,7 +245,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
       e.preventDefault();
       e.stopPropagation();
 
-      generationPanel.open({
+      generationGraphPanel.open({
         type: selectedImage.type,
         id: selectedImage.id,
       });

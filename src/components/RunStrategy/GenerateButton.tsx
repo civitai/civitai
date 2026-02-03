@@ -10,7 +10,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import type { ModelById } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -40,15 +40,15 @@ export function GenerateButton({
       onPurchase?.();
       return;
     }
-    if (mode === 'toggle' && opened) return generationPanel.close();
+    if (mode === 'toggle' && opened) return generationGraphPanel.close();
 
     vId
-      ? generationPanel.open({
+      ? generationGraphPanel.open({
           type: 'modelVersion',
           id: vId,
           epoch: epochNumber,
         })
-      : generationPanel.open();
+      : generationGraphPanel.open();
 
     onClick?.();
   };

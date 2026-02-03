@@ -37,7 +37,7 @@ import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 
 /**
  * Determine if a link to the model page should be shown for this resource.
@@ -270,7 +270,7 @@ function ResourceInfoCard({
                 component={Link}
                 style={{ cursor: 'pointer' }}
                 href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
-                onClick={() => generationPanel.close()}
+                onClick={() => generationGraphPanel.close()}
                 rel="nofollow noindex"
                 size="sm"
                 lineClamp={1}

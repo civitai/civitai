@@ -1,5 +1,4 @@
 import { Button, Title, useMantineTheme } from '@mantine/core';
-import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconBrush, IconExternalLink } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -8,7 +7,7 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { useQueryTools } from '~/components/Tool/tools.utils';
 import type { FilterKeys } from '~/providers/FiltersProvider';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { slugit } from '~/utils/string-helpers';
 
 export function ToolBanner({
@@ -81,15 +80,7 @@ export function ToolBanner({
                     rightSection={<IconBrush size={18} />}
                     data-activity="generate:tool"
                     onClick={() => {
-                      const isVideo = selected.type === ToolType.Video;
-                      const engine = isVideo ? selected.alias : undefined;
-                      generationStore.setData({
-                        resources: [],
-                        params: {},
-                        type: isVideo ? 'video' : 'image',
-                        engine,
-                      });
-                      generationPanel.open();
+                      generationGraphPanel.open();
                     }}
                   >
                     Generate

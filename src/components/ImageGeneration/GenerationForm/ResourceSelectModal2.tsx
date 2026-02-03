@@ -100,7 +100,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { fetchGenerationData } from '~/store/generation.store';
+import { fetchGenerationData } from '~/store/generation-graph.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';

@@ -9,7 +9,7 @@ import { LoadingOverlay } from '@mantine/core';
 
 import { useIsClient } from '~/providers/IsClientProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { useGenerationStore } from '~/store/generation.store';
+import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 
 import { GenerationForm } from './GenerationForm';
@@ -49,7 +49,7 @@ export interface GenerationFormV2Props {
  * ```
  */
 export function GenerationFormV2({ debug = false }: GenerationFormV2Props = {}) {
-  const loading = useGenerationStore((state) => state.loading);
+  const loading = useGenerationGraphStore((state) => state.loading);
   const isClient = useIsClient();
 
   if (!isClient) return null;

@@ -5,7 +5,7 @@ import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta'; //
-import { generationPanel } from '~/store/generation.store'; //
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { encodeMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 
@@ -82,7 +82,7 @@ export default function ImageMetaPopoverLazy({ imageId }: { imageId: number }) {
                 data-activity="remix:image-meta"
                 // @ts-ignore eslint-disable-next-line
                 onClick={() => {
-                  generationPanel.open({ type, id: imageId ?? 0 });
+                  generationGraphPanel.open({ type, id: imageId ?? 0 });
                 }}
                 className="flex-1"
               >

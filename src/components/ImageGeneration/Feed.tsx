@@ -4,7 +4,7 @@ import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { isDefined } from '~/utils/type-guards';
 import classes from './Feed.module.scss';
 
@@ -54,7 +54,7 @@ export function Feed() {
                 Try{' '}
                 <Text
                   c="blue.4"
-                  onClick={() => generationPanel.setView('generate')}
+                  onClick={() => generationGraphPanel.setView('generate')}
                   style={{ cursor: 'pointer' }}
                   span
                 >

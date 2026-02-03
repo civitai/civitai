@@ -51,8 +51,7 @@ import type {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
-import { generationPanel } from '~/store/generation.store';
-import { generationGraphStore } from '~/store/generation-graph.store';
+import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -442,7 +441,7 @@ const ResourceBadge = (props: GenerationResource) => {
         classNames={{ label: '!overflow-hidden' }}
         component={Link}
         href={`/models/${model.id}?modelVersionId=${id}`}
-        onClick={() => generationPanel.close()}
+        onClick={() => generationGraphPanel.close()}
       >
         {model.name} - {name}
       </Badge>

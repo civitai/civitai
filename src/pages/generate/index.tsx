@@ -11,8 +11,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import type { GenerationPanelView } from '~/store/generation.store';
-import { useGenerationStore } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getLoginLink } from '~/utils/login-helpers';
 
 /**
@@ -37,7 +36,7 @@ export const getServerSideProps = createServerSideProps({
 function GeneratePage() {
   const currentUser = useCurrentUser();
   const view = useGenerationPanelStore((state) => state.view);
-  const setView = useGenerationStore((state) => state.setView);
+  const setView = generationGraphPanel.setView;
 
   if (currentUser?.muted) return <GenerationMutedNotice />;
 
@@ -51,7 +50,7 @@ function GeneratePage() {
         value={view}
         onChange={(view) => {
           // tab can be null
-          if (view) setView(view as GenerationPanelView);
+          if (view) setView(view as 'generate' | 'queue' | 'feed');
         }}
         radius="xl"
         color="gray"

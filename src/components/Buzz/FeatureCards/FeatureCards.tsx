@@ -20,7 +20,7 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -144,7 +144,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     title: 'Generate',
     description: 'Generate Flux and Pony images',
     btnProps: {
-      onClick: () => generationPanel.open(),
+      onClick: () => generationGraphPanel.open(),
       children: 'Generate',
     },
   },

@@ -66,9 +66,7 @@ function toResourceData(r: GenerationResource): ResourceData {
     model: { type: r.model.type },
     strength: r.strength,
     trainedWords: r.trainedWords.length > 0 ? r.trainedWords : undefined,
-    epochDetails: r.epochDetails
-      ? { epochNumber: r.epochDetails.epochNumber }
-      : undefined,
+    epochDetails: r.epochDetails ? { epochNumber: r.epochDetails.epochNumber } : undefined,
   };
 }
 
@@ -81,7 +79,7 @@ function substituteResource(item: GenerationResource): GenerationResource {
 
 /** Fetch generation data from the API with caching */
 const dictionary: Record<string, GenerationData> = {};
-async function fetchGenerationData(input: GetGenerationDataInput): Promise<GenerationData> {
+export async function fetchGenerationData(input: GetGenerationDataInput): Promise<GenerationData> {
   let key = 'default';
   switch (input.type) {
     case 'modelVersions':
@@ -179,6 +177,7 @@ const store = useGenerationGraphStore.getState();
 export const generationGraphPanel = {
   open: store.open,
   close: store.close,
+  setView: (view: 'generate' | 'queue' | 'feed') => useGenerationPanelStore.setState({ view }),
 };
 
 export const generationGraphStore = {
