@@ -581,7 +581,7 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Sampler (SD only) */}
+            {/* Sampler */}
             <Controller
               graph={graph}
               name="sampler"
@@ -592,6 +592,20 @@ export function GenerationForm() {
                   label="Sampler"
                   options={meta.options}
                   presets={meta.presets}
+                />
+              )}
+            />
+
+            {/* Scheduler (SdCpp ecosystems) */}
+            <Controller
+              graph={graph}
+              name="scheduler"
+              render={({ value, meta, onChange }) => (
+                <SelectInput
+                  value={value}
+                  onChange={onChange}
+                  label="Scheduler"
+                  options={meta.options}
                 />
               )}
             />

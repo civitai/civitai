@@ -175,6 +175,36 @@ export function samplerNode({
   };
 }
 
+/**
+ * Creates a scheduler node (for SdCpp-based ecosystems like Flux2 Klein, ZImage).
+ * Meta contains: options (dynamic - varies by ecosystem)
+ */
+export function schedulerNode({
+  options,
+  defaultValue,
+}: {
+  options: readonly string[];
+  defaultValue?: string;
+}) {
+  const resolvedDefault =
+    defaultValue && options.includes(defaultValue) ? defaultValue : options[0];
+  return {
+    input: z
+      .string()
+      .optional()
+      .transform((val) => {
+        if (!val) return undefined;
+        if (options.includes(val)) return val;
+        return resolvedDefault;
+      }),
+    output: z.enum(options),
+    defaultValue: resolvedDefault,
+    meta: {
+      options: options.map((s) => ({ label: s, value: s })),
+    },
+  };
+}
+
 /** Default CFG scale presets */
 const defaultCfgScalePresets = [
   { label: 'Creative', value: 4 },

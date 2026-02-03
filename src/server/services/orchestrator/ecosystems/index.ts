@@ -232,7 +232,7 @@ export async function createEcosystemStepInput(
     // ZImage Family
     case 'ZImageTurbo':
     case 'ZImageBase':
-      return createZImageInput(normalizedData, handlerCtx);
+      return { $type: 'imageGen', input: await createZImageInput(normalizedData, handlerCtx) };
 
     // HiDream
     case 'HiDream':

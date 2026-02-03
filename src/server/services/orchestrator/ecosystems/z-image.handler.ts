@@ -1,52 +1,66 @@
 /**
  * ZImage Ecosystem Handler
  *
- * Handles ZImageTurbo and ZImageBase workflows using textToImage step type.
- * Fast generation, no negative prompt support.
+ * Handles ZImageTurbo and ZImageBase workflows using imageGen step type.
+ * Uses SdCpp samplers (euler, heun) and schedulers (simple, discrete).
+ * Supports LoRA resources.
  */
 
-import type { ImageJobNetworkParams, Scheduler, TextToImageStepTemplate } from '@civitai/client';
-import { maxRandomSeed } from '~/server/common/constants';
-import { getRandomInt } from '~/utils/number-helpers';
+import type {
+  ZImageTurboCreateImageGenInput,
+  ZImageBaseCreateImageGenInput,
+} from '@civitai/client';
+import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
 type ZImageCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' | 'ZImageBase' };
 
+// Return type union
+type ZImageInput = ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
+
+// Map baseModel to model variant
+const baseModelToModel: Record<string, 'turbo' | 'base'> = {
+  ZImageTurbo: 'turbo',
+  ZImageBase: 'base',
+};
+
 /**
- * Creates step input for ZImage ecosystems (ZImageTurbo and ZImageBase).
- * Fast generation with no negative prompt support.
+ * Creates imageGen input for ZImage ecosystems (ZImageTurbo and ZImageBase).
+ * Uses SdCpp samplers/schedulers. Supports LoRA resources.
  */
-export const createZImageInput = defineHandler<ZImageCtx, TextToImageStepTemplate>((data, ctx) => {
+export const createZImageInput = defineHandler<ZImageCtx, ZImageInput>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImage workflows');
 
   const quantity = data.quantity ?? 1;
-  const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
+  const model = baseModelToModel[data.baseModel] ?? 'turbo';
 
-  // Build additionalNetworks from resources
-  const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
-  for (const resource of data.resources ?? []) {
-    additionalNetworks[ctx.airs.getOrThrow(resource.id)] = { strength: resource.strength };
+  // Build loras from additional resources
+  const loras: Record<string, number> = {};
+  if ('resources' in data && Array.isArray(data.resources)) {
+    for (const resource of data.resources as ResourceData[]) {
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
+    }
   }
 
-  return {
-    $type: 'textToImage',
-    input: {
-      model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
-      additionalNetworks,
-      scheduler: 'euler' as Scheduler,
-      prompt: data.prompt,
-      // No negative prompt for ZImageTurbo
-      steps: data.steps ?? 4,
-      cfgScale: data.cfgScale ?? 1,
-      seed,
-      width: data.aspectRatio.width,
-      height: data.aspectRatio.height,
-      quantity,
-      batchSize: 1,
-      outputFormat: data.outputFormat,
-    },
-  } as TextToImageStepTemplate;
+  return removeEmpty({
+    engine: 'sdcpp',
+    ecosystem: 'zImage',
+    model,
+    operation: 'createImage' as const,
+    prompt: data.prompt,
+    negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+    width: data.aspectRatio.width,
+    height: data.aspectRatio.height,
+    cfgScale: data.cfgScale ?? 1,
+    steps: data.steps ?? 4,
+    sampleMethod: 'sampler' in data ? data.sampler : 'euler',
+    schedule: 'scheduler' in data ? data.scheduler : 'simple',
+    quantity,
+    seed: data.seed,
+    loras: Object.keys(loras).length > 0 ? loras : undefined,
+  }) as ZImageInput;
 });

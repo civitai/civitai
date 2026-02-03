@@ -81,7 +81,7 @@ export const createFlux2KleinInput = defineHandler<Flux2KleinCtx, Flux2KleinInpu
     cfgScale,
     steps,
     sampleMethod: 'sampler' in data ? data.sampler : 'euler',
-    schedule: 'simple',
+    schedule: 'scheduler' in data ? data.scheduler : 'simple',
     quantity,
     seed: data.seed,
     loras: Object.keys(loras).length > 0 ? loras : undefined,

@@ -23,6 +23,7 @@ import {
   negativePromptNode,
   resourcesNode,
   samplerNode,
+  schedulerNode,
   seedNode,
   stepsNode,
 } from './common';
@@ -70,7 +71,7 @@ const flux2KleinAspectRatios = [
 // Sampler Options
 // =============================================================================
 
-/** Flux.2 Klein sampler options */
+/** Flux.2 Klein sampler options (SdCppSampleMethod) */
 const flux2KleinSamplers = [
   'euler',
   'heun',
@@ -81,6 +82,9 @@ const flux2KleinSamplers = [
   'ipndm_v',
   'lcm',
 ] as const;
+
+/** Flux.2 Klein scheduler options (SdCppSchedule) */
+const flux2KleinSchedules = ['simple', 'discrete', 'karras', 'exponential'] as const;
 
 // =============================================================================
 // Mode Subgraphs
@@ -98,7 +102,6 @@ type Flux2KleinModeCtx = {
  * For 9B and 4B distilled variants
  */
 const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
-  .merge(createCheckpointGraph())
   .node(
     'resources',
     (ctx, ext) =>
@@ -118,7 +121,6 @@ const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
  * For 9B Base and 4B Base variants
  */
 const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
-  .merge(createCheckpointGraph())
   .node(
     'resources',
     (ctx, ext) =>
@@ -131,8 +133,9 @@ const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
   .node('sampler', samplerNode({ options: flux2KleinSamplers, defaultValue: 'euler' }))
-  .node('cfgScale', cfgScaleNode({ min: 1, max: 10, defaultValue: 2.5 }))
-  .node('steps', stepsNode({ min: 10, max: 50, defaultValue: 20 }))
+  .node('scheduler', schedulerNode({ options: flux2KleinSchedules, defaultValue: 'simple' }))
+  .node('cfgScale', cfgScaleNode({ min: 2, max: 20, defaultValue: 7 }))
+  .node('steps', stepsNode({ min: 20, max: 50, defaultValue: 30 }))
   .node('seed', seedNode())
   .node('enhancedCompatibility', enhancedCompatibilityNode());
 
@@ -154,6 +157,12 @@ export const flux2KleinGraph = new DataGraph<
   { baseModel: string; workflow: string },
   GenerationCtx
 >()
+  // Merge checkpoint graph with version options (defaultModelId inferred from baseModel)
+  .merge(
+    createCheckpointGraph({
+      versions: flux2KleinModeVersionOptions,
+    })
+  )
   // Computed: derive flux2Klein mode from baseModel
   .computed(
     'flux2KleinMode',
@@ -174,13 +183,11 @@ export const flux2KleinGraph = new DataGraph<
     },
     ['baseModel']
   )
-  // Discriminated union based on flux2KleinMode
-  .discriminator('flux2KleinMode', {
-    '9b': distilledModeGraph,
-    '9b-base': baseModeGraph,
-    '4b': distilledModeGraph,
-    '4b-base': baseModeGraph,
-  });
+  // Grouped discriminator: distilled (9b/4b) and base (9b-base/4b-base) share graphs
+  .groupedDiscriminator('flux2KleinMode', [
+    { values: ['9b', '4b'] as const, graph: distilledModeGraph },
+    { values: ['9b-base', '4b-base'] as const, graph: baseModeGraph },
+  ]);
 
 // Export mode options for use in components
 export { flux2KleinModeVersionOptions, flux2KleinVersionIds };
