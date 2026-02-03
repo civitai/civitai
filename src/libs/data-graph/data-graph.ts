@@ -1338,6 +1338,9 @@ export class DataGraph<
       skipStorage: true,
     });
     if (this.storageAdapter) {
+      // Persist reset defaults to localStorage BEFORE reinstating the valueProvider.
+      // Without this, the next set() would re-read stale pre-reset values from storage.
+      this.storageAdapter.onSet(this._ctx, this._ctx);
       this.storageAdapter.onBeforeEvaluate?.();
     }
     return result;
