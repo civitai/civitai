@@ -835,6 +835,40 @@ export const EntityMetric_MetricType_Type = {
 
 export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
 
+export const ComicProjectStatus = {
+  Active: 'Active',
+  Deleted: 'Deleted',
+} as const;
+
+export type ComicProjectStatus = (typeof ComicProjectStatus)[keyof typeof ComicProjectStatus];
+
+export const ComicCharacterStatus = {
+  Pending: 'Pending',
+  Processing: 'Processing',
+  Training: 'Training',
+  GeneratingRefs: 'GeneratingRefs',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ComicCharacterStatus = (typeof ComicCharacterStatus)[keyof typeof ComicCharacterStatus];
+
+export const ComicCharacterSourceType = {
+  Upload: 'Upload',
+  ExistingModel: 'ExistingModel',
+} as const;
+
+export type ComicCharacterSourceType = (typeof ComicCharacterSourceType)[keyof typeof ComicCharacterSourceType];
+
+export const ComicPanelStatus = {
+  Pending: 'Pending',
+  Generating: 'Generating',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ComicPanelStatus = (typeof ComicPanelStatus)[keyof typeof ComicPanelStatus];
+
 export const UserRestrictionStatus = {
   Pending: 'Pending',
   Upheld: 'Upheld',

@@ -174,6 +174,14 @@ export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
 
+export type ComicProjectStatus = "Active" | "Deleted";
+
+export type ComicCharacterStatus = "Pending" | "Processing" | "Training" | "GeneratingRefs" | "Ready" | "Failed";
+
+export type ComicCharacterSourceType = "Upload" | "ExistingModel";
+
+export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
+
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
 export interface Account {
@@ -441,6 +449,8 @@ export interface User {
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
   userRestrictions?: UserRestriction[];
+  comicProjects?: ComicProject[];
+  comicCharacters?: ComicCharacter[];
 }
 
 export interface CustomerSubscription {
@@ -3693,6 +3703,76 @@ export interface TagsOnImageDetails {
   reserved_1: boolean;
   reserved_2: boolean;
   confidence: number;
+}
+
+export interface ComicProject {
+  id: string;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  coverImageUrl: string | null;
+  status: ComicProjectStatus;
+  baseModel: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  characters?: ComicCharacter[];
+  chapters?: ComicChapter[];
+}
+
+export interface ComicChapter {
+  id: string;
+  projectId: string;
+  project?: ComicProject;
+  name: string;
+  position: number;
+  createdAt: Date;
+  updatedAt: Date;
+  panels?: ComicPanel[];
+}
+
+export interface ComicCharacter {
+  id: string;
+  projectId: string | null;
+  project?: ComicProject | null;
+  userId: number;
+  user?: User;
+  name: string;
+  status: ComicCharacterStatus;
+  sourceType: ComicCharacterSourceType;
+  modelId: number | null;
+  modelVersionId: number | null;
+  referenceImages: JsonValue | null;
+  trainingJobId: string | null;
+  trainedModelId: number | null;
+  trainedModelVersionId: number | null;
+  generatedReferenceImages: JsonValue | null;
+  referenceImageWorkflowIds: JsonValue | null;
+  errorMessage: string | null;
+  buzzCost: number;
+  createdAt: Date;
+  updatedAt: Date;
+  panels?: ComicPanel[];
+}
+
+export interface ComicPanel {
+  id: string;
+  chapterId: string;
+  chapter?: ComicChapter;
+  characterId: string | null;
+  character?: ComicCharacter | null;
+  prompt: string;
+  enhancedPrompt: string | null;
+  imageUrl: string | null;
+  position: number;
+  buzzCost: number;
+  status: ComicPanelStatus;
+  workflowId: string | null;
+  civitaiJobId: string | null;
+  errorMessage: string | null;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface UserRestriction {

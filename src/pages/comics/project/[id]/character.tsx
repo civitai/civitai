@@ -1,0 +1,921 @@
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Container,
+  Group,
+  Image,
+  Progress,
+  SegmentedControl,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
+import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { useDebouncedValue } from '@mantine/hooks';
+import { IconAlertTriangle, IconArrowLeft, IconCheck, IconPhoto, IconSearch, IconUpload, IconX } from '@tabler/icons-react';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { useEffect, useMemo, useState } from 'react';
+
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { Page } from '~/components/AppLayout/Page';
+import { Meta } from '~/components/Meta/Meta';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { trpc } from '~/utils/trpc';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    if (!session?.user) {
+      return {
+        redirect: {
+          destination: '/login?returnUrl=/comics',
+          permanent: false,
+        },
+      };
+    }
+  },
+});
+
+type CharacterSource = 'existing' | 'upload';
+
+function CharacterUpload() {
+  const router = useRouter();
+  const { id } = router.query;
+  const projectId = id as string;
+
+  const [sourceType, setSourceType] = useState<CharacterSource>('existing');
+  const [characterName, setCharacterName] = useState('');
+  const [saveToLibrary, setSaveToLibrary] = useState(false);
+
+  // Upload flow state
+  const [images, setImages] = useState<{ file: File; preview: string }[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const { uploadToCF: uploadTrainingImageToCF } = useCFImageUpload();
+
+  // Existing model flow state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch] = useDebouncedValue(searchQuery, 300);
+  const [selectedModel, setSelectedModel] = useState<{
+    id: number;
+    name: string;
+    versionId: number;
+  } | null>(null);
+
+  const { data: project, refetch: refetchProject } = trpc.comics.getProject.useQuery(
+    { id: projectId },
+    { enabled: !!projectId }
+  );
+
+  const { data: myModels, isLoading: isLoadingModels } = trpc.comics.searchMyModels.useQuery(
+    { query: debouncedSearch || undefined, limit: 20 },
+    { enabled: sourceType === 'existing' }
+  );
+
+  // Fetch cover images for models using the same pattern as showcase items
+  const modelEntities = useMemo(
+    () => (myModels ?? []).map((m) => ({ entityType: 'Model' as const, entityId: m.id })),
+    [myModels]
+  );
+  const { data: coverImages } = trpc.image.getEntitiesCoverImage.useQuery(
+    { entities: modelEntities },
+    { enabled: modelEntities.length > 0 }
+  );
+  const coverImageMap = useMemo(() => {
+    const map = new Map<number, { url: string; type: string; metadata?: any }>();
+    if (coverImages) {
+      for (const img of coverImages) {
+        map.set(img.entityId, { url: img.url, type: img.type, metadata: img.metadata });
+      }
+    }
+    return map;
+  }, [coverImages]);
+
+  const [newCharacterId, setNewCharacterId] = useState<string | null>(null);
+
+  const createFromUploadMutation = trpc.comics.createCharacterFromUpload.useMutation({
+    onSuccess: (data) => {
+      setNewCharacterId(data.id);
+      // Auto-trigger training after character creation
+      submitTrainingMutation.mutate({ characterId: data.id });
+    },
+  });
+
+  const submitTrainingMutation = trpc.comics.submitCharacterTraining.useMutation({
+    onSuccess: () => {
+      // If this was a new character creation, redirect to project
+      if (newCharacterId) {
+        router.push(`/comics/project/${projectId}`);
+      } else {
+        // Retry case — refetch to update status
+        refetchProject();
+      }
+    },
+    onError: () => {
+      if (newCharacterId) {
+        router.push(`/comics/project/${projectId}`);
+      } else {
+        refetchProject();
+      }
+    },
+  });
+
+  const createFromModelMutation = trpc.comics.createCharacterFromModel.useMutation({
+    onSuccess: () => {
+      router.push(`/comics/project/${projectId}`);
+    },
+  });
+
+  // Training cost estimate
+  const { data: trainingCostData, isLoading: isLoadingCost } =
+    trpc.comics.getTrainingCostEstimate.useQuery(
+      { imageCount: Math.max(3, images.length) },
+      { enabled: sourceType === 'upload' && images.length >= 3, staleTime: 5 * 60 * 1000 }
+    );
+  const trainingCost = trainingCostData?.cost ?? 0;
+  const trainingCostReady = trainingCostData?.ready ?? false;
+
+  const utils = trpc.useUtils();
+
+  const handleDrop = (files: File[]) => {
+    const newImages = files.map((file) => ({
+      file,
+      preview: URL.createObjectURL(file),
+    }));
+    setImages((prev) => [...prev, ...newImages].slice(0, 5));
+  };
+
+  const removeImage = (index: number) => {
+    setImages((prev) => {
+      const newImages = [...prev];
+      URL.revokeObjectURL(newImages[index].preview);
+      newImages.splice(index, 1);
+      return newImages;
+    });
+  };
+
+  const handleSubmitUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (images.length < 3 || !characterName.trim()) return;
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      // Upload images to CloudFlare
+      const imageUrls: string[] = [];
+      for (let i = 0; i < images.length; i++) {
+        setUploadProgress(Math.round(((i + 1) / images.length) * 80));
+        const result = await uploadTrainingImageToCF(images[i].file);
+        imageUrls.push(result.id);
+      }
+
+      setUploadProgress(90);
+
+      createFromUploadMutation.mutate({
+        ...(saveToLibrary ? {} : { projectId }),
+        name: characterName.trim(),
+        referenceImages: imageUrls,
+      });
+    } catch (error) {
+      console.error('Upload failed:', error);
+      setIsUploading(false);
+    }
+  };
+
+  const handleSubmitModel = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedModel || !characterName.trim()) return;
+
+    createFromModelMutation.mutate({
+      ...(saveToLibrary ? {} : { projectId }),
+      name: characterName.trim(),
+      modelId: selectedModel.id,
+      modelVersionId: selectedModel.versionId,
+    });
+  };
+
+  const characterId = router.query.characterId as string | undefined;
+  const existingCharacter = characterId
+    ? project?.characters?.find((c) => c.id === characterId)
+      ?? project?.libraryCharacters?.find((c) => c.id === characterId)
+    : undefined;
+
+  // Poll for character status when in Pending/Processing state
+  useEffect(() => {
+    if (
+      !existingCharacter ||
+      (existingCharacter.status !== 'Pending' &&
+       existingCharacter.status !== 'Processing' &&
+       existingCharacter.status !== 'Training' &&
+       existingCharacter.status !== 'GeneratingRefs')
+    ) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await utils.comics.pollCharacterStatus.fetch({
+          characterId: existingCharacter.id,
+        });
+        if (result.status === 'Ready' || result.status === 'Failed') {
+          refetchProject();
+        }
+      } catch {
+        // Silently ignore poll errors
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [existingCharacter?.id, existingCharacter?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reference image management state
+  const [showUploadArea, setShowUploadArea] = useState(false);
+  const { uploadToCF, files: uploadingFiles, resetFiles } = useCFImageUpload();
+  const [uploadedImages, setUploadedImages] = useState<{ url: string; previewUrl: string; width: number; height: number }[]>([]);
+
+  const generateRefsMutation = trpc.comics.generateCharacterReferences.useMutation({
+    onSuccess: () => {
+      refetchProject();
+    },
+  });
+
+  const uploadRefsMutation = trpc.comics.uploadCharacterReferences.useMutation({
+    onSuccess: () => {
+      setShowUploadArea(false);
+      setUploadedImages([]);
+      resetFiles();
+      refetchProject();
+    },
+  });
+
+  const handleRefImageDrop = async (files: File[]) => {
+    for (const file of files) {
+      const result = await uploadToCF(file);
+      // Use objectUrl (local blob) for preview and dimension detection
+      // Store id (CF image ID) as the persistent URL for the database
+      const img = new window.Image();
+      img.src = result.objectUrl;
+      await new Promise<void>((resolve) => {
+        img.onload = () => {
+          setUploadedImages((prev) => [
+            ...prev,
+            { url: result.id, previewUrl: result.objectUrl, width: img.naturalWidth, height: img.naturalHeight },
+          ]);
+          resolve();
+        };
+        img.onerror = () => {
+          setUploadedImages((prev) => [
+            ...prev,
+            { url: result.id, previewUrl: result.objectUrl, width: 512, height: 512 },
+          ]);
+          resolve();
+        };
+      });
+    }
+  };
+
+  const handleSaveUploadedRefs = () => {
+    if (!existingCharacter || uploadedImages.length === 0) return;
+    uploadRefsMutation.mutate({
+      characterId: existingCharacter.id,
+      referenceImages: uploadedImages,
+    });
+  };
+
+  // If characterId is in URL but character not found, show not-found state
+  if (characterId && !existingCharacter && project) {
+    return (
+      <>
+        <Meta title={`Character Not Found - ${project?.name} - Civitai Comics`} />
+        <Container size="md" py="xl">
+          <Stack gap="xl">
+            <Group>
+              <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
+                <IconArrowLeft size={20} />
+              </ActionIcon>
+              <Title order={2}>Character Not Found</Title>
+            </Group>
+            <Card withBorder p="xl">
+              <Stack align="center" gap="lg">
+                <IconAlertTriangle size={40} className="text-yellow-500" />
+                <Text c="dimmed">
+                  This character could not be found in the project or your library.
+                </Text>
+                <Button component={Link} href={`/comics/project/${projectId}`}>
+                  Back to Project
+                </Button>
+              </Stack>
+            </Card>
+          </Stack>
+        </Container>
+      </>
+    );
+  }
+
+  // If character already exists, show status + ref image management
+  if (existingCharacter) {
+    const isExistingModel = existingCharacter.sourceType === 'ExistingModel';
+    const isFailed = existingCharacter.status === 'Failed';
+    const generatedRefs = existingCharacter.generatedReferenceImages as
+      | { url: string; width: number; height: number; view: string }[]
+      | null;
+    const hasRefs = (generatedRefs?.length ?? 0) > 0;
+
+    return (
+      <>
+        <Meta title={`Character - ${project?.name} - Civitai Comics`} />
+
+        <Container size="md" py="xl">
+          <Stack gap="xl">
+            <Group>
+              <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
+                <IconArrowLeft size={20} />
+              </ActionIcon>
+              <Title order={2}>Character</Title>
+            </Group>
+
+            <Card withBorder p="xl">
+              <Stack align="center" gap="lg">
+                <div className="w-24 h-24 bg-gray-800 rounded-full flex items-center justify-center">
+                  {isFailed ? (
+                    <IconAlertTriangle size={40} className="text-red-500" />
+                  ) : (
+                    <IconPhoto size={40} className="text-gray-500" />
+                  )}
+                </div>
+
+                <div className="text-center">
+                  <Text fw={500} size="lg">
+                    {existingCharacter.name}
+                  </Text>
+                  <Text c={isFailed ? 'red' : 'dimmed'} size="sm">
+                    {isFailed
+                      ? existingCharacter.sourceType === 'Upload' && !existingCharacter.modelVersionId
+                        ? 'Character training failed'
+                        : 'Reference image generation failed'
+                      : existingCharacter.status === 'Ready'
+                        ? hasRefs
+                          ? 'Ready to use'
+                          : 'Ready to use. Generate reference images for previews.'
+                        : existingCharacter.status === 'Training'
+                          ? 'Your character LoRA is being trained...'
+                          : existingCharacter.status === 'GeneratingRefs'
+                            ? 'Generating reference images (front, side, back)...'
+                            : existingCharacter.status === 'Processing'
+                              ? isExistingModel
+                                ? 'Generating reference images...'
+                                : 'Training your character...'
+                              : existingCharacter.status === 'Pending'
+                                ? existingCharacter.sourceType === 'Upload'
+                                  ? "Training hasn't started yet."
+                                  : 'Queued for processing'
+                                : 'Queued for processing'}
+                  </Text>
+                </div>
+
+                {/* Error details for failed characters */}
+                {isFailed && existingCharacter.errorMessage && (
+                  <Alert
+                    color="red"
+                    variant="light"
+                    title="Error details"
+                    icon={<IconAlertTriangle size={18} />}
+                    w="100%"
+                    maw={500}
+                  >
+                    <Text size="sm">{existingCharacter.errorMessage}</Text>
+                  </Alert>
+                )}
+
+                {(existingCharacter.status === 'Processing' ||
+                  existingCharacter.status === 'Training' ||
+                  existingCharacter.status === 'GeneratingRefs') && (
+                  <Stack gap="xs" w="100%" maw={300}>
+                    <Progress value={55} animated />
+                    <Text size="xs" c="dimmed" ta="center">
+                      {existingCharacter.status === 'Training'
+                        ? 'Training usually takes 5-10 minutes'
+                        : existingCharacter.status === 'GeneratingRefs'
+                          ? 'Generating front, side, and back reference views'
+                          : isExistingModel
+                            ? 'Generating front, side, and back reference views'
+                            : 'Training usually takes 5-10 minutes'}
+                    </Text>
+                  </Stack>
+                )}
+
+                {/* Display generated reference images when ready */}
+                {existingCharacter.status === 'Ready' && hasRefs && (
+                  <Stack gap="sm" w="100%">
+                    <Text fw={500} size="sm" ta="center">
+                      Reference Images
+                    </Text>
+                    <Group justify="center" gap="md">
+                      {generatedRefs!.map((ref, i) => (
+                        <Stack key={i} gap={4} align="center">
+                          <div
+                            className="rounded-lg overflow-hidden"
+                            style={{
+                              width: 120,
+                              height: 160,
+                              background: 'var(--mantine-color-dark-7)',
+                            }}
+                          >
+                            <EdgeMedia2
+                              src={ref.url}
+                              type="image"
+                              name={`${ref.view} view`}
+                              alt={`${ref.view} view`}
+                              width={120}
+                              style={{
+                                width: 120,
+                                height: 160,
+                                objectFit: 'cover',
+                                display: 'block',
+                              }}
+                            />
+                          </div>
+                          <Badge size="xs" variant="light">
+                            {ref.view}
+                          </Badge>
+                        </Stack>
+                      ))}
+                    </Group>
+                  </Stack>
+                )}
+
+                {/* Start Training button for Pending Upload characters */}
+                {existingCharacter.status === 'Pending' && existingCharacter.sourceType === 'Upload' && (
+                  <Stack gap="sm" w="100%" maw={400}>
+                    <Group justify="center" gap="sm">
+                      <Button
+                        color="yellow"
+                        onClick={() => submitTrainingMutation.mutate({ characterId: existingCharacter.id })}
+                        loading={submitTrainingMutation.isPending}
+                      >
+                        Start Training
+                      </Button>
+                    </Group>
+                  </Stack>
+                )}
+
+                {/* Training retry for Upload characters that failed (no model yet) */}
+                {isFailed && existingCharacter.sourceType === 'Upload' && !existingCharacter.modelVersionId && (
+                  <Stack gap="sm" w="100%" maw={400}>
+                    <Group justify="center" gap="sm">
+                      <Button
+                        color="yellow"
+                        onClick={() => submitTrainingMutation.mutate({ characterId: existingCharacter.id })}
+                        loading={submitTrainingMutation.isPending}
+                      >
+                        Retry Training
+                      </Button>
+                    </Group>
+                  </Stack>
+                )}
+
+                {/* Reference image actions — for Ready or Failed+has-model state */}
+                {(existingCharacter.status === 'Ready' || (isFailed && (isExistingModel || existingCharacter.modelVersionId))) && (
+                  <Stack gap="sm" w="100%" maw={400}>
+                    <Group justify="center" gap="sm">
+                      <BuzzTransactionButton
+                        buzzAmount={75}
+                        label={isFailed ? 'Retry Generation' : hasRefs ? 'Regenerate References' : 'Generate Reference Images'}
+                        onPerformTransaction={() =>
+                          generateRefsMutation.mutate({ characterId: existingCharacter.id })
+                        }
+                        loading={generateRefsMutation.isPending}
+                      />
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          setShowUploadArea(!showUploadArea);
+                          setUploadedImages([]);
+                          resetFiles();
+                        }}
+                      >
+                        {hasRefs ? 'Upload New' : 'Upload Your Own'}
+                      </Button>
+                    </Group>
+
+                    {showUploadArea && (
+                      <Stack gap="sm">
+                        <Dropzone
+                          onDrop={handleRefImageDrop}
+                          accept={IMAGE_MIME_TYPE}
+                          maxFiles={5 - uploadedImages.length}
+                          disabled={uploadedImages.length >= 5}
+                        >
+                          <Group
+                            justify="center"
+                            gap="xl"
+                            mih={100}
+                            style={{ pointerEvents: 'none' }}
+                          >
+                            <Dropzone.Accept>
+                              <IconUpload size={32} className="text-blue-500" />
+                            </Dropzone.Accept>
+                            <Dropzone.Reject>
+                              <IconX size={32} className="text-red-500" />
+                            </Dropzone.Reject>
+                            <Dropzone.Idle>
+                              <IconPhoto size={32} className="text-gray-500" />
+                            </Dropzone.Idle>
+                            <div>
+                              <Text size="sm" inline>
+                                Drop reference images here
+                              </Text>
+                              <Text size="xs" c="dimmed" inline mt={4}>
+                                Upload 1-5 images
+                              </Text>
+                            </div>
+                          </Group>
+                        </Dropzone>
+
+                        {uploadedImages.length > 0 && (
+                          <Group>
+                            {uploadedImages.map((img, i) => (
+                              <div key={i} className="rounded-md overflow-hidden" style={{ width: 80, height: 80, background: 'var(--mantine-color-dark-7)' }}>
+                                <Image src={img.previewUrl} alt={`Upload ${i + 1}`} w={80} h={80} fit="cover" />
+                              </div>
+                            ))}
+                          </Group>
+                        )}
+
+                        {uploadingFiles.some((f) => f.status === 'uploading') && (
+                          <Progress value={65} animated size="xs" />
+                        )}
+
+                        <Button
+                          onClick={handleSaveUploadedRefs}
+                          disabled={uploadedImages.length === 0}
+                          loading={uploadRefsMutation.isPending}
+                        >
+                          Save Reference Images
+                        </Button>
+                      </Stack>
+                    )}
+                  </Stack>
+                )}
+
+                <Button component={Link} href={`/comics/project/${projectId}`}>
+                  Back to Project
+                </Button>
+              </Stack>
+            </Card>
+          </Stack>
+        </Container>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Meta title={`Add Character - ${project?.name} - Civitai Comics`} />
+
+      <Container size="md" py="xl">
+        <Stack gap="xl">
+          <Group>
+            <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
+              <IconArrowLeft size={20} />
+            </ActionIcon>
+            <Title order={2}>Add Character</Title>
+          </Group>
+
+          <SegmentedControl
+            value={sourceType}
+            onChange={(v) => setSourceType(v as CharacterSource)}
+            data={[
+              { label: 'Use Existing LoRA', value: 'existing' },
+              { label: 'Upload & Train', value: 'upload' },
+            ]}
+            fullWidth
+          />
+
+          {sourceType === 'existing' ? (
+            <form onSubmit={handleSubmitModel}>
+              <Stack gap="lg">
+                <Card withBorder>
+                  <Stack gap="md">
+                    <Text fw={500}>Select a Character LoRA</Text>
+                    <Text size="sm" c="dimmed">
+                      Choose from your existing LoRA models. You can generate reference images later.
+                    </Text>
+
+                    <TextInput
+                      placeholder="Search your models..."
+                      leftSection={<IconSearch size={16} />}
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+
+                    <div
+                      className="max-h-[420px] overflow-y-auto pr-1"
+                      style={{
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#495057 #25262b',
+                      }}
+                    >
+                      {isLoadingModels ? (
+                        <div className="py-8 text-center">
+                          <Text c="dimmed" size="sm">Loading models...</Text>
+                        </div>
+                      ) : myModels?.length === 0 ? (
+                        <div className="py-8 text-center">
+                          <Stack align="center" gap="xs">
+                            <IconPhoto size={32} className="text-gray-600" />
+                            <Text c="dimmed" size="sm">
+                              No LoRA models found. Create one first or upload images to train a new character.
+                            </Text>
+                          </Stack>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {myModels?.map((model) => {
+                            const coverImage = coverImageMap.get(model.id);
+                            const isSelected = selectedModel?.id === model.id;
+                            return (
+                              <div
+                                key={model.id}
+                                onClick={() => setSelectedModel({
+                                  id: model.id,
+                                  name: model.name,
+                                  versionId: model.versionId!,
+                                })}
+                                className="cursor-pointer rounded-xl overflow-hidden flex flex-col transition-all duration-200 hover:-translate-y-0.5"
+                                style={{
+                                  background: 'var(--mantine-color-dark-6)',
+                                  border: isSelected
+                                    ? '2px solid var(--mantine-color-blue-6)'
+                                    : '2px solid var(--mantine-color-dark-4)',
+                                  boxShadow: isSelected
+                                    ? '0 0 0 3px rgba(34,139,230,0.2), 0 8px 16px rgba(0,0,0,0.5)'
+                                    : '0 2px 8px rgba(0,0,0,0.3)',
+                                }}
+                              >
+                                {/* Image */}
+                                <div
+                                  className="relative overflow-hidden"
+                                  style={{
+                                    aspectRatio: '1',
+                                    background: 'var(--mantine-color-dark-7)',
+                                  }}
+                                >
+                                  {coverImage ? (
+                                    <EdgeMedia2
+                                      src={coverImage.url}
+                                      type={coverImage.type as any}
+                                      metadata={coverImage.metadata}
+                                      name={model.name}
+                                      alt={model.name}
+                                      width={300}
+                                      style={{
+                                        maxWidth: '100%',
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: 'cover',
+                                        objectPosition: 'top center',
+                                        display: 'block',
+                                      }}
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center">
+                                      <IconPhoto size={28} style={{ color: 'var(--mantine-color-dark-3)' }} />
+                                    </div>
+                                  )}
+
+                                  {/* Selection badge */}
+                                  <div
+                                    className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200"
+                                    style={{
+                                      background: 'var(--mantine-color-blue-6)',
+                                      border: '3px solid var(--mantine-color-dark-6)',
+                                      opacity: isSelected ? 1 : 0,
+                                      transform: isSelected ? 'scale(1)' : 'scale(0.6)',
+                                    }}
+                                  >
+                                    <IconCheck size={14} color="white" />
+                                  </div>
+                                </div>
+
+                                {/* Info */}
+                                <div className="px-3 py-2.5">
+                                  <Text size="sm" fw={600} c="white" truncate>
+                                    {model.name}
+                                  </Text>
+                                  {model.versionName && (
+                                    <Text size="xs" c="dimmed" mt={2}>
+                                      {model.versionName}
+                                    </Text>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </Stack>
+                </Card>
+
+                <TextInput
+                  label="Character name"
+                  placeholder="Maya"
+                  value={characterName}
+                  onChange={(e) => setCharacterName(e.target.value)}
+                />
+
+                <Switch
+                  label="Save to My Library"
+                  description="Library characters can be used across all your projects"
+                  checked={saveToLibrary}
+                  onChange={(e) => setSaveToLibrary(e.currentTarget.checked)}
+                  color="yellow"
+                />
+
+                <Group justify="space-between">
+                  <Text c="dimmed" size="sm">
+                    Free — uses your existing model
+                  </Text>
+                  <Group>
+                    <Button
+                      variant="default"
+                      component={Link}
+                      href={`/comics/project/${projectId}`}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={!selectedModel || !characterName.trim()}
+                      loading={createFromModelMutation.isPending}
+                    >
+                      {saveToLibrary ? 'Add to Library' : 'Add Character'}
+                    </Button>
+                  </Group>
+                </Group>
+              </Stack>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmitUpload}>
+              <Stack gap="lg">
+                <Card withBorder>
+                  <Stack gap="md">
+                    <div>
+                      <Text fw={500}>Upload Reference Images</Text>
+                      <Text size="sm" c="dimmed">
+                        Upload 3-5 images of your character. We&apos;ll train a LoRA model automatically.
+                      </Text>
+                    </div>
+
+                    <Dropzone
+                      onDrop={handleDrop}
+                      accept={IMAGE_MIME_TYPE}
+                      maxFiles={5 - images.length}
+                      disabled={images.length >= 5 || isUploading}
+                    >
+                      <Group justify="center" gap="xl" mih={120} style={{ pointerEvents: 'none' }}>
+                        <Dropzone.Accept>
+                          <IconUpload size={48} className="text-blue-500" />
+                        </Dropzone.Accept>
+                        <Dropzone.Reject>
+                          <IconX size={48} className="text-red-500" />
+                        </Dropzone.Reject>
+                        <Dropzone.Idle>
+                          <IconPhoto size={48} className="text-gray-500" />
+                        </Dropzone.Idle>
+
+                        <div>
+                          <Text size="lg" inline>
+                            Drop images here or click to browse
+                          </Text>
+                          <Text size="sm" c="dimmed" inline mt={7}>
+                            Upload 3-5 reference images
+                          </Text>
+                        </div>
+                      </Group>
+                    </Dropzone>
+
+                    {images.length > 0 && (
+                      <Group>
+                        {images.map((image, index) => (
+                          <div key={index} className="relative">
+                            <Image
+                              src={image.preview}
+                              alt={`Reference ${index + 1}`}
+                              w={80}
+                              h={80}
+                              fit="cover"
+                              radius="sm"
+                            />
+                            <ActionIcon
+                              size="xs"
+                              color="red"
+                              variant="filled"
+                              className="absolute -top-2 -right-2"
+                              onClick={() => removeImage(index)}
+                              disabled={isUploading}
+                            >
+                              <IconX size={12} />
+                            </ActionIcon>
+                          </div>
+                        ))}
+                      </Group>
+                    )}
+
+                    <Text size="sm" c={images.length >= 3 ? 'green' : 'dimmed'}>
+                      {images.length}/5 images ({images.length >= 3 ? 'ready' : 'need at least 3'})
+                    </Text>
+                  </Stack>
+                </Card>
+
+                <Card withBorder>
+                  <Stack gap="md">
+                    <Text fw={500}>Tips for Good References</Text>
+                    <ul className="text-sm text-gray-400 list-disc ml-4 space-y-1">
+                      <li>Clear, front-facing view of the character</li>
+                      <li>Same character in all images</li>
+                      <li>Different angles help (front, side, 3/4 view)</li>
+                      <li>Consistent lighting across images</li>
+                      <li>High resolution images work best</li>
+                    </ul>
+                  </Stack>
+                </Card>
+
+                <TextInput
+                  label="Character name"
+                  placeholder="Maya"
+                  value={characterName}
+                  onChange={(e) => setCharacterName(e.target.value)}
+                  disabled={isUploading}
+                />
+
+                {isUploading && (
+                  <Stack gap="xs">
+                    <Progress value={uploadProgress} animated />
+                    <Text size="sm" c="dimmed" ta="center">
+                      Uploading images...
+                    </Text>
+                  </Stack>
+                )}
+
+                <Switch
+                  label="Save to My Library"
+                  description="Library characters can be used across all your projects"
+                  checked={saveToLibrary}
+                  onChange={(e) => setSaveToLibrary(e.currentTarget.checked)}
+                  color="yellow"
+                  disabled={isUploading}
+                />
+
+                <Group justify="space-between">
+                  <Text c="dimmed" size="sm">
+                    Training cost:{' '}
+                    {images.length < 3
+                      ? '~50 Buzz (est.)'
+                      : isLoadingCost
+                        ? 'Estimating...'
+                        : trainingCost > 0
+                          ? `~${trainingCost} Buzz`
+                          : trainingCostReady
+                            ? 'Free'
+                            : '~50 Buzz (est.)'}
+                  </Text>
+                  <Group>
+                    <Button
+                      variant="default"
+                      component={Link}
+                      href={`/comics/project/${projectId}`}
+                      disabled={isUploading}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={images.length < 3 || !characterName.trim()}
+                      loading={isUploading || createFromUploadMutation.isPending}
+                    >
+                      {saveToLibrary ? 'Train & Save to Library' : 'Train Character'}
+                    </Button>
+                  </Group>
+                </Group>
+              </Stack>
+            </form>
+          )}
+        </Stack>
+      </Container>
+    </>
+  );
+}
+
+export default Page(CharacterUpload);
