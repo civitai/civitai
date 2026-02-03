@@ -30,7 +30,6 @@ import {
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -750,8 +749,8 @@ export interface NormalizedWorkflowStepOutput {
 export interface NormalizedStepMetadata {
   /** Mapped params ready for the generation graph (workflow, baseModel, aspectRatio resolved) */
   params: Partial<GenerationGraphValues> & Record<string, unknown>;
-  /** Resources in ResourceData format (matching data-graph resourceSchema) */
-  resources: ResourceData[];
+  /** Enriched resources with full model/version data for display */
+  resources: GenerationResource[];
   /** Remix reference */
   remixOfId?: number;
   /** Per-image metadata (favorite, feedback, hidden, etc.) */
@@ -779,8 +778,8 @@ export interface NormalizedStep {
   queuePosition?: WorkflowStepJobQueuePosition;
   /** Original params (for backward compatibility) */
   params: Partial<GenerationGraphValues> & Record<string, unknown>;
-  /** Resources in ResourceData format (matching data-graph resourceSchema) */
-  resources: ResourceData[];
+  /** Enriched resources with full model/version data for display */
+  resources: GenerationResource[];
   /** Metadata with mapped params */
   metadata: NormalizedStepMetadata;
   /** Output images/videos */
@@ -841,31 +840,28 @@ function getResourceRefsFromStep(
 }
 
 /**
- * Returns resources in ResourceData format (matching data-graph resourceSchema).
- * Uses enriched resources from getResourceData to populate baseModel, model.type,
- * trainedWords, and epochDetails.
+ * Returns enriched resources for display in the queue.
+ * Preserves full GenerationResource data (model.name, model.id, version name, etc.)
+ * and applies per-step strength overrides and epoch details.
  */
 function getResourcesFromStep(
   step: WorkflowStep,
   allResources: GenerationResource[]
-): ResourceData[] {
+): GenerationResource[] {
   const refs = getResourceRefsFromStep(step);
   return refs
     .map((ref) => {
       const enriched = allResources.find((r) => r.id === ref.id);
       if (!enriched) return null;
       return {
-        id: enriched.id,
-        baseModel: enriched.baseModel,
-        model: { type: enriched.model.type },
+        ...enriched,
         strength: ref.strength ?? enriched.strength,
-        trainedWords: enriched.trainedWords.length > 0 ? enriched.trainedWords : undefined,
         epochDetails: enriched.epochDetails
-          ? { epochNumber: enriched.epochDetails.epochNumber }
+          ? enriched.epochDetails
           : ref.epochNumber
-          ? { epochNumber: ref.epochNumber }
+          ? { jobId: '', fileName: '', epochNumber: ref.epochNumber, isExpired: false }
           : undefined,
-      } satisfies ResourceData;
+      };
     })
     .filter(isDefined);
 }
@@ -1003,7 +999,7 @@ function formatStep(
   const metadata = (step.metadata ?? {}) as Record<string, unknown>;
   const rawParams = (metadata.params ?? {}) as Record<string, unknown>;
 
-  // Get step resources in ResourceData format (matching data-graph resourceSchema)
+  // Get enriched resources for display (full model/version data)
   const resources = getResourcesFromStep(step, allResources);
 
   // Map params to graph format (resolves workflow, baseModel, aspectRatio, etc.)

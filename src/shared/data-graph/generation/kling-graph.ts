@@ -37,9 +37,9 @@ import {
 
 /** Kling model version IDs */
 const klingVersionIds = {
-  v1_6: 1, // Placeholder - actual version IDs from API
-  v2: 2,
-  v2_5_turbo: 3,
+  v1_6: 2623815, // Placeholder - actual version IDs from API
+  v2: 2623817,
+  v2_5_turbo: 2623821,
 } as const;
 
 /** Options for Kling model selector */
@@ -121,23 +121,20 @@ export const klingGraph = new DataGraph<KlingCtx, GenerationCtx>()
     ['workflow']
   )
 
-  // Mode node - derives available options from model
+  // Mode node - only available for V1.6 which supports standard/professional choice
   .node(
     'mode',
     (ctx) => {
       const model = ctx.model as { id?: number } | undefined;
       const isV1_6 = model?.id === klingVersionIds.v1_6;
 
-      // Only V1.6 supports standard mode
-      const options = isV1_6 ? klingModes : klingModes.filter((m) => m.value === 'professional');
-      const defaultValue = isV1_6 ? 'standard' : 'professional';
-
       return {
         input: z.enum(['standard', 'professional']).optional(),
         output: z.enum(['standard', 'professional']),
-        defaultValue: defaultValue as 'standard' | 'professional',
+        defaultValue: isV1_6 ? ('standard' as const) : ('professional' as const),
+        when: isV1_6,
         meta: {
-          options,
+          options: klingModes,
         },
       };
     },

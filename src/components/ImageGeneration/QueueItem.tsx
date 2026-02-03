@@ -323,7 +323,7 @@ export function QueueItem({
                 <div className="flex items-center gap-1">
                   <Text size="sm">Resources:</Text>
                   <Collection
-                    items={resources as unknown as GenerationResource[]}
+                    items={resources}
                     limit={3}
                     renderItem={ResourceBadge}
                     grouped

@@ -2683,6 +2683,14 @@ export function getDefaultEngine(ecosystemId: number): string | undefined {
 // =============================================================================
 
 /**
+ * Get active base models for selection UIs (e.g., model version upsert form).
+ * Moderators see all base models; regular users see only non-hidden ones.
+ */
+export function getActiveBaseModels(isModerator?: boolean): BaseModelRecord[] {
+  return isModerator ? baseModels : baseModels.filter((m) => !m.hidden);
+}
+
+/**
  * Get base models available for generation (not hidden, not disabled, has generation support)
  */
 export function getGenerationBaseModels(): BaseModelRecord[] {

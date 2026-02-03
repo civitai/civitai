@@ -65,6 +65,12 @@ export type ValidationResult<T> =
   | { success: true; data: T; nodes: Record<string, NodeEntry> }
   | { success: false; errors: Record<string, NodeError> };
 
+/** Result of partial validation - always returns valid data, omitting failed nodes */
+export type PartialValidationResult<T> = {
+  data: Partial<T>;
+  errors: Record<string, NodeError>;
+};
+
 // ============================================================================
 // Storage Adapter Types
 // ============================================================================
@@ -577,6 +583,43 @@ export class DataGraph<
     }
 
     return root._buildValidationResult(errors);
+  }
+
+  /**
+   * Validate current graph state, returning as much valid data as possible.
+   * Nodes that fail validation are omitted from `data` and reported in `errors`.
+   * Always returns a result (never fails entirely), unlike `validate()`.
+   *
+   * Useful for cost estimation (whatIf) where the backend provides defaults
+   * for missing fields like prompt.
+   */
+  validatePartial(): PartialValidationResult<Ctx> {
+    const root = this.rootGraph;
+    const { errors } = root._validate(false);
+
+    // Build partial data with output-filtered values, excluding failed nodes
+    const data: Record<string, unknown> = {};
+    for (const entry of root.activeEntries) {
+      if (entry.kind === 'computed') {
+        if (entry.key in root._ctx) {
+          data[entry.key] = root._ctx[entry.key as keyof typeof root._ctx];
+        }
+        continue;
+      }
+      if (entry.kind !== 'node') continue;
+      if (!(entry.key in root._ctx)) continue;
+      if (errors.has(entry.key)) continue;
+
+      // Use output-filtered value (cached from _validate)
+      data[entry.key] = this.getOutputValue(entry.key as keyof Ctx & string);
+    }
+
+    const errorsObj: Record<string, NodeError> = {};
+    for (const [key, error] of errors) {
+      errorsObj[key] = error;
+    }
+
+    return { data: data as Partial<Ctx>, errors: errorsObj };
   }
 
   /** Build a ValidationResult from an error map (defaults to nodeErrors) */

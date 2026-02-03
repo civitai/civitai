@@ -87,12 +87,12 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     }
   }, [promptFocused, snapshot?.prompt]);
 
-  // Full validation for isValid flag (used to disable submit button)
-  const validationResult = useMemo(
-    () => (snapshot ? graph.validate({ saveState: false }) : null),
+  // Partial validation: get as much validated data as possible, omitting failed nodes.
+  // The backend provides defaults for missing fields (e.g. prompt) via applyWhatIfDefaults.
+  const partialResult = useMemo(
+    () => (snapshot ? graph.validatePartial() : null),
     [snapshot, graph]
   );
-  const isValid = validationResult?.success ?? false;
 
   // Lighter check for cost estimation: only require cost-affecting fields.
   // The backend fills in placeholders for non-cost-affecting fields (images)
@@ -108,23 +108,21 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
     // Standalone workflows (upscale, remove-bg, vid2vid) need actual source media
     // for cost calculation (dimensions affect scale factor), so require full validation
-    if (config.ecosystemIds.length === 0) return isValid;
+    if (config.ecosystemIds.length === 0) return true;
 
     // Ecosystem workflows need baseModel to determine pricing
     if (!snapshot.baseModel) return false;
 
     return true;
-  }, [snapshot, isValid]);
+  }, [snapshot]);
 
-  // Build the query payload using the lighter cost check
-  // Filter out computed nodes and disabled resources
-  // Use stale prompt value when prompt is focused to avoid blur race condition
-  // Uses getOutputSnapshot() to get values filtered through output schemas
+  // Build the query payload from partially validated data.
+  // Uses validatePartial() to get output-schema-filtered values for nodes that pass,
+  // omitting nodes that fail (e.g. prompt). The backend fills in defaults for omitted fields.
   const queryPayload = useMemo(() => {
-    if (!snapshot || !canEstimateCost) return null;
+    if (!snapshot || !canEstimateCost || !partialResult) return null;
 
-    // Get output-schema-filtered snapshot (cached, minimal overhead)
-    const outputSnapshot = graph.getOutputSnapshot() as Record<string, unknown>;
+    const outputSnapshot = partialResult.data as Record<string, unknown>;
 
     // When focused, use committed prompt value to avoid race conditions with submit
     // When not focused, use current snapshot value directly (effect updates ref for next focus)
@@ -134,7 +132,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     return filterSnapshotForSubmit(snapshotForQuery, {
       computedKeys: graph.getComputedKeys(),
     });
-  }, [snapshot, canEstimateCost, graph, promptFocused]);
+  }, [snapshot, canEstimateCost, partialResult, graph, promptFocused]);
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
     enabled: enabled && !!currentUser && !!queryPayload && !resourcesLoading,
@@ -142,8 +140,6 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
   return {
     ...queryResult,
-    isValid,
     isLoading: queryResult.isFetching,
-    validationErrors: validationResult?.success === false ? validationResult.errors : undefined,
   };
 }

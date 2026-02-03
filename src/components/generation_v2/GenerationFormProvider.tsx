@@ -11,6 +11,9 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { ecosystemByKey, getGenerationSupport } from '~/shared/constants/basemodel.constants';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
@@ -121,18 +124,56 @@ function InnerProvider({
       // Just need to split flat resources into model/resources/vae for graph nodes
       const split = splitResourcesByType(data.resources);
 
-      const values = {
-        ...data.params,
-        model: split.model,
-        resources: split.resources,
-        vae: split.vae,
-      };
-
       if (data.runType === 'remix' || data.runType === 'replay') {
+        // Full override: reset graph, then apply all values
         graph.reset();
+        const values = {
+          ...data.params,
+          model: split.model,
+          resources: split.resources,
+          vae: split.vae,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
+        graph.set(values as any);
+      } else {
+        // Run/Patch: model/vae overwrite, resources merge with existing
+        const snapshot = graph.getSnapshot() as Record<string, unknown>;
+        const existingResources = (snapshot.resources ?? []) as ResourceData[];
+        const incomingIds = new Set(split.resources.map((r) => r.id));
+
+        // Determine incoming baseModel ecosystem for compatibility filtering
+        const incomingBaseModel = data.params.baseModel as string | undefined;
+        const checkpointEcosystem = incomingBaseModel
+          ? ecosystemByKey.get(incomingBaseModel)
+          : undefined;
+
+        // Filter existing resources: keep only those compatible with the incoming ecosystem
+        const compatibleExisting = existingResources.filter((r) => {
+          // Skip resources that are being replaced by incoming ones
+          if (incomingIds.has(r.id)) return false;
+          // If no checkpoint ecosystem to check against, keep the resource
+          if (!checkpointEcosystem || !r.baseModel) return true;
+          const resourceEcosystem = ecosystemByKey.get(r.baseModel);
+          if (!resourceEcosystem) return true;
+          const support = getGenerationSupport(
+            checkpointEcosystem.id,
+            resourceEcosystem.id,
+            r.model.type as ModelType
+          );
+          return support !== null;
+        });
+
+        const mergedResources = [...compatibleExisting, ...split.resources];
+
+        const values = {
+          ...data.params,
+          model: split.model,
+          resources: mergedResources,
+          vae: split.vae,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
+        graph.set(values as any);
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
-      graph.set(values as any);
 
       generationGraphStore.clearData();
     }

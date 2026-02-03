@@ -469,12 +469,6 @@ export const activeBaseModels = baseModelConfig
   .filter((x) => !('hidden' in x) || !x.hidden)
   .map((x) => x.name);
 
-export function getActiveBaseModels(isModerator?: boolean) {
-  return isModerator
-    ? baseModelConfig
-    : baseModelConfig.filter((x) => !('hidden' in x) || !x.hidden);
-}
-
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);
   if (!config) return baseModelConfig.find((x) => x.group === 'Other')!;

@@ -137,7 +137,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 
   // Get whatIf data from context (provided by WhatIfProvider)
   // isLoading includes both pending debounce AND fetching states
-  const { data, isError, isLoading: isWhatIfLoading, isValid } = useWhatIfContext();
+  const { data, isError, isLoading: isWhatIfLoading } = useWhatIfContext();
 
   // Get values from graph for tip calculation
   const snapshot = graph.getSnapshot() as ResourceSnapshot;
@@ -163,7 +163,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       loading={isWhatIfLoading || isSubmitting}
       cost={totalCost}
-      disabled={isError || !isValid}
+      disabled={isError}
       onClick={handleClick}
       transactions={data?.transactions}
       allowMatureContent={data?.allowMatureContent}
