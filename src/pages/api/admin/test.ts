@@ -6,131 +6,103 @@ import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAu
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { debugAuditPrompt } from '~/utils/metadata/audit';
 
+const userIds = [
+  11231576, 1641822, 10119527, 4406586, 7640794, 7467302, 9261165, 11160036, 11147401, 1110633,
+  11171413, 11170682, 10296176, 10021203, 480152,
+];
+
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     if (!clickhouse) throw new Error('ClickHouse is not available');
 
-    const userRestrictionId = req.query.id ? Number(req.query.id) : undefined;
-    const limit = req.query.limit ? Number(req.query.limit) : 10;
-    const force = req.query.force === 'true';
+    const results: {
+      userId: number;
+      restrictionId?: number;
+      triggerCount: number;
+      error?: string;
+    }[] = [];
 
-    // Find restrictions that need backfilling
-    const restrictions = await dbRead.userRestriction.findMany({
-      where: {
-        type: 'generation',
-        ...(userRestrictionId && { id: userRestrictionId }),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        userId: true,
-        triggers: true,
-        createdAt: true,
-      },
-    });
-
-    const results: { id: number; userId: number; beforeCount: number; afterCount: number }[] = [];
-
-    for (const restriction of restrictions) {
-      // Skip if triggers is already an array (already backfilled) unless force is true
-      if (!force && Array.isArray(restriction.triggers) && restriction.triggers.length > 1) {
-        results.push({
-          id: restriction.id,
-          userId: restriction.userId,
-          beforeCount: restriction.triggers.length,
-          afterCount: restriction.triggers.length,
+    for (const userId of userIds) {
+      try {
+        // Skip if user already has a pending UserRestriction
+        const existingRestriction = await dbRead.userRestriction.findFirst({
+          where: { userId, type: 'generation', status: 'Pending' },
+          select: { id: true },
         });
-        continue;
-      }
 
-      // When forcing, start fresh; otherwise preserve existing triggers
-      const existingTriggers = force
-        ? []
-        : Array.isArray(restriction.triggers)
-        ? (restriction.triggers as unknown as BlockedPromptEntry[])
-        : restriction.triggers
-        ? [restriction.triggers as unknown as BlockedPromptEntry]
-        : [];
+        if (existingRestriction) {
+          results.push({
+            userId,
+            restrictionId: existingRestriction.id,
+            triggerCount: 0,
+            error: 'Skipped: existing Pending restriction',
+          });
+          continue;
+        }
 
-      // Query ClickHouse for prohibited prompts in the 24h before the restriction was created
-      const restrictionDate = new Date(restriction.createdAt);
-      const startDate = new Date(restrictionDate.getTime() - 24 * 60 * 60 * 1000);
+        // Query ClickHouse for the last 8 prohibited requests for this user
+        const queryResult = await clickhouse.query({
+          query: `
+            SELECT prompt, negativePrompt, source, createdDate
+            FROM prohibitedRequests
+            WHERE userId = {userId:Int32}
+            ORDER BY createdDate DESC
+            LIMIT 8
+          `,
+          query_params: { userId },
+          format: 'JSONEachRow',
+        });
 
-      // Format dates for ClickHouse (YYYY-MM-DD HH:MM:SS)
-      const formatForClickHouse = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+        const rows = (await queryResult.json()) as Array<{
+          prompt: string;
+          negativePrompt: string;
+          source: string;
+          createdDate: string;
+        }>;
 
-      const queryResult = await clickhouse.query({
-        query: `
-          SELECT prompt, negativePrompt, source, createdDate
-          FROM prohibitedRequests
-          WHERE userId = {userId:Int32}
-            AND createdDate >= {startDate:DateTime}
-            AND createdDate <= {endDate:DateTime}
-          ORDER BY createdDate DESC
-          LIMIT 8
-        `,
-        query_params: {
-          userId: restriction.userId,
-          startDate: formatForClickHouse(startDate),
-          endDate: formatForClickHouse(restrictionDate),
-        },
-        format: 'JSONEachRow',
-      });
+        // Convert rows to BlockedPromptEntry format
+        const triggers: BlockedPromptEntry[] = rows.map((row) => {
+          const auditResult = debugAuditPrompt(row.prompt, row.negativePrompt || undefined);
+          const firstMatch = auditResult.matches.find((m) => m.matched);
 
-      const rows = (await queryResult.json()) as Array<{
-        prompt: string;
-        negativePrompt: string;
-        source: string;
-        createdDate: string;
-      }>;
+          return {
+            prompt: row.prompt,
+            negativePrompt: row.negativePrompt ?? '',
+            source: row.source,
+            category: firstMatch?.check as BlockedPromptEntry['category'],
+            matchedWord: firstMatch?.matchedText,
+            matchedRegex: firstMatch?.regex,
+            imageId: null,
+            time: row.createdDate,
+          };
+        });
 
-      // Convert ClickHouse rows to BlockedPromptEntry format, running audit to get match details
-      const historicalTriggers: BlockedPromptEntry[] = rows.map((row) => {
-        // Run the audit to get the matched regex and word
-        const auditResult = debugAuditPrompt(row.prompt, row.negativePrompt || undefined);
-        const firstMatch = auditResult.matches.find((m) => m.matched);
-
-        return {
-          prompt: row.prompt,
-          negativePrompt: row.negativePrompt ?? '',
-          source: row.source,
-          category: firstMatch?.check as BlockedPromptEntry['category'],
-          matchedWord: firstMatch?.matchedText,
-          matchedRegex: firstMatch?.regex,
-          imageId: null,
-          time: row.createdDate,
-        };
-      });
-
-      // Merge with existing triggers (avoid duplicates by checking prompt + time)
-      const existingKeys = new Set(existingTriggers.map((t) => `${t.prompt}:${t.time}`));
-      const newTriggers = historicalTriggers.filter(
-        (t) => !existingKeys.has(`${t.prompt}:${t.time}`)
-      );
-      const mergedTriggers = [...existingTriggers, ...newTriggers];
-
-      // Update the restriction if we found new triggers
-      if (newTriggers.length > 0) {
-        await dbWrite.userRestriction.update({
-          where: { id: restriction.id },
+        // Create the UserRestriction record
+        const restriction = await dbWrite.userRestriction.create({
           data: {
+            userId,
+            type: 'generation',
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            triggers: mergedTriggers as any,
+            triggers: triggers as any,
           },
         });
-      }
 
-      results.push({
-        id: restriction.id,
-        userId: restriction.userId,
-        beforeCount: existingTriggers.length,
-        afterCount: mergedTriggers.length,
-      });
+        results.push({
+          userId,
+          restrictionId: restriction.id,
+          triggerCount: triggers.length,
+        });
+      } catch (userError) {
+        results.push({
+          userId,
+          triggerCount: 0,
+          error: (userError as Error).message,
+        });
+      }
     }
 
     logToAxiom({
-      name: 'user-restriction-backfill',
+      name: 'backfill-user-restrictions',
       type: 'info',
       details: { results },
     });

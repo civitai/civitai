@@ -527,7 +527,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={`${env.NEXT_PUBLIC_IMAGE_LOCATION}/${data.url}/optimized=true/media.webp`}
+            src={`${env.NEXT_PUBLIC_IMAGE_LOCATION}/${data.url}/original=true/media.webp`}
             alt="advertisement"
             loading="lazy"
             onLoad={() => setImgLoaded(true)}

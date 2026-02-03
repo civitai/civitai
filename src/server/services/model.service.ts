@@ -456,7 +456,10 @@ export const getModelsRaw = async ({
     isPrivate = true;
   }
 
-  // Base model filtering: either via EXISTS subquery (standard) or direct mbm."baseModel" (base model metrics)
+  // Base model filtering:
+  // - Standard path: EXISTS subquery on ModelVersion
+  // - Base model metrics, single base model: direct equality on mbm."baseModel" (preserves index scan)
+  // - Base model metrics, multiple base models: filter is inside the FROM subquery (see fromClause)
   if (baseModels?.length && !useBaseModelMetrics) {
     AND.push(
       Prisma.sql`EXISTS (
@@ -465,9 +468,9 @@ export const getModelsRaw = async ({
             AND mv."baseModel" IN (${Prisma.join(baseModels, ',')})
         )`
     );
-  } else if (useBaseModelMetrics) {
-    // Direct equality filter on ModelBaseModelMetric
-    AND.push(Prisma.sql`mbm."baseModel" IN (${Prisma.join(baseModels, ',')})`);
+  } else if (useBaseModelMetrics && baseModels!.length === 1) {
+    // Single base model: filter in WHERE clause so covering indexes can be fully utilized
+    AND.push(Prisma.sql`mbm."baseModel" = ${baseModels![0]}`);
   }
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
@@ -673,12 +676,36 @@ export const getModelsRaw = async ({
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   // Build dynamic FROM clause based on query path
-  const fromClause = useBaseModelMetrics
+  // Three paths:
+  // 1. Standard: ModelMetric JOIN Model (no base model metrics)
+  // 2. Base model metrics, single base model: direct JOIN on ModelBaseModelMetric
+  //    (preserves covering index scan + sort order + early LIMIT termination)
+  // 3. Base model metrics, multiple base models: aggregate subquery on ModelBaseModelMetric
+  //    (GROUP BY modelId prevents duplicates when a model has versions in multiple matching base models)
+  const fromClause = !useBaseModelMetrics
+    ? Prisma.sql`FROM "ModelMetric" mm
+      JOIN "Model" m ON m."id" = mm."modelId"`
+    : baseModels!.length === 1
     ? Prisma.sql`FROM "ModelBaseModelMetric" mbm
       JOIN "Model" m ON m."id" = mbm."modelId"
       JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`
-    : Prisma.sql`FROM "ModelMetric" mm
-      JOIN "Model" m ON m."id" = mm."modelId"`;
+    : Prisma.sql`FROM (
+        SELECT "modelId",
+          SUM("downloadCount")::int as "downloadCount",
+          SUM("thumbsUpCount")::int as "thumbsUpCount",
+          SUM("imageCount")::int as "imageCount",
+          MIN("status") as "status",
+          MIN("nsfwLevel") as "nsfwLevel",
+          MIN("availability") as "availability",
+          MIN("mode") as "mode",
+          MAX("minor"::int)::bool as "minor",
+          MAX("poi"::int)::bool as "poi"
+        FROM "ModelBaseModelMetric"
+        WHERE "baseModel" IN (${Prisma.join(baseModels!, ',')})
+        GROUP BY "modelId"
+      ) mbm
+      JOIN "Model" m ON m."id" = mbm."modelId"
+      JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`;
 
   // Unified query - uses pSql for denormalized fields and per-base-model stats
   const modelQuery = Prisma.sql`
