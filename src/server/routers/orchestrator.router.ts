@@ -33,7 +33,6 @@ import {
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { updateWorkflow } from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
-import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
   createTextToImage,
   createTextToImageStep,
@@ -441,13 +440,6 @@ export const orchestratorRouter = router({
   }),
   // #endregion
 
-  // #region [Image upload]
-  imageUpload: orchestratorGuardedProcedure
-    .input(z.object({ sourceImage: z.string() }))
-    .mutation(({ ctx, input }) =>
-      imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input })
-    ),
-  // #endregion
 
   // #region [image training]
   createTraining: orchestratorGuardedProcedure
