@@ -57,3 +57,16 @@ export function getMimeTypesFromMediaTypes(types: MediaType[]) {
   }
   return arr;
 }
+
+const mimeToExtension: Record<string, string> = Object.entries(MIME_TYPES).reduce(
+  (acc, [ext, mime]) => {
+    if (!acc[mime]) acc[mime] = ext.toUpperCase();
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
+/** Converts MIME types to human-readable extensions (e.g. ["image/png", "image/jpeg"] → "PNG, JPEG") */
+export function getExtensionsFromMimeTypes(mimeTypes: string[]): string {
+  return [...new Set(mimeTypes.map((mime) => mimeToExtension[mime] ?? mime))].join(', ');
+}

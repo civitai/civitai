@@ -10,6 +10,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
+import { upsertContact } from '~/server/integrations/freshdesk';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -356,4 +357,34 @@ export const deliverMonthlyCosmetics = async ({
         AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
+};
+
+/**
+ * Manually sync a user's membership tier to Freshdesk
+ */
+export const syncFreshdeskMembership = async ({ userId }: { userId: number }) => {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { id: true, username: true, email: true },
+  });
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  if (!user.email) {
+    throw new Error('User has no email address');
+  }
+
+  const subscription = await getHighestTierSubscription(userId);
+  const tier = subscription?.tier;
+
+  await upsertContact({
+    id: user.id,
+    username: user.username ?? undefined,
+    email: user.email,
+    tier,
+  });
+
+  return { success: true, userId, tier };
 };

@@ -196,7 +196,6 @@ function updateTextToImageRequests({
       },
     },
     (state) => {
-      // console.log(state);
       return produce(state, (old?: InfiniteTextToImageRequests) => {
         if (!old) return;
         cb(old);
@@ -346,7 +345,16 @@ export type UpdateImageStepMetadataArgs = {
 
 export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void }) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation({
+    onError: async (error) => {
+      // Rollback optimistic update by refetching from server
+      await queryClient.invalidateQueries({ queryKey, exact: false });
+      showErrorNotification({
+        title: 'Failed to update image',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   function updateImages(args: Array<UpdateImageStepMetadataArgs>, onError?: () => void) {
     const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
@@ -461,6 +469,35 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
       }
     }
 
+    // Optimistically update the cache before mutation to ensure UI updates
+    // even if the component unmounts (e.g., menu closing)
+    updateTextToImageRequests({
+      cb: (old) => {
+        for (const page of old.pages) {
+          page.items = page.items.filter((x) => !toDelete.includes(x.id));
+          for (const workflow of page.items) {
+            const tagsToAdd = tags.filter((x) => x.workflowId === workflow.id && x.op === 'add');
+            const tagsToRemove = tags.filter(
+              (x) => x.workflowId === workflow.id && x.op === 'remove'
+            );
+            for (const tagOp of tagsToAdd) workflow.tags.push(tagOp.tag);
+            if (tagsToRemove.length) {
+              const tagsToRemoveSet = new Set(tagsToRemove.map((x) => x.tag));
+              workflow.tags = workflow.tags.filter((tag) => !tagsToRemoveSet.has(tag));
+            }
+
+            const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
+            if (!toUpdate.length) continue;
+
+            for (const step of workflow.steps) {
+              const images = toUpdate.find((x) => x.stepName === step.name)?.images;
+              if (images) step.metadata = { ...step.metadata, images };
+            }
+          }
+        }
+      },
+    });
+
     mutate(
       {
         workflows: workflowPatches.length ? workflowPatches : undefined,
@@ -470,42 +507,17 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
       },
       {
         onSuccess: () => {
-          updateQueries<IWorkflowsInfinite>(queryKey, (old) => {
-            for (const page of old.pages) {
-              // remove deleted items
-              page.items = page.items.filter((x) => !toDelete.includes(x.id));
-              for (const workflow of page.items) {
-                // add/remove workflow tags
-                const addTagsMatch = tags.find(
-                  (x) => x.workflowId === workflow.id && x.op === 'add'
-                );
-                const removeTagsMatch = tags.find(
-                  (x) => x.workflowId === workflow.id && x.op === 'remove'
-                );
-                if (addTagsMatch) workflow.tags.push(addTagsMatch.tag);
-                if (removeTagsMatch)
-                  workflow.tags = workflow.tags.filter((tag) => tag !== removeTagsMatch.tag);
-
-                const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
-                if (!toUpdate.length) continue;
-                for (const step of workflow.steps) {
-                  const images = toUpdate.find((x) => x.stepName === step.name)?.images;
-                  if (images) step.metadata = { ...step.metadata, images };
-                }
-              }
-            }
-          });
-
           const tagNames = [...new Set(tags.filter((x) => x.op === 'add').map((x) => x.tag))];
-          // ['favorite' 'feedback:liked', 'feedback:'disliked']
           for (const tag of tagNames) {
             const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] });
-            queryClient.invalidateQueries(key, { exact: false });
+            queryClient.invalidateQueries({ queryKey: key, exact: false });
           }
 
           options?.onSuccess?.();
         },
-        onError,
+        onError: () => {
+          onError?.();
+        },
       }
     );
   }

@@ -28,18 +28,14 @@ function logError({ error, name, details }: { error: Error; name: string; detail
   }
 }
 
-// Create an AbortController with timeout for health checks
-function createHealthCheckAbort() {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), env.HEALTHCHECK_TIMEOUT);
-  return {
-    signal: controller.signal,
-    clear: () => clearTimeout(timeout),
-  };
-}
+// Type for cancellable check functions
+type CancellableCheckFn = (signal: AbortSignal) => Promise<boolean>;
 
-const checkFns = {
-  async write() {
+const checkFns: Record<string, CancellableCheckFn> = {
+  // Prisma checks - use transaction timeout (Prisma doesn't support AbortSignal)
+  // The statement_timeout limits query duration on the server side
+  async write(signal: AbortSignal) {
+    if (signal.aborted) return false;
     return !!(await dbWrite
       .$transaction(async (tx) => {
         await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}`);
@@ -50,7 +46,9 @@ const checkFns = {
         return false;
       }));
   },
-  async read() {
+
+  async read(signal: AbortSignal) {
+    if (signal.aborted) return false;
     return !!(await dbRead
       .$transaction(async (tx) => {
         await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}`);
@@ -61,73 +59,100 @@ const checkFns = {
         return false;
       }));
   },
-  async pgWrite() {
-    return !!(await pgDbWrite
-      .query(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`)
-      .catch((e) => {
-        logError({ error: e, name: 'pgWrite', details: null });
-        return false;
-      }));
+
+  // pg checks - use simple query with statement_timeout
+  // Note: cancellableQuery adds overhead (extra connection for pg_cancel_backend)
+  // which isn't worth it for a simple SELECT 1. statement_timeout handles slow queries.
+  async pgWrite(signal: AbortSignal) {
+    if (signal.aborted) return false;
+    try {
+      // Multi-statement queries through PgBouncer return rowCount: undefined,
+      // so we just check that the query resolves without throwing
+      await pgDbWrite.query(
+        `SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`
+      );
+      return true;
+    } catch (e) {
+      logError({ error: e as Error, name: 'pgWrite', details: null });
+      return false;
+    }
   },
-  async pgRead() {
-    return !!(await pgDbRead
-      .query(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`)
-      .catch((e) => {
-        logError({ error: e, name: 'pgRead', details: null });
-        return false;
-      }));
+
+  async pgRead(signal: AbortSignal) {
+    if (signal.aborted) return false;
+    try {
+      await pgDbRead.query(
+        `SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`
+      );
+      return true;
+    } catch (e) {
+      logError({ error: e as Error, name: 'pgRead', details: null });
+      return false;
+    }
   },
-  async searchMetrics() {
+
+  async searchMetrics(signal: AbortSignal) {
+    if (signal.aborted) return false;
     if (metricsSearchClient === null) return true;
     return await metricsSearchClient.isHealthy().catch((e) => {
       logError({ error: e, name: 'metricsSearch', details: null });
       return false;
     });
   },
-  async redis() {
+
+  // Redis checks - use simple ping (redis v5 doesn't support AbortSignal via commandOptions)
+  async redis(signal: AbortSignal) {
+    if (signal.aborted) return false;
     try {
       // For cluster, we need to check if it's ready first
       const baseClient = redis as any;
       if (baseClient.isReady === false) {
         return false;
       }
-      const res = await redis.ping();
+      const res = await (redis as any).ping();
       return res === 'PONG';
     } catch (e) {
+      if (signal.aborted || (e as Error).name === 'AbortError') return false;
       logError({ error: e as Error, name: 'redis', details: null });
       return false;
     }
   },
-  async sysRedis() {
-    return await sysRedis
-      .ping()
-      .then((res) => res === 'PONG')
-      .catch((e) => {
-        logError({ error: e, name: 'sysRedis', details: null });
-        return false;
-      });
+
+  async sysRedis(signal: AbortSignal) {
+    if (signal.aborted) return false;
+    try {
+      const res = await (sysRedis as any).ping();
+      return res === 'PONG';
+    } catch (e) {
+      if (signal.aborted || (e as Error).name === 'AbortError') return false;
+      logError({ error: e as Error, name: 'sysRedis', details: null });
+      return false;
+    }
   },
-  async clickhouse() {
+
+  // ClickHouse - ping doesn't support abort_signal, cancellation handled at caller level
+  async clickhouse(signal: AbortSignal) {
+    if (signal.aborted) return false;
     if (!clickhouse) return true;
-    const { clear } = createHealthCheckAbort();
     try {
       const { success } = await clickhouse.ping();
-      clear();
       return success;
     } catch (e) {
-      clear();
+      if (signal.aborted || (e as Error).name === 'AbortError') return false;
       logError({ error: e as Error, name: 'clickhouse', details: null });
       return false;
     }
   },
-  // async buzz() {
-  //   return await pingBuzzService().catch((e) => {
-  //     logError({ error: e, name: 'buzz', details: null });
-  //     return false;
-  //   });
-  // },
-} as const;
-type CheckKey = keyof typeof checkFns;
+};
+type CheckKey =
+  | 'write'
+  | 'read'
+  | 'pgWrite'
+  | 'pgRead'
+  | 'searchMetrics'
+  | 'redis'
+  | 'sysRedis'
+  | 'clickhouse';
 const counters = (() =>
   [...Object.keys(checkFns), 'overall'].reduce((agg, name) => {
     agg[name as CheckKey] = registerCounter({
@@ -140,12 +165,31 @@ const counters = (() =>
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
+  // Create AbortController for all health checks
+  // This will be aborted when the client disconnects
+  const abortController = new AbortController();
+  const { signal } = abortController;
+
+  // Abort all checks when client disconnects
+  const onClose = () => {
+    if (!isProd) console.log('Health check request cancelled (client disconnected)');
+    abortController.abort();
+  };
+  res.on('close', onClose);
+
   const disabledChecks = await getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS);
+
+  // Check if already cancelled before starting the expensive health checks
+  if (signal.aborted) {
+    res.off('close', onClose);
+    return;
+  }
+
   const resultsArray = await Promise.all(
     Object.entries(checkFns)
       .filter(([name]) => !disabledChecks.includes(name as CheckKey))
       .map(([name, fn]) =>
-        timeoutAsyncFn(fn, false)
+        runCheckWithTimeout(fn, signal, env.HEALTHCHECK_TIMEOUT)
           .then((result) => {
             if (!result) counters[name as CheckKey]?.inc();
             return { [name]: result };
@@ -153,6 +197,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           .catch(() => ({ [name]: false }))
       )
   );
+
+  // Clean up the close listener
+  res.off('close', onClose);
+
+  // If cancelled, don't send response (connection is already closed)
+  if (signal.aborted) {
+    return;
+  }
+
   const nonCriticalChecks = await getHealthcheckConfig(
     REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
   );
@@ -175,17 +228,52 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   });
 });
 
-function timeoutAsyncFn<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
-  return Promise.race([
-    fn(),
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), env.HEALTHCHECK_TIMEOUT)),
-  ]);
+/**
+ * Run a cancellable check function with timeout.
+ * The signal is passed to the check function for proper cancellation support.
+ */
+async function runCheckWithTimeout(
+  fn: CancellableCheckFn,
+  signal: AbortSignal,
+  timeout: number
+): Promise<boolean> {
+  if (signal.aborted) return false;
+
+  // Create a combined signal that aborts on either:
+  // 1. The parent signal (client disconnect)
+  // 2. Timeout
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeout);
+
+  // Create a combined abort handler
+  const combinedController = new AbortController();
+  const abortCombined = () => combinedController.abort();
+
+  signal.addEventListener('abort', abortCombined, { once: true });
+  timeoutController.signal.addEventListener('abort', abortCombined, { once: true });
+
+  try {
+    const result = await fn(combinedController.signal);
+    return result;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+    signal.removeEventListener('abort', abortCombined);
+  }
 }
 
+/**
+ * Get healthcheck config from Redis with timeout
+ */
 async function getHealthcheckConfig(key: string): Promise<CheckKey[]> {
-  const value = await timeoutAsyncFn(
-    () => sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, key),
-    null
-  );
-  return JSON.parse(value ?? '[]') as CheckKey[];
+  try {
+    const value = await Promise.race([
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, key),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), env.HEALTHCHECK_TIMEOUT)),
+    ]);
+    return JSON.parse(value ?? '[]') as CheckKey[];
+  } catch {
+    return [];
+  }
 }

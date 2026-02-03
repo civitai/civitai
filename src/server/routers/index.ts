@@ -17,11 +17,13 @@ import { gamesRouter } from '~/server/routers/games.router';
 import { modRouter } from '~/server/routers/moderator';
 import { orchestratorRouter } from '~/server/routers/orchestrator.router';
 import { paddleRouter } from '~/server/routers/paddle.router';
+import { productBadgeRouter } from '~/server/routers/product-badge.router';
 import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
 import { researchRouter } from '~/server/routers/research.router';
 import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
 import { toolRouter } from '~/server/routers/tool.router';
+import { userRestrictionRouter } from '~/server/routers/user-restriction.router';
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { vimeoRouter } from '~/server/routers/vimeo.router';
@@ -119,6 +121,7 @@ export const appRouter = router({
   track: trackRouter,
   training: trainingRouter,
   user: userRouter,
+  userRestriction: userRestrictionRouter,
   userLink: userLinkRouter,
   leaderboard: leaderboardRouter,
   generation: generationRouter,
@@ -141,6 +144,7 @@ export const appRouter = router({
   redeemableCode: redeemableCodeRouter,
   tool: toolRouter,
   cosmeticShop: cosmeticShopRouter,
+  productBadge: productBadgeRouter,
   technique: techniqueRouter,
   donationGoal: donationGoalRouter,
   orchestrator: orchestratorRouter,

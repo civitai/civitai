@@ -847,5 +847,13 @@ export const EntityMetric_MetricType_Type = {
   Buzz: 'Buzz',
 } as const;
 
-export type EntityMetric_MetricType_Type =
-  (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
+
+export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
+
+export const UserRestrictionStatus = {
+  Pending: 'Pending',
+  Upheld: 'Upheld',
+  Overturned: 'Overturned',
+} as const;
+
+export type UserRestrictionStatus = (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];

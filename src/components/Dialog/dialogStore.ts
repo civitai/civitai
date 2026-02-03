@@ -51,7 +51,8 @@ export const useDialogStore = create<DialogStore>()(
       set((state) => {
         const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;
         if (!exists) {
-          state.dialogs.push(dialog);
+          // Cast needed because Immer's WritableDraft doesn't handle HTMLElement in target
+          state.dialogs.push(dialog as unknown as (typeof state.dialogs)[number]);
         }
       });
     },

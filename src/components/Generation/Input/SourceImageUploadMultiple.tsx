@@ -594,13 +594,13 @@ SourceImageUploadMultiple.Image = function ImagePreview({
 };
 
 export async function uploadOrchestratorImage(src: string | Blob | File, id: string) {
-  const size = await getImageDimensions(src);
+  const originalSize = await getImageDimensions(src);
 
   // If already an orchestrator URL, return it directly
   if (typeof src === 'string' && isOrchestratorUrl(src)) {
     return {
       url: src,
-      ...size,
+      ...originalSize,
       available: true,
       type: 'image',
       id: '',
@@ -619,18 +619,21 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
     });
     const jpegBlob = await imageToJpegBlob(resized);
 
+    // Get dimensions after resizing
+    const resizedSize = await getImageDimensions(jpegBlob);
+
     // Upload using presigned URL
     const blob = await uploadConsumerBlob(jpegBlob);
     setImageUploading(id, false);
 
-    return { ...blob, ...size };
+    return { ...blob, ...resizedSize };
   } catch (e) {
     setImageUploading(id, false);
     const error = e as Error;
 
     return {
       url: typeof src === 'string' ? src : URL.createObjectURL(src),
-      ...size,
+      ...originalSize,
       available: false,
       blockedReason: error.message,
     };

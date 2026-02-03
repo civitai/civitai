@@ -651,7 +651,7 @@ export const getArticleById = async ({
       userId === article.userId ||
       (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
 
-    let contentJson: Record<string, any> | undefined;
+    let contentJson: MixedObject | undefined;
     if (article.content) {
       contentJson = article.content.startsWith('{')
         ? JSON.parse(article.content)
@@ -797,6 +797,15 @@ export const upsertArticle = async ({
 
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+    // Validate userNsfwLevel cannot be set below system rating (non-moderators only)
+    if (data.userNsfwLevel < article.nsfwLevel && !isModerator) {
+      throw throwBadRequestError(
+        `NSFW level cannot be set below the system rating (${
+          NsfwLevel[article.nsfwLevel]
+        }). You can only set it equal to or higher than the current level.`
+      );
+    }
 
     // Prevent owners from re-publishing articles unpublished for ToS violations
     if (

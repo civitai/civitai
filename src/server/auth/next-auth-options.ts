@@ -12,19 +12,19 @@ import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
 import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
-import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
+import { civitaiTokenCookieName, cookiePrefix, useSecureCookies } from '~/libs/auth';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { getSessionUser } from './session-user';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
-import { refreshToken } from '~/server/auth/token-refresh';
+import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -77,7 +77,7 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
 }
 
 const emailLimiter = createLimiter({
-  counterKey: REDIS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
+  counterKey: REDIS_SYS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
   limitKey: REDIS_SYS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
@@ -192,12 +192,19 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         if (trigger === 'update') {
           // Clear cache first, then fetch fresh user data to avoid getting stale cached data
           // Also mark all user's tokens for refresh in case they have multiple sessions
-          await refreshSession(Number(token.sub));
+          // Don't send signal here - this IS the response to a signal, sending another would create a loop
+          await refreshSession(Number(token.sub), { sendSignal: false });
           // Now fetch fresh user data (cache is cleared, so this will hit the database)
           const freshUser = await getSessionUser({ userId: Number(token.sub) });
           if (freshUser) {
             token.user = freshUser;
             token.signedAt = Date.now(); // Update signedAt to mark this refresh
+          }
+
+          // Clear the refresh marker for THIS token since the cookie is now being updated
+          // Other tokens (multi-session) will still have their markers from refreshSession() above
+          if (token.id) {
+            await clearTokenRefreshMarker(token.id as string);
           }
 
           // Return immediately - no need to go through refreshToken() since we just refreshed
@@ -436,9 +443,42 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           sameSite: hostname == 'localhost' ? 'lax' : 'none',
           path: '/',
           secure: useSecureCookies,
-          domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
+          // Use NEXTAUTH_COOKIE_DOMAIN if set (for cross-subdomain sharing in PR previews),
+          // otherwise default to the hostname with a leading dot for subdomain support
+          domain:
+            hostname == 'localhost'
+              ? hostname
+              : env.NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname,
         },
       },
+      // Only configure state/pkce cookies when NEXTAUTH_COOKIE_DOMAIN is set (PR previews)
+      // This enables cross-subdomain OAuth flows through auth.civitaic.com
+      ...(env.NEXTAUTH_COOKIE_DOMAIN
+        ? {
+            state: {
+              name: `${cookiePrefix}next-auth.state`,
+              options: {
+                httpOnly: true,
+                sameSite: 'lax' as const, // Must be 'lax' for OAuth redirect flows
+                path: '/',
+                secure: useSecureCookies,
+                domain: env.NEXTAUTH_COOKIE_DOMAIN,
+                maxAge: 900, // 15 minutes - same as NextAuth default
+              },
+            },
+            pkceCodeVerifier: {
+              name: `${cookiePrefix}next-auth.pkce.code_verifier`,
+              options: {
+                httpOnly: true,
+                sameSite: 'lax' as const, // Must be 'lax' for OAuth redirect flows
+                path: '/',
+                secure: useSecureCookies,
+                domain: env.NEXTAUTH_COOKIE_DOMAIN,
+                maxAge: 900, // 15 minutes - same as NextAuth default
+              },
+            },
+          }
+        : {}),
     },
     pages: {
       signIn: '/login',
@@ -457,8 +497,10 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   const { hostname: reqHostname } = new URL(req.headers.origin);
 
   // Handle domain-specific cookie
+  // Skip domain color override when NEXTAUTH_COOKIE_DOMAIN is explicitly set
+  // (needed for PR preview cross-subdomain cookie sharing via auth.civitaic.com)
   const domainColor = getRequestDomainColor(req);
-  if (domainColor && !!options.cookies?.sessionToken?.options?.domain) {
+  if (domainColor && !!options.cookies?.sessionToken?.options?.domain && !env.NEXTAUTH_COOKIE_DOMAIN) {
     options.cookies.sessionToken.options.domain =
       (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }

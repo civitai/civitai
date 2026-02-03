@@ -502,6 +502,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://purplesmart.ai/license',
     name: 'Pony',
   },
+  ltxv2: {
+    url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
+    name: 'LTXV2',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -554,6 +558,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
+  LTXV2: baseLicenses['ltxv2'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
@@ -575,6 +580,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],
+  ZImageBase: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -893,6 +899,82 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  Flux2Klein_9B: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612554,
+      name: '9b',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 9B',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_9B_base: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612548,
+      name: '9b-base',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 9B-base',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_4B: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612557,
+      name: '4b',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 4B',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_4B_base: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612552,
+      name: '4b-base',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 4B-base',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   Qwen: {
     aspectRatios: qwenSizes,
     checkpoint: {
@@ -1105,6 +1187,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  ZImageBase: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2635223,
+      name: 'Base',
+      trainedWords: [],
+      baseModel: 'ZImageBase',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2342797,
+        name: 'Z Image Base',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
 
   Other: {
     aspectRatios: commonAspectRatios,
@@ -1136,6 +1237,7 @@ export const generation = {
     cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
+    scheduler: 'simple',
     seed: null,
     clipSkip: 2,
     quantity: 2,

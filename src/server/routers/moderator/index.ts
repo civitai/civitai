@@ -7,10 +7,20 @@ import {
 } from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
 import { getModeratorArticlesSchema } from '~/server/schema/article.schema';
+import {
+  modCashAdjustmentSchema,
+  updateCashWithdrawalSchema,
+} from '~/server/schema/creator-program.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema, getTrainingModerationFeedSchema } from '~/server/schema/model.schema';
 import { getModeratorArticles } from '~/server/services/article.service';
+import {
+  getCash,
+  getWithdrawalHistory,
+  modAdjustCashBalance,
+  updateCashWithdrawal,
+} from '~/server/services/creator-program.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import { getModelModRules, getTrainingModelsForModerators } from '~/server/services/model.service';
@@ -20,6 +30,10 @@ import type { ModerationRule } from '~/shared/utils/prisma/models';
 
 const trainingModerationProcedure = protectedProcedure.use(
   isFlagProtected('trainingModelsModeration')
+);
+
+const cashManagementProcedure = moderatorProcedure.use(
+  isFlagProtected('cashManagement')
 );
 
 export const modRouter = router({
@@ -48,6 +62,22 @@ export const modRouter = router({
   trainingData: router({
     approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),
     deny: moderatorProcedure.input(getByIdSchema).mutation(handleDenyTrainingData),
+  }),
+  cash: router({
+    getCashForUser: cashManagementProcedure
+      .input(z.object({ userId: z.number().int().positive() }))
+      .query(({ input }) => getCash(input.userId)),
+    getWithdrawalHistory: cashManagementProcedure
+      .input(z.object({ userId: z.number().int().positive() }))
+      .query(({ input }) => getWithdrawalHistory(input.userId)),
+    adjustBalance: cashManagementProcedure
+      .input(modCashAdjustmentSchema)
+      .mutation(({ input, ctx }) =>
+        modAdjustCashBalance({ ...input, modUserId: ctx.user.id })
+      ),
+    updateWithdrawal: cashManagementProcedure
+      .input(updateCashWithdrawalSchema)
+      .mutation(({ input }) => updateCashWithdrawal(input)),
   }),
   rules: router({
     getById: moderatorProcedure

@@ -29,7 +29,9 @@ import {
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsFlux2,
+  trainingDetailsBaseModelsFlux2Klein,
   trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -178,6 +180,15 @@ const ModelSelector = ({
                   ? 'qwen'
                   : ([...getBaseModelsByGroup('ZImageTurbo')] as string[]).includes(baseModel)
                   ? 'zimageturbo'
+                  : (
+                      [
+                        ...getBaseModelsByGroup('Flux2Klein_4B'),
+                        ...getBaseModelsByGroup('Flux2Klein_4B_base'),
+                        ...getBaseModelsByGroup('Flux2Klein_9B'),
+                        ...getBaseModelsByGroup('Flux2Klein_9B_base'),
+                      ] as string[]
+                    ).includes(baseModel)
+                  ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
                   : 'sd15';
@@ -344,6 +355,16 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsZImageTurbo as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelFlux2Klein =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsFlux2Klein as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelLtx2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsLtx2 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -466,6 +487,17 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
+                  {features.flux2kleinTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="pink"
+                      name="Flux.2 Klein"
+                      value={baseModelFlux2Klein}
+                      baseType="flux2klein"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'video' && (
@@ -490,6 +522,18 @@ export const ModelSelect = ({
                     isVideo
                     isNew={new Date() < new Date('2025-04-30')}
                   />
+                  {features.ltx2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="lime"
+                      name="LTX2"
+                      value={baseModelLtx2}
+                      baseType="ltx2"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'image' && !restrictedModels?.length && (
@@ -533,7 +577,9 @@ export const ModelSelect = ({
                     Note: custom models may see a higher failure rate than normal, and cost more
                     Buzz.
                   </AlertWithIcon>
-                ) : selectedRun.baseType === 'hunyuan' || selectedRun.baseType === 'wan' ? (
+                ) : selectedRun.baseType === 'hunyuan' ||
+                  selectedRun.baseType === 'wan' ||
+                  selectedRun.baseType === 'ltx2' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.

@@ -44,7 +44,18 @@ export const paymentIntentMetadataSchema = z.discriminatedUnion('type', [
 
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
-  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
+  unitAmount: z
+    .number()
+    .min(constants.buzz.minChargeAmount, {
+      message: `The minimum transaction amount is $${(constants.buzz.minChargeAmount / 100).toFixed(
+        2
+      )} USD`,
+    })
+    .max(constants.buzz.maxChargeAmount, {
+      message: `The maximum transaction amount is $${(constants.buzz.maxChargeAmount / 100).toFixed(
+        2
+      )} USD`,
+    }),
   currency: z.enum(Currency),
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),

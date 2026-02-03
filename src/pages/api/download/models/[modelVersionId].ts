@@ -5,7 +5,7 @@ import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { colorDomains, getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { dbRead } from '~/server/db/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -23,7 +23,7 @@ const schema = z.object({
 });
 
 const downloadLimiter = createLimiter({
-  counterKey: REDIS_KEYS.DOWNLOAD.COUNT,
+  counterKey: REDIS_SYS_KEYS.DOWNLOAD.COUNT,
   limitKey: REDIS_SYS_KEYS.DOWNLOAD.LIMITS,
   fetchCount: async (userKey) => {
     const isIP = userKey.includes(':') || userKey.includes('.');

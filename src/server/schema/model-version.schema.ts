@@ -69,6 +69,8 @@ export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2
 export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
 export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
 export const trainingDetailsBaseModelsZImageTurbo = ['zimageturbo'] as const;
+export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
+export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -76,6 +78,7 @@ const trainingDetailsBaseModelsImage = [
   // ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
   ...trainingDetailsBaseModelsFlux2,
+  ...trainingDetailsBaseModelsFlux2Klein,
   ...trainingDetailsBaseModelsChroma,
   ...trainingDetailsBaseModelsQwen,
   ...trainingDetailsBaseModelsZImageTurbo,
@@ -83,6 +86,7 @@ const trainingDetailsBaseModelsImage = [
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
   ...trainingDetailsBaseModelsWan,
+  ...trainingDetailsBaseModelsLtx2,
 ] as const;
 
 const trainingDetailsBaseModels = [

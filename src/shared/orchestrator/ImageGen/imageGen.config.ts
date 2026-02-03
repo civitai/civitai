@@ -3,6 +3,10 @@ import {
   fluxKontextModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import {
+  flux2KleinConfig,
+  flux2KleinModelVersionToVariantMap,
+} from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import {
   flux2Config,
   flux2ModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/flux2.config';
@@ -20,6 +24,10 @@ import {
   seedreamConfig,
   seedreamModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  zImageConfig,
+  zImageModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/zImage.config';
 
 type ImageGenConfigKey = keyof typeof imageGenConfig;
 export const imageGenConfig = {
@@ -27,9 +35,11 @@ export const imageGenConfig = {
   google: googleConfig,
   flux1: flux1KontextConfig,
   flux2: flux2Config,
+  flux2klein: flux2KleinConfig,
   gemini: geminiConfig,
   qwen: qwenConfig,
   seedream: seedreamConfig,
+  zImage: zImageConfig,
 };
 
 export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
@@ -38,9 +48,11 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
     .concat([...googleModelVersionToModelMap.keys()].map((key) => [key, 'google']))
     .concat([...fluxKontextModelVersionToModelMap.keys()].map((key) => [key, 'flux1']))
     .concat([...flux2ModelVersionToModelMap.keys()].map((key) => [key, 'flux2']))
+    .concat([...flux2KleinModelVersionToVariantMap.keys()].map((key) => [key, 'flux2klein']))
     .concat([...geminiModelVersionMap.keys()].map((key) => [key, 'gemini']))
     .concat([...qwenModelVersionToModelMap.keys()].map((key) => [key, 'qwen']))
     .concat([...seedreamModelVersionToModelMap.keys()].map((key) => [key, 'seedream']))
+    .concat([...zImageModelVersionToModelMap.keys()].map((key) => [key, 'zImage']))
 );
 
 export function getModelVersionUsesImageGen(modelVersionId: number) {

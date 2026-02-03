@@ -49,6 +49,7 @@ type GroupedItem = {
   name: string;
   description: string;
   family?: BaseModelFamily;
+  selector?: string;
 };
 
 type FamilyGroup = {
@@ -68,9 +69,18 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
 
   // Group items by family
   const groupedByFamily = useMemo(() => {
+    // Deduplicate by selector: items sharing a selector collapse into one entry
+    const deduped = items.reduce<GroupedItem[]>((acc, item) => {
+      if (item.selector) {
+        if (acc.some((x) => x.selector === item.selector)) return acc;
+        return [...acc, { ...item, name: item.selector }];
+      }
+      return [...acc, item];
+    }, []);
+
     const familyMap = new Map<BaseModelFamily | null, GroupedItem[]>();
 
-    for (const item of items) {
+    for (const item of deduped) {
       const family = item.family ?? null;
       const existing = familyMap.get(family) ?? [];
       familyMap.set(family, [...existing, item]);

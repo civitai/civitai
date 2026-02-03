@@ -13,7 +13,11 @@ import {
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import {
+  getDownloadUrl,
+  getDownloadUrlByFileId,
+  isStorageResolverEnabled,
+} from '~/utils/delivery-worker';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -295,7 +299,10 @@ export const getFileForModelVersion = async ({
     file,
   });
   try {
-    const { url } = await getDownloadUrl(file.url, filename);
+    // Use storage resolver if configured, otherwise fall back to delivery worker
+    const { url } = isStorageResolverEnabled()
+      ? await getDownloadUrlByFileId(file.id, filename)
+      : await getDownloadUrl(file.url, filename);
     return {
       status: 'success',
       url,
