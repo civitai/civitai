@@ -46,6 +46,11 @@ export interface OverflowSegmentedControlProps<T extends string = string> {
    * @param selected - Whether this option is currently selected
    */
   renderOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
+  /**
+   * Number of columns in the grid layout for the popover.
+   * If not provided, defaults to 1 (single column).
+   */
+  gridColumns?: number;
   className?: string;
 }
 
@@ -97,6 +102,7 @@ interface OptionGridProps<T extends string> {
   disabled?: boolean;
   onSelect: (value: T) => void;
   renderOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
+  gridColumns?: number;
 }
 
 function OptionGrid<T extends string>({
@@ -105,44 +111,23 @@ function OptionGrid<T extends string>({
   disabled,
   onSelect,
   renderOption,
+  gridColumns = 1,
 }: OptionGridProps<T>) {
-  const gridRef = useRef<HTMLDivElement>(null);
-  const [columnCount, setColumnCount] = useState(1);
-
-  // Track actual column count from grid layout
-  useLayoutEffect(() => {
-    const grid = gridRef.current;
-    if (!grid) return;
-
-    const updateColumnCount = () => {
-      const gridStyle = window.getComputedStyle(grid);
-      const columns = gridStyle.gridTemplateColumns.split(' ').length;
-      setColumnCount(columns);
-    };
-
-    updateColumnCount();
-
-    const observer = new ResizeObserver(updateColumnCount);
-    observer.observe(grid);
-    return () => observer.disconnect();
-  }, []);
-
   const totalItems = options.length;
-  const rowCount = Math.ceil(totalItems / columnCount);
+  const rowCount = Math.ceil(totalItems / gridColumns);
 
   return (
     <div
-      ref={gridRef}
       className="grid overflow-hidden rounded-md bg-gray-1 dark:bg-[#141517]"
       style={{
-        gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
+        gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
       }}
     >
       {options.map((option, index) => {
         const selected = option.value === value;
-        const column = index % columnCount;
-        const row = Math.floor(index / columnCount);
-        const isLastColumn = column === columnCount - 1;
+        const column = index % gridColumns;
+        const row = Math.floor(index / gridColumns);
+        const isLastColumn = column === gridColumns - 1;
         const isLastRow = row === rowCount - 1;
 
         return (
@@ -193,6 +178,7 @@ export function OverflowSegmentedControl<T extends string = string>({
   priorityOptions,
   renderMoreButton,
   renderOption,
+  gridColumns = 1,
   className,
 }: OverflowSegmentedControlProps<T>) {
   // Default maxVisible to the number of options
@@ -293,8 +279,11 @@ export function OverflowSegmentedControl<T extends string = string>({
     setPopoverOpened(false);
   };
 
-  // Create a key based on visible option values to force re-render when options change
-  const segmentedKey = useMemo(() => segmentedData.map((d) => d.value).join(','), [segmentedData]);
+  // Create a key based on visible option values and popover state to force re-render
+  const segmentedKey = useMemo(
+    () => `${segmentedData.map((d) => d.value).join(',')}-${popoverOpened}`,
+    [segmentedData, popoverOpened]
+  );
 
   return (
     <div ref={containerRef} className={`relative ${className ?? ''}`}>
@@ -312,19 +301,24 @@ export function OverflowSegmentedControl<T extends string = string>({
           opened={popoverOpened}
           onChange={setPopoverOpened}
           position="bottom-end"
-          width={300}
+          withArrow
+          arrowPosition="center"
+          arrowSize={12}
+          withinPortal
           shadow="md"
+          closeOnClickOutside
         >
           <Popover.Target>
             <span className="absolute bottom-0 right-0 top-0 w-px" />
           </Popover.Target>
-          <Popover.Dropdown p="xs">
+          <Popover.Dropdown p={0}>
             <OptionGrid
               options={options}
               value={value}
               disabled={disabled}
               onSelect={handlePopoverSelect}
               renderOption={renderOption}
+              gridColumns={gridColumns}
             />
           </Popover.Dropdown>
         </Popover>

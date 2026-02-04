@@ -227,6 +227,7 @@ export function AspectRatioInput({
         priorityOptions={priorityOptions}
         renderMoreButton={renderMoreButton}
         renderOption={renderModalOption}
+        gridColumns={3}
       />
     </Input.Wrapper>
   );
