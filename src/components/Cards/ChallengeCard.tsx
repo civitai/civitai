@@ -1,7 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
 import { Badge, Group, Text } from '@mantine/core';
 import { IconClockHour4, IconPhoto, IconTrophy, IconSparkles } from '@tabler/icons-react';
-import React from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -23,6 +22,54 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   fw: 'bold',
 };
 
+const darkBgStyle = { backgroundColor: 'rgba(0, 0, 0, 0.31)' } as const;
+
+function StatusBadge({ status, startsAt, endsAt }: StatusBadgeProps) {
+  switch (status) {
+    case ChallengeStatus.Completed:
+      return (
+        <Badge className={cardClasses.chip} {...sharedBadgeProps} color="yellow.7">
+          <Group gap={4}>
+            <IconTrophy size={12} />
+            <Text size="xs" fw="bold">
+              Complete
+            </Text>
+          </Group>
+        </Badge>
+      );
+    case ChallengeStatus.Active:
+      return (
+        <Badge className={cardClasses.chip} {...sharedBadgeProps} color="green">
+          <Group gap={4}>
+            <IconSparkles size={12} />
+            <Text size="xs" fw="bold">
+              Live
+            </Text>
+          </Group>
+        </Badge>
+      );
+    case ChallengeStatus.Scheduled:
+      return (
+        <Badge className={cardClasses.chip} {...sharedBadgeProps} color="blue">
+          Upcoming
+        </Badge>
+      );
+    default:
+      return (
+        <IconBadge
+          {...sharedBadgeProps}
+          color="dark"
+          icon={<IconClockHour4 size={14} />}
+          style={darkBgStyle}
+        >
+          <Text fw="bold" size="xs">
+            <DaysFromNow date={endsAt < new Date() ? endsAt : startsAt} withoutSuffix />
+          </Text>
+        </IconBadge>
+      );
+  }
+}
+
 export function ChallengeCard({ data }: Props) {
   const {
     id,
@@ -38,13 +85,8 @@ export function ChallengeCard({ data }: Props) {
     createdBy,
   } = data;
 
-  const now = new Date();
   const isActive = status === ChallengeStatus.Active;
-  const isCompleted = status === ChallengeStatus.Completed;
-  const isScheduled = status === ChallengeStatus.Scheduled;
-  const hasEnded = endsAt < now;
 
-  // Use coverImage data for AspectRatioImageCard
   const image = coverImage
     ? {
         id: coverImage.id,
@@ -58,93 +100,6 @@ export function ChallengeCard({ data }: Props) {
       }
     : undefined;
 
-  // Status badges
-  const activeBadge = (
-    <Badge
-      className={cardClasses.chip}
-      {...sharedBadgeProps}
-      color="green"
-      variant="filled"
-      radius="xl"
-    >
-      <Group gap={4}>
-        <IconSparkles size={12} />
-        <Text size="xs" fw="bold">
-          Live
-        </Text>
-      </Group>
-    </Badge>
-  );
-
-  const countdownBadge = (
-    <IconBadge
-      {...sharedBadgeProps}
-      color="dark"
-      icon={<IconClockHour4 size={14} />}
-      style={{
-        backgroundColor: 'rgba(0, 0, 0, 0.31)',
-      }}
-    >
-      <Text fw="bold" size="xs">
-        <DaysFromNow date={isActive ? endsAt : startsAt} withoutSuffix />
-      </Text>
-    </IconBadge>
-  );
-
-  const completedBadge = (
-    <Badge
-      className={cardClasses.chip}
-      {...sharedBadgeProps}
-      color="yellow.7"
-      variant="filled"
-      radius="xl"
-    >
-      <Group gap={4}>
-        <IconTrophy size={12} />
-        <Text size="xs" fw="bold">
-          Complete
-        </Text>
-      </Group>
-    </Badge>
-  );
-
-  const scheduledBadge = (
-    <Badge
-      className={cardClasses.chip}
-      {...sharedBadgeProps}
-      color="blue"
-      variant="filled"
-      radius="xl"
-    >
-      Upcoming
-    </Badge>
-  );
-
-  // Source badge (System, Mod, User)
-  const sourceBadge = source !== ChallengeSource.System && (
-    <Badge
-      className={clsx(cardClasses.infoChip, cardClasses.chip)}
-      variant="light"
-      radius="xl"
-      color={source === ChallengeSource.User ? 'grape' : 'cyan'}
-    >
-      <Text size="xs" tt="capitalize" fw="bold">
-        {source === ChallengeSource.User ? 'Community' : 'Staff'}
-      </Text>
-    </Badge>
-  );
-
-  // Status badge logic
-  const statusBadge = isCompleted
-    ? completedBadge
-    : isActive
-    ? activeBadge
-    : isScheduled
-    ? scheduledBadge
-    : hasEnded
-    ? completedBadge
-    : countdownBadge;
-
   return (
     <AspectRatioImageCard
       href={`/challenges/${id}/${slugit(title)}`}
@@ -153,9 +108,31 @@ export function ChallengeCard({ data }: Props) {
       header={
         <div className="flex w-full justify-between">
           <div className="flex gap-1">
-            {sourceBadge}
-            {statusBadge}
-            {isActive && countdownBadge}
+            {source !== ChallengeSource.System && (
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+                color={source === ChallengeSource.User ? 'grape' : 'cyan'}
+              >
+                <Text size="xs" tt="capitalize" fw="bold">
+                  {source === ChallengeSource.User ? 'Community' : 'Staff'}
+                </Text>
+              </Badge>
+            )}
+            <StatusBadge status={status} startsAt={startsAt} endsAt={endsAt} />
+            {isActive && (
+              <IconBadge
+                {...sharedBadgeProps}
+                color="dark"
+                icon={<IconClockHour4 size={14} />}
+                style={darkBgStyle}
+              >
+                <Text fw="bold" size="xs">
+                  <DaysFromNow date={endsAt} withoutSuffix />
+                </Text>
+              </IconBadge>
+            )}
           </div>
         </div>
       }
@@ -180,7 +157,6 @@ export function ChallengeCard({ data }: Props) {
             </Text>
           </div>
           <div className="flex items-center justify-between gap-2">
-            {/* Prize pool */}
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={prizePool}
@@ -188,11 +164,8 @@ export function ChallengeCard({ data }: Props) {
               px={8}
               variant="filled"
               className={cardClasses.chip}
-              style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.31)',
-              }}
+              style={darkBgStyle}
             />
-            {/* Stats */}
             <IconBadge
               icon={<IconPhoto size={14} />}
               color="gray.0"
@@ -201,9 +174,7 @@ export function ChallengeCard({ data }: Props) {
               size="lg"
               variant="transparent"
               className={cardClasses.chip}
-              style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.31)',
-              }}
+              style={darkBgStyle}
               radius="xl"
             >
               <Text fw="bold" size="xs">
@@ -217,4 +188,5 @@ export function ChallengeCard({ data }: Props) {
   );
 }
 
+type StatusBadgeProps = Pick<ChallengeListItem, 'status' | 'startsAt' | 'endsAt'>;
 type Props = { data: ChallengeListItem };

@@ -6,6 +6,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
 import CustomParseFormat from 'dayjs/plugin/customParseFormat';
+import localizedFormat from 'dayjs/plugin/localizedFormat';
 import { lazyProxy } from '~/shared/utils/lazy';
 
 const lazyDayjs = lazyProxy(() => {
@@ -16,6 +17,7 @@ const lazyDayjs = lazyProxy(() => {
   dayjs.extend(relativeTime);
   dayjs.extend(timezone);
   dayjs.extend(CustomParseFormat);
+  dayjs.extend(localizedFormat);
   return dayjs;
 });
 

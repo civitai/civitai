@@ -49,8 +49,6 @@ export function useGetActiveChallenges() {
       title: challenge.title,
       invitation: challenge.invitation,
       coverUrl: challenge.coverImage?.url ?? '',
-      // TODO.challenge: Display the selected judge instead of the creator
-      judge: 'ai' as 'ai' | 'team', // Default to AI for system challenges
       dismissed: dismissed.includes(challenge.id),
       endsToday: !isFutureDate(startOfDay(challenge.endsAt)),
       // Creator info for profile picture display

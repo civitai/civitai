@@ -20,11 +20,11 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 
 const statusFilters = [
   { value: 'active', label: 'Active' },
-  { value: 'completed', label: 'Completed' },
   { value: 'upcoming', label: 'Upcoming' },
+  { value: 'completed', label: 'Completed' },
 ];
 
-const defaultStatus = ['active', 'completed'];
+const defaultStatus = ['active', 'upcoming'];
 
 export function parseStatusQuery(raw: string | string[] | undefined): string[] {
   if (!raw) return defaultStatus;

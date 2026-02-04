@@ -37,9 +37,7 @@ async function getDatesWithoutChallenges(horizonDays: number): Promise<Date[]> {
     )
   `;
 
-  const scheduledDateSet = new Set(
-    scheduledDates.map((d) => dayjs(d.date).format('YYYY-MM-DD'))
-  );
+  const scheduledDateSet = new Set(scheduledDates.map((d) => dayjs(d.date).format('YYYY-MM-DD')));
 
   // Find dates without challenges
   const missingDates: Date[] = [];
@@ -114,13 +112,10 @@ export async function getChallengeHorizonStatus() {
     missingDates: missingDates.map((d) => dayjs(d).format('YYYY-MM-DD')),
     missingCount: missingDates.length,
     coverage: Math.round(((HORIZON_DAYS - missingDates.length) / HORIZON_DAYS) * 100),
-    statusBreakdown: statusCounts.reduce(
-      (acc, { status, count }) => {
-        acc[status] = Number(count);
-        return acc;
-      },
-      {} as Record<string, number>
-    ),
+    statusBreakdown: statusCounts.reduce((acc, { status, count }) => {
+      acc[status] = Number(count);
+      return acc;
+    }, {} as Record<string, number>),
   };
 }
 

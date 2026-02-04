@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   Checkbox,
@@ -25,7 +26,7 @@ import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ChallengeSelectableImageCardMemoized } from '~/components/Challenge/ChallengeSelectableImageCard';
@@ -397,9 +398,9 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
             {challenge && (
               <ChallengeContext.Provider value={challenge}>
                 <ChallengeEligibilityContext.Provider value={eligibilityMap}>
-                  <ScrollAreaProvider
-                    scrollRestore={{ enabled: false }}
-                    style={{ maxHeight: '440px', overflowY: 'auto' }}
+                  <ScrollArea
+                    scrollRestore={{ enabled: false, key: 'challenge-submit-library' }}
+                    style={{ maxHeight: 440, overflowY: 'auto' }}
                   >
                     <MasonryProvider
                       columnWidth={constants.cardSizes.image}
@@ -426,7 +427,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                         />
                       </MasonryContainer>
                     </MasonryProvider>
-                  </ScrollAreaProvider>
+                  </ScrollArea>
                 </ChallengeEligibilityContext.Provider>
               </ChallengeContext.Provider>
             )}
@@ -632,10 +633,7 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
   }
 
   return (
-    <ScrollAreaProvider
-      scrollRestore={{ enabled: false }}
-      style={{ maxHeight: '440px', overflowY: 'auto' }}
-    >
+    <Box mah={440} style={{ overflowY: 'auto' }}>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-2">
         {generatedMedia.map((img) => (
           <GeneratorImageCard
@@ -655,7 +653,7 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
           </Center>
         </InViewLoader>
       )}
-    </ScrollAreaProvider>
+    </Box>
   );
 }
 

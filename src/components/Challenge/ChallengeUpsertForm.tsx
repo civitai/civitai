@@ -288,7 +288,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Title order={4}>Schedule</Title>
 
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
-              {/* TODO.challenge: Figure out why date format doesn't follow system format (i.e: USA is MM/DD/YYYY, ROW is DD/MM/YYYY) */}
+              {/* Date locale is handled by DateLocaleProvider via DatesProvider */}
               <InputDateTimePicker
                 name="visibleAt"
                 label="Visible From"

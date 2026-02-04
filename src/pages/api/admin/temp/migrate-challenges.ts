@@ -1,22 +1,15 @@
-/**
- * Migration Script: Article-based Challenges to Challenge Table
- *
- * This script migrates existing challenges stored in the Article table
- * (with metadata) to the new dedicated Challenge table.
- *
- * Run with: npx ts-node src/server/jobs/migrate-challenges.ts
- * Or add as a job and run via job runner.
- */
-
 import type { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
-import { createLogger } from '~/utils/logging';
-import { createJob } from './job';
-
-const log = createLogger('jobs:migrate-challenges', 'green');
+import {
+  ChallengeSource,
+  ChallengeStatus,
+  CollectionMode,
+  CollectionReadConfiguration,
+  CollectionWriteConfiguration,
+} from '~/shared/utils/prisma/enums';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 type ArticleChallenge = {
   articleId: number;
@@ -36,10 +29,9 @@ type ArticleChallenge = {
   entryPrizeRequirement: number | null;
 };
 
-/**
- * Migrates a single Article-based challenge to the Challenge table
- */
-async function migrateChallenge(article: ArticleChallenge): Promise<number | null> {
+async function migrateChallenge(
+  article: ArticleChallenge
+): Promise<'migrated' | 'skipped' | 'failed'> {
   try {
     // Check if already migrated
     const existing = await dbRead.challenge.findFirst({
@@ -51,42 +43,50 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
       },
     });
 
-    if (existing) {
-      log(`Challenge already migrated: articleId=${article.articleId}, challengeId=${existing.id}`);
-      return existing.id;
-    }
+    if (existing) return 'skipped';
 
-    // Parse metadata
-    const prizes = article.prizes ? JSON.parse(article.prizes) : dailyChallengeConfig.prizes;
-    const entryPrize = article.entryPrize
+    // Skip if no collection - collectionId is required
+    if (!article.collectionId) return 'skipped';
+
+    // Parse and normalize prizes to ensure { buzz, points } shape
+    const rawPrizes = article.prizes ? JSON.parse(article.prizes) : dailyChallengeConfig.prizes;
+    const prizes = (rawPrizes as any[]).map((p: any) => ({
+      buzz: p.buzz ?? 0,
+      points: p.points ?? 0,
+    }));
+
+    const rawEntryPrize = article.entryPrize
       ? JSON.parse(article.entryPrize)
       : dailyChallengeConfig.entryPrize;
+    const entryPrize = { buzz: rawEntryPrize.buzz ?? 0, points: rawEntryPrize.points ?? 0 };
+
     const entryPrizeRequirement =
       article.entryPrizeRequirement ?? dailyChallengeConfig.entryPrizeRequirement;
 
-    // Determine status
+    // Determine status using date-based logic
+    const challengeDate = article.challengeDate ?? article.publishedAt ?? new Date();
     let status: ChallengeStatus;
     if (article.status === 'complete') {
       status = ChallengeStatus.Completed;
     } else if (article.status === 'active') {
       status = ChallengeStatus.Active;
-    } else if (article.publishedAt) {
-      status = ChallengeStatus.Completed; // Old published challenges are complete
+    } else if (dayjs(challengeDate).add(1, 'day').isBefore(dayjs())) {
+      status = ChallengeStatus.Completed;
+    } else if (dayjs(challengeDate).isBefore(dayjs())) {
+      status = ChallengeStatus.Active;
     } else {
       status = ChallengeStatus.Scheduled;
     }
 
     // Calculate dates
-    const challengeDate = article.challengeDate ?? article.publishedAt ?? new Date();
     const startsAt = challengeDate;
     const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
     const visibleAt = challengeDate;
 
-    // Skip if no collection - collectionId is now required
-    if (!article.collectionId) {
-      log(`Skipping articleId=${article.articleId} - no collectionId`);
-      return null;
-    }
+    // Submission window for collection metadata
+    const submissionStartDate = startsAt;
+    const submissionEndDate = endsAt;
+    const maxItemsPerUser = entryPrizeRequirement * 2;
 
     // Get model version IDs for the model (if modelId exists)
     let modelVersionIds: number[] = [];
@@ -113,42 +113,58 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
         invitation: article.invitation,
         coverImageId: article.coverId,
         nsfwLevel: 1,
-        allowedNsfwLevel: 1, // PG only for migrated challenges
+        allowedNsfwLevel: 1,
         modelVersionIds,
         collectionId: article.collectionId,
-        maxEntriesPerUser: entryPrizeRequirement * 2,
+        maxEntriesPerUser: maxItemsPerUser,
         entryPrizeRequirement,
         prizes: prizes as Prisma.InputJsonValue,
         entryPrize: entryPrize as Prisma.InputJsonValue,
-        prizePool: prizes.reduce((sum: number, p: { buzz: number }) => sum + p.buzz, 0),
+        prizePool: prizes.reduce((sum, p) => sum + p.buzz, 0),
         createdById: article.userId,
+        judgeId: dailyChallengeConfig.defaultJudgeId,
         source: ChallengeSource.System,
         status,
         metadata: {
           articleId: article.articleId,
-          modelId: article.modelId, // Keep original modelId in metadata for reference
+          modelId: article.modelId,
           migratedAt: new Date().toISOString(),
         } as Prisma.InputJsonValue,
       },
       select: { id: true },
     });
 
-    log(`Migrated challenge: articleId=${article.articleId} -> challengeId=${challenge.id}`);
-    return challenge.id;
+    // Update associated collection to Contest mode
+    await dbWrite.collection.update({
+      where: { id: article.collectionId },
+      data: {
+        mode: CollectionMode.Contest,
+        read: CollectionReadConfiguration.Public,
+        write:
+          status === ChallengeStatus.Active
+            ? CollectionWriteConfiguration.Review
+            : CollectionWriteConfiguration.Private,
+        metadata: {
+          maxItemsPerUser,
+          submissionStartDate,
+          submissionEndDate,
+          forcedBrowsingLevel: 1,
+        },
+      },
+    });
+
+    console.log(
+      `Migrated challenge: articleId=${article.articleId} -> challengeId=${challenge.id}`
+    );
+    return 'migrated';
   } catch (error) {
     const err = error as Error;
-    log(`Failed to migrate challenge articleId=${article.articleId}: ${err.message}`);
-    return null;
+    console.error(`Failed to migrate challenge articleId=${article.articleId}: ${err.message}`);
+    return 'failed';
   }
 }
 
-/**
- * Main migration function
- */
-export async function migrateAllChallenges() {
-  log('Starting challenge migration...');
-
-  // Get all Article-based challenges from the challenge collection
+async function migrateAllChallenges() {
   const articles = await dbRead.$queryRaw<ArticleChallenge[]>`
     SELECT
       a.id as "articleId",
@@ -172,28 +188,21 @@ export async function migrateAllChallenges() {
     ORDER BY a."publishedAt" DESC NULLS LAST
   `;
 
-  log(`Found ${articles.length} Article-based challenges to migrate`);
-
   let migrated = 0;
+  let skipped = 0;
   let failed = 0;
 
   for (const article of articles) {
-    const challengeId = await migrateChallenge(article);
-    if (challengeId) {
-      migrated++;
-    } else {
-      failed++;
-    }
+    const result = await migrateChallenge(article);
+    if (result === 'migrated') migrated++;
+    else if (result === 'skipped') skipped++;
+    else failed++;
   }
 
-  log(`Migration complete: ${migrated} migrated, ${failed} failed`);
-
-  return { migrated, failed };
+  return { migrated, skipped, failed, total: articles.length };
 }
 
-// Create a job for the migration (run manually or add to job list)
-export const migrateChallengesJob = createJob(
-  'migrate-challenges',
-  '0 0 * * 0', // Run weekly on Sunday at midnight (mainly for cleanup/retry)
-  migrateAllChallenges
-);
+export default WebhookEndpoint(async (req, res) => {
+  const result = await migrateAllChallenges();
+  res.status(200).json(result);
+});

@@ -63,7 +63,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   finalReviewAmount: 10,
   resourceCosmeticId: null,
   articleTagId: 128643, // Announcement.
-  defaultJudgeId: null,
+  defaultJudgeId: 1, // CivBot
 };
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
