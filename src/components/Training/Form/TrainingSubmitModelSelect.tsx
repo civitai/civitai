@@ -70,6 +70,7 @@ const ModelSelector = ({
   isNew = false,
   isCustom = false,
   isVideo = false,
+  allowedKeys,
 }: {
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -80,9 +81,11 @@ const ModelSelector = ({
   isNew?: boolean;
   isCustom?: boolean;
   isVideo?: boolean;
+  allowedKeys?: string[];
 }) => {
   const versions = Object.entries(trainingModelInfo).filter(
-    ([, v]) => v.type === baseType && v.disabled !== true
+    ([k, v]) =>
+      v.type === baseType && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
   );
   if (!versions.length) return null;
 
@@ -461,7 +464,7 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.zimageTraining && (
+                  {(features.zimageturboTraining || features.zimagebaseTraining) && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="yellow"
@@ -470,6 +473,10 @@ export const ModelSelect = ({
                       baseType="zimage"
                       makeDefaultParams={makeDefaultParams}
                       isNew
+                      allowedKeys={[
+                        ...(features.zimageturboTraining ? ['zimageturbo'] : []),
+                        ...(features.zimagebaseTraining ? ['zimagebase'] : []),
+                      ]}
                     />
                   )}
                   {features.flux2kleinTraining && (
