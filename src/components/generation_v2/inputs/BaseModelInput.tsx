@@ -165,7 +165,7 @@ function BaseModelListContent({
   // Build available tabs
   const tabs: { value: TabValue; label: string }[] = useMemo(() => {
     const result: { value: TabValue; label: string }[] = [
-      { value: 'compatible', label: 'Compatible' },
+      { value: 'compatible', label: 'Workflow Compatible' },
     ];
     if (showRecentTab) {
       result.push({ value: 'recent', label: 'Recent' });

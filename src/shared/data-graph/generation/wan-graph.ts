@@ -38,13 +38,20 @@ import {
 // Constants
 // =============================================================================
 
+/** Wan 2.1 img2vid resolution-specific model IDs */
+const wan21Img2VidModels = {
+  '480p': { id: 1501125, baseModel: 'Wan Video 14B i2v 480p' },
+  '720p': { id: 1501344, baseModel: 'Wan Video 14B I2V 720p' },
+} as const;
+
 /** Wan version definitions - single source of truth */
 const wanVersionDefs = [
   {
     version: 'v2.1',
     label: 'Wan 2.1',
     txt2vid: { id: 1707796, baseModel: 'Wan Video 14B t2v' },
-    img2vid: { id: 1501125, baseModel: 'Wan Video 14B i2v 480p' },
+    // For img2vid, default to 720p variant (users can switch via resolution picker)
+    img2vid: wan21Img2VidModels['720p'],
   },
   {
     version: 'v2.2',
@@ -71,12 +78,21 @@ const wanVersions = wanVersionDefs.map((d) => d.version);
 type WanVersion = (typeof wanVersionDefs)[number]['version'];
 
 /** Map from version ID to Wan version name */
-const versionIdToWanVersion = new Map<number, WanVersion>(
-  wanVersionDefs.flatMap((d) => [
-    [d.txt2vid.id, d.version],
-    [d.img2vid.id, d.version],
-  ])
-);
+const versionIdToWanVersion = new Map<number, WanVersion>([
+  // v2.1 - includes both 480p and 720p img2vid variants
+  [wanVersionDefs[0].txt2vid.id, 'v2.1'],
+  [wan21Img2VidModels['480p'].id, 'v2.1'],
+  [wan21Img2VidModels['720p'].id, 'v2.1'],
+  // v2.2
+  [wanVersionDefs[1].txt2vid.id, 'v2.2'],
+  [wanVersionDefs[1].img2vid.id, 'v2.2'],
+  // v2.2-5b
+  [wanVersionDefs[2].txt2vid.id, 'v2.2-5b'],
+  [wanVersionDefs[2].img2vid.id, 'v2.2-5b'],
+  // v2.5
+  [wanVersionDefs[3].txt2vid.id, 'v2.5'],
+  [wanVersionDefs[3].img2vid.id, 'v2.5'],
+]);
 
 /** Workflow-specific version configuration for Wan */
 const wanWorkflowVersions = {
@@ -89,11 +105,25 @@ const wanWorkflowVersions = {
     defaultModelId: wanVersionDefs[0].txt2vid.id,
   },
   img2vid: {
-    versions: wanVersionDefs.map((d) => ({
-      label: d.label,
-      value: d.img2vid.id,
-      baseModel: d.img2vid.baseModel,
-    })),
+    versions: [
+      // Wan 2.1 - include both 480p and 720p so version selector shows for either
+      {
+        label: 'Wan 2.1',
+        value: wan21Img2VidModels['720p'].id,
+        baseModel: wan21Img2VidModels['720p'].baseModel,
+      },
+      {
+        label: 'Wan 2.1 (480p)',
+        value: wan21Img2VidModels['480p'].id,
+        baseModel: wan21Img2VidModels['480p'].baseModel,
+      },
+      // Other versions
+      ...wanVersionDefs.slice(1).map((d) => ({
+        label: d.label,
+        value: d.img2vid.id,
+        baseModel: d.img2vid.baseModel,
+      })),
+    ],
     defaultModelId: wanVersionDefs[0].img2vid.id,
   },
 };
@@ -168,6 +198,10 @@ type WanVersionCtx = {
 
 /**
  * Wan 2.1 subgraph - basic controls with resolution selection
+ *
+ * For img2vid workflow, resolution picker controls the model variant:
+ * - 480p → model ID 1501125 (Wan Video 14B i2v 480p)
+ * - 720p → model ID 1501344 (Wan Video 14B I2V 720p)
  */
 const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   .node(
@@ -198,6 +232,61 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
         limit: 2, // Fal provider has 2 max resources
       }),
     ['baseModel']
+  )
+  // Effect: Sync model and ecosystem when resolution changes (img2vid only)
+  // Ensures the correct model variant is selected for the current resolution
+  .effect(
+    (ctx, _ext, set) => {
+      if (ctx.workflow !== 'img2vid') return;
+
+      const resolution = ctx.resolution as '480p' | '720p';
+      const targetModel = wan21Img2VidModels[resolution];
+      const targetEcosystemKey = resolution === '480p' ? 'WanVideo14B_I2V_480p' : 'WanVideo14B_I2V_720p';
+
+      // Skip if already using the correct model variant and ecosystem
+      if (ctx.model?.id === targetModel.id && ctx.baseModel === targetEcosystemKey) return;
+
+      // Skip if current ecosystem is not a Wan 2.1 variant
+      // (e.g., user selected Wan 2.2, don't force back to 2.1)
+      if (
+        ctx.baseModel !== 'WanVideo14B_I2V_480p' &&
+        ctx.baseModel !== 'WanVideo14B_I2V_720p'
+      ) {
+        return;
+      }
+
+      // Update both ecosystem and model together atomically
+      set('baseModel', targetEcosystemKey);
+      set('model', {
+        id: targetModel.id,
+        baseModel: targetModel.baseModel,
+        model: { type: 'Checkpoint' },
+      } as ResourceData);
+    },
+    ['resolution', 'workflow', 'baseModel']
+  )
+  // Effect: Sync resolution when ecosystem changes (img2vid only)
+  // Handles ecosystem switching when user swaps to a different Wan 2.1 variant
+  .effect(
+    (ctx, _ext, set) => {
+      if (ctx.workflow !== 'img2vid') return;
+
+      const currentResolution = ctx.resolution;
+      let targetResolution: '480p' | '720p' | null = null;
+
+      // Check ecosystem key to determine target resolution
+      if (ctx.baseModel === 'WanVideo14B_I2V_480p') {
+        targetResolution = '480p';
+      } else if (ctx.baseModel === 'WanVideo14B_I2V_720p') {
+        targetResolution = '720p';
+      }
+
+      // Only update if we detected a valid Wan 2.1 ecosystem and resolution differs
+      if (targetResolution && currentResolution !== targetResolution) {
+        set('resolution', targetResolution);
+      }
+    },
+    ['baseModel', 'workflow']
   );
 
 /**
@@ -392,6 +481,7 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
 export {
   wanVersions,
   wanVersionDefs,
+  wan21Img2VidModels,
   versionIdToWanVersion,
   wanAspectRatios,
   wan21AspectRatios,
