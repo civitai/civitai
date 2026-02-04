@@ -93,7 +93,7 @@ export async function createUpcomingChallenge() {
       SELECT DISTINCT
         cast(a.metadata->'userId' as int) as "userId"
       FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."modelId"
+      JOIN "Article" a ON a.id = ci."articleId"
       WHERE ci."collectionId" = ${config.challengeCollectionId}
       AND a."status" = 'Published'
       AND a."publishedAt" > now() - ${config.userCooldown}::interval
