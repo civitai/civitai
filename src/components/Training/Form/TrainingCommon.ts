@@ -304,7 +304,8 @@ export const useAutoLabelPolling = (
         currentState[modelId]?.autoCaptioning ?? defaultState.autoCaptioning;
 
       for (const job of jobs) {
-        if (!job.lastEvent) continue;
+        // Skip jobs that are still in progress
+        if (job.scheduled || !job.lastEvent) continue;
 
         const { type: eventType, context } = job.lastEvent;
 
@@ -321,13 +322,18 @@ export const useAutoLabelPolling = (
 
         // Check if job completed
         if (eventType === 'Succeeded' && context) {
-          const data = context.data as TagDataResponse | CaptionDataResponse;
+          const data = context.data as TagDataResponse | CaptionDataResponse | undefined;
           const isDone = context.isDone as boolean;
+
+          // Skip if no data yet
+          if (!data) continue;
 
           if (labelType === 'tag') {
             const tagData = data as TagDataResponse;
+            if (!tagData || typeof tagData !== 'object') continue;
+
             const tagList = Object.entries(tagData).map(([f, t]) => ({
-              [f]: t.wdTagger.tags,
+              [f]: t?.wdTagger?.tags ?? {},
             }));
             const returnData: AutoTagResponse = Object.assign({}, ...tagList);
 
@@ -368,8 +374,10 @@ export const useAutoLabelPolling = (
             });
           } else {
             const captionData = data as CaptionDataResponse;
-            const tagList = Object.entries(captionData ?? {}).map(([f, t]) => ({
-              [f]: t.joyCaption?.caption ?? '',
+            if (!captionData || typeof captionData !== 'object') continue;
+
+            const tagList = Object.entries(captionData).map(([f, t]) => ({
+              [f]: t?.joyCaption?.caption ?? '',
             }));
             const returnData: AutoCaptionResponse = Object.assign({}, ...tagList);
 
