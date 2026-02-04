@@ -224,7 +224,7 @@ export const trainingModelInfo: {
     air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
     baseModel: 'ZImageTurbo',
     isNew: true,
-    aiToolkit: { ecosystem: 'zimage', modelVariant: 'turbo' },
+    aiToolkit: { ecosystem: 'zimageturbo' },
   },
   zimagebase: {
     label: 'Base',
@@ -234,7 +234,7 @@ export const trainingModelInfo: {
     air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
     baseModel: 'ZImageBase',
     isNew: true,
-    aiToolkit: { ecosystem: 'zimage', modelVariant: 'base' },
+    aiToolkit: { ecosystem: 'zimagebase' },
   },
   //
   flux2klein_4b: {
