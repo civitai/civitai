@@ -73,6 +73,30 @@ export function decodeUserComment(buffer: Uint8Array): string {
   return decodeUTF32LE(content);
 }
 
+/**
+ * Decode EXIF UserComment to a string, with fallback for raw UTF-8.
+ * Some tools write WebP/JPEG metadata as raw UTF-8 in UserComment
+ * without the standard EXIF charset header
+ */
+export function decodeUserCommentToParams(buffer: Uint8Array | Int32Array | string): string {
+  if (typeof buffer === 'string') return buffer;
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer as Int32Array);
+  if (bytes.length === 0) return '';
+
+  if (bytes.length >= 8) {
+    const decoded = decodeUserComment(bytes);
+    // Standard header was present and produced a plausible string (e.g. JSON)
+    if (decoded.length > 0 && (decoded.startsWith('{') || decoded.includes('sui_image_params')))
+      return decoded;
+  }
+
+  try {
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
 const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0
 // function encodeUserCommentUTF16LE(str: string) {
 //   const encoded = [];
