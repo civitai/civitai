@@ -165,7 +165,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   let trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
-    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
+    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma, zimageturbo, zimagebase) until @civitai/client is updated
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
     trainingData: {

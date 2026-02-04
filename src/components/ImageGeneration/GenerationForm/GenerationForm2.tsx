@@ -701,7 +701,8 @@ export function GenerationFormContent() {
               : isFlux2Klein
               ? [...flux2KleinSampleMethods]
               : generation.samplers;
-            const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
+            const disableSteps =
+              isFluxUltra || isFluxKontext || isSeedream || isFlux2KleinDistilled;
             const disableClipSkip =
               isSDXL ||
               isFlux ||

@@ -47,6 +47,7 @@ const featureFlags = createFeatureFlags({
   qwenTraining: ['mod'],
   flux2Training: ['public'],
   zimageturboTraining: ['mod'],
+  zimagebaseTraining: ['mod'],
   flux2kleinTraining: ['mod'],
   ltx2Training: ['mod'],
   imageTrainingResults: ['user'],

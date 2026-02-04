@@ -160,7 +160,8 @@ export function GeneratedImageActions({
           }
 
           const file = new File([blob], name);
-          zip.file(image.type === 'video' ? `${name}.mp4` : `${name}.jpg`, file);
+          const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+          zip.file(`${name}.${ext}`, file);
         })
       )
     );

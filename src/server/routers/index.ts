@@ -18,6 +18,7 @@ import { gamesRouter } from '~/server/routers/games.router';
 import { modRouter } from '~/server/routers/moderator';
 import { orchestratorRouter } from '~/server/routers/orchestrator.router';
 import { paddleRouter } from '~/server/routers/paddle.router';
+import { productBadgeRouter } from '~/server/routers/product-badge.router';
 import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
 import { researchRouter } from '~/server/routers/research.router';
 import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
@@ -144,6 +145,7 @@ export const appRouter = router({
   redeemableCode: redeemableCodeRouter,
   tool: toolRouter,
   cosmeticShop: cosmeticShopRouter,
+  productBadge: productBadgeRouter,
   technique: techniqueRouter,
   donationGoal: donationGoalRouter,
   orchestrator: orchestratorRouter,

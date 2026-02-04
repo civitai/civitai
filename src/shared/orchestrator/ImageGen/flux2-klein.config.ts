@@ -111,7 +111,7 @@ export const flux2KleinSchedules = [
   'discrete',
   'karras',
   'exponential',
-  'ays',
+  // 'ays', // Disabled - fails 100% of the time
 ] as const satisfies SdCppSchedule[];
 
 const baseSchema = z.object({

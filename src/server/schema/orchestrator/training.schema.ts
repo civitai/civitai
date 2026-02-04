@@ -69,6 +69,10 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     modelVariant: z.undefined().optional(),
   }),
   aiToolkitBaseParams.extend({
+    ecosystem: z.literal('zimagebase'),
+    modelVariant: z.undefined().optional(),
+  }),
+  aiToolkitBaseParams.extend({
     ecosystem: z.literal('ltx2'),
     modelVariant: z.undefined().optional(),
   }),
