@@ -82,7 +82,7 @@ const flux2GuidancePresets = [
 
 /** Context shape passed to flux2 mode subgraphs */
 type Flux2ModeCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   model: ResourceData;
   flux2Mode: Flux2Mode;
@@ -115,10 +115,10 @@ const devModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>().merge(baseMode
   'resources',
   (ctx, ext) =>
     resourcesNode({
-      baseModel: ctx.baseModel,
+      ecosystem: ctx.ecosystem,
       limit: ext.limits.maxResources,
     }),
-  ['baseModel']
+  ['ecosystem']
 );
 
 /**
@@ -142,7 +142,7 @@ const noResourcesModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>().merge(
  * Note: Flux.2 doesn't use negative prompts, samplers, or CLIP skip.
  */
 export const flux2Graph = new DataGraph<
-  { baseModel: string; workflow: string; model: ResourceData },
+  { ecosystem: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options

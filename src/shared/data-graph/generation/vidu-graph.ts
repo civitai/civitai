@@ -47,7 +47,7 @@ const viduMovementAmplitudes = [
 // =============================================================================
 
 /** Context shape for vidu graph */
-type ViduCtx = { baseModel: string; workflow: string };
+type ViduCtx = { ecosystem: string; workflow: string };
 
 /**
  * Vidu video generation controls.

@@ -49,7 +49,7 @@ const hunyuanDurations = [
 // =============================================================================
 
 /** Context shape for hunyuan graph */
-type HunyuanCtx = { baseModel: string; workflow: string };
+type HunyuanCtx = { ecosystem: string; workflow: string };
 
 /**
  * Hunyuan video generation controls.
@@ -112,10 +112,10 @@ export const hunyuanGraph = new DataGraph<HunyuanCtx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 // Export constants for use in components

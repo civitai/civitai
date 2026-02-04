@@ -72,7 +72,7 @@ const zImageAspectRatios = [
 
 /** Context shape passed to zImage mode subgraphs */
 type ZImageModeCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   zImageMode: ZImageMode;
 };
@@ -86,10 +86,10 @@ const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: zImageAspectRatios, defaultValue: '1:1' }))
   .node(
@@ -121,10 +121,10 @@ const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: zImageAspectRatios, defaultValue: '1:1' }))
   .node('sampler', samplerNode({ options: zImageSamplers, defaultValue: 'euler' }))
@@ -163,7 +163,7 @@ const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
  *
  * Uses SdCpp samplers/schedulers. Supports LoRA resources.
  */
-export const zImageGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
+export const zImageGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph with version options (defaultModelId inferred from baseModel)
   .merge(
     createCheckpointGraph({
@@ -174,7 +174,7 @@ export const zImageGraph = new DataGraph<{ baseModel: string; workflow: string }
   .computed(
     'zImageMode',
     (ctx): ZImageMode => {
-      switch (ctx.baseModel) {
+      switch (ctx.ecosystem) {
         case 'ZImageBase':
           return 'base';
         case 'ZImageTurbo':
@@ -182,7 +182,7 @@ export const zImageGraph = new DataGraph<{ baseModel: string; workflow: string }
           return 'turbo';
       }
     },
-    ['baseModel']
+    ['ecosystem']
   )
   // Grouped discriminator: turbo (no sampler/scheduler) and base (full controls)
   .groupedDiscriminator('zImageMode', [

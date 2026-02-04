@@ -101,7 +101,7 @@ const fluxGuidancePresets = [
 
 /** Context shape passed to flux mode subgraphs */
 type FluxModeCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   model: ResourceData | undefined;
   fluxMode: FluxMode;
@@ -152,10 +152,10 @@ const standardModeWithResourcesGraph = new DataGraph<FluxModeCtx, GenerationCtx>
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 /** Draft mode subgraph: aspectRatio, seed, enhancedCompatibility */
@@ -198,7 +198,7 @@ const ultraModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  */
 
 export const fluxGraph = new DataGraph<
-  { baseModel: string; workflow: string; model: ResourceData | undefined },
+  { ecosystem: string; workflow: string; model: ResourceData | undefined },
   GenerationCtx
 >()
   // Merge checkpoint graph with dynamic modelLocked based on workflow

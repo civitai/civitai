@@ -12,8 +12,8 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type ChromaCtx = EcosystemGraphOutput & { baseModel: 'Chroma' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type ChromaCtx = EcosystemGraphOutput & { ecosystem: 'Chroma' };
 
 /**
  * Creates step input for Chroma ecosystem.

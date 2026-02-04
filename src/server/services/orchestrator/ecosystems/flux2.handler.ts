@@ -18,8 +18,8 @@ import { flux2VersionIds, type Flux2Mode } from '~/shared/data-graph/generation/
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type Flux2Ctx = EcosystemGraphOutput & { baseModel: 'Flux2' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type Flux2Ctx = EcosystemGraphOutput & { ecosystem: 'Flux2' };
 
 // Return type union
 type Flux2Input =

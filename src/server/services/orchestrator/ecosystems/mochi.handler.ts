@@ -12,8 +12,8 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type MochiCtx = EcosystemGraphOutput & { baseModel: 'Mochi' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
 
 /**
  * Creates videoGen input for Mochi ecosystem.

@@ -50,7 +50,7 @@ const ltxv2Durations = [
 // =============================================================================
 
 /** Context shape for LTXV2 graph */
-type LTXV2Ctx = { baseModel: string; workflow: string };
+type LTXV2Ctx = { ecosystem: string; workflow: string };
 
 /**
  * LTXV2 video generation controls.
@@ -112,10 +112,10 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 // Export constants for use in components

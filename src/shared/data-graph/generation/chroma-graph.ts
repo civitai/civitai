@@ -62,7 +62,7 @@ const chromaGuidancePresets = [
  * Meta only contains dynamic props - static props like label are in components.
  * Note: Chroma doesn't use negative prompts, samplers, or CLIP skip.
  */
-export const chromaGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
+export const chromaGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph
   .merge(
     () =>
@@ -75,10 +75,10 @@ export const chromaGraph = new DataGraph<{ baseModel: string; workflow: string }
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: chromaAspectRatios, defaultValue: '1:1' }))
   .node(

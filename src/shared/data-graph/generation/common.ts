@@ -464,12 +464,12 @@ const resourceInputSchema = z.union([
   z.looseObject({ id: z.number() }),
 ]);
 
-function getResourceSelectOptions(baseModel: string, resourceTypes: ModelType[]) {
-  const ecosystem = ecosystemByKey.get(baseModel);
+function getResourceSelectOptions(ecosystem: string, resourceTypes: ModelType[]) {
+  const ecosystemData = ecosystemByKey.get(ecosystem);
   return resourceTypes
     .map((type) => {
-      const compatible = ecosystem
-        ? getCompatibleBaseModels(ecosystem.id, type)
+      const compatible = ecosystemData
+        ? getCompatibleBaseModels(ecosystemData.id, type)
         : { full: [], partial: [] };
       return {
         type,
@@ -671,11 +671,11 @@ export function createCheckpointGraph(options?: {
     };
   };
 
-  return new DataGraph<{ workflow: string; baseModel: string }, GenerationCtx>()
+  return new DataGraph<{ workflow: string; ecosystem: string }, GenerationCtx>()
     .node(
       'model',
       (ctx, ext) => {
-        const ecosystem = ecosystemByKey.get(ctx.baseModel);
+        const ecosystem = ecosystemByKey.get(ctx.ecosystem);
         const ecosystemDefaults = ecosystem ? getEcosystemDefaults(ecosystem.id) : undefined;
         const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
@@ -713,7 +713,7 @@ export function createCheckpointGraph(options?: {
           meta: (_ctx, _ext, value: ResourceData | undefined) => ({
             options: {
               canGenerate: true,
-              resources: getResourceSelectOptions(ctx.baseModel, ['Checkpoint']),
+              resources: getResourceSelectOptions(ctx.ecosystem, ['Checkpoint']),
               excludeIds: value ? [value.id] : [],
             },
             modelLocked,
@@ -727,7 +727,7 @@ export function createCheckpointGraph(options?: {
         };
       },
       // Include 'workflow' in deps so transform runs when workflow changes
-      options?.workflowVersions ? ['baseModel', 'workflow'] : ['baseModel']
+      options?.workflowVersions ? ['ecosystem', 'workflow'] : ['ecosystem']
     )
     .effect(
       (ctx, _ext, set) => {
@@ -736,7 +736,7 @@ export function createCheckpointGraph(options?: {
 
         const modelEcosystemKey = getEcosystemKeyForBaseModel(model.baseModel);
         // Only switch ecosystem if the model's ecosystem differs from current
-        if (!modelEcosystemKey || modelEcosystemKey === ctx.baseModel) return;
+        if (!modelEcosystemKey || modelEcosystemKey === ctx.ecosystem) return;
 
         const targetEcosystem = ecosystemByKey.get(modelEcosystemKey);
         if (!targetEcosystem) return;
@@ -746,7 +746,7 @@ export function createCheckpointGraph(options?: {
 
         if (workflowCompatible) {
           // Current workflow is compatible - just switch ecosystem
-          set('baseModel', modelEcosystemKey);
+          set('ecosystem', modelEcosystemKey);
         } else {
           // Current workflow is NOT compatible with model's ecosystem.
           // Find a compatible workflow for the model's ecosystem and switch both.
@@ -754,9 +754,9 @@ export function createCheckpointGraph(options?: {
           if (compatibleWorkflows.length > 0) {
             // Pick the first compatible workflow (usually the primary one like txt2vid or txt2img)
             const newWorkflow = compatibleWorkflows[0].id;
-            // Set workflow first, then baseModel - order matters for effect ordering
+            // Set workflow first, then ecosystem - order matters for effect ordering
             set('workflow', newWorkflow);
-            set('baseModel', modelEcosystemKey);
+            set('ecosystem', modelEcosystemKey);
           }
           // If no compatible workflows found, don't switch (shouldn't happen in practice)
         }
@@ -809,21 +809,21 @@ function buildVersionMappings(
 
 /**
  * Creates an additional resources (LoRA, etc.) node.
- * Meta contains: options, limit (dynamic based on baseModel)
+ * Meta contains: options, limit (dynamic based on ecosystem)
  *
  * Meta is computed from the current value to derive excludeIds,
  * eliminating the need to pass resource IDs through external context.
  */
 export function resourcesNode({
-  baseModel,
+  ecosystem,
   resourceTypes = ['TextualInversion', 'LORA', 'LoCon', 'DoRA'] as ModelType[],
   limit = 12,
 }: {
-  baseModel: string;
+  ecosystem: string;
   resourceTypes?: ModelType[];
   limit?: number;
 }) {
-  const resources = getResourceSelectOptions(baseModel, resourceTypes);
+  const resources = getResourceSelectOptions(ecosystem, resourceTypes);
 
   return {
     input: resourceInputSchema.array().optional(),
@@ -845,12 +845,12 @@ export function resourcesNode({
 
 /**
  * Creates a VAE node.
- * Meta contains only: options (dynamic based on baseModel)
+ * Meta contains only: options (dynamic based on ecosystem)
  *
  * Meta is computed from the current value to derive excludeIds.
  */
-export function vaeNode({ baseModel }: { baseModel: string }) {
-  const resources = getResourceSelectOptions(baseModel, ['VAE']);
+export function vaeNode({ ecosystem }: { ecosystem: string }) {
+  const resources = getResourceSelectOptions(ecosystem, ['VAE']);
 
   return {
     input: resourceInputSchema.optional(),

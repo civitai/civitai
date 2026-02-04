@@ -12,8 +12,8 @@ import { seedreamVersionIds } from '~/shared/data-graph/generation/seedream-grap
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type SeedreamCtx = EcosystemGraphOutput & { baseModel: 'Seedream' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type SeedreamCtx = EcosystemGraphOutput & { ecosystem: 'Seedream' };
 
 // Create reverse map from version ID to version string
 const versionIdToVersion = new Map<number, SeedreamVersion>(

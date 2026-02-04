@@ -88,7 +88,7 @@ const veo3ApiVersionOptions = [
 // =============================================================================
 
 /** Context shape for veo3 graph */
-type Veo3Ctx = { baseModel: string; workflow: string };
+type Veo3Ctx = { ecosystem: string; workflow: string };
 
 /** Workflow-specific version configuration for Veo3 */
 const veo3WorkflowVersions = {
@@ -188,10 +188,10 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 // Export constants for use in components

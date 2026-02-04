@@ -62,7 +62,7 @@ type OpenAIQuality = (typeof qualityOptions)[number];
  * Meta only contains dynamic props - static props like label are in components.
  * Note: OpenAI doesn't use LoRAs, negative prompts, samplers, steps, CFG scale, or CLIP skip.
  */
-export const openaiGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
+export const openaiGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph with version options
   .merge(
     () =>

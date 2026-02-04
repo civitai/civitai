@@ -14,8 +14,8 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type PonyV7Ctx = EcosystemGraphOutput & { baseModel: 'PonyV7' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 
 /**
  * Creates step input for PonyV7 ecosystem.

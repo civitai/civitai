@@ -160,9 +160,9 @@ function applyWorkflowToForm({
   workflowId,
   image,
   step,
-  baseModel,
+  ecosystem,
   clearResources,
-}: ApplyWorkflowOptions & { baseModel?: string; clearResources: boolean }) {
+}: ApplyWorkflowOptions & { ecosystem?: string; clearResources: boolean }) {
   dialogStore.closeById('generated-image');
 
   const inputType = getInputTypeForWorkflow(workflowId);
@@ -181,7 +181,7 @@ function applyWorkflowToForm({
       negativePrompt: stepParams.negativePrompt,
       ...(images ? { images } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
-      ...(baseModel ? { baseModel } : {}),
+      ...(ecosystem ? { ecosystem } : {}),
     },
     resources: clearResources ? [] : (step.resources as GenerationResource[]),
     runType: 'patch',
@@ -223,7 +223,7 @@ export function applyWorkflowWithCheck({
             workflowId,
             image,
             step,
-            baseModel: target.key,
+            ecosystem: target.key,
             clearResources: true,
           }),
       });
@@ -238,7 +238,7 @@ export function applyWorkflowWithCheck({
     workflowId,
     image,
     step,
-    baseModel: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia),
+    ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia),
     clearResources,
   });
 }

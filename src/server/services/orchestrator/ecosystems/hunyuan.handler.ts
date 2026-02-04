@@ -13,8 +13,8 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type HunyuanCtx = EcosystemGraphOutput & { baseModel: 'HyV1' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 
 /**
  * Creates videoGen input for Hunyuan ecosystem.

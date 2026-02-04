@@ -13,9 +13,9 @@ import { defineHandler } from './handler-factory';
 import type { Flux2KleinMode } from '~/shared/data-graph/generation/flux2-klein-graph';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type Flux2KleinCtx = EcosystemGraphOutput & {
-  baseModel: 'Flux2Klein_9B' | 'Flux2Klein_9B_base' | 'Flux2Klein_4B' | 'Flux2Klein_4B_base';
+  ecosystem: 'Flux2Klein_9B' | 'Flux2Klein_9B_base' | 'Flux2Klein_4B' | 'Flux2Klein_4B_base';
 };
 
 // Return type union
@@ -46,7 +46,7 @@ export const createFlux2KleinInput = defineHandler<Flux2KleinCtx, Flux2KleinInpu
   const quantity = data.quantity ?? 1;
 
   // Determine model variant from baseModel
-  const modelVersion = baseModelToVariant[data.baseModel] ?? '9b';
+  const modelVersion = baseModelToVariant[data.ecosystem] ?? '9b';
   const isDistilled = modelVersion === '9b' || modelVersion === '4b';
   const defaults = variantDefaults[modelVersion];
 

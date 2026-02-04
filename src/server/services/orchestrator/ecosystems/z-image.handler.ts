@@ -16,8 +16,8 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type ZImageCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' | 'ZImageBase' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type ZImageCtx = EcosystemGraphOutput & { ecosystem: 'ZImageTurbo' | 'ZImageBase' };
 
 // Return type union
 type ZImageInput = ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
@@ -36,7 +36,7 @@ export const createZImageInput = defineHandler<ZImageCtx, ZImageInput>((data, ct
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImage workflows');
 
   const quantity = data.quantity ?? 1;
-  const model = baseModelToModel[data.baseModel] ?? 'turbo';
+  const model = baseModelToModel[data.ecosystem] ?? 'turbo';
 
   // Build loras from additional resources
   const loras: Record<string, number> = {};

@@ -252,7 +252,7 @@ export function FormFooter() {
   const handleReset = () => {
     // Don't exclude 'model' - it should be reset to match the baseModel
     // The checkpointNode factory will select a default model for the baseModel
-    graph.reset({ exclude: ['workflow', 'baseModel'] });
+    graph.reset({ exclude: ['workflow', 'ecosystem'] });
     clearWarning();
     setSubmitError(undefined);
   };

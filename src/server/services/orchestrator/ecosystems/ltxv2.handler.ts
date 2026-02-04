@@ -12,8 +12,8 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type LTXV2Ctx = EcosystemGraphOutput & { baseModel: 'LTXV2' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type LTXV2Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV2' };
 
 /**
  * Creates videoGen input for LTXV2 ecosystem.

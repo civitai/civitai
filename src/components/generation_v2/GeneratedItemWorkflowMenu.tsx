@@ -65,8 +65,8 @@ export function GeneratedItemWorkflowMenu({
   const isMember = status.tier !== 'free';
 
   const outputType = image.type === 'video' ? 'video' : 'image';
-  const ecosystemKey =
-    step.params.baseModel;
+  const ecosystemKey: string | undefined =
+    (step.params as any).ecosystem ?? step.params.baseModel;
 
   const { groups, isCompatible } = useGeneratedItemWorkflows({
     outputType,
@@ -79,7 +79,7 @@ export function GeneratedItemWorkflowMenu({
 
   function handleRemix(seed?: number | null) {
     dialogStore.closeById('generated-image');
-    // Params are already mapped via mapDataToGraphInput (workflow, baseModel, aspectRatio, etc.)
+    // Params are already mapped via mapDataToGraphInput (workflow, ecosystem, aspectRatio, etc.)
     // Use step.resources (enriched) for splitResourcesByType to work correctly
     generationGraphStore.setData({
       params: { ...step.metadata.params, seed: seed ?? null },

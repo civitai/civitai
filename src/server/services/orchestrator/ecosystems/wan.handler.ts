@@ -21,7 +21,7 @@ import { versionIdToWanVersion } from '~/shared/data-graph/generation/wan-graph'
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 
 // Wan baseModel variants
 type WanBaseModel =
@@ -36,7 +36,7 @@ type WanBaseModel =
   | 'WanVideo-25-T2V'
   | 'WanVideo-25-I2V';
 
-type WanCtx = EcosystemGraphOutput & { baseModel: WanBaseModel };
+type WanCtx = EcosystemGraphOutput & { ecosystem: WanBaseModel };
 
 // Return type union
 type WanInput =
@@ -176,8 +176,8 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
 });
 
 /**
- * Checks if a baseModel is a Wan variant.
+ * Checks if an ecosystem is a Wan variant.
  */
-export function isWanEcosystem(baseModel: string): baseModel is WanBaseModel {
-  return baseModel.startsWith('WanVideo') || baseModel === 'WanVideo';
+export function isWanEcosystem(ecosystem: string): ecosystem is WanBaseModel {
+  return ecosystem.startsWith('WanVideo') || ecosystem === 'WanVideo';
 }

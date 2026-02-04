@@ -19,7 +19,7 @@ import { seedNode, createCheckpointGraph } from './common';
 // =============================================================================
 
 /** Context shape for mochi graph */
-type MochiCtx = { baseModel: string; workflow: string };
+type MochiCtx = { ecosystem: string; workflow: string };
 
 /**
  * Mochi video generation controls.

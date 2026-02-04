@@ -25,9 +25,9 @@ import { createComfyInput } from './comfy-input';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type SDFamilyCtx = EcosystemGraphOutput & {
-  baseModel: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
+  ecosystem: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
 };
 
 // =============================================================================
@@ -145,7 +145,7 @@ export const createStableDiffusionInput = defineHandler<
     throw new Error('Aspect ratio is required for SD family workflows');
 
   const isDraft = data.workflow === 'txt2img:draft';
-  const isSD1 = data.baseModel === 'SD1';
+  const isSD1 = data.ecosystem === 'SD1';
   const useComfy = COMFY_WORKFLOWS.includes(data.workflow as (typeof COMFY_WORKFLOWS)[number]);
 
   // User resources (not modified - draft LoRA handled separately)

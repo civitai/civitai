@@ -37,22 +37,22 @@ const storageAdapter = createLocalStorageAdapter({
   groups: [
     // Workflow is the primary selector - stored globally
     { keys: ['workflow', 'outputFormat', 'priority'] },
-    { name: 'output', keys: ['baseModel'], scope: 'output' },
+    { name: 'output', keys: ['ecosystem'], scope: 'output' },
     { name: 'common', keys: ['prompt', 'negativePrompt', 'seed', 'quantity'] },
-    // baseModel is scoped to workflow (different workflows may use different ecosystems)
-    // { name: 'workflow', keys: ['baseModel'], scope: 'workflow' },
+    // ecosystem is scoped to workflow (different workflows may use different ecosystems)
+    // { name: 'workflow', keys: ['ecosystem'], scope: 'workflow' },
     {
       name: 'workflow',
       keys: ['quantity'],
       scope: 'workflow',
       condition: (ctx) => ctx.workflow === 'txt2img:draft',
     },
-    // Model-family specific settings scoped to baseModel
+    // Model-family specific settings scoped to ecosystem
     // Values for inactive nodes are automatically retained in storage
     // (e.g., cfgScale/steps when switching to Ultra mode which doesn't have them)
-    { name: 'scoped', keys: '*', scope: 'baseModel' },
+    { name: 'ecosystem', keys: '*', scope: 'ecosystem' },
     // Fallback for non-ecosystem workflows (upscale, interpolate, etc.)
-    // These workflows don't have baseModel, so the above group is skipped
+    // These workflows don't have ecosystem, so the above group is skipped
     // and this catch-all handles remaining keys at workflow scope
     { name: 'workflow', keys: '*', scope: 'workflow' },
   ],
@@ -120,7 +120,7 @@ function InnerProvider({
       if (!data || counter === prevCounterRef.current) return;
       prevCounterRef.current = counter;
 
-      // Params are already mapped via mapDataToGraphInput (workflow, baseModel, aspectRatio, etc.)
+      // Params are already mapped via mapDataToGraphInput (workflow, ecosystem, aspectRatio, etc.)
       // Just need to split flat resources into model/resources/vae for graph nodes
       const split = splitResourcesByType(data.resources);
 
@@ -141,10 +141,10 @@ function InnerProvider({
         const existingResources = (snapshot.resources ?? []) as ResourceData[];
         const incomingIds = new Set(split.resources.map((r) => r.id));
 
-        // Determine incoming baseModel ecosystem for compatibility filtering
-        const incomingBaseModel = data.params.baseModel as string | undefined;
-        const checkpointEcosystem = incomingBaseModel
-          ? ecosystemByKey.get(incomingBaseModel)
+        // Determine incoming ecosystem for compatibility filtering
+        const incomingEcosystem = data.params.ecosystem as string | undefined;
+        const checkpointEcosystem = incomingEcosystem
+          ? ecosystemByKey.get(incomingEcosystem)
           : undefined;
 
         // Filter existing resources: keep only those compatible with the incoming ecosystem

@@ -11,8 +11,8 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type ViduCtx = EcosystemGraphOutput & { baseModel: 'Vidu' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 
 /**
  * Creates videoGen input for Vidu ecosystem.

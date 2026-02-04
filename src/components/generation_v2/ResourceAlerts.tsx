@@ -4,7 +4,7 @@
  * Displays alerts related to selected resources including:
  * - Unstable resources (high failure rate)
  * - Content restricted resources (minor/SFW flagged)
- * - Experimental ecosystem alerts (based on baseModel config)
+ * - Experimental ecosystem alerts (based on ecosystem config)
  * - Ready state alerts (resources need to be downloaded)
  */
 

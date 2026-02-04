@@ -68,7 +68,7 @@ const seedreamSizes4K = [
  * Meta only contains dynamic props - static props like label are in components.
  * Note: Seedream doesn't use negative prompts, samplers, steps, or CLIP skip.
  */
-export const seedreamGraph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
+export const seedreamGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph with version options
   .merge(
     () =>

@@ -14,8 +14,8 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type HiDreamCtx = EcosystemGraphOutput & { baseModel: 'HiDream' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
 
 /**
  * Creates step input for HiDream ecosystem.
@@ -31,7 +31,7 @@ export const createHiDreamInput = defineHandler<HiDreamCtx, TextToImageStepTempl
 
     // Use HiDream-specific input transformation
     const hiDreamResult = getHiDreamInput({
-      baseModel: 'HiDream',
+      ecosystem: 'HiDream',
       workflow: data.workflow,
       resources: [
         {

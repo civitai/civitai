@@ -17,8 +17,8 @@ import { openaiVersionIds } from '~/shared/data-graph/generation/openai-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type OpenAICtx = EcosystemGraphOutput & { baseModel: 'OpenAI' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type OpenAICtx = EcosystemGraphOutput & { ecosystem: 'OpenAI' };
 
 // Return type union
 type OpenAIInput =

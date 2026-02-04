@@ -11,8 +11,8 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type SoraCtx = EcosystemGraphOutput & { baseModel: 'Sora2' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type SoraCtx = EcosystemGraphOutput & { ecosystem: 'Sora2' };
 
 // Return type union
 type SoraInput = Sora2TextToVideoInput | Sora2ImageToVideoInput;

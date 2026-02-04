@@ -190,7 +190,7 @@ const wanInterpolatorModels = [
 
 /** Base context for version subgraphs */
 type WanVersionCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   model: ResourceData | undefined;
   wanVersion: WanVersion;
@@ -228,10 +228,10 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     'resources',
     (ctx) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: 2, // Fal provider has 2 max resources
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   // Effect: Sync model and ecosystem when resolution changes (img2vid only)
   // Ensures the correct model variant is selected for the current resolution
@@ -244,19 +244,19 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
       const targetEcosystemKey = resolution === '480p' ? 'WanVideo14B_I2V_480p' : 'WanVideo14B_I2V_720p';
 
       // Skip if already using the correct model variant and ecosystem
-      if (ctx.model?.id === targetModel.id && ctx.baseModel === targetEcosystemKey) return;
+      if (ctx.model?.id === targetModel.id && ctx.ecosystem === targetEcosystemKey) return;
 
       // Skip if current ecosystem is not a Wan 2.1 variant
       // (e.g., user selected Wan 2.2, don't force back to 2.1)
       if (
-        ctx.baseModel !== 'WanVideo14B_I2V_480p' &&
-        ctx.baseModel !== 'WanVideo14B_I2V_720p'
+        ctx.ecosystem !== 'WanVideo14B_I2V_480p' &&
+        ctx.ecosystem !== 'WanVideo14B_I2V_720p'
       ) {
         return;
       }
 
       // Update both ecosystem and model together atomically
-      set('baseModel', targetEcosystemKey);
+      set('ecosystem', targetEcosystemKey);
       set('model', {
         id: targetModel.id,
         baseModel: targetModel.baseModel,
@@ -275,9 +275,9 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
       let targetResolution: '480p' | '720p' | null = null;
 
       // Check ecosystem key to determine target resolution
-      if (ctx.baseModel === 'WanVideo14B_I2V_480p') {
+      if (ctx.ecosystem === 'WanVideo14B_I2V_480p') {
         targetResolution = '480p';
-      } else if (ctx.baseModel === 'WanVideo14B_I2V_720p') {
+      } else if (ctx.ecosystem === 'WanVideo14B_I2V_720p') {
         targetResolution = '720p';
       }
 
@@ -329,10 +329,10 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     'resources',
     (ctx) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: 2,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 /**
@@ -370,10 +370,10 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
     'resources',
     (ctx) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: 2,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 /**
@@ -405,10 +405,10 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     'resources',
     (ctx) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: 2,
       }),
-    ['baseModel']
+    ['ecosystem']
   );
 
 // =============================================================================
@@ -416,7 +416,7 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
 // =============================================================================
 
 /** Context shape for wan graph */
-type WanCtx = { baseModel: string; workflow: string; model: ResourceData | undefined };
+type WanCtx = { ecosystem: string; workflow: string; model: ResourceData | undefined };
 
 /**
  * Wan video generation controls.

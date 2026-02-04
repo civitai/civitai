@@ -73,7 +73,7 @@ const klingDurations = [
 // =============================================================================
 
 /** Context shape for kling graph */
-type KlingCtx = { baseModel: string; workflow: string };
+type KlingCtx = { ecosystem: string; workflow: string };
 
 /**
  * Kling video generation controls.

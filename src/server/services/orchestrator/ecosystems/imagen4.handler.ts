@@ -11,8 +11,8 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type Imagen4Ctx = EcosystemGraphOutput & { baseModel: 'Imagen4' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type Imagen4Ctx = EcosystemGraphOutput & { ecosystem: 'Imagen4' };
 
 // Supported aspect ratios for Imagen4
 type Imagen4AspectRatio = '16:9' | '4:3' | '1:1' | '3:4' | '9:16';
