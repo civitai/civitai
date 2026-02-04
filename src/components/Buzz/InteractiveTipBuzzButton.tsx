@@ -126,7 +126,7 @@ export function InteractiveTipBuzzButton({
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
       return Math.min(
-        buzzConstants.maxEntityTip,
+        buzzConstants.maxTipAmount,
         Math.min(currencyBalance ?? 0, prevCounter + step)
       );
     });
@@ -226,7 +226,7 @@ export function InteractiveTipBuzzButton({
   const processEnteredNumber = (value: string) => {
     let amount = Number(value);
     if (isNaN(amount) || amount < 1) amount = 1;
-    else if (amount > buzzConstants.maxEntityTip) amount = buzzConstants.maxEntityTip;
+    else if (amount > buzzConstants.maxTipAmount) amount = buzzConstants.maxTipAmount;
     else if (currencyBalance && amount > currencyBalance) amount = currencyBalance ?? 0;
     setBuzzCounter(amount);
 
@@ -287,7 +287,7 @@ export function InteractiveTipBuzzButton({
 
     if (startTimerTimeoutRef.current !== null) {
       // Was click
-      setBuzzCounter((x) => Math.min(buzzConstants.maxEntityTip, x + CLICK_AMOUNT));
+      setBuzzCounter((x) => Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT));
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
 
