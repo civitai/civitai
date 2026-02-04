@@ -222,7 +222,7 @@ export const upsertChallengeBaseSchema = z.object({
   description: z.string().optional(),
   theme: z.string().optional(),
   invitation: z.string().optional(),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageSchema,
   nsfwLevel: z.number().min(1).max(32).default(1),
   allowedNsfwLevel: z.number().min(1).max(63).default(1),
   modelVersionIds: z.array(z.number()).default([]),

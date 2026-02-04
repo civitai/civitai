@@ -684,16 +684,14 @@ export async function upsertChallenge({
   }
 
   // Handle cover image - create Image record if needed (like Article does)
-  let coverImageId: number | null = null;
-  if (coverImage) {
-    if (coverImage.id) {
-      // Use existing image ID
-      coverImageId = coverImage.id;
-    } else if (coverImage.url) {
-      // Create new Image record from uploaded file
-      const result = await createImage({ ...coverImage, userId });
-      coverImageId = result.id;
-    }
+  let coverImageId: number;
+  if (coverImage.id) {
+    // Use existing image ID
+    coverImageId = coverImage.id;
+  } else {
+    // Create new Image record from uploaded file
+    const result = await createImage({ ...coverImage, userId });
+    coverImageId = result.id;
   }
 
   if (id) {

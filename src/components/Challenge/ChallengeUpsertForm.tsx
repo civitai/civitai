@@ -51,6 +51,9 @@ const schema = upsertChallengeBaseSchema
   .omit({ prizes: true, entryPrize: true, judgeId: true })
   .extend({
     judgeId: z.string().nullable().optional(),
+    coverImage: z
+      .object({ id: z.number().optional(), url: z.string() })
+      .refine((val) => !!val.url, { error: 'Cover image is required' }),
     prize1Buzz: z.number().min(0).default(5000),
     prize2Buzz: z.number().min(0).default(2500),
     prize3Buzz: z.number().min(0).default(1000),
@@ -115,7 +118,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       description: challenge?.description ?? '',
       theme: challenge?.theme ?? '',
       invitation: challenge?.invitation ?? '',
-      coverImage: challenge?.coverImage ?? null,
+      coverImage: challenge?.coverImage ?? undefined,
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? 1,
@@ -229,27 +232,42 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           <Stack gap="md">
             <Title order={4}>Basic Information</Title>
 
-            <InputText
-              name="title"
-              label="Title"
-              placeholder="Enter challenge title"
-              withAsterisk
-              disabled={isTerminal}
-            />
+            <div className="flex flex-col-reverse gap-4 sm:flex-row sm:items-start sm:gap-6">
+              <Stack gap="md" className="min-w-0 flex-1">
+                <InputText
+                  name="title"
+                  label="Title"
+                  placeholder="Enter challenge title"
+                  withAsterisk
+                  disabled={isTerminal}
+                />
 
-            <InputText
-              name="theme"
-              label="Theme"
-              placeholder="1-2 word theme (e.g., 'Neon Dreams')"
-              disabled={isTerminal}
-            />
+                <InputText
+                  name="theme"
+                  label="Theme"
+                  placeholder="1-2 word theme (e.g., 'Neon Dreams')"
+                  disabled={isTerminal}
+                />
 
-            <InputText
-              name="invitation"
-              label="Invitation"
-              placeholder="Short tagline to invite participants"
-              disabled={isTerminal}
-            />
+                <InputText
+                  name="invitation"
+                  label="Invitation"
+                  placeholder="Short tagline to invite participants"
+                  disabled={isTerminal}
+                />
+              </Stack>
+
+              <div className="w-full sm:w-80 sm:shrink-0">
+                <InputSimpleImageUpload
+                  name="coverImage"
+                  label="Cover Image"
+                  aspectRatio={3 / 4}
+                  withAsterisk
+                  withNsfwLevel={false}
+                  disabled={isTerminal}
+                />
+              </div>
+            </div>
 
             <InputRTE
               name="description"
@@ -259,14 +277,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               includeControls={['heading', 'formatting', 'list', 'link']}
               editorSize="lg"
               stickyToolbar
-              disabled={isTerminal}
-            />
-
-            <InputSimpleImageUpload
-              name="coverImage"
-              label="Cover Image"
-              description="Suggested resolution: 1024 x 768 (4:3 aspect ratio, optional)"
-              withNsfwLevel={false}
               disabled={isTerminal}
             />
           </Stack>
