@@ -23,7 +23,7 @@ test.describe('generation', () => {
       });
     }
     if (mockWhatIf) {
-      await page.route(/\/api\/trpc\/orchestrator.getImageWhatIf(\?|$)/, async (route) => {
+      await page.route(/\/api\/trpc\/orchestrator.whatIfFromGraph(\?|$)/, async (route) => {
         await route.fulfill({ json: getImageWhatIfReturn });
       });
     }
@@ -136,7 +136,7 @@ test.describe('generation', () => {
       .getByRole('textbox', { name: 'Your prompt goes here...' })
       .fill('Test prompt for reset functionality');
 
-    await page.route(/\/api\/trpc\/orchestrator.generateImage(\?|$)/, async (route, request) => {
+    await page.route(/\/api\/trpc\/orchestrator.generateFromGraph(\?|$)/, async (route, request) => {
       const params = parseRequestParams(request);
       expect(params).toHaveProperty('engine', null); // or not be there
       await route.fulfill({ json: {} });
