@@ -101,7 +101,7 @@ const hiDreamAspectRatios = [
 
 /** Context shape passed to HiDream variant subgraphs */
 type HiDreamVariantCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   model: ResourceData;
   hiDreamVariant: HiDreamVariant;
@@ -123,10 +123,10 @@ const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: hiDreamAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
@@ -168,7 +168,7 @@ const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
  * - full: resources, aspectRatio, negativePrompt, sampler, cfgScale, steps, seed
  */
 export const hiDreamGraph = new DataGraph<
-  { baseModel: string; workflow: string; model: ResourceData },
+  { ecosystem: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options

@@ -12,8 +12,8 @@ import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type KlingCtx = EcosystemGraphOutput & { baseModel: 'Kling' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type KlingCtx = EcosystemGraphOutput & { ecosystem: 'Kling' };
 
 // Map from version ID to model version string
 type KlingModel = 'v1_6' | 'v2' | 'v2_5_turbo';

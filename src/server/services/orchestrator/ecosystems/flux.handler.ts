@@ -16,9 +16,9 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type FluxCtx = EcosystemGraphOutput & {
-  baseModel: 'Flux1' | 'FluxKrea';
+  ecosystem: 'Flux1' | 'FluxKrea';
 };
 
 // =============================================================================

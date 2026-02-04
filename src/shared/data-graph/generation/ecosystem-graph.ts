@@ -1,13 +1,13 @@
 /**
  * Ecosystem Graph
  *
- * Subgraph for ecosystem-dependent nodes (baseModel, model, modelFamily).
+ * Subgraph for ecosystem-dependent nodes (ecosystem, model, modelFamily).
  * Only included when the workflow has ecosystem support.
  *
  * This graph expects `workflow`, `output`, and `input` to be available in the parent context.
  *
  * Architecture:
- * - baseModel and model nodes are defined at this level (shared across all model families)
+ * - ecosystem and model nodes are defined at this level (shared across all model families)
  * - modelFamily discriminator selects family-specific nodes (SD vs Flux)
  * - Family subgraphs only contain nodes specific to that family (no model node)
  */
@@ -78,9 +78,9 @@ export const ecosystemGraph = new DataGraph<
   { workflow: string; output: 'image' | 'video'; input: 'text' | 'image' | 'video' },
   GenerationCtx
 >()
-  // baseModel depends on workflow to filter compatible ecosystems
+  // ecosystem depends on workflow to filter compatible ecosystems
   .node(
-    'baseModel',
+    'ecosystem',
     (ctx) => {
       // Get ecosystems compatible with the selected workflow (as IDs, convert to keys)
       const compatibleEcosystemIds = getEcosystemsForWorkflow(ctx.workflow);
@@ -102,32 +102,32 @@ export const ecosystemGraph = new DataGraph<
     },
     ['workflow', 'output']
   )
-  // When workflow changes, update baseModel if incompatible
+  // When workflow changes, update ecosystem if incompatible
   .effect(
     (ctx, _ext, set) => {
-      const ecosystem = ctx.baseModel ? ecosystemByKey.get(ctx.baseModel) : undefined;
+      const ecosystem = ctx.ecosystem ? ecosystemByKey.get(ctx.ecosystem) : undefined;
       if (!ecosystem) return;
 
-      // If current baseModel supports the workflow, nothing to do
+      // If current ecosystem supports the workflow, nothing to do
       if (isWorkflowAvailable(ctx.workflow, ecosystem.id)) {
         return;
       }
 
       // Find a compatible ecosystem for this workflow
-      const validEcosystem = getValidEcosystemForWorkflow(ctx.workflow, ctx.baseModel);
-      if (validEcosystem !== ctx.baseModel) {
-        set('baseModel', validEcosystem);
+      const validEcosystem = getValidEcosystemForWorkflow(ctx.workflow, ctx.ecosystem);
+      if (validEcosystem !== ctx.ecosystem) {
+        set('ecosystem', validEcosystem);
       }
     },
     ['workflow']
   )
-  // When baseModel changes, check if current workflow is still supported
+  // When ecosystem changes, check if current workflow is still supported
   .effect(
     (ctx, _ext, set) => {
-      const ecosystem = ctx.baseModel ? ecosystemByKey.get(ctx.baseModel) : undefined;
+      const ecosystem = ctx.ecosystem ? ecosystemByKey.get(ctx.ecosystem) : undefined;
       if (!ecosystem) return;
 
-      // If current workflow is supported by the new baseModel, nothing to do
+      // If current workflow is supported by the new ecosystem, nothing to do
       if (isWorkflowAvailable(ctx.workflow, ecosystem.id)) {
         return;
       }
@@ -142,7 +142,7 @@ export const ecosystemGraph = new DataGraph<
         set('workflow', 'txt2img');
       }
     },
-    ['baseModel']
+    ['ecosystem']
   )
   // Quantity node - workflow-dependent (draft uses step=4)
   .node(
@@ -164,13 +164,13 @@ export const ecosystemGraph = new DataGraph<
       const slots = config?.slots;
       return { ...imagesNode({ max, min, slots }), when: ctx.input === 'image' };
     },
-    ['workflow', 'baseModel', 'model', 'input']
+    ['workflow', 'ecosystem', 'model', 'input']
   )
 
   // Use groupedDiscriminator to reduce TypeScript type complexity:
-  // - Multiple baseModel values that share the same graph are grouped into ONE type branch
+  // - Multiple ecosystem values that share the same graph are grouped into ONE type branch
   // - This reduces union type bloat from O(ecosystems) to O(families)
-  .groupedDiscriminator('baseModel', [
+  .groupedDiscriminator('ecosystem', [
     // Image ecosystems - Stable Diffusion family (ONE type branch)
     {
       values: ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'] as const,
@@ -246,7 +246,7 @@ export const ecosystemGraph = new DataGraph<
  * 2. Ecosystem overrides
  * 3. Workflow base nodes
  */
-function getImageConfig(ctx: { workflow?: string; baseModel?: string; model?: { id: number } }) {
-  if (!ctx.workflow || !ctx.baseModel) return undefined;
-  return getImagesConfig(workflowConfigs, ctx.workflow, ctx.baseModel, ctx.model?.id);
+function getImageConfig(ctx: { workflow?: string; ecosystem?: string; model?: { id: number } }) {
+  if (!ctx.workflow || !ctx.ecosystem) return undefined;
+  return getImagesConfig(workflowConfigs, ctx.workflow, ctx.ecosystem, ctx.model?.id);
 }

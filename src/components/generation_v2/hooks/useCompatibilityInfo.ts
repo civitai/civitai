@@ -57,7 +57,7 @@ export interface CompatibilityInfo {
 
 export interface UseCompatibilityInfoOptions {
   workflow: string | undefined;
-  baseModel: string | undefined;
+  ecosystem: string | undefined;
 }
 
 // =============================================================================
@@ -66,10 +66,10 @@ export interface UseCompatibilityInfoOptions {
 
 export function useCompatibilityInfo({
   workflow,
-  baseModel,
+  ecosystem,
 }: UseCompatibilityInfoOptions): CompatibilityInfo {
   return useMemo(() => {
-    const currentEcosystem = baseModel ? ecosystemByKey.get(baseModel) : undefined;
+    const currentEcosystem = ecosystem ? ecosystemByKey.get(ecosystem) : undefined;
     const currentEcosystemId = currentEcosystem?.id;
     const currentEcosystemKey = currentEcosystem?.key;
 
@@ -120,7 +120,7 @@ export function useCompatibilityInfo({
     };
 
     const getTargetEcosystemForWorkflow = (workflowId: string) => {
-      // Use the same logic as ecosystem-graph: check if current baseModel supports the workflow,
+      // Use the same logic as ecosystem-graph: check if current ecosystem supports the workflow,
       // otherwise fall back to the default ecosystem for that workflow
       return getValidEcosystemForWorkflow(workflowId, currentEcosystemKey);
     };
@@ -167,5 +167,5 @@ export function useCompatibilityInfo({
       getTargetEcosystemForWorkflow,
       getTargetWorkflowForEcosystem,
     };
-  }, [workflow, baseModel]);
+  }, [workflow, ecosystem]);
 }

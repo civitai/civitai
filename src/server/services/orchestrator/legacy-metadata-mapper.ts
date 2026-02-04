@@ -205,10 +205,10 @@ export function resolveWorkflow(
 // =============================================================================
 
 /**
- * Infers the baseModel/ecosystem key when params.baseModel is missing.
+ * Infers the ecosystem key when params.baseModel/ecosystem is missing.
  *
  * Priority:
- * 1. params.baseModel (already present)
+ * 1. params.ecosystem or params.baseModel (legacy) - already present
  * 2. params.engine → ENGINE_TO_BASE_MODEL lookup
  * 3. Enriched resources → getBaseModelFromResources (checkpoint baseModel → group)
  */
@@ -216,7 +216,8 @@ export function inferBaseModel(
   params: GeneratedImageStepMetadata['params'],
   enrichedResources: GenerationResource[]
 ): string | undefined {
-  // 1. Direct from params
+  // 1. Direct from params (check both new 'ecosystem' and legacy 'baseModel')
+  if ((params as any)?.ecosystem) return (params as any).ecosystem;
   if (params?.baseModel) return params.baseModel;
 
   // 2. From engine (video workflows)
@@ -286,8 +287,8 @@ function splitResourcesForLegacy(
  * Maps raw generation params + enriched resources into graph-compatible input.
  *
  * Passes through all params by default, only transforming fields that need it:
- * - Computes `workflow` (from stepType + params + baseModel)
- * - Computes `baseModel` (from params + resources)
+ * - Computes `workflow` (from stepType + params + ecosystem)
+ * - Computes `ecosystem` (from params + resources) - maps legacy 'baseModel' to 'ecosystem'
  * - Computes `aspectRatio` (from width/height into { value, width, height })
  * - Computes `images` (from sourceImage/images array)
  * - Maps legacy names (`openAITransparentBackground` → `transparent`, `openAIQuality` → `quality`)
@@ -308,14 +309,14 @@ export function mapDataToGraphInput(
   // are Record<string, unknown> supersets with overlapping fields)
   const p = params as GeneratedImageStepMetadata['params'];
 
-  // Infer baseModel first — needed for workflow resolution
-  const baseModel = inferBaseModel(p, enrichedResources);
+  // Infer ecosystem first — needed for workflow resolution
+  const ecosystem = inferBaseModel(p, enrichedResources);
 
   // Count images from params
   const imageCount = p?.images?.length ?? (p?.sourceImage ? 1 : 0);
 
   // Resolve workflow from step type + params + ecosystem context
-  const workflow = resolveWorkflow(options?.stepType, p, baseModel, imageCount);
+  const workflow = resolveWorkflow(options?.stepType, p, ecosystem, imageCount);
 
   // Build aspect ratio from width/height in graph format { value, width, height }
   let aspectRatio: { value: string; width: number; height: number } | undefined;
@@ -372,9 +373,9 @@ export function mapDataToGraphInput(
     // Legacy field names that map to different graph node keys
     openAITransparentBackground,
     openAIQuality,
+    baseModel: _legacyBaseModel, // Legacy field - mapped to 'ecosystem' below
     // Overridden by computed values below
     workflow: _wf,
-    baseModel: _bm,
     aspectRatio: _ar,
     images: _imgs,
     ...rest
@@ -383,7 +384,7 @@ export function mapDataToGraphInput(
   return removeEmpty({
     ...rest,
     workflow,
-    baseModel,
+    ecosystem, // Maps from legacy 'baseModel' field
     aspectRatio,
     images,
     // Map legacy field names to graph node keys
@@ -396,6 +397,8 @@ export function mapDataToGraphInput(
  * Maps legacy step metadata to the new generation-graph input format.
  * Thin wrapper around mapDataToGraphInput that also handles resource splitting
  * with legacy strength merging and fluxMode model fallback.
+ *
+ * Handles backwards compatibility by mapping old 'baseModel' field to new 'ecosystem' field.
  *
  * @param step - The workflow step containing legacy metadata
  * @param enrichedResources - Full resource data looked up from the database
@@ -474,6 +477,7 @@ export function getGenerationInput(
  * This is the inverse of mapDataToGraphInput.
  *
  * Transforms:
+ * - ecosystem → baseModel (for legacy compatibility)
  * - aspectRatio: { value, width, height } → string value
  * - images → sourceImage (first image)
  * - transparent → openAITransparentBackground
@@ -489,6 +493,7 @@ export function mapGraphToLegacyParams(
 ): Record<string, unknown> {
   const {
     // Transform these fields
+    ecosystem,
     aspectRatio,
     images,
     transparent,
@@ -525,6 +530,7 @@ export function mapGraphToLegacyParams(
 
   return removeEmpty({
     ...rest,
+    baseModel: ecosystem, // Map back to legacy field name
     aspectRatio: aspectRatioValue,
     width,
     height,

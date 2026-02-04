@@ -92,7 +92,7 @@ const flux2KleinSchedules = ['simple', 'discrete', 'karras', 'exponential'] as c
 
 /** Context shape passed to flux2 klein mode subgraphs */
 type Flux2KleinModeCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   flux2KleinMode: Flux2KleinMode;
 };
@@ -106,10 +106,10 @@ const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
@@ -125,10 +125,10 @@ const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
@@ -154,7 +154,7 @@ const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
  * Supports negative prompts, samplers, and LoRA resources.
  */
 export const flux2KleinGraph = new DataGraph<
-  { baseModel: string; workflow: string },
+  { ecosystem: string; workflow: string },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options (defaultModelId inferred from baseModel)
@@ -168,7 +168,7 @@ export const flux2KleinGraph = new DataGraph<
     'flux2KleinMode',
     (ctx): Flux2KleinMode => {
       // Map baseModel to mode
-      switch (ctx.baseModel) {
+      switch (ctx.ecosystem) {
         case 'Flux2Klein_9B':
           return '9b';
         case 'Flux2Klein_9B_base':
@@ -181,7 +181,7 @@ export const flux2KleinGraph = new DataGraph<
           return '9b'; // Default
       }
     },
-    ['baseModel']
+    ['ecosystem']
   )
   // Grouped discriminator: distilled (9b/4b) and base (9b-base/4b-base) share graphs
   .groupedDiscriminator('flux2KleinMode', [

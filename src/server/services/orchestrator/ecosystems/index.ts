@@ -60,60 +60,60 @@ export type StepInput =
   | ImageGenStepTemplate
   | VideoGenStepTemplate;
 
-/** Validated output from the generation graph with baseModel */
-export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
+/** Validated output from the generation graph with ecosystem */
+export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 
 /** SD family context */
 export type SDFamilyCtx = EcosystemGraphOutput & {
-  baseModel: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
+  ecosystem: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
 };
 
 /** Flux family context (Flux1/FluxKrea - textToImage) */
 export type FluxCtx = EcosystemGraphOutput & {
-  baseModel: 'Flux1' | 'FluxKrea';
+  ecosystem: 'Flux1' | 'FluxKrea';
 };
 
 /** Flux2 context */
-export type Flux2Ctx = EcosystemGraphOutput & { baseModel: 'Flux2' };
+export type Flux2Ctx = EcosystemGraphOutput & { ecosystem: 'Flux2' };
 
 /** Flux2 Klein context */
 export type Flux2KleinCtx = EcosystemGraphOutput & {
-  baseModel: 'Flux2Klein_9B' | 'Flux2Klein_9B_base' | 'Flux2Klein_4B' | 'Flux2Klein_4B_base';
+  ecosystem: 'Flux2Klein_9B' | 'Flux2Klein_9B_base' | 'Flux2Klein_4B' | 'Flux2Klein_4B_base';
 };
 
 /** Flux Kontext context */
-export type FluxKontextCtx = EcosystemGraphOutput & { baseModel: 'Flux1Kontext' };
+export type FluxKontextCtx = EcosystemGraphOutput & { ecosystem: 'Flux1Kontext' };
 
 /** Qwen context */
-export type QwenCtx = EcosystemGraphOutput & { baseModel: 'Qwen' };
+export type QwenCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' };
 
 /** Seedream context */
-export type SeedreamCtx = EcosystemGraphOutput & { baseModel: 'Seedream' };
+export type SeedreamCtx = EcosystemGraphOutput & { ecosystem: 'Seedream' };
 
 /** Imagen4 context */
-export type Imagen4Ctx = EcosystemGraphOutput & { baseModel: 'Imagen4' };
+export type Imagen4Ctx = EcosystemGraphOutput & { ecosystem: 'Imagen4' };
 
 /** OpenAI context */
-export type OpenAICtx = EcosystemGraphOutput & { baseModel: 'OpenAI' };
+export type OpenAICtx = EcosystemGraphOutput & { ecosystem: 'OpenAI' };
 
 /** NanoBanana context */
-export type NanoBananaCtx = EcosystemGraphOutput & { baseModel: 'NanoBanana' };
+export type NanoBananaCtx = EcosystemGraphOutput & { ecosystem: 'NanoBanana' };
 
 /** Chroma context */
-export type ChromaCtx = EcosystemGraphOutput & { baseModel: 'Chroma' };
+export type ChromaCtx = EcosystemGraphOutput & { ecosystem: 'Chroma' };
 
 /** ZImage context (ZImageTurbo and ZImageBase) */
-export type ZImageCtx = EcosystemGraphOutput & { baseModel: 'ZImageTurbo' | 'ZImageBase' };
+export type ZImageCtx = EcosystemGraphOutput & { ecosystem: 'ZImageTurbo' | 'ZImageBase' };
 
 /** HiDream context */
-export type HiDreamCtx = EcosystemGraphOutput & { baseModel: 'HiDream' };
+export type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
 
 /** PonyV7 context */
-export type PonyV7Ctx = EcosystemGraphOutput & { baseModel: 'PonyV7' };
+export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 
 /** Wan video ecosystems context */
 export type WanCtx = EcosystemGraphOutput & {
-  baseModel:
+  ecosystem:
     | 'WanVideo'
     | 'WanVideo1_3B_T2V'
     | 'WanVideo14B_T2V'
@@ -127,25 +127,25 @@ export type WanCtx = EcosystemGraphOutput & {
 };
 
 /** Vidu context */
-export type ViduCtx = EcosystemGraphOutput & { baseModel: 'Vidu' };
+export type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 
 /** Kling context */
-export type KlingCtx = EcosystemGraphOutput & { baseModel: 'Kling' };
+export type KlingCtx = EcosystemGraphOutput & { ecosystem: 'Kling' };
 
 /** Hunyuan (HyV1) context */
-export type HunyuanCtx = EcosystemGraphOutput & { baseModel: 'HyV1' };
+export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 
 /** LTXV2 context */
-export type LTXV2Ctx = EcosystemGraphOutput & { baseModel: 'LTXV2' };
+export type LTXV2Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV2' };
 
 /** Mochi context */
-export type MochiCtx = EcosystemGraphOutput & { baseModel: 'Mochi' };
+export type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
 
 /** Sora2 context */
-export type SoraCtx = EcosystemGraphOutput & { baseModel: 'Sora2' };
+export type SoraCtx = EcosystemGraphOutput & { ecosystem: 'Sora2' };
 
 /** Veo3 context */
-export type Veo3Ctx = EcosystemGraphOutput & { baseModel: 'Veo3' };
+export type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 
 // =============================================================================
 // Exports - Individual handlers
@@ -189,7 +189,7 @@ export type { GenerationHandlerCtx } from '../orchestration-new.service';
 
 /**
  * Creates step input for any ecosystem.
- * Routes to the appropriate handler based on baseModel.
+ * Routes to the appropriate handler based on ecosystem.
  * Normalizes seed value before passing to handlers.
  *
  * @param data - Validated ecosystem graph output
@@ -204,9 +204,9 @@ export async function createEcosystemStepInput(
     ...data,
     seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
   };
-  const { baseModel } = normalizedData;
+  const { ecosystem } = normalizedData;
 
-  switch (baseModel) {
+  switch (ecosystem) {
     // =========================================================================
     // Image Ecosystems - textToImage step type
     // =========================================================================
@@ -325,6 +325,6 @@ export async function createEcosystemStepInput(
       return { $type: 'videoGen', input: await createVeo3Input(normalizedData, handlerCtx) };
 
     default:
-      throw new Error(`Unknown ecosystem: ${baseModel}`);
+      throw new Error(`Unknown ecosystem: ${ecosystem}`);
   }
 }

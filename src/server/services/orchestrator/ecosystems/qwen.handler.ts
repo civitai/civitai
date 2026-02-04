@@ -12,8 +12,8 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type QwenCtx = EcosystemGraphOutput & { baseModel: 'Qwen' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type QwenCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' };
 
 // Return type union
 type QwenInput = Qwen20bCreateImageGenInput | Qwen20bEditImageGenInput;

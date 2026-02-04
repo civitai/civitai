@@ -13,8 +13,8 @@ import { veo3VersionIds } from '~/shared/data-graph/generation/veo3-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type Veo3Ctx = EcosystemGraphOutput & { baseModel: 'Veo3' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 
 // Map from version ID to mode (fast/standard)
 type Veo3Mode = 'fast' | 'standard';

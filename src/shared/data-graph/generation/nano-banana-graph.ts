@@ -68,7 +68,7 @@ const resolutionOptions = ['1K', '2K', '4K'] as const;
 
 /** Context shape passed to nano banana mode subgraphs */
 type NanoBananaModeCtx = {
-  baseModel: string;
+  ecosystem: string;
   workflow: string;
   model: ResourceData;
   nanoBananaMode: NanoBananaMode;
@@ -107,7 +107,7 @@ const proModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
  * - pro: negativePrompt, aspectRatio, resolution, seed
  */
 export const nanoBananaGraph = new DataGraph<
-  { baseModel: string; workflow: string; model: ResourceData },
+  { ecosystem: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options

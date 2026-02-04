@@ -21,8 +21,8 @@ import {
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type NanoBananaCtx = EcosystemGraphOutput & { baseModel: 'NanoBanana' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type NanoBananaCtx = EcosystemGraphOutput & { ecosystem: 'NanoBanana' };
 
 // Return type union
 type NanoBananaInput =

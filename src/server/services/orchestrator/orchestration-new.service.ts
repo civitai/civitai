@@ -14,7 +14,7 @@
  *    - img2img:remove-background → comfy step
  *    - All other workflows → ecosystem discriminator
  *
- * 2. BASEMODEL DISCRIMINATOR (second level - via ecosystemGraph):
+ * 2. ecosystem DISCRIMINATOR (second level - via ecosystemGraph):
  *    - Routes to appropriate step type based on ecosystem
  */
 
@@ -99,8 +99,8 @@ type StepInput = WorkflowStepTemplate & {
   input: unknown;
 };
 
-/** Ecosystem workflows - GenerationGraphOutput where baseModel is defined */
-type EcosystemGraphOutput = Extract<GenerationGraphOutput, { baseModel: string }>;
+/** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
+type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
 
 /**
  * A Map that throws an error when getting a value that doesn't exist.
@@ -446,9 +446,9 @@ async function createStepInput(
       return createImageRemoveBackgroundInput(data);
   }
 
-  // Ecosystem workflows - baseModel must be defined
-  if (!('baseModel' in data) || !data.baseModel) {
-    throw new Error('baseModel is required for ecosystem workflows');
+  // Ecosystem workflows - ecosystem must be defined
+  if (!('ecosystem' in data) || !data.ecosystem) {
+    throw new Error('ecosystem is required for ecosystem workflows');
   }
 
   return createEcosystemStepInput(data as EcosystemGraphOutput, handlerCtx);
@@ -509,6 +509,8 @@ export async function createWorkflowStepFromGraph(
     Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined && v !== null))
   );
 
+  // TODO - if the workflow is comes from an enhancement category, store the enhancement as a transformation with the original workflow params/resources preserved
+
   return {
     $type,
     input: { ...(input as object), outputFormat: data.outputFormat },
@@ -555,7 +557,7 @@ export async function generateFromGraph({
   const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator });
 
   // Determine workflow tags
-  const baseModel = 'baseModel' in data ? data.baseModel : undefined;
+  const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
   const [process, name] = data.workflow.split(':');
 
   const tags = [
@@ -563,7 +565,7 @@ export async function generateFromGraph({
     data.output === 'image' ? WORKFLOW_TAGS.IMAGE : WORKFLOW_TAGS.VIDEO,
     process,
     name,
-    baseModel,
+    ecosystem,
     ...customTags,
   ].filter(isDefined);
 
@@ -747,7 +749,7 @@ export interface NormalizedWorkflowStepOutput {
 
 /** Step metadata with mapped params and enriched resources */
 export interface NormalizedStepMetadata {
-  /** Mapped params ready for the generation graph (workflow, baseModel, aspectRatio resolved) */
+  /** Mapped params ready for the generation graph (workflow, ecosystem, aspectRatio resolved) */
   params: Partial<GenerationGraphValues> & Record<string, unknown>;
   /** Enriched resources with full model/version data for display */
   resources: GenerationResource[];
@@ -989,7 +991,7 @@ function formatStepOutputs(
 
 /**
  * Simplified step formatting that works for all step types.
- * Uses mapDataToGraphInput to handle workflow/baseModel/aspectRatio resolution uniformly.
+ * Uses mapDataToGraphInput to handle workflow/ecosystem/aspectRatio resolution uniformly.
  */
 function formatStep(
   workflowId: string,
@@ -1002,7 +1004,7 @@ function formatStep(
   // Get enriched resources for display (full model/version data)
   const resources = getResourcesFromStep(step, allResources);
 
-  // Map params to graph format (resolves workflow, baseModel, aspectRatio, etc.)
+  // Map params to graph format (resolves workflow, ecosystem, aspectRatio, etc.)
   // mapDataToGraphInput needs the full GenerationResource[] for model lookup
   const stepGenerationResources = getResourceRefsFromStep(step)
     .map((ref) => {

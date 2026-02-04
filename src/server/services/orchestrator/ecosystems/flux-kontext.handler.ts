@@ -15,8 +15,8 @@ import {
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { baseModel: string }>;
-type FluxKontextCtx = EcosystemGraphOutput & { baseModel: 'Flux1Kontext' };
+type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
+type FluxKontextCtx = EcosystemGraphOutput & { ecosystem: 'Flux1Kontext' };
 
 // Return type union
 type FluxKontextInput = Flux1KontextProImageGenInput | Flux1KontextMaxImageGenInput;

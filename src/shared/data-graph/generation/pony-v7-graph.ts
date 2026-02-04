@@ -61,7 +61,7 @@ const ponyV7GuidancePresets = [
  * Note: Pony V7 doesn't use negative prompts, samplers, or CLIP skip.
  * This model works best with 40+ steps.
  */
-export const ponyV7Graph = new DataGraph<{ baseModel: string; workflow: string }, GenerationCtx>()
+export const ponyV7Graph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph
   .merge(
     () =>
@@ -74,10 +74,10 @@ export const ponyV7Graph = new DataGraph<{ baseModel: string; workflow: string }
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
   .node('aspectRatio', aspectRatioNode({ options: ponyV7AspectRatios, defaultValue: '1:1' }))
   .node(

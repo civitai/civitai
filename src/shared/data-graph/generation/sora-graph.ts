@@ -44,7 +44,7 @@ const soraDurations = [
 // =============================================================================
 
 /** Context shape for sora graph */
-type SoraCtx = { baseModel: string; workflow: string };
+type SoraCtx = { ecosystem: string; workflow: string };
 
 /**
  * Sora 2 video generation controls.

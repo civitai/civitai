@@ -13,7 +13,7 @@
  *
  * Ecosystem Support Discriminator:
  * - Some workflows (like vid2vid:upscale) have no ecosystem support
- * - For these workflows, baseModel/model nodes are not rendered
+ * - For these workflows, ecosystem/model nodes are not rendered
  * - The `hasEcosystemSupport` computed node acts as a discriminator
  */
 
@@ -58,8 +58,8 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
  * Workflow-First Architecture:
  * - The `workflow` node is the primary selector (Create Image, Draft, Face Fix, etc.)
  * - `output` and `input` are computed from the selected workflow
- * - `hasEcosystemSupport` determines if baseModel/model nodes should be shown
- * - `baseModel` picker shows ecosystems compatible with the workflow, plus recent selections
+ * - `hasEcosystemSupport` determines if ecosystem/model nodes should be shown
+ * - `ecosystem` picker shows ecosystems compatible with the workflow, plus recent selections
  * - When ecosystem changes, workflow compatibility is checked and may switch to 'txt2img'
  *
  * @example
@@ -214,7 +214,7 @@ export type GenerationGraphTypes = InferDataGraph<typeof generationGraph>;
  *
  * Use this instead of `Record<string, unknown>` when working with params from
  * step metadata or the legacy data mapper. Provides type-safe access to known
- * fields like `prompt`, `workflow`, `seed`, `baseModel`, etc. without manual casting.
+ * fields like `prompt`, `workflow`, `seed`, `ecosystem`, etc. without manual casting.
  *
  * @example
  * ```ts
@@ -240,12 +240,12 @@ if ('test'.length > 5) {
       }
     }
     if (data.workflow === 'txt2img:draft') {
-      console.log(data.baseModel);
-      // Now discriminating on baseModel instead of modelFamily
-      if (data.baseModel === 'Flux1') {
+      console.log(data.ecosystem);
+      // Now discriminating on ecosystem instead of modelFamily
+      if (data.ecosystem === 'Flux1') {
         console.log(data.fluxMode);
       }
-      if (data.baseModel === 'SDXL') {
+      if (data.ecosystem === 'SDXL') {
         console.log(data.aspectRatio);
         console.log(data.seed);
         console.log(data.model);
@@ -259,8 +259,8 @@ if ('test'.length > 5) {
     }
 
     if (data.workflow === 'txt2vid') {
-      // Now discriminating on baseModel instead of modelFamily
-      if (data.baseModel === 'Vidu') {
+      // Now discriminating on ecosystem instead of modelFamily
+      if (data.ecosystem === 'Vidu') {
         console.log(data.movementAmplitude);
       }
     }

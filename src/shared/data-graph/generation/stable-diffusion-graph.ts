@@ -60,28 +60,28 @@ const workflowsWithDenoise = [
  * Meta only contains dynamic props - static props like label are in components.
  */
 export const stableDiffusionGraph = new DataGraph<
-  { baseModel: string; workflow: string; input: 'text' | 'image' | 'video' },
+  { ecosystem: string; workflow: string; input: 'text' | 'image' | 'video' },
   GenerationCtx
 >()
-  // Merge checkpoint graph (includes model node and baseModel sync effect)
+  // Merge checkpoint graph (includes model node and ecosystem sync effect)
   .merge(createCheckpointGraph())
   .node(
     'resources',
     (ctx, ext) =>
       resourcesNode({
-        baseModel: ctx.baseModel,
+        ecosystem: ctx.ecosystem,
         limit: ext.limits.maxResources,
       }),
-    ['baseModel']
+    ['ecosystem']
   )
-  .node('vae', (ctx) => vaeNode({ baseModel: ctx.baseModel }), ['baseModel'])
+  .node('vae', (ctx) => vaeNode({ ecosystem: ctx.ecosystem }), ['ecosystem'])
   .node(
     'aspectRatio',
     (ctx) => {
-      const options = ctx.baseModel === 'SD1' ? sd1AspectRatios : sdAspectRatios;
+      const options = ctx.ecosystem === 'SD1' ? sd1AspectRatios : sdAspectRatios;
       return { ...aspectRatioNode({ options }), when: ctx.input === 'text' };
     },
-    ['baseModel', 'input']
+    ['ecosystem', 'input']
   )
   .node('negativePrompt', negativePromptNode())
   .node('sampler', samplerNode())

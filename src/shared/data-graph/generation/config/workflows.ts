@@ -210,22 +210,22 @@ export const workflowConfigs: WorkflowConfigs = {
   // Image Enhancement Workflows (Standalone)
   // ===========================================================================
 
+  'img2img:upscale': {
+    label: 'Upscale',
+    description: 'Increase image resolution',
+    category: 'image-enhancements',
+    ecosystemIds: [],
+    nodes: {
+      images: { max: 1, min: 1 },
+    },
+  },
+
   'img2img:remove-background': {
     label: 'Remove Background',
     description: 'Remove the background from an image',
     category: 'image-enhancements',
     ecosystemIds: [],
     memberOnly: true,
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
-  },
-
-  'img2img:upscale': {
-    label: 'Upscale',
-    description: 'Increase image resolution',
-    category: 'image-enhancements',
-    ecosystemIds: [],
     nodes: {
       images: { max: 1, min: 1 },
     },

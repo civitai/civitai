@@ -57,25 +57,25 @@ export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
   const isMember = !!currentUser && currentUser.tier !== 'free';
-  // Access graph snapshot directly for workflow/baseModel (they exist in discriminated branches)
-  const snapshot = graph.getSnapshot() as { workflow?: string; baseModel?: string };
-  // Force re-render when workflow or baseModel changes
-  // Use loose typing for subscribe since baseModel is in a discriminated branch
+  // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
+  const snapshot = graph.getSnapshot() as { workflow?: string; ecosystem?: string };
+  // Force re-render when workflow or ecosystem changes
+  // Use loose typing for subscribe since ecosystem is in a discriminated branch
   const [, forceUpdate] = useState({});
   useEffect(() => {
     const unsubWorkflow = graph.subscribe('workflow', () => forceUpdate({}));
     type LooseGraph = { subscribe: (key: string, cb: () => void) => () => void };
-    const unsubBaseModel = (graph as LooseGraph).subscribe('baseModel', () => forceUpdate({}));
+    const unsubEcosystem = (graph as LooseGraph).subscribe('ecosystem', () => forceUpdate({}));
     return () => {
       unsubWorkflow();
-      unsubBaseModel();
+      unsubEcosystem();
     };
   }, [graph]);
 
-  // Get compatibility info based on current workflow and baseModel
+  // Get compatibility info based on current workflow and ecosystem
   const compatibility = useCompatibilityInfo({
     workflow: snapshot.workflow,
-    baseModel: snapshot.baseModel,
+    ecosystem: snapshot.ecosystem,
   });
 
   // Use ref to store the graph instance for callbacks (avoids stale closure)
@@ -91,7 +91,7 @@ export function GenerationForm() {
           // Get current ecosystem display name
           const currentEcoName =
             graph
-              .getNodeMeta('baseModel')
+              .getNodeMeta('ecosystem')
               ?.compatibleEcosystems?.find(
                 (key: string) => key === compatibility.currentEcosystemKey
               ) ?? compatibility.currentEcosystemKey;
@@ -129,16 +129,16 @@ export function GenerationForm() {
             targetWorkflowId: target.id,
           },
           onConfirm: () => {
-            // Set both workflow and baseModel together to avoid validation issues
+            // Set both workflow and ecosystem together to avoid validation issues
             graphRef.current.set({
               workflow: target.id,
-              baseModel: newBaseModel,
+              ecosystem: newBaseModel,
             } as Parameters<typeof graph.set>[0]);
           },
         });
         return;
       }
-      graph.set({ baseModel: newBaseModel } as Parameters<typeof graph.set>[0]);
+      graph.set({ ecosystem: newBaseModel } as Parameters<typeof graph.set>[0]);
     },
     [compatibility, graph, snapshot.workflow]
   );
@@ -166,7 +166,7 @@ export function GenerationForm() {
 
             <Controller
               graph={graph}
-              name="baseModel"
+              name="ecosystem"
               render={({ value, meta }) => (
                 <BaseModelInput
                   value={value}
@@ -265,7 +265,7 @@ export function GenerationForm() {
           {/* Experimental Ecosystem Alert */}
           <Controller
             graph={graph}
-            name="baseModel"
+            name="ecosystem"
             render={({ value }) => <ExperimentalModelAlert ecosystem={value} />}
           />
 

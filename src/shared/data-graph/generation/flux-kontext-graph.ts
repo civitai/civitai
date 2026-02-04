@@ -69,7 +69,7 @@ const fluxKontextAspectRatios = [
  * Note: Flux Kontext doesn't use LoRAs, negative prompts, samplers, steps, or CLIP skip.
  */
 export const fluxKontextGraph = new DataGraph<
-  { baseModel: string; workflow: string },
+  { ecosystem: string; workflow: string },
   GenerationCtx
 >()
   // Merge checkpoint graph with version options
