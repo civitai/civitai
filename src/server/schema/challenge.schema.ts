@@ -266,3 +266,16 @@ export type GetUpcomingThemesInput = z.infer<typeof getUpcomingThemesSchema>;
 export const getUpcomingThemesSchema = z.object({
   count: z.number().min(1).max(10).default(3),
 });
+
+// Check entry eligibility for challenge submission
+export type CheckEntryEligibilityInput = z.infer<typeof checkEntryEligibilitySchema>;
+export const checkEntryEligibilitySchema = z.object({
+  challengeId: z.number(),
+  imageIds: z.array(z.number()).min(1).max(100),
+});
+
+export type ImageEligibilityResult = {
+  imageId: number;
+  eligible: boolean;
+  reasons: string[];
+};

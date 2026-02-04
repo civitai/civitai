@@ -8,7 +8,10 @@ import {
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  setChallengeActive,
   updateChallengeStatus,
+  type RecentEntry,
+  type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type {
@@ -20,9 +23,7 @@ import {
   endChallenge,
   getActiveChallenges,
   getChallengeConfig,
-  getChallengesReadyToStart,
   getChallengeTypeConfig,
-  getEndedActiveChallenges,
   getUpcomingSystemChallenge,
   getJudgePrompts,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -62,17 +63,7 @@ const processDailyChallengeEntriesJob = createJob(
   reviewEntries
 );
 
-const pickDailyChallengeWinnersJob = createJob(
-  'daily-challenge-pick-winners',
-  '0 0 * * *',
-  pickWinners
-);
-
-export const dailyChallengeJobs = [
-  dailyChallengeSetupJob,
-  processDailyChallengeEntriesJob,
-  pickDailyChallengeWinnersJob,
-];
+export const dailyChallengeJobs = [dailyChallengeSetupJob, processDailyChallengeEntriesJob];
 
 // Job Functions
 // ----------------------------------------------
@@ -274,9 +265,11 @@ export async function createUpcomingChallenge() {
     createdById: challengeTypeConfig.userId,
     source: ChallengeSource.System,
     status: ChallengeStatus.Scheduled,
+    judgeId: config.defaultJudgeId,
     metadata: {
       challengeType: config.challengeType,
       resourceUserId: randomUser.userId,
+      resourceModelId: resource.modelId,
     },
   });
   log('Challenge record created:', challengeId);
@@ -449,14 +442,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Get last time reviewed from Challenge metadata or default to challenge start
   let lastReviewedAt = currentChallenge.date ?? new Date(0); // Default to challenge start
   if (currentChallenge.challengeId) {
-    const [challengeRecord] = await dbRead.$queryRaw<{ reviewedAt: number | null }[]>`
+    const [challengeReviewState] = await dbRead.$queryRaw<{ reviewedAt: number | null }[]>`
       SELECT
         cast(metadata->>'reviewedAt' as bigint) as "reviewedAt"
       FROM "Challenge"
       WHERE id = ${currentChallenge.challengeId}
     `;
-    if (challengeRecord?.reviewedAt) {
-      lastReviewedAt = new Date(Number(challengeRecord.reviewedAt));
+    if (challengeReviewState?.reviewedAt) {
+      lastReviewedAt = new Date(Number(challengeReviewState.reviewedAt));
     }
   }
   log('Last reviewed at:', lastReviewedAt);
@@ -668,80 +661,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   log('Last reviewed at updated');
 }
 
-export async function pickWinners() {
-  // Check if challenge platform is enabled
-  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
-    log('Challenge platform disabled, skipping job');
-    return;
-  }
-
-  const config = await getChallengeConfig();
-
-  // Step 1: Process ended challenges (pick winners)
-  // ----------------------------------------------
-  const endedChallenges = await getEndedActiveChallenges();
-  log(`Found ${endedChallenges.length} ended challenge(s) to process`);
-
-  for (const challenge of endedChallenges) {
-    try {
-      await pickWinnersForChallenge(challenge, config);
-    } catch (error) {
-      const err = error as Error;
-      logToAxiom({
-        type: 'error',
-        name: 'daily-challenge-pick-winners',
-        message: err.message,
-        challengeId: challenge.challengeId,
-        collectionId: challenge.collectionId,
-      });
-      log(`Failed to pick winners for challenge ${challenge.challengeId ?? 'unknown'}:`, error);
-    }
-  }
-
-  // Step 2: Start scheduled challenges ready to begin
-  // ----------------------------------------------
-  const challengesToStart = await getChallengesReadyToStart();
-  log(`Found ${challengesToStart.length} scheduled challenge(s) ready to start`);
-
-  for (const challenge of challengesToStart) {
-    try {
-      await startScheduledChallenge(challenge, config);
-    } catch (error) {
-      const err = error as Error;
-      logToAxiom({
-        type: 'error',
-        name: 'daily-challenge-start',
-        message: err.message,
-        challengeId: challenge.challengeId,
-        collectionId: challenge.collectionId,
-      });
-      log(`Failed to start challenge ${challenge.challengeId ?? 'unknown'}:`, error);
-    }
-  }
-
-  // Step 3: Ensure system challenge exists for next period
-  const existingSystemChallenge = await getUpcomingSystemChallenge();
-  if (!existingSystemChallenge) {
-    log('No system challenges found, creating upcoming challenge');
-    try {
-      await createUpcomingChallenge();
-    } catch (e) {
-      const error = e as Error;
-      logToAxiom({
-        type: 'error',
-        name: 'failed-to-create-upcoming-challenge',
-        message: error.message,
-      });
-      log('Failed to create upcoming challenge:', error);
-    }
-  }
-}
-
 /**
  * Pick winners for a single challenge.
- * Extracted from pickWinners() to support multi-challenge processing.
  */
-async function pickWinnersForChallenge(
+export async function pickWinnersForChallenge(
   currentChallenge: DailyChallengeDetails,
   config: ChallengeConfig
 ) {
@@ -940,9 +863,12 @@ async function pickWinnersForChallenge(
 
 /**
  * Start a scheduled challenge that is ready to begin.
- * Adapted from startNextChallenge() to work with a specific challenge.
+ * Start a scheduled challenge that is ready to begin.
  */
-async function startScheduledChallenge(challenge: DailyChallengeDetails, config: ChallengeConfig) {
+export async function startScheduledChallenge(
+  challenge: DailyChallengeDetails,
+  config: ChallengeConfig
+) {
   log('Starting scheduled challenge:', challenge.challengeId);
 
   // Open collection
@@ -954,9 +880,9 @@ async function startScheduledChallenge(challenge: DailyChallengeDetails, config:
   `;
   log('Collection opened');
 
-  // Update Challenge status to Active
+  // Update Challenge status to Active (includes Redis cache)
   if (challenge.challengeId) {
-    await updateChallengeStatus(challenge.challengeId, ChallengeStatus.Active);
+    await setChallengeActive(challenge.challengeId);
     log('Challenge status updated to Active:', challenge.challengeId);
   }
 
@@ -1143,53 +1069,8 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
   return judgedEntries.slice(0, config.finalReviewAmount);
 }
 
-export async function startNextChallenge(config: ChallengeConfig) {
-  // Step 1: Start all scheduled challenges that are ready
-  const challengesToStart = await getChallengesReadyToStart();
-  log(`Found ${challengesToStart.length} scheduled challenge(s) ready to start`);
-
-  for (const challenge of challengesToStart) {
-    try {
-      await startScheduledChallenge(challenge, config);
-    } catch (error) {
-      const err = error as Error;
-      logToAxiom({
-        type: 'error',
-        name: 'daily-challenge-start',
-        message: err.message,
-        challengeId: challenge.challengeId,
-        collectionId: challenge.collectionId,
-      });
-      log(`Failed to start challenge ${challenge.challengeId ?? 'unknown'}:`, error);
-    }
-  }
-
-  // Step 2: If no system challenges exist, create one for the next period
-  const existingSystemChallenge = await getUpcomingSystemChallenge();
-  if (!existingSystemChallenge) {
-    log('No system challenges found, creating upcoming challenge');
-    try {
-      await createUpcomingChallenge();
-    } catch (e) {
-      const error = e as Error;
-      logToAxiom({
-        type: 'error',
-        name: 'failed-to-create-upcoming-challenge',
-        message: error.message,
-      });
-      log('Failed to create upcoming challenge:', error);
-    }
-  }
-}
-
 // Types
 // ----------------------------------------------
-type RecentEntry = {
-  imageId: number;
-  userId: number;
-  username: string;
-  url: string;
-};
 
 type JudgedEntry = {
   imageId: number;
@@ -1197,10 +1078,4 @@ type JudgedEntry = {
   username: string;
   note: string;
   engagement: number;
-};
-
-type SelectedResource = {
-  modelId: number;
-  creator: string;
-  title: string;
 };

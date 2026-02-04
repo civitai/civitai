@@ -1,4 +1,3 @@
-import type { ButtonProps } from '@mantine/core';
 import {
   Button,
   Chip,
@@ -21,25 +20,30 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 
 const statusFilters = [
   { value: 'active', label: 'Active' },
-  { value: 'upcoming', label: 'Upcoming' },
   { value: 'completed', label: 'Completed' },
-  { value: 'all', label: 'All' },
+  { value: 'upcoming', label: 'Upcoming' },
 ];
 
-type Props = Omit<ButtonProps, 'onClick' | 'children'>;
+const defaultStatus = ['active', 'completed'];
 
-export function ChallengeFiltersDropdown({ ...buttonProps }: Props) {
+export function parseStatusQuery(raw: string | string[] | undefined): string[] {
+  if (!raw) return defaultStatus;
+  return Array.isArray(raw) ? raw : raw.split(',');
+}
+
+export function ChallengeFiltersDropdown() {
   const router = useRouter();
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const [opened, setOpened] = useState(false);
 
-  const statusFilter = (router.query.status as string) || 'active';
+  const statusFilter = parseStatusQuery(router.query.status);
 
-  const handleStatusChange = (value: string | string[]) => {
-    const newValue = Array.isArray(value) ? value[0] : value;
+  const handleStatusChange = (value: string[]) => {
+    // Prevent deselecting all options
+    if (value.length === 0) return;
     router.replace(
-      { pathname: '/challenges', query: { ...router.query, status: newValue } },
+      { pathname: '/challenges', query: { ...router.query, status: value.join(',') } },
       undefined,
       { shallow: true }
     );
@@ -54,7 +58,10 @@ export function ChallengeFiltersDropdown({ ...buttonProps }: Props) {
   };
 
   // Count active filters (excluding defaults)
-  const filterLength = statusFilter !== 'active' ? 1 : 0;
+  const isDefault =
+    statusFilter.length === defaultStatus.length &&
+    defaultStatus.every((s) => statusFilter.includes(s));
+  const filterLength = isDefault ? 0 : 1;
 
   const target = (
     <Indicator
@@ -75,7 +82,7 @@ export function ChallengeFiltersDropdown({ ...buttonProps }: Props) {
     <Stack gap={8} p="md">
       <Stack gap={0}>
         <Divider label="Status" className="text-sm font-bold" mb={4} />
-        <Chip.Group value={statusFilter} onChange={handleStatusChange}>
+        <Chip.Group multiple value={statusFilter} onChange={handleStatusChange}>
           <Group gap={8} mb={4}>
             {statusFilters.map((option) => (
               <FilterChip key={option.value} value={option.value}>

@@ -13,8 +13,9 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   createUpcomingChallenge,
-  startNextChallenge,
+  startScheduledChallenge,
 } from '~/server/jobs/daily-challenge-processing';
+import { getChallengesReadyToStart } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -57,7 +58,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     const config = await getChallengeConfig();
     const newChallenge = await createUpcomingChallenge();
     if (shouldStartChallenge) {
-      await startNextChallenge(config);
+      const challengesToStart = await getChallengesReadyToStart();
+      for (const c of challengesToStart) {
+        await startScheduledChallenge(c, config);
+      }
     }
     res
       .status(200)

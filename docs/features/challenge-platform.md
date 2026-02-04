@@ -513,28 +513,34 @@ model ChallengeWinner {
 ## Revised Implementation Phases
 
 ### Phase 1: Core Challenge System ✅
-**Goal:** Replace Article-based challenges with dedicated Challenge entity + OpenRouter migration
+**Goal:** Replace Article-based challenges with dedicated Challenge entity
 
-- [ ] **OpenRouter migration** - Replace OpenAI SDK with OpenRouter SDK
-  - Create abstraction layer for LLM calls
-  - Support model selection per task type
-  - Add fallback routing
-- [x] Create `Challenge`, `ChallengeEntry`, `ChallengeWinner` tables
+- [x] Create `Challenge`, `ChallengeWinner`, `ChallengeJudge` tables
 - [x] Deprecate Article-based challenges (new challenges no longer create Articles)
-- [x] Create `/challenges` feed page (list view)
-- [x] Create `/challenges/[id]` detail page
+- [x] Create `/challenges` feed page (list view with filters/sorting)
+- [x] Create `/challenges/[id]` detail page (with winners podium, entries, mod actions)
 - [x] Update jobs to use new tables
 - [x] Mod management at `/moderator/challenges` (list + CRUD)
-- [ ] Auto-queue job to maintain 30-day horizon
+- [x] Auto-queue job to maintain 30-day horizon (`challenge-auto-queue.ts`)
+- [x] Challenge activation job (`challenge-activation.ts` - every minute)
+- [x] Challenge completion job (`challenge-completion.ts` - every minute)
+- [x] Entry submission modal (My Images, From Generator, Upload New)
+- [x] Image eligibility checking (NSFW level, model version, recency)
+- [x] Judge personas with custom prompts (`ChallengeJudge` table)
+- [x] Judge displayed as challenge creator in UI (display-layer swap)
+- [x] Feature flag gating via Flipt (`CHALLENGE_PLATFORM_ENABLED`)
+- [x] Mobile-optimized detail page and upsert form
+- [x] Collection metadata sync on challenge update
+- [x] Cover image upload and display
 
-### Phase 2: Enhanced Features
+### Phase 2: Enhanced Features ✅
 **Goal:** Multi-day challenges, visibility controls, better UX
 
-- [ ] Support variable duration (`startsAt`/`endsAt`)
-- [ ] `visibleAt` field for preview announcements
-- [ ] Countdown timers on challenge cards
-- [ ] Filter/sort options on feed (active, upcoming, completed)
-- [ ] Challenge search
+- [x] Support variable duration (`startsAt`/`endsAt`)
+- [x] `visibleAt` field for preview announcements
+- [x] Countdown timers on challenge cards
+- [x] Filter/sort options on feed (active, upcoming, completed)
+- [x] Challenge search (query filter on title/theme)
 - [ ] NSFW auto-classification via LLM
 
 ### Phase 3: User-Created Challenges
@@ -583,16 +589,18 @@ I'll add this as a Phase 1 task since it affects the foundation.
 
 ## Implementation Status
 
-> **Last Updated:** January 2026
+> **Last Updated:** February 2026
 
-### Phase 1: Core Challenge System ✅
+### Phase 1 & 2: Core Challenge System ✅
 
-The core challenge system has been implemented with the following components:
+The challenge platform has been fully implemented and is ready for production release.
 
 #### Database Schema
 - `Challenge` table with timing, content, prizes, and lifecycle fields
 - `ChallengeWinner` table for recording winners
+- `ChallengeJudge` table for AI judge personas (custom prompts, bios)
 - Challenge entries are stored as `CollectionItem` records in the challenge's collection
+- Migrations: `20260113113902_add_challenge_system`, `20260129000000_add_challenge_judge`
 
 #### Challenge Lifecycle
 Status transitions are **automatic and date-driven**, not manually controlled:
@@ -672,22 +680,46 @@ The daily challenge jobs support **multiple concurrent active challenges**:
 - `getUpcomingSystemChallenge()` - Checks if a system challenge exists
 
 #### Key Files
-- Schema: `prisma/schema.full.prisma` (Challenge, ChallengeWinner models)
-- Types: `src/server/schema/challenge.schema.ts` (ChallengeDetail, ChallengeCompletionSummary)
-- Service: `src/server/services/challenge.service.ts`
-- Router: `src/server/routers/challenge.router.ts`
-- Moderator UI: `src/pages/moderator/challenges.tsx`
-- Challenge Detail Page: `src/pages/challenges/[id]/[[...slug]].tsx`
-- Create/Edit Form: `src/components/Challenge/ChallengeUpsertForm.tsx`
-- Daily Job: `src/server/jobs/daily-challenge-processing.ts`
-- Challenge Helpers: `src/server/games/daily-challenge/challenge-helpers.ts`
-- Challenge Utils: `src/server/games/daily-challenge/daily-challenge.utils.ts`
 
-### Phase 2-4: Future Work
-- [ ] User-created challenges
+| Purpose | File |
+|---------|------|
+| Prisma models | `prisma/schema.full.prisma` (Challenge, ChallengeWinner, ChallengeJudge) |
+| Types & Zod schemas | `src/server/schema/challenge.schema.ts` |
+| Service (business logic) | `src/server/services/challenge.service.ts` |
+| tRPC router | `src/server/routers/challenge.router.ts` |
+| DB helpers & shared types | `src/server/games/daily-challenge/challenge-helpers.ts` |
+| Config & legacy adapters | `src/server/games/daily-challenge/daily-challenge.utils.ts` |
+| Challenge activation job | `src/server/jobs/challenge-activation.ts` |
+| Challenge completion job | `src/server/jobs/challenge-completion.ts` |
+| Daily processing jobs | `src/server/jobs/daily-challenge-processing.ts` |
+| Job registration | `src/pages/api/webhooks/run-jobs/[[...run]].ts` |
+| Challenges feed page | `src/pages/challenges/index.tsx` |
+| Challenge detail page | `src/pages/challenges/[id]/[[...slug]].tsx` |
+| Moderator list page | `src/pages/moderator/challenges.tsx` |
+| Create/Edit form | `src/components/Challenge/ChallengeUpsertForm.tsx` |
+| Entry submission modal | `src/components/Challenge/ChallengeSubmitModal.tsx` |
+| Entry image card | `src/components/Challenge/ChallengeSelectableImageCard.tsx` |
+| Generator image import | `src/utils/generator-import.ts` |
+| Feature flag | `src/server/services/feature-flags.service.ts` (`challengePlatform`) |
+
+#### Feature Flag
+
+The entire platform is gated behind the `CHALLENGE_PLATFORM_ENABLED` Flipt flag (key: `challengePlatform`). This controls:
+- All tRPC endpoints (router-level `isFlagProtected`)
+- All pages (SSR-level redirect)
+- Navigation visibility (HomeContentToggle)
+- Background jobs (checked at job start)
+
+#### Judge Display
+
+When a challenge has a `judgeId`, the judge's user profile (avatar, cosmetics, username) is shown as the challenge "creator" in both the feed cards and detail page. The actual `createdById` remains unchanged for auditing. This swap happens in the service layer (`getInfiniteChallenges` and `getChallengeDetail`).
+
+### Future Work
+- [ ] User-created challenges with Buzz escrow
 - [ ] Prompt Lab for custom judging criteria
 - [ ] UserChallengeStats and leaderboards
 - [ ] Streak tracking and badges
+- [ ] NSFW auto-classification via LLM
 
 ---
 

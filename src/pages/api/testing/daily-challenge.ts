@@ -2,7 +2,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead } from '~/server/db/client';
-import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  getChallengeById,
+  type RecentEntry,
+  type SelectedResource,
+} from '~/server/games/daily-challenge/challenge-helpers';
 import {
   challengeToLegacyFormat,
   getChallengeConfig,
@@ -18,9 +22,14 @@ import {
   createUpcomingChallenge,
   getCoverOfModel,
   getJudgedEntries,
-  pickWinners,
+  pickWinnersForChallenge,
   reviewEntries,
+  startScheduledChallenge,
 } from '~/server/jobs/daily-challenge-processing';
+import {
+  getEndedActiveChallenges,
+  getChallengesReadyToStart,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
@@ -183,11 +192,22 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       return res.status(200).json({
         action: 'complete-challenge',
         dryRun: true,
-        message:
-          'Would execute pickWinners() to close challenge, pick winners, send prizes, and start next challenge',
+        message: 'Would complete ended challenges and activate scheduled challenges',
       });
     }
-    await pickWinners();
+
+    // Complete ended challenges
+    const endedChallenges = await getEndedActiveChallenges();
+    for (const challenge of endedChallenges) {
+      await pickWinnersForChallenge(challenge, config);
+    }
+
+    // Activate scheduled challenges
+    const challengesToStart = await getChallengesReadyToStart();
+    for (const challenge of challengesToStart) {
+      await startScheduledChallenge(challenge, config);
+    }
+
     return res.status(200).json({ success: true, action: 'complete-challenge' });
   }
 
@@ -206,16 +226,4 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   return res.status(200).json({ how: 'did i get here?' });
 });
 
-// Types
-// ----------------------------------------------
-type RecentEntry = {
-  imageId: number;
-  userId: number;
-  username: string;
-  url: string;
-};
-type SelectedResource = {
-  modelId: number;
-  creator: string;
-  title: string;
-};
+// Types imported from challenge-helpers

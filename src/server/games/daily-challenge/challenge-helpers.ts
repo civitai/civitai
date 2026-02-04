@@ -238,6 +238,7 @@ export type CreateChallengeInput = {
   allowedNsfwLevel?: number; // Bitwise NSFW levels for entries (default 1 = PG only)
   modelVersionIds?: number[]; // Array of allowed model version IDs
   judgingPrompt?: string;
+  judgeId?: number | null;
   reviewPercentage?: number;
   maxReviews?: number;
   collectionId?: number; // Optional - auto-created if not provided
@@ -299,6 +300,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       allowedNsfwLevel: input.allowedNsfwLevel ?? 1,
       modelVersionIds: input.modelVersionIds ?? [],
       judgingPrompt: input.judgingPrompt,
+      judgeId: input.judgeId ?? null,
       reviewPercentage: input.reviewPercentage ?? 100,
       maxReviews: input.maxReviews,
       collectionId: input.collectionId, // Optional - can be null
@@ -480,3 +482,22 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
     WHERE id = ${challengeId}
   `;
 }
+
+// =============================================================================
+// Shared Query Result Types
+// =============================================================================
+
+/** Row shape for collection entry queries (used by processing and testing). */
+export type RecentEntry = {
+  imageId: number;
+  userId: number;
+  username: string;
+  url: string;
+};
+
+/** Row shape for resource selection queries (used by processing and testing). */
+export type SelectedResource = {
+  modelId: number;
+  creator: string;
+  title: string;
+};

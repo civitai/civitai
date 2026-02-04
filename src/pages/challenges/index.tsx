@@ -9,6 +9,7 @@ import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesIn
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
+import { parseStatusQuery } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -21,6 +22,12 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const statusMap: Record<string, ChallengeStatus> = {
+  active: ChallengeStatus.Active,
+  upcoming: ChallengeStatus.Scheduled,
+  completed: ChallengeStatus.Completed,
+};
+
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -28,23 +35,11 @@ function ChallengesPage() {
 
   // Parse query params
   const sort = (router.query.sort as ChallengeSort) || ChallengeSort.Newest;
-  const statusFilter = (router.query.status as string) || 'active';
-
-  // Convert status filter to API format
-  const getStatusArray = () => {
-    switch (statusFilter) {
-      case 'active':
-        return [ChallengeStatus.Active];
-      case 'upcoming':
-        return [ChallengeStatus.Scheduled];
-      case 'completed':
-        return [ChallengeStatus.Completed];
-      case 'all':
-        return undefined; // No filter
-      default:
-        return [ChallengeStatus.Active];
-    }
-  };
+  const statusFilters = parseStatusQuery(router.query.status);
+  const statusArray = statusFilters
+    .map((s) => statusMap[s])
+    .filter((s): s is ChallengeStatus => s != null);
+  const includeEnded = statusFilters.includes('completed');
 
   return (
     <>
@@ -145,8 +140,8 @@ function ChallengesPage() {
           <ChallengesInfinite
             filters={{
               sort,
-              status: getStatusArray(),
-              includeEnded: statusFilter === 'completed' || statusFilter === 'all',
+              status: statusArray.length > 0 ? statusArray : undefined,
+              includeEnded,
             }}
           />
         </Stack>

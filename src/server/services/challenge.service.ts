@@ -16,6 +16,7 @@ import {
   type ChallengeListItem,
   type GetInfiniteChallengesInput,
   type GetModeratorChallengesInput,
+  type ImageEligibilityResult,
   type UpcomingTheme,
   type UpsertChallengeInput,
 } from '~/server/schema/challenge.schema';
@@ -226,6 +227,10 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       creatorUsername: string | null;
       creatorImage: string | null;
       creatorDeletedAt: Date | null;
+      judgeUserId: number | null;
+      judgeUsername: string | null;
+      judgeImage: string | null;
+      judgeDeletedAt: Date | null;
     }>
   >`
     SELECT
@@ -247,9 +252,15 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c."createdById",
       u.username as "creatorUsername",
       u.image as "creatorImage",
-      u."deletedAt" as "creatorDeletedAt"
+      u."deletedAt" as "creatorDeletedAt",
+      cj."userId" as "judgeUserId",
+      ju.username as "judgeUsername",
+      ju.image as "judgeImage",
+      ju."deletedAt" as "judgeDeletedAt"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
+    LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
+    LEFT JOIN "User" ju ON ju.id = cj."userId"
     ${whereClause}
     ORDER BY ${orderByClause}
     LIMIT ${limit + 1}
@@ -267,11 +278,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     }
   }
 
-  // Fetch profile pictures for all creators
-  const creatorIds = [...new Set(items.map((item) => item.createdById))];
+  // Fetch profile pictures for display users (judge when present, else creator)
+  const displayUserIds = [...new Set(items.map((item) => item.judgeUserId ?? item.createdById))];
   const [profilePictures, cosmetics] = await Promise.all([
-    getProfilePicturesForUsers(creatorIds),
-    getCosmeticsForUsers(creatorIds),
+    getProfilePicturesForUsers(displayUserIds),
+    getCosmeticsForUsers(displayUserIds),
   ]);
 
   // Fetch cover images
@@ -312,12 +323,12 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
         : null,
       modelVersionIds: item.modelVersionIds ?? [],
       createdBy: {
-        id: item.createdById,
-        username: item.creatorUsername,
-        image: item.creatorImage,
-        profilePicture: profilePictures[item.createdById] ?? null,
-        cosmetics: cosmetics[item.createdById] ?? null,
-        deletedAt: item.creatorDeletedAt,
+        id: item.judgeUserId ?? item.createdById,
+        username: item.judgeUsername ?? item.creatorUsername,
+        image: item.judgeImage ?? item.creatorImage,
+        profilePicture: profilePictures[item.judgeUserId ?? item.createdById] ?? null,
+        cosmetics: cosmetics[item.judgeUserId ?? item.createdById] ?? null,
+        deletedAt: item.judgeDeletedAt ?? item.creatorDeletedAt,
       },
     };
   });
@@ -463,6 +474,34 @@ export async function getChallengeDetail(
     }
   }
 
+  // Resolve display user: prefer judge's user over creator
+  const displayUserId = judge?.userId ?? challenge.createdById;
+  let displayUser: {
+    id: number;
+    username: string | null;
+    image: string | null;
+    deletedAt: Date | null;
+  };
+  let displayProfilePics: Awaited<ReturnType<typeof getProfilePicturesForUsers>>;
+  let displayCosmetics: Awaited<ReturnType<typeof getCosmeticsForUsers>>;
+
+  if (displayUserId !== challenge.createdById) {
+    const [judgeUser] = await dbRead.$queryRaw<
+      [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
+    >`
+      SELECT id, username, image, "deletedAt" FROM "User" WHERE id = ${displayUserId}
+    `;
+    displayUser = judgeUser;
+    [displayProfilePics, displayCosmetics] = await Promise.all([
+      getProfilePicturesForUsers([displayUserId]),
+      getCosmeticsForUsers([displayUserId]),
+    ]);
+  } else {
+    displayUser = creator;
+    displayProfilePics = profilePictures;
+    displayCosmetics = cosmetics;
+  }
+
   // Extract completion summary from metadata
   const metadata = challenge.metadata as Record<string, unknown> | null;
   const completionSummary =
@@ -505,9 +544,9 @@ export async function getChallengeDetail(
     operationBudget: challenge.operationBudget,
     entryCount,
     createdBy: {
-      ...creator,
-      profilePicture: profilePictures[challenge.createdById] ?? null,
-      cosmetics: cosmetics[challenge.createdById] ?? null,
+      ...displayUser,
+      profilePicture: displayProfilePics[displayUserId] ?? null,
+      cosmetics: displayCosmetics[displayUserId] ?? null,
     },
     judge,
     winners,
@@ -688,6 +727,7 @@ export async function upsertChallenge({
 
     // For Active challenges: restore locked fields from DB (silently override attempted changes)
     if (challenge.status === ChallengeStatus.Active) {
+      data.status = challenge.status;
       data.startsAt = challenge.startsAt;
       data.modelVersionIds = challenge.modelVersionIds;
       data.allowedNsfwLevel = challenge.allowedNsfwLevel;
@@ -1119,7 +1159,82 @@ export async function getActiveJudges() {
       userId: true,
       name: true,
       bio: true,
-      reviewPrompt: true,
+      systemPrompt: true,
     },
+  });
+}
+
+/**
+ * Check whether images are eligible for a challenge entry.
+ * Validates NSFW level, model version usage (via ImageResourceNew), and recency.
+ */
+export async function checkImageEligibility(
+  challengeId: number,
+  imageIds: number[]
+): Promise<ImageEligibilityResult[]> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: {
+      allowedNsfwLevel: true,
+      modelVersionIds: true,
+      startsAt: true,
+    },
+  });
+
+  if (!challenge) throw throwNotFoundError(`No challenge with id ${challengeId}`);
+
+  // Get image details + their resources in one query
+  const images = await dbRead.$queryRawUnsafe<
+    Array<{
+      id: number;
+      nsfwLevel: number;
+      createdAt: Date;
+      modelVersionIds: number[] | null;
+    }>
+  >(
+    `
+    SELECT
+      i.id,
+      i."nsfwLevel",
+      i."createdAt",
+      array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL) AS "modelVersionIds"
+    FROM "Image" i
+    LEFT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
+    WHERE i.id = ANY($1::int[])
+    GROUP BY i.id
+    `,
+    imageIds
+  );
+
+  const imageMap = new Map(images.map((img) => [img.id, img]));
+
+  return imageIds.map((imageId) => {
+    const image = imageMap.get(imageId);
+    if (!image) return { imageId, eligible: false, reasons: ['Image not found'] };
+
+    const reasons: string[] = [];
+
+    // Check NSFW level
+    if ((image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
+      reasons.push('NSFW restricted');
+    }
+
+    // Check recency
+    if (new Date(image.createdAt) < new Date(challenge.startsAt)) {
+      reasons.push('Created before challenge');
+    }
+
+    // Check model version requirement
+    if (challenge.modelVersionIds.length > 0) {
+      const imageVersionIds = image.modelVersionIds ?? [];
+      const hasEligibleModel = imageVersionIds.some((vid) =>
+        challenge.modelVersionIds.includes(vid)
+      );
+      if (!hasEligibleModel) {
+        reasons.push('Wrong model');
+      }
+    }
+
+    return { imageId, eligible: reasons.length === 0, reasons };
   });
 }

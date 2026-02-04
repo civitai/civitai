@@ -108,7 +108,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const existingPrizes = challenge?.prizes ?? [];
   const existingEntryPrize = challenge?.entryPrize;
 
-  const form = useForm<typeof schema>({
+  const form = useForm({
     schema,
     defaultValues: {
       title: challenge?.title ?? '',
@@ -421,8 +421,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               renderOption={(item) => renderJudgeOption({ ...item, judges })}
               onChange={(value) => {
                 const selectedJudge = judges.find((j) => String(j.id) === value);
-                if (selectedJudge?.reviewPrompt) {
-                  form.setValue('judgingPrompt', selectedJudge.reviewPrompt);
+                if (selectedJudge?.systemPrompt) {
+                  form.setValue('judgingPrompt', selectedJudge.systemPrompt);
                 } else {
                   form.setValue('judgingPrompt', '');
                 }

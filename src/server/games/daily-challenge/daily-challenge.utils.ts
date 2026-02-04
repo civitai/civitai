@@ -1,11 +1,12 @@
 import { mergeWith } from 'lodash-es';
 import * as z from 'zod';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   type ChallengeDetails,
+  closeChallengeCollection,
   getActiveChallengeFromDb,
   getActiveChallengesFromDb,
   getEndedActiveChallengesFromDb,
@@ -40,6 +41,7 @@ const challengeConfigSchema = z.object({
   finalReviewAmount: z.number(),
   resourceCosmeticId: z.number().nullable(),
   articleTagId: z.number(),
+  defaultJudgeId: z.number().nullable(),
 });
 export type ChallengeConfig = z.infer<typeof challengeConfigSchema>;
 export const dailyChallengeConfig: ChallengeConfig = {
@@ -61,6 +63,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   finalReviewAmount: 10,
   resourceCosmeticId: null,
   articleTagId: 128643, // Announcement.
+  defaultJudgeId: null,
 };
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
@@ -220,7 +223,7 @@ export function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChall
     type: (metadata?.challengeType as string) ?? 'world-morph',
     date: challenge.startsAt,
     theme: challenge.theme ?? '',
-    modelId: (metadata?.resourceUserId as number) ?? 0,
+    modelId: (metadata?.resourceModelId as number) ?? (metadata?.resourceUserId as number) ?? 0,
     modelVersionIds: challenge.modelVersionIds,
     collectionId: challenge.collectionId!,
     title: challenge.title,
@@ -299,18 +302,7 @@ export async function endChallenge(challenge?: { collectionId: number } | null) 
   challenge ??= await getCurrentChallenge();
   if (!challenge) return;
 
-  // Close challenge
-  await dbWrite.$executeRaw`
-    UPDATE "Collection"
-    SET write = 'Private'::"CollectionWriteConfiguration"
-    WHERE id = ${challenge.collectionId};
-  `;
-
-  // Remove all contributors
-  await dbWrite.$executeRaw`
-    DELETE FROM "CollectionContributor"
-    WHERE "collectionId" = ${challenge.collectionId}
-  `;
+  await closeChallengeCollection(challenge);
 }
 
 // =============================================================================

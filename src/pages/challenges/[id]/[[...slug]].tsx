@@ -72,7 +72,7 @@ import { trpc } from '~/utils/trpc';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
+import { ChallengeSubmitModal } from '~/components/Challenge/ChallengeSubmitModal';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -526,15 +526,30 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
             Enter Challenge
           </Button>
         ) : challenge.status === ChallengeStatus.Completed ? (
-          <IconBadge
-            size="lg"
-            radius="sm"
-            color="yellow.7"
-            icon={<IconTrophy size={16} fill="currentColor" />}
-            style={{ flex: 1 }}
+          <Group
+            gap="xs"
+            justify="center"
+            py="xs"
+            px="md"
+            style={{
+              flex: 1,
+              borderRadius: 'var(--mantine-radius-sm)',
+              background:
+                colorScheme === 'dark'
+                  ? 'linear-gradient(135deg, rgba(250,176,5,0.12) 0%, rgba(250,176,5,0.04) 100%)'
+                  : 'linear-gradient(135deg, rgba(250,176,5,0.15) 0%, rgba(250,176,5,0.05) 100%)',
+              border: `1px solid ${
+                colorScheme === 'dark' ? 'rgba(250,176,5,0.25)' : 'rgba(250,176,5,0.35)'
+              }`,
+            }}
           >
-            Completed
-          </IconBadge>
+            <ThemeIcon variant="transparent" color="yellow.5" size="sm">
+              <IconTrophy size={18} fill="currentColor" />
+            </ThemeIcon>
+            <Text size="sm" fw={600} c="yellow.5" tt="uppercase" lts={1}>
+              Challenge Completed
+            </Text>
+          </Group>
         ) : null}
         <ShareButton url={router.asPath} title={challenge.title}>
           <Button
@@ -648,36 +663,6 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
             </Accordion.Panel>
           </Accordion.Item>
         )}
-
-        {challenge.judge && (
-          <Accordion.Item value="judge">
-            <Accordion.Control>
-              <Group justify="space-between">Judged By</Group>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Group gap="sm" p="sm">
-                <UserAvatar
-                  user={{
-                    id: challenge.judge.userId,
-                    profilePicture: challenge.judge.profilePicture ?? undefined,
-                    cosmetics: challenge.judge.cosmetics ?? undefined,
-                  }}
-                  size="md"
-                />
-                <div>
-                  <Text fw={600} size="sm">
-                    {challenge.judge.name}
-                  </Text>
-                  {challenge.judge.bio && (
-                    <Text size="xs" c="dimmed" lineClamp={2}>
-                      {challenge.judge.bio}
-                    </Text>
-                  )}
-                </div>
-              </Group>
-            </Accordion.Panel>
-          </Accordion.Item>
-        )}
       </Accordion>
 
       <CreatorCardSimple
@@ -787,11 +772,6 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     <Text fw={600} size="sm">
                       {challenge.judge.name}&apos;s Commentary
                     </Text>
-                    {challenge.judge.bio && (
-                      <Text size="xs" c="dimmed">
-                        {challenge.judge.bio}
-                      </Text>
-                    )}
                   </div>
                 </Group>
               )}
@@ -998,8 +978,8 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const handleOpenSubmitModal = () => {
     if (challenge.collectionId) {
       dialogStore.trigger({
-        component: AddUserContentModal,
-        props: { collectionId: challenge.collectionId },
+        component: ChallengeSubmitModal,
+        props: { challengeId: challenge.id, collectionId: challenge.collectionId },
       });
     }
   };

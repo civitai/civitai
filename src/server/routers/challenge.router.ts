@@ -1,5 +1,6 @@
 import {
   challengeQuickActionSchema,
+  checkEntryEligibilitySchema,
   deleteChallengeSchema,
   getChallengeWinnersSchema,
   getInfiniteChallengesSchema,
@@ -17,6 +18,7 @@ import {
   router,
 } from '~/server/trpc';
 import {
+  checkImageEligibility,
   deleteChallenge,
   endChallengeAndPickWinners,
   getChallengeDetail,
@@ -61,6 +63,12 @@ export const challengeRouter = router({
     .input(getUserEntryCountSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getUserEntryCount(input.challengeId, ctx.user.id)),
+
+  // Check image eligibility for a challenge
+  checkEntryEligibility: protectedProcedure
+    .input(checkEntryEligibilitySchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => checkImageEligibility(input.challengeId, input.imageIds)),
 
   // Moderator: Get all challenges (including drafts)
   getModeratorList: moderatorProcedure
