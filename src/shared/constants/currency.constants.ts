@@ -5,7 +5,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 type CurrencyTheme = {
-  icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>;
+  icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   color: string;
   fill?: string | undefined;
   cssVariableName?: string;

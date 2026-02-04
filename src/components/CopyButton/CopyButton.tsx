@@ -12,7 +12,7 @@ export function CopyButton({
   children(payload: {
     copied: boolean;
     copy(): void;
-    Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>;
+    Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
     color?: MantineColor;
   }): React.ReactElement;
   value: string | (() => string);

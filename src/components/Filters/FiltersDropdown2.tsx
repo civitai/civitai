@@ -7,7 +7,7 @@ import type { ComponentPropsWithoutRef, ForwardRefExoticComponent, RefAttributes
 import clsx from 'clsx';
 
 export type FilterButtonProps = ComponentPropsWithoutRef<'button'> & {
-  icon?: ForwardRefExoticComponent<IconProps & React.RefAttributes<SVGSVGElement>>;
+  icon?: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   indicatorCount?: number;
   size?: MantineSize;
   variant?: 'default';
