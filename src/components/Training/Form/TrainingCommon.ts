@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import Router from 'next/router';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import type { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
@@ -20,6 +20,7 @@ import {
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { MyTrainingModelGetAll } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -259,4 +260,201 @@ export const useOrchestratorUpdateSignal = () => {
     }
   };
   useSignalConnection(SignalMessages.OrchestratorUpdate, onUpdate);
+};
+
+// Polling interval in ms (5 seconds)
+const POLLING_INTERVAL = 5000;
+// Delay before starting polling to give signals a chance (10 seconds)
+const POLLING_START_DELAY = 10000;
+
+/**
+ * Polling fallback hook for auto-labeling jobs.
+ * Polls for job status when signals don't arrive within the expected timeframe.
+ */
+export const useAutoLabelPolling = (
+  modelId: number,
+  mediaType: TrainingDetailsObj['mediaType'],
+  labelType: 'tag' | 'caption'
+) => {
+  const storeState = useTrainingImageStore.getState();
+  const { autoLabeling } =
+    storeState[modelId] ??
+    (mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState);
+  const { updateImage, setAutoLabeling } = trainingStore;
+  const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+
+  const pollingStartTimeRef = useRef<number | null>(null);
+  const hasReceivedSignalRef = useRef(false);
+
+  const { refetch } = trpc.training.getAutoLabelJobStatus.useQuery(
+    { token: autoLabeling.jobToken ?? '' },
+    {
+      enabled: false, // Manual control
+      retry: false,
+    }
+  );
+
+  // Process job status results
+  const processJobResults = useCallback(
+    (jobs: Orchestrator.JobStatusItem[]) => {
+      const currentState = useTrainingImageStore.getState();
+      const currentAutoLabeling = currentState[modelId]?.autoLabeling ?? defaultState.autoLabeling;
+      const currentAutoTagging = currentState[modelId]?.autoTagging ?? defaultState.autoTagging;
+      const currentAutoCaptioning =
+        currentState[modelId]?.autoCaptioning ?? defaultState.autoCaptioning;
+
+      for (const job of jobs) {
+        if (!job.lastEvent) continue;
+
+        const { type: eventType, context } = job.lastEvent;
+
+        // Check if job failed
+        if (eventType === 'Failed') {
+          showErrorNotification({
+            error: new Error('Could not complete. Please try again.'),
+            title: 'Failed to auto label',
+            autoClose: false,
+          });
+          setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+          return;
+        }
+
+        // Check if job completed
+        if (eventType === 'Succeeded' && context) {
+          const data = context.data as TagDataResponse | CaptionDataResponse;
+          const isDone = context.isDone as boolean;
+
+          if (labelType === 'tag') {
+            const tagData = data as TagDataResponse;
+            const tagList = Object.entries(tagData).map(([f, t]) => ({
+              [f]: t.wdTagger.tags,
+            }));
+            const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+
+            Object.entries(returnData).forEach(([k, v]) => {
+              const returnDataList = Object.entries(v);
+              const blacklist = getTextTagsAsList(currentAutoTagging.blacklist ?? '');
+              const prependList = getTextTagsAsList(currentAutoTagging.prependTags ?? '');
+              const appendList = getTextTagsAsList(currentAutoTagging.appendTags ?? '');
+
+              if (returnDataList.length === 0) {
+                setAutoLabeling(modelId, mediaType, {
+                  ...currentAutoLabeling,
+                  fails: [...currentAutoLabeling.fails, k],
+                });
+              } else {
+                let tags = returnDataList
+                  .sort(([, a], [, b]) => b - a)
+                  .filter(
+                    (t) =>
+                      t[1] >= (currentAutoTagging.threshold ?? autoLabelLimits.tag.threshold.min) &&
+                      !blacklist.includes(t[0])
+                  )
+                  .slice(0, currentAutoTagging.maxTags ?? autoLabelLimits.tag.tags.max)
+                  .map((t) => t[0]);
+
+                tags = [...prependList, ...tags, ...appendList];
+
+                updateImage(modelId, mediaType, {
+                  matcher: k,
+                  label: tags.join(', '),
+                  appendLabel: currentAutoTagging.overwrite === 'append',
+                });
+                setAutoLabeling(modelId, mediaType, {
+                  ...currentAutoLabeling,
+                  successes: currentAutoLabeling.successes + 1,
+                });
+              }
+            });
+          } else {
+            const captionData = data as CaptionDataResponse;
+            const tagList = Object.entries(captionData ?? {}).map(([f, t]) => ({
+              [f]: t.joyCaption?.caption ?? '',
+            }));
+            const returnData: AutoCaptionResponse = Object.assign({}, ...tagList);
+
+            Object.entries(returnData).forEach(([k, v]) => {
+              if (v.length === 0) {
+                setAutoLabeling(modelId, mediaType, {
+                  ...currentAutoLabeling,
+                  fails: [...currentAutoLabeling.fails, k],
+                });
+              } else {
+                updateImage(modelId, mediaType, {
+                  matcher: k,
+                  label: v,
+                  appendLabel: currentAutoCaptioning.overwrite === 'append',
+                });
+                setAutoLabeling(modelId, mediaType, {
+                  ...currentAutoLabeling,
+                  successes: currentAutoLabeling.successes + 1,
+                });
+              }
+            });
+          }
+
+          if (isDone) {
+            const finalState = useTrainingImageStore.getState();
+            const finalAutoLabeling =
+              finalState[modelId]?.autoLabeling ?? defaultState.autoLabeling;
+
+            showSuccessNotification({
+              title: 'Images auto-labeled successfully!',
+              message: `Tagged ${finalAutoLabeling.successes} image${
+                finalAutoLabeling.successes === 1 ? '' : 's'
+              }. Failures: ${finalAutoLabeling.fails.length}`,
+            });
+            setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+          }
+        }
+      }
+    },
+    [modelId, mediaType, labelType, updateImage, setAutoLabeling, defaultState]
+  );
+
+  // Polling effect
+  useEffect(() => {
+    if (!autoLabeling.isRunning || !autoLabeling.jobToken) {
+      pollingStartTimeRef.current = null;
+      return;
+    }
+
+    // Set start time for polling delay
+    if (!pollingStartTimeRef.current) {
+      pollingStartTimeRef.current = Date.now();
+    }
+
+    const pollInterval = setInterval(async () => {
+      // Wait for initial delay before polling
+      if (Date.now() - (pollingStartTimeRef.current ?? 0) < POLLING_START_DELAY) {
+        return;
+      }
+
+      // Check if we should still be polling
+      const currentState = useTrainingImageStore.getState();
+      const currentAutoLabeling = currentState[modelId]?.autoLabeling;
+      if (!currentAutoLabeling?.isRunning || !currentAutoLabeling?.jobToken) {
+        clearInterval(pollInterval);
+        return;
+      }
+
+      try {
+        const result = await refetch();
+        if (result.data?.jobs) {
+          processJobResults(result.data.jobs);
+        }
+      } catch (error) {
+        console.error('Failed to poll job status:', error);
+      }
+    }, POLLING_INTERVAL);
+
+    return () => clearInterval(pollInterval);
+  }, [autoLabeling.isRunning, autoLabeling.jobToken, modelId, refetch, processJobResults]);
+
+  // Mark that we received a signal (to potentially disable polling)
+  const markSignalReceived = useCallback(() => {
+    hasReceivedSignalRef.current = true;
+  }, []);
+
+  return { markSignalReceived };
 };

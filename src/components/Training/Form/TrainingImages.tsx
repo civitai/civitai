@@ -65,7 +65,12 @@ import type {
   ImageSelectModalProps,
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
-import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
+import {
+  getTextTagsAsList,
+  goBack,
+  goNext,
+  useAutoLabelPolling,
+} from '~/components/Training/Form/TrainingCommon';
 import {
   blankTagStr,
   labelDescriptions,
@@ -911,7 +916,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   });
 
   const submitTagMutation = trpc.training.autoTag.useMutation({
-    // TODO allow people to rerun failed images
+    onSuccess(data) {
+      // Store the job token for polling fallback
+      if (data?.token) {
+        setAutoLabeling(model.id, thisMediaType, { jobToken: data.token });
+      }
+    },
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
@@ -922,7 +932,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
   });
   const submitCaptionMutation = trpc.training.autoCaption.useMutation({
-    // TODO allow people to rerun failed images
+    onSuccess(data) {
+      // Store the job token for polling fallback
+      if (data?.token) {
+        setAutoLabeling(model.id, thisMediaType, { jobToken: data.token });
+      }
+    },
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
@@ -932,6 +947,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
   });
+
+  // Polling fallback for when signals don't arrive
+  useAutoLabelPolling(model.id, thisMediaType, labelType);
 
   useEffect(() => {
     if (existingDataFile) {

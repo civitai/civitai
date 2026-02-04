@@ -16,6 +16,7 @@ import {
   autoTagHandler,
   createTrainingRequest,
   createTrainingRequestDryRun,
+  getAutoLabelJobStatusHandler,
   getJobEstStartsHandler,
   getTrainingServiceStatus,
   moveAsset,
@@ -66,6 +67,10 @@ export const trainingRouter = router({
     .input(autoCaptionInput)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => autoCaptionHandler({ ...input, userId: ctx.user.id })),
+  getAutoLabelJobStatus: protectedProcedure
+    .input(z.object({ token: z.string() }))
+    .use(isFlagProtected('imageTraining'))
+    .query(({ input }) => getAutoLabelJobStatusHandler(input)),
   getStatus: publicProcedure
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))

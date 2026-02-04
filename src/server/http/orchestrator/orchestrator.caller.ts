@@ -69,15 +69,11 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
-  // public getEventById({ id, take, descending }: Orchestrator.Events.QueryParams) {
-  //   return this.get<Orchestrator.Events.GetResponse>(`/v1/producer/jobs/${id}/events`, {
-  //     queryParams: { take, descending },
-  //   });
-  // }
-  //
-  // public getJobById({ id }: Orchestrator.JobQueryParams) {
-  //   return this.get<Orchestrator.GetJobResponse>(`/v1/consumer/jobs/${id}`);
-  // }
+  public getJobStatusByToken({ token }: { token: string }) {
+    return this.get<Orchestrator.JobStatusCollection>('/v1/consumer/jobs', {
+      queryParams: { token },
+    });
+  }
 
   // public bustModelCache({ modelVersionId }: Orchestrator.Generation.BustModelCache) {
   //   return this.delete('/v2/models/@civitai/' + modelVersionId);

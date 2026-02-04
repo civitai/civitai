@@ -6,7 +6,7 @@ import type {
   TrainingStep,
   TrainingOutput,
 } from '@civitai/client';
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
@@ -351,6 +351,16 @@ export const autoCaptionHandler = async ({
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
+  }
+
+  return response.data;
+};
+
+export const getAutoLabelJobStatusHandler = async ({ token }: { token: string }) => {
+  const response = await getOrchestratorCaller(new Date()).getJobStatusByToken({ token });
+
+  if (!response.ok) {
+    throw throwBadRequestError('Failed to get job status');
   }
 
   return response.data;

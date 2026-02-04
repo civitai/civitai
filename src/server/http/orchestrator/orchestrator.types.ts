@@ -20,6 +20,25 @@ export namespace Orchestrator {
     | 'Expired'
     | 'ClaimExpired';
 
+  export type JobEvent = {
+    type: JobStatus;
+    jobHasCompleted?: boolean;
+    context?: Record<string, unknown>;
+  };
+
+  export type JobStatusItem = {
+    jobId?: string;
+    scheduled?: boolean;
+    cost?: number;
+    lastEvent?: JobEvent;
+    result?: unknown;
+  };
+
+  export type JobStatusCollection = {
+    token: string;
+    jobs: JobStatusItem[];
+  };
+
   export namespace Training {
     export type CopyAssetJob = Orchestrator.Job<{ found?: boolean; fileSize?: number }> & {
       lastEvent: { type: string };

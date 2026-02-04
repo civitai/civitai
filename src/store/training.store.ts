@@ -100,6 +100,7 @@ export type AutoLabelType = {
   total: number;
   successes: number;
   fails: string[];
+  jobToken: string | null;
 };
 
 type Attest = { status: boolean; error: string };
@@ -298,6 +299,7 @@ const defaultTrainingStateBase: Omit<TrainingDataState, 'labelType' | 'initialLa
       total: 0,
       successes: 0,
       fails: [],
+      jobToken: null,
     },
     autoTagging: {
       overwrite: overwriteDefault,
