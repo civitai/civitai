@@ -60,7 +60,7 @@ export const constants = {
     'Archive',
   ],
   trainingMediaTypes: ['image', 'video'],
-  trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
+  trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect', 'Image Edit'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],

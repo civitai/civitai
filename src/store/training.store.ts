@@ -22,6 +22,16 @@ export type ImageDataType = {
   source: { type: ImageSelectSource; url: string } | null;
 };
 
+// Multi-dataset support for Image Edit training
+export type DatasetType = {
+  id: number;
+  label: string;
+  imageList: ImageDataType[];
+  initialImageList: ImageDataType[];
+  triggerWord: string;
+  labelType: LabelTypes;
+};
+
 type UpdateImageDataType = Partial<ImageDataType> & {
   matcher: string;
   appendLabel?: boolean;
@@ -100,6 +110,7 @@ export type AutoLabelType = {
   total: number;
   successes: number;
   fails: string[];
+  datasetId?: number; // For Image Edit: which dataset is being auto-labeled
 };
 
 type Attest = { status: boolean; error: string };
@@ -137,6 +148,9 @@ type TrainingDataState = {
   autoTagging: AutoTagSchemaType;
   autoCaptioning: AutoCaptionSchemaType;
   runs: TrainingRun[];
+  // Multi-dataset support for Image Edit
+  datasets: DatasetType[];
+  activeDatasetIndex: number;
 };
 
 export type TrainingRunUpdate = Partial<Omit<TrainingRun, 'id' | 'params' | 'customModel'>> & {
@@ -235,6 +249,53 @@ type TrainingImageStore = {
     runId: number,
     data: TrainingRunUpdate
   ) => void;
+  // Multi-dataset methods for Image Edit
+  setActiveDataset: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    index: number
+  ) => void;
+  addDataset: (modelId: number, mediaType: TrainingDetailsObj['mediaType'], label?: string) => void;
+  removeDataset: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasetId: number
+  ) => void;
+  updateDatasetImages: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasetId: number,
+    images: ImageDataType[]
+  ) => void;
+  updateDatasetLabel: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasetId: number,
+    label: string
+  ) => void;
+  updateDatasetTriggerWord: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasetId: number,
+    triggerWord: string
+  ) => void;
+  updateDatasetLabelType: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasetId: number,
+    labelType: LabelTypes
+  ) => void;
+  updateDatasetImage: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasetId: number,
+    data: UpdateImageDataType
+  ) => void;
+  setDatasets: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    datasets: DatasetType[]
+  ) => void;
 };
 
 export const defaultBase = 'sdxl';
@@ -280,6 +341,20 @@ export const defaultRunVideo = {
   baseType: defaultBaseTypeVideo,
 };
 
+// Default dataset for Image Edit training
+export const createDefaultDataset = (
+  id: number,
+  labelType: LabelTypes = 'tag',
+  label?: string
+): DatasetType => ({
+  id,
+  label: label ?? (id === 0 ? 'Target' : `Control ${id}`),
+  imageList: [],
+  initialImageList: [],
+  triggerWord: '',
+  labelType,
+});
+
 const defaultTrainingStateBase: Omit<TrainingDataState, 'labelType' | 'initialLabelType' | 'runs'> =
   {
     imageList: [] as ImageDataType[],
@@ -312,6 +387,9 @@ const defaultTrainingStateBase: Omit<TrainingDataState, 'labelType' | 'initialLa
       temperature: autoLabelLimits.caption.temperature.def,
       maxNewTokens: autoLabelLimits.caption.maxNewTokens.def,
     },
+    // Multi-dataset defaults (Target + Control 1 for Image Edit)
+    datasets: [createDefaultDataset(0), createDefaultDataset(1)],
+    activeDatasetIndex: 0,
   };
 export const defaultTrainingState: TrainingDataState = {
   ...defaultTrainingStateBase,
@@ -530,6 +608,120 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         }
       });
     },
+    // Multi-dataset methods for Image Edit
+    setActiveDataset: (modelId, mediaType, index) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        state[modelId]!.activeDatasetIndex = index;
+      });
+    },
+    addDataset: (modelId, mediaType, label) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const datasets = state[modelId]!.datasets;
+        if (datasets.length >= 4) return; // Max 4 datasets
+
+        const lastId = Math.max(0, ...datasets.map((d) => d.id));
+        const newDataset = createDefaultDataset(lastId + 1, state[modelId]!.labelType);
+        if (label) newDataset.label = label;
+        datasets.push(newDataset);
+        state[modelId]!.activeDatasetIndex = datasets.length - 1;
+      });
+    },
+    removeDataset: (modelId, mediaType, datasetId) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const datasets = state[modelId]!.datasets;
+        if (datasets.length <= 1) return; // Keep at least one dataset
+
+        const idx = datasets.findIndex((d) => d.id === datasetId);
+        if (idx !== -1) {
+          datasets.splice(idx, 1);
+          // Adjust activeDatasetIndex if needed
+          if (state[modelId]!.activeDatasetIndex >= datasets.length) {
+            state[modelId]!.activeDatasetIndex = datasets.length - 1;
+          }
+        }
+      });
+    },
+    updateDatasetImages: (modelId, mediaType, datasetId, images) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const dataset = state[modelId]!.datasets.find((d) => d.id === datasetId);
+        if (dataset) {
+          dataset.imageList = images;
+        }
+      });
+    },
+    updateDatasetLabel: (modelId, mediaType, datasetId, label) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const dataset = state[modelId]!.datasets.find((d) => d.id === datasetId);
+        if (dataset) {
+          dataset.label = label;
+        }
+      });
+    },
+    updateDatasetTriggerWord: (modelId, mediaType, datasetId, triggerWord) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const dataset = state[modelId]!.datasets.find((d) => d.id === datasetId);
+        if (dataset) {
+          dataset.triggerWord = triggerWord;
+        }
+      });
+    },
+    updateDatasetLabelType: (modelId, mediaType, datasetId, labelType) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const dataset = state[modelId]!.datasets.find((d) => d.id === datasetId);
+        if (dataset) {
+          dataset.labelType = labelType;
+        }
+      });
+    },
+    updateDatasetImage: (modelId, mediaType, datasetId, { matcher, url, name, type, label, appendLabel, invalidLabel, source }) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const dataset = state[modelId]!.datasets.find((d) => d.id === datasetId);
+        if (!dataset) return;
+
+        dataset.imageList = dataset.imageList.map((i) => {
+          const shortName = `${i.url.split('/').pop() ?? 'unk'}.${i.type.split('/').pop() ?? 'jpg'}`;
+          if (shortName === matcher) {
+            let newLabel = i.label;
+            if (label !== undefined) {
+              if (appendLabel && i.label.length > 0) {
+                if (dataset.labelType === 'caption') {
+                  newLabel = `${i.label}\n${label}`;
+                } else {
+                  newLabel = `${i.label}, ${label}`;
+                }
+              } else {
+                newLabel = label;
+              }
+            }
+
+            return {
+              url: url ?? i.url,
+              name: name ?? i.name,
+              type: type ?? i.type,
+              label: newLabel,
+              invalidLabel: invalidLabel ?? i.invalidLabel,
+              source: source ?? i.source,
+            };
+          }
+          return i;
+        });
+      });
+    },
+    setDatasets: (modelId, mediaType, datasets) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        state[modelId]!.datasets = datasets;
+        state[modelId]!.activeDatasetIndex = 0;
+      });
+    },
   }))
 );
 
@@ -555,4 +747,14 @@ export const trainingStore = {
   removeRun: store.removeRun,
   resetRuns: store.resetRuns,
   updateRun: store.updateRun,
+  // Multi-dataset methods
+  setActiveDataset: store.setActiveDataset,
+  addDataset: store.addDataset,
+  removeDataset: store.removeDataset,
+  updateDatasetImages: store.updateDatasetImages,
+  updateDatasetLabel: store.updateDatasetLabel,
+  updateDatasetTriggerWord: store.updateDatasetTriggerWord,
+  updateDatasetLabelType: store.updateDatasetLabelType,
+  updateDatasetImage: store.updateDatasetImage,
+  setDatasets: store.setDatasets,
 };

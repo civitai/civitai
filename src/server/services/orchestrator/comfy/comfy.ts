@@ -15,7 +15,11 @@ import {
 } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { WORKFLOW_TAGS, samplersToComfySamplers, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
+import {
+  WORKFLOW_TAGS,
+  samplersToComfySamplers,
+  getProcessTagFromWorkflow,
+} from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';

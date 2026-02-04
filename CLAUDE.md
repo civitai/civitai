@@ -215,6 +215,8 @@ Feature-specific documentation lives in `docs/features/`. Before implementing a 
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
 | Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
+| LoRA Training | [docs/features/lora-training.md](docs/features/lora-training.md) |
+| Image Edit Training | [docs/features/image-edit-training.md](docs/features/image-edit-training.md) |
 
 ## Troubleshooting
 

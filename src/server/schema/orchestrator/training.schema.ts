@@ -194,3 +194,18 @@ const imageTraininWhatIfgWorkflowSchema = z.intersection(
   })
 );
 export type ImageTraininWhatIfWorkflowSchema = z.infer<typeof imageTraininWhatIfgWorkflowSchema>;
+
+// PLACEHOLDER: Multi-dataset support for Image Edit training
+// When orchestrator API supports multiple datasets, this schema will be used
+// to define additional dataset inputs
+export const additionalDatasetsSchema = z
+  .array(
+    z.object({
+      url: z.string().url(),
+      label: z.string().optional(),
+      count: z.number(),
+    })
+  )
+  .max(3)
+  .optional();
+export type AdditionalDatasetsSchema = z.infer<typeof additionalDatasetsSchema>;

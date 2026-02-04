@@ -88,6 +88,7 @@ import {
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
+  createDefaultDataset,
   defaultTrainingState,
   defaultTrainingStateVideo,
   getShortNameFromUrl,
@@ -111,6 +112,7 @@ import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { TrainingDatasetsView, DatasetConfig } from '~/components/Training/Form/TrainingDatasets';
 
 const TrainingImagesCaptions = dynamic(
   () =>
@@ -245,9 +247,10 @@ const LabelSelectModal = ({
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
-  const thisMediaType =
-    (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
+  const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
   const isVideo = thisMediaType === 'video';
+  const isImageEdit = thisTrainingDetails?.type === 'Image Edit';
   const thisDefaultTrainingState = isVideo ? defaultTrainingStateVideo : defaultTrainingState;
   const domainColor = useDomainColor();
   const isGreen = domainColor === 'green';
@@ -267,6 +270,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setInitialOwnRights,
     setInitialShareDataset,
     setAutoLabeling,
+    updateDatasetImages,
+    updateDatasetLabelType,
+    updateDatasetImage,
+    setDatasets,
   } = trainingStore;
 
   const {
@@ -284,6 +291,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialShareDataset,
     autoLabeling,
     autoCaptioning,
+    datasets,
   } = useTrainingImageStore((state) => state[model.id] ?? { ...thisDefaultTrainingState });
 
   const [page, setPage] = useState(1);
@@ -519,11 +527,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (showNotif) setLoadingZip(true);
 
     const parsedFiles: ImageDataType[] = [];
+    // For Image Edit: group files by folder (target/, control_1/, etc.)
+    const datasetFiles: Map<string, ImageDataType[]> = new Map();
 
     const zipReader = await getJSZip();
     const zData = await zipReader.loadAsync(f);
 
     const zipEntries = Object.entries(zData.files);
+
+    // Detect if this is an Image Edit zip (has target/ folder)
+    const hasTargetFolder = zipEntries.some(([zname]) => zname.startsWith('target/'));
+    const isImageEditZip = hasTargetFolder;
+
     const imageEntries = zipEntries.filter(([zname, zf]) => {
       if (zf.dir) return false;
       if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return false;
@@ -532,7 +547,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     });
 
     console.log(
-      `[ZipProcessing] Starting to process ${imageEntries.length} images from zip (total entries: ${zipEntries.length})`
+      `[ZipProcessing] Starting to process ${imageEntries.length} images from zip (total entries: ${zipEntries.length})${isImageEditZip ? ' [Image Edit format]' : ''}`
     );
     let completedCount = 0;
     const totalImages = imageEntries.length;
@@ -561,14 +576,31 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 labelStr = await czFile.async('string');
                 hasLabelFiles = true;
               }
-              parsedFiles.push({
-                name: zname,
+
+              const imgData: ImageDataType = {
+                name: zname.includes('/') ? zname.split('/').pop()! : zname,
                 type: mediaExts[fileExt],
                 url: scaledUrl,
                 label: labelStr,
                 invalidLabel: false,
                 source: source ?? null,
+              };
+
+              // For Image Edit zip, group by folder
+              if (isImageEditZip && zname.includes('/')) {
+                const folder = zname.split('/')[0];
+                if (!datasetFiles.has(folder)) {
+                  datasetFiles.set(folder, []);
+                }
+                datasetFiles.get(folder)!.push(imgData);
+              }
+
+              // Also add to flat list for backward compatibility
+              parsedFiles.push({
+                ...imgData,
+                name: zname, // Keep full path for flat list
               });
+
               completedCount++;
               // Log progress every 10 images to reduce console spam
               if (completedCount % 10 === 0 || completedCount === totalImages) {
@@ -607,12 +639,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setLoadingZip(false);
     }
 
-    return { parsedFiles, hasAnyLabelFiles };
+    return { parsedFiles, hasAnyLabelFiles, isImageEditZip, datasetFiles };
   };
 
   const handleDrop = async (
     fileList: FileWithPath[],
-    data?: { [p: string]: Pick<ImageDataType, 'label' | 'source'> }
+    data?: { [p: string]: Pick<ImageDataType, 'label' | 'source'> },
+    datasetId?: number
   ) => {
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
@@ -651,15 +684,28 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       .map((nf) => nf.parsedFiles)
       .flat()
       .filter(isDefined);
-    if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
+
+    // Determine target list for max file check
+    const targetList =
+      datasetId !== undefined
+        ? datasets.find((d) => d.id === datasetId)?.imageList ?? []
+        : imageList;
+
+    if (filteredFiles.length > MAX_FILES_ALLOWED - targetList.length) {
       showErrorNotification({
         title: 'Too many files',
         error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
         autoClose: false,
       });
-      filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
+      filteredFiles.splice(MAX_FILES_ALLOWED - targetList.length);
     }
-    setImageList(model.id, thisMediaType, imageList.concat(filteredFiles));
+
+    // Add images to specific dataset or global imageList
+    if (datasetId !== undefined) {
+      updateDatasetImages(model.id, thisMediaType, datasetId, targetList.concat(filteredFiles));
+    } else {
+      setImageList(model.id, thisMediaType, imageList.concat(filteredFiles));
+    }
 
     const labelsPresent = newFiles.map((nf) => nf.hasAnyLabelFiles).some((hl) => hl);
     if (labelsPresent) {
@@ -674,7 +720,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const handleImport = async (assets: SelectedImage[], source: ImageSelectSource) => {
+  const handleImport = async (
+    assets: SelectedImage[],
+    source: ImageSelectSource,
+    datasetId?: number
+  ) => {
     const importNotifId = `${thisModelVersion.id}-importing-asset-${new Date().toISOString()}`;
     showNotification({
       id: importNotifId,
@@ -749,7 +799,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             [f.file.name]: { label: f.label, source: { type: source, url: f.url } },
           }),
           {} as Record<string, Pick<ImageDataType, 'label' | 'source'>>
-        )
+        ),
+        datasetId
       );
     }
 
@@ -954,18 +1005,59 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setTriggerWord(model.id, thisMediaType, thisTrainedWord);
       setInitialTriggerWord(model.id, thisMediaType, thisTrainedWord);
 
-      if (imageList.length === 0) {
+      // For Image Edit, check datasets; for standard, check imageList
+      const hasExistingData = isImageEdit
+        ? datasets.some((d) => d.imageList.length > 0)
+        : imageList.length > 0;
+
+      if (!hasExistingData) {
         setLoadingZip(true);
         parseExistingAndHandle(thisModelVersion.id)
           .then((files) => {
             if (files) {
-              const flatFiles = files.parsedFiles.flat();
-              setImageList(model.id, thisMediaType, flatFiles);
-              setInitialImageList(
-                model.id,
-                thisMediaType,
-                flatFiles.map((d) => ({ ...d }))
-              );
+              // Check if this is an Image Edit zip with folder structure
+              if (files.isImageEditZip && files.datasetFiles.size > 0) {
+                // Convert folder-based data to datasets
+                const restoredDatasets: ReturnType<typeof createDefaultDataset>[] = [];
+
+                // Get sorted folder names (target first, then control_1, control_2, etc.)
+                const folderNames = Array.from(files.datasetFiles.keys()).sort((a, b) => {
+                  if (a === 'target') return -1;
+                  if (b === 'target') return 1;
+                  return a.localeCompare(b);
+                });
+
+                folderNames.forEach((folder, idx) => {
+                  const images = files.datasetFiles.get(folder) || [];
+                  const dataset = createDefaultDataset(idx, fileLabelType);
+
+                  // Set label based on folder name
+                  if (folder === 'target') {
+                    dataset.label = 'Target';
+                  } else {
+                    // control_1 -> Control 1, etc.
+                    const controlNum = folder.replace('control_', '');
+                    dataset.label = `Control ${controlNum}`;
+                  }
+
+                  dataset.imageList = images;
+                  dataset.initialImageList = images.map((d) => ({ ...d }));
+                  restoredDatasets.push(dataset);
+                });
+
+                if (restoredDatasets.length > 0) {
+                  setDatasets(model.id, thisMediaType, restoredDatasets);
+                }
+              } else {
+                // Standard training: flat file structure
+                const flatFiles = files.parsedFiles.flat();
+                setImageList(model.id, thisMediaType, flatFiles);
+                setInitialImageList(
+                  model.id,
+                  thisMediaType,
+                  flatFiles.map((d) => ({ ...d }))
+                );
+              }
             }
           })
           .catch((e) => {
@@ -1034,38 +1126,57 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     const zip = await getJSZip();
 
-    await Promise.all(
-      imageList.map(async (imgData, idx) => {
-        const filenameBase = String(idx).padStart(3, '0');
+    // For Image Edit mode, create folder structure for each dataset
+    if (isImageEdit) {
+      await Promise.all(
+        datasets.map(async (dataset, datasetIdx) => {
+          const folderName = datasetIdx === 0 ? 'target' : `control_${datasetIdx}`;
 
-        let label = imgData.label;
+          await Promise.all(
+            dataset.imageList.map(async (imgData) => {
+              const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+              // Use original filename to preserve pairing
+              const filename = imgData.name || `${String(datasetIdx).padStart(3, '0')}.${imgData.type.split('/').pop() ?? 'jpeg'}`;
+              zip.file(`${folderName}/${filename}`, imgBlob);
+            })
+          );
+        })
+      );
+    } else {
+      // Standard training: flat file structure with labels
+      await Promise.all(
+        imageList.map(async (imgData, idx) => {
+          const filenameBase = String(idx).padStart(3, '0');
 
-        if (triggerWord.length) {
-          const separator = labelType === 'caption' ? '' : ',';
-          const regMatch =
-            labelType === 'caption'
-              ? new RegExp(`^${triggerWord}( |$)`)
-              : new RegExp(`^${triggerWord}(${separator}|$)`);
+          let label = imgData.label;
 
-          if (!regMatch.test(label)) {
-            label =
-              label.length > 0
-                ? labelType === 'caption'
-                  ? [triggerWord, label].join(' ')
-                  : [triggerWord, label].join(`${separator} `)
-                : triggerWord;
+          if (triggerWord.length) {
+            const separator = labelType === 'caption' ? '' : ',';
+            const regMatch =
+              labelType === 'caption'
+                ? new RegExp(`^${triggerWord}( |$)`)
+                : new RegExp(`^${triggerWord}(${separator}|$)`);
+
+            if (!regMatch.test(label)) {
+              label =
+                label.length > 0
+                  ? labelType === 'caption'
+                    ? [triggerWord, label].join(' ')
+                    : [triggerWord, label].join(`${separator} `)
+                  : triggerWord;
+            }
           }
-        }
 
-        label.length > 0 && zip.file(`${filenameBase}.txt`, label);
+          label.length > 0 && zip.file(`${filenameBase}.txt`, label);
 
-        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
 
-        // TODO [bw] unregister here
+          // TODO [bw] unregister here
 
-        zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
-      })
-    );
+          zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
+        })
+      );
+    }
     // TODO [bw] handle error
     zip.generateAsync({ type: 'blob' }).then(async (content) => {
       const fileName = `${thisModelVersion.id}_training_data.zip`;
@@ -1076,6 +1187,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      // Calculate total images for notification (datasets for Image Edit, imageList otherwise)
+      const totalImages = isImageEdit
+        ? datasets.reduce((sum, d) => sum + d.imageList.length, 0)
+        : imageList.length;
+
       hideNotification(notificationId);
       showNotification({
         id: notificationId,
@@ -1083,7 +1199,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         autoClose: false,
         withCloseButton: false,
         title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
+        message: `Packaging ${totalImages} file${totalImages !== 1 ? 's' : ''}...`,
       });
 
       try {
@@ -1122,8 +1238,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               labelType,
               ownRights,
               shareDataset,
-              numImages: imageList.length,
-              numCaptions: imageList.filter((i) => i.label.length > 0).length,
+              numImages: totalImages,
+              numCaptions: isImageEdit ? 0 : imageList.filter((i) => i.label.length > 0).length,
             },
           },
           async ({ meta, size, ...result }) => {
@@ -1187,6 +1303,40 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
     setAttest(model.id, thisMediaType, { ...attested, error: '' });
+
+    // For Image Edit mode, check datasets instead of global imageList
+    if (isImageEdit) {
+      // Validate datasets have images
+      const totalDatasetImages = datasets.reduce((sum, d) => sum + d.imageList.length, 0);
+      if (totalDatasetImages === 0) {
+        showNotification({
+          icon: <IconX size={18} />,
+          color: 'red',
+          title: 'No files provided',
+          message: 'Each dataset must have at least 1 file.',
+        });
+        return;
+      }
+
+      // Validate all datasets have the same number of images
+      const imageCounts = datasets.map((d) => d.imageList.length);
+      const allCountsMatch = imageCounts.every((c) => c === imageCounts[0] && c > 0);
+      if (!allCountsMatch) {
+        showNotification({
+          icon: <IconX size={18} />,
+          color: 'red',
+          title: 'Image count mismatch',
+          message:
+            'All datasets must have the same number of images for proper pairing. Current counts: ' +
+            datasets.map((d, i) => `${d.label || (i === 0 ? 'Target' : `Control ${i}`)}: ${d.imageList.length}`).join(', '),
+        });
+        return;
+      }
+
+      // For Image Edit, proceed to next step (datasets will be zipped separately)
+      await handleNextAfterCheck();
+      return;
+    }
 
     if (
       isEqual(imageList, initialImageList) &&
@@ -1324,6 +1474,240 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       !isEqual(triggerWord, initialTriggerWord),
     // message: ``,
   });
+
+  // Image Edit training uses multi-dataset view
+  if (isImageEdit) {
+    return (
+      <>
+        <Stack>
+          <Paper mb="md" radius="md" p="xl" withBorder>
+            <div className="flex flex-col gap-4">
+              <Title order={4}>Acknowledgement</Title>
+              {attested.status ? (
+                <ContentClamp maxHeight={28}>
+                  <AttestDiv />
+                </ContentClamp>
+              ) : (
+                <div>
+                  <AttestDiv />
+                </div>
+              )}
+              <Checkbox
+                label="By agreeing to this attestation, I acknowledge that I have complied with these conditions and accept full responsibility for any legal or ethical implications that arise from the use of this content."
+                checked={attested.status}
+                error={attested.error}
+                onChange={(event) =>
+                  setAttest(model.id, thisMediaType, {
+                    status: event.currentTarget.checked,
+                    error: '',
+                  })
+                }
+              />
+            </div>
+          </Paper>
+
+          {attested.status && (
+            <TrainingDatasetsView model={model}>
+              {(dataset) => {
+                const datasetImportedUrls = dataset.imageList
+                  .filter((i) => isDefined(i.source?.url))
+                  .map((i) => i.source!.url!);
+
+                return (
+                  <Stack>
+                    {/* Import buttons */}
+                    <Paper p="md" withBorder radius="sm">
+                      <Stack>
+                        <Text size="sm">
+                          Add images to this dataset from various sources, or drag and drop files
+                          below.
+                        </Text>
+                        <Group mt="xs" justify="center" grow>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Media',
+                                selectSource: 'generation',
+                                onSelect: async (media) => {
+                                  await handleImport(media, 'generation', dataset.id);
+                                },
+                                importedUrls: datasetImportedUrls,
+                                videoAllowed: false,
+                              });
+                            }}
+                          >
+                            Import from Generator
+                          </Button>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Media',
+                                selectSource: 'uploaded',
+                                onSelect: async (media) => {
+                                  await handleImport(media, 'uploaded', dataset.id);
+                                },
+                                importedUrls: datasetImportedUrls,
+                                videoAllowed: false,
+                              });
+                            }}
+                          >
+                            Add from Profile
+                          </Button>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Datasets',
+                                selectSource: 'training',
+                                onSelect: async (datasets) => {
+                                  await handleImport(datasets, 'training', dataset.id);
+                                },
+                                importedUrls: datasetImportedUrls,
+                                videoAllowed: false,
+                              });
+                            }}
+                          >
+                            Re-use a Dataset
+                          </Button>
+                        </Group>
+
+                        <Divider label="OR" labelPosition="center" />
+
+                        <ImageDropzone
+                          onDrop={async (files) => {
+                            await handleDrop(files, undefined, dataset.id);
+                          }}
+                          label="Drag images or zips here (or click to select files)"
+                          description={
+                            <Text mt="xs" fz="sm" c={theme.colors.red[5]}>
+                              Changes made here are not permanently saved until you hit
+                              &quot;Next&quot;
+                            </Text>
+                          }
+                          max={MAX_FILES_ALLOWED}
+                          count={dataset.imageList.length}
+                          accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+                          onExceedMax={() =>
+                            showErrorNotification({
+                              title: 'Too many files',
+                              error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                              autoClose: false,
+                            })
+                          }
+                        />
+                      </Stack>
+                    </Paper>
+
+                    {/* Images section (simplified - no labeling for Image Edit) */}
+                    {dataset.imageList.length > 0 && (
+                      <Paper p="md" withBorder radius="sm">
+                        <Stack>
+                          <Group justify="space-between">
+                            <Text fw={500}>Images ({dataset.imageList.length})</Text>
+                            <Button
+                              size="compact-xs"
+                              color="red"
+                              variant="subtle"
+                              leftSection={<IconTrash size={14} />}
+                              onClick={() => {
+                                openConfirmModal({
+                                  title: 'Clear all images?',
+                                  children: `This will remove all ${dataset.imageList.length} images from this dataset.`,
+                                  labels: { cancel: 'Cancel', confirm: 'Clear All' },
+                                  confirmProps: { color: 'red' },
+                                  centered: true,
+                                  onConfirm: () =>
+                                    updateDatasetImages(model.id, thisMediaType, dataset.id, []),
+                                });
+                              }}
+                            >
+                              Clear All
+                            </Button>
+                          </Group>
+
+                          {/* Image grid - shows filename for pairing reference */}
+                          <SimpleGrid cols={{ base: 2, sm: 4, md: 6 }}>
+                            {dataset.imageList.map((imgData, index) => (
+                              <Card
+                                key={`${imgData.url}-${index}`}
+                                shadow="sm"
+                                radius="sm"
+                                withBorder
+                                className="p-0"
+                              >
+                                <div className={styles.imgOverlay}>
+                                  <Group gap={4} className={clsx(styles.trash)}>
+                                    <Tooltip label="Remove file">
+                                      <LegacyActionIcon
+                                        color="red"
+                                        variant="filled"
+                                        size="sm"
+                                        onClick={() => {
+                                          const newList = dataset.imageList.filter(
+                                            (i) => i.url !== imgData.url
+                                          );
+                                          updateDatasetImages(
+                                            model.id,
+                                            thisMediaType,
+                                            dataset.id,
+                                            newList
+                                          );
+                                        }}
+                                      >
+                                        <IconTrash size={14} />
+                                      </LegacyActionIcon>
+                                    </Tooltip>
+                                  </Group>
+                                  <MImage
+                                    alt={imgData.name}
+                                    src={imgData.url}
+                                    style={{
+                                      height: '100px',
+                                      width: '100%',
+                                      objectFit: 'cover',
+                                    }}
+                                  />
+                                </div>
+                                {/* Show filename for pairing reference */}
+                                <Text
+                                  size="xs"
+                                  c="dimmed"
+                                  ta="center"
+                                  p={4}
+                                  className="truncate"
+                                  title={imgData.name}
+                                >
+                                  {imgData.name}
+                                </Text>
+                              </Card>
+                            ))}
+                          </SimpleGrid>
+                        </Stack>
+                      </Paper>
+                    )}
+                  </Stack>
+                );
+              }}
+            </TrainingDatasetsView>
+          )}
+        </Stack>
+        <Group justify="flex-end" mt="xl">
+          <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
+            Back
+          </Button>
+          <Button
+            onClick={handleNext}
+            disabled={autoLabeling.isRunning}
+            loading={zipping || uploading > 0}
+          >
+            Next
+          </Button>
+        </Group>
+      </>
+    );
+  }
 
   return (
     <>

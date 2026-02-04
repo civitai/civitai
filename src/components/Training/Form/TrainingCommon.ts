@@ -160,7 +160,8 @@ export const useOrchestratorUpdateSignal = () => {
     const { autoLabeling, autoTagging, autoCaptioning } = storeState[modelId] ?? {
       ...defaultState,
     };
-    const { updateImage, setAutoLabeling } = trainingStore;
+    const { updateImage, setAutoLabeling, updateDatasetImage } = trainingStore;
+    const { datasetId } = autoLabeling;
 
     if (type === 'Failed') {
       showErrorNotification({
@@ -209,11 +210,16 @@ export const useOrchestratorUpdateSignal = () => {
 
           tags = [...prependList, ...tags, ...appendList];
 
-          updateImage(modelId, mediaType, {
+          const updateData = {
             matcher: k,
             label: tags.join(', '),
             appendLabel: autoTagging.overwrite === 'append',
-          });
+          };
+          if (datasetId !== undefined) {
+            updateDatasetImage(modelId, mediaType, datasetId, updateData);
+          } else {
+            updateImage(modelId, mediaType, updateData);
+          }
           setAutoLabeling(modelId, mediaType, {
             ...autoLabeling,
             successes: autoLabeling.successes + 1,
@@ -235,11 +241,16 @@ export const useOrchestratorUpdateSignal = () => {
             fails: [...autoLabeling.fails, k],
           });
         } else {
-          updateImage(modelId, mediaType, {
+          const updateData = {
             matcher: k,
             label: v,
             appendLabel: autoCaptioning.overwrite === 'append',
-          });
+          };
+          if (datasetId !== undefined) {
+            updateDatasetImage(modelId, mediaType, datasetId, updateData);
+          } else {
+            updateImage(modelId, mediaType, updateData);
+          }
           setAutoLabeling(modelId, mediaType, {
             ...autoLabeling,
             successes: autoLabeling.successes + 1,

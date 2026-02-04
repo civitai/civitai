@@ -104,12 +104,15 @@ export function SubscriptionCard() {
                       shortenPlanInterval(price.interval)}
                   </Text>
                 )}
-                <Text size="sm" c={subscription.cancelAt || subscription.isBadState ? 'red' : 'dimmed'}>
+                <Text
+                  size="sm"
+                  c={subscription.cancelAt || subscription.isBadState ? 'red' : 'dimmed'}
+                >
                   {subscription.isBadState
                     ? 'Payment failed'
                     : subscription.cancelAt || isCivitaiProvider
-                      ? 'Ends'
-                      : 'Renews'}{' '}
+                    ? 'Ends'
+                    : 'Renews'}{' '}
                   {!subscription.isBadState && formatDate(subscription.currentPeriodEnd)}
                 </Text>
               </Stack>
