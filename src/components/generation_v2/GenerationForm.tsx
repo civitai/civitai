@@ -84,7 +84,7 @@ export function GenerationForm() {
 
   // Handle workflow selection with compatibility check
   const handleWorkflowChange = useCallback(
-    (newWorkflow: string, workflowLabel: string) => {
+    (newWorkflow: string) => {
       if (!compatibility.isWorkflowCompatible(newWorkflow)) {
         const target = compatibility.getTargetEcosystemForWorkflow(newWorkflow);
         if (target && compatibility.currentEcosystemKey) {
@@ -100,7 +100,6 @@ export function GenerationForm() {
             pendingChange: {
               type: 'workflow',
               value: newWorkflow,
-              workflowLabel,
               currentEcosystem: currentEcoName,
               targetEcosystem: target.displayName,
             },
@@ -126,8 +125,8 @@ export function GenerationForm() {
             type: 'ecosystem',
             value: newBaseModel,
             ecosystemLabel,
-            currentWorkflow: snapshot.workflow ?? 'txt2img',
-            targetWorkflow: target.label,
+            currentWorkflowId: snapshot.workflow ?? 'txt2img',
+            targetWorkflowId: target.id,
           },
           onConfirm: () => {
             // Set both workflow and baseModel together to avoid validation issues
@@ -157,9 +156,7 @@ export function GenerationForm() {
                 <WorkflowInput
                   value={value}
                   onChange={(newValue) => {
-                    // Get workflow label for the modal
-                    const label = newValue; // WorkflowInput doesn't expose label, using value
-                    handleWorkflowChange(newValue, label);
+                    handleWorkflowChange(newValue);
                   }}
                   isCompatible={compatibility.isWorkflowCompatible}
                   isMember={isMember}

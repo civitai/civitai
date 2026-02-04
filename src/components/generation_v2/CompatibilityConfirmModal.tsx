@@ -10,6 +10,7 @@ import { IconArrowRight } from '@tabler/icons-react';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { workflowOptionById } from '~/shared/data-graph/generation/config/workflows';
 
 // =============================================================================
 // Types
@@ -19,7 +20,6 @@ export type PendingChange =
   | {
       type: 'workflow';
       value: string;
-      workflowLabel: string;
       currentEcosystem: string;
       targetEcosystem: string;
     }
@@ -27,8 +27,8 @@ export type PendingChange =
       type: 'ecosystem';
       value: string;
       ecosystemLabel: string;
-      currentWorkflow: string;
-      targetWorkflow: string;
+      currentWorkflowId: string;
+      targetWorkflowId: string;
     };
 
 export interface CompatibilityConfirmModalProps {
@@ -48,6 +48,19 @@ function CompatibilityConfirmModalContent({
 
   const isWorkflowChange = pendingChange.type === 'workflow';
 
+  // Derive labels from IDs
+  const workflowLabel = isWorkflowChange
+    ? workflowOptionById.get(pendingChange.value)?.label ?? pendingChange.value
+    : undefined;
+
+  const currentWorkflowLabel = !isWorkflowChange
+    ? workflowOptionById.get(pendingChange.currentWorkflowId)?.label ?? pendingChange.currentWorkflowId
+    : undefined;
+
+  const targetWorkflowLabel = !isWorkflowChange
+    ? workflowOptionById.get(pendingChange.targetWorkflowId)?.label ?? pendingChange.targetWorkflowId
+    : undefined;
+
   const handleConfirm = () => {
     onConfirm();
     dialog.onClose();
@@ -65,13 +78,13 @@ function CompatibilityConfirmModalContent({
         <Text size="sm">
           {isWorkflowChange ? (
             <>
-              <strong>{pendingChange.workflowLabel}</strong> is not available for{' '}
+              <strong>{workflowLabel}</strong> is not available for{' '}
               <strong>{pendingChange.currentEcosystem}</strong>.
             </>
           ) : (
             <>
               <strong>{pendingChange.ecosystemLabel}</strong> doesn&apos;t support{' '}
-              <strong>{pendingChange.currentWorkflow}</strong>.
+              <strong>{currentWorkflowLabel}</strong>.
             </>
           )}
         </Text>
@@ -82,11 +95,11 @@ function CompatibilityConfirmModalContent({
               {isWorkflowChange ? 'Ecosystem' : 'Workflow'}
             </Text>
             <Text size="sm" fw={500} className="line-through opacity-60">
-              {isWorkflowChange ? pendingChange.currentEcosystem : pendingChange.currentWorkflow}
+              {isWorkflowChange ? pendingChange.currentEcosystem : currentWorkflowLabel}
             </Text>
             <IconArrowRight size={14} className="text-gray-5" />
             <Text size="sm" fw={600} c="blue">
-              {isWorkflowChange ? pendingChange.targetEcosystem : pendingChange.targetWorkflow}
+              {isWorkflowChange ? pendingChange.targetEcosystem : targetWorkflowLabel}
             </Text>
           </Group>
         </Card>

@@ -215,7 +215,6 @@ export function applyWorkflowWithCheck({
         pendingChange: {
           type: 'workflow',
           value: workflowId,
-          workflowLabel: workflowConfigByKey.get(workflowId)?.label ?? workflowId,
           currentEcosystem: ecosystemKey,
           targetEcosystem: target.displayName,
         },
