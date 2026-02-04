@@ -2,15 +2,8 @@ import { FliptClient } from '@flipt-io/flipt-client-js';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
-export enum FLIPT_FEATURE_FLAGS {
-  FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
-  FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-  REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
-  LIVE_METRICS = 'live-metrics',
-  GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
-  GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
-}
+// Re-export from shared location for backwards compatibility
+export { FLIPT_FEATURE_FLAGS } from '~/shared/constants/feature-flags';
 
 class FliptSingleton {
   private static instance: FliptClient | null = null;
