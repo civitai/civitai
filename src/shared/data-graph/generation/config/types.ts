@@ -131,6 +131,9 @@ export interface WorkflowConfig {
   /** Ecosystem IDs that support this workflow */
   ecosystemIds: number[];
 
+  /** Whether this workflow requires membership */
+  memberOnly?: boolean;
+
   /** Base node configurations */
   nodes?: NodeConfigs;
 

@@ -215,6 +215,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Remove the background from an image',
     category: 'image-enhancements',
     ecosystemIds: [],
+    memberOnly: true,
     nodes: {
       images: { max: 1, min: 1 },
     },
@@ -324,6 +325,8 @@ export type WorkflowOption = {
   inputType: 'text' | 'image' | 'video';
   /** If true, this workflow is ecosystem-specific */
   ecosystemSpecific?: boolean;
+  /** If true, this workflow requires membership */
+  memberOnly?: boolean;
 };
 
 /**
@@ -342,6 +345,7 @@ function toWorkflowOption(
     category: config.category,
     inputType: parsed.input,
     ecosystemSpecific: config.ecosystemIds.length === 1,
+    memberOnly: config.memberOnly,
   };
 }
 

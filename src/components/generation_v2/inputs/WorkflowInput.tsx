@@ -14,12 +14,15 @@ import {
   IconPhoto,
   IconVideo,
   IconArrowRight,
+  IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { forwardRef, useMemo } from 'react';
 
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
+import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import {
   getAllWorkflowsGrouped,
   workflowOptionById,
@@ -34,6 +37,7 @@ export interface WorkflowOption {
   label: string;
   description?: string;
   compatible: boolean;
+  memberOnly?: boolean;
 }
 
 export interface WorkflowCategoryGroup {
@@ -51,6 +55,8 @@ export interface WorkflowInputProps {
   className?: string;
   /** Check if a workflow is compatible with the current ecosystem */
   isCompatible?: (workflowId: string) => boolean;
+  /** Whether the current user is a member */
+  isMember?: boolean;
 }
 
 // =============================================================================
@@ -78,6 +84,8 @@ interface WorkflowMenuItemProps {
   onSelect: () => void;
   /** Whether this workflow is compatible with the current ecosystem */
   isCompatible?: boolean;
+  /** Whether the current user is a member */
+  isMember?: boolean;
 }
 
 function WorkflowMenuItem({
@@ -85,7 +93,31 @@ function WorkflowMenuItem({
   isSelected,
   onSelect,
   isCompatible = true,
+  isMember = false,
 }: WorkflowMenuItemProps) {
+  const disabled = workflow.memberOnly && !isMember;
+
+  if (disabled) {
+    return (
+        <RequireMembership>
+          <SupportButtonPolymorphic
+            icon={IconDiamond}
+            position="right"
+            className="w-full !px-3 !py-2.5 !h-auto !min-h-[44px]"
+          >
+            <div className="flex flex-col items-start gap-0.5 py-0.5">
+              <span className="text-sm leading-tight">{workflow.label}</span>
+              {workflow.description && (
+                <span className="text-xs text-dimmed opacity-70 leading-tight">
+                  {workflow.description}
+                </span>
+              )}
+            </div>
+          </SupportButtonPolymorphic>
+        </RequireMembership>
+    );
+  }
+
   return (
     <UnstyledButton
       onClick={onSelect}
@@ -171,6 +203,7 @@ interface WorkflowListContentProps {
   selectedValue?: string;
   onSelect: (workflowId: string) => void;
   isCompatible?: (workflowId: string) => boolean;
+  isMember?: boolean;
 }
 
 function WorkflowListContent({
@@ -178,6 +211,7 @@ function WorkflowListContent({
   selectedValue,
   onSelect,
   isCompatible,
+  isMember = false,
 }: WorkflowListContentProps) {
   // Flatten all workflows with compatibility info
   const allWorkflows = useMemo(() => {
@@ -202,6 +236,7 @@ function WorkflowListContent({
           isSelected={workflow.id === selectedValue}
           onSelect={() => onSelect(workflow.id)}
           isCompatible={compatible}
+          isMember={isMember}
         />
       ))}
     </Stack>
@@ -218,6 +253,7 @@ interface WorkflowSelectModalProps {
   selectedValue?: string;
   onSelect: (workflowId: string) => void;
   isCompatible?: (workflowId: string) => boolean;
+  isMember?: boolean;
 }
 
 function WorkflowSelectModal({
@@ -226,6 +262,7 @@ function WorkflowSelectModal({
   selectedValue,
   onSelect,
   isCompatible,
+  isMember = false,
 }: WorkflowSelectModalProps) {
   const dialog = useDialogContext();
 
@@ -252,6 +289,7 @@ function WorkflowSelectModal({
           selectedValue={selectedValue}
           onSelect={handleSelect}
           isCompatible={isCompatible}
+          isMember={isMember}
         />
       </Stack>
     </Modal>
@@ -307,6 +345,7 @@ export function WorkflowInput({
   disabled,
   className,
   isCompatible,
+  isMember = false,
 }: WorkflowInputProps) {
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
@@ -362,6 +401,7 @@ export function WorkflowInput({
         selectedValue: value,
         onSelect: (workflowId: string) => onChange?.(workflowId),
         isCompatible,
+        isMember,
       },
     });
   };
@@ -376,6 +416,7 @@ export function WorkflowInput({
         selectedValue: value,
         onSelect: (workflowId: string) => onChange?.(workflowId),
         isCompatible,
+        isMember,
       },
     });
   };
@@ -457,6 +498,7 @@ export function WorkflowInput({
             selectedValue={value}
             onSelect={handleImageSelect}
             isCompatible={isCompatible}
+            isMember={isMember}
           />
         </Popover.Dropdown>
       </Popover>
@@ -493,6 +535,7 @@ export function WorkflowInput({
               selectedValue={value}
               onSelect={handleVideoSelect}
               isCompatible={isCompatible}
+              isMember={isMember}
             />
           </Popover.Dropdown>
         </Popover>

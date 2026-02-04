@@ -18,12 +18,16 @@ import {
   IconPlayerTrackNextFilled,
   IconTrash,
   IconAlertTriangle,
+  IconDiamond,
 } from '@tabler/icons-react';
 
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationGraphStore } from '~/store/generation-graph.store';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
+import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageStep,
@@ -57,6 +61,8 @@ export function GeneratedItemWorkflowMenu({
 }: GeneratedItemWorkflowMenuProps) {
   const { updateImages } = useUpdateImageStepMetadata();
   const { copied, copy } = useClipboard();
+  const status = useGenerationStatus();
+  const isMember = status.tier !== 'free';
 
   const outputType = image.type === 'video' ? 'video' : 'image';
   const ecosystemKey =
@@ -152,28 +158,48 @@ export function GeneratedItemWorkflowMenu({
         <React.Fragment key={group.category}>
           {workflowsOnly && group !== groups[0] && <Menu.Divider />}
           <Menu.Label>{group.label}</Menu.Label>
-          {group.workflows.map((workflow) => (
-            <Menu.Item
-              key={workflow.id}
-              onClick={() =>
-                applyWorkflowWithCheck({
-                  workflowId: workflow.id,
-                  ecosystemKey,
-                  image,
-                  step,
-                  compatible: workflow.compatible,
-                })
-              }
-              className={!workflow.compatible ? 'opacity-60' : undefined}
-              rightSection={
-                !workflow.compatible ? (
-                  <IconAlertTriangle size={14} className="text-yellow-5" />
-                ) : undefined
-              }
-            >
-              <Text size="sm">{workflow.label}</Text>
-            </Menu.Item>
-          ))}
+          {group.workflows.map((workflow) => {
+            const disabled = workflow.memberOnly && !isMember;
+
+            if (disabled) {
+              return (
+                <div key={workflow.id} className="px-1 pt-1">
+                  <RequireMembership>
+                    <SupportButtonPolymorphic
+                      icon={IconDiamond}
+                      position="right"
+                      className="w-full !px-3 !py-2"
+                    >
+                      <Text size="sm">{workflow.label}</Text>
+                    </SupportButtonPolymorphic>
+                  </RequireMembership>
+                </div>
+              );
+            }
+
+            return (
+              <Menu.Item
+                key={workflow.id}
+                onClick={() =>
+                  applyWorkflowWithCheck({
+                    workflowId: workflow.id,
+                    ecosystemKey,
+                    image,
+                    step,
+                    compatible: workflow.compatible,
+                  })
+                }
+                className={!workflow.compatible ? 'opacity-60' : undefined}
+                rightSection={
+                  !workflow.compatible ? (
+                    <IconAlertTriangle size={14} className="text-yellow-5" />
+                  ) : undefined
+                }
+              >
+                <Text size="sm">{workflow.label}</Text>
+              </Menu.Item>
+            );
+          })}
         </React.Fragment>
       ))}
 

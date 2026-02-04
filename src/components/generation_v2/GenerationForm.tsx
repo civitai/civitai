@@ -21,6 +21,7 @@ import React, { useCallback, useState, useRef, useEffect } from 'react';
 
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { Controller, MultiController, useGraph } from '~/libs/data-graph/react';
 import { type GenerationGraphTypes, type VideoValue } from '~/shared/data-graph/generation';
@@ -54,6 +55,8 @@ import { ScaleFactorInput } from './inputs/ScaleFactorInput';
 
 export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
+  const currentUser = useCurrentUser();
+  const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/baseModel (they exist in discriminated branches)
   const snapshot = graph.getSnapshot() as { workflow?: string; baseModel?: string };
   // Force re-render when workflow or baseModel changes
@@ -159,6 +162,7 @@ export function GenerationForm() {
                     handleWorkflowChange(newValue, label);
                   }}
                   isCompatible={compatibility.isWorkflowCompatible}
+                  isMember={isMember}
                 />
               )}
             />
