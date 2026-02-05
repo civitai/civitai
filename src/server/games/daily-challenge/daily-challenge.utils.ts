@@ -79,6 +79,18 @@ export async function getChallengeConfig() {
   return { ...dailyChallengeConfig, ...config };
 }
 
+export async function setChallengeConfig(updates: Partial<ChallengeConfig>): Promise<void> {
+  // Get existing Redis config (not merged with defaults)
+  const existingConfig =
+    (await sysRedis.packed.get<Partial<ChallengeConfig>>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG)) ??
+    {};
+
+  // Merge updates
+  const newConfig = { ...existingConfig, ...updates };
+
+  await sysRedis.packed.set(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG, newConfig);
+}
+
 export type ChallengePrompts = {
   systemMessage: string;
   collection: string;

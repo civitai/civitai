@@ -108,6 +108,16 @@ export function ModelVersionMultiSelect({
   return (
     <Input.Wrapper {...inputWrapperProps}>
       <Stack gap="xs" mt={5}>
+        {canAdd && !disabled && (
+          <Button
+            variant="light"
+            leftSection={<IconPlus size={16} />}
+            onClick={handleOpenResourceSelect}
+            size="sm"
+          >
+            Add Resource
+          </Button>
+        )}
         {isLoading ? (
           <Card withBorder p="sm">
             <Group justify="center">
@@ -157,20 +167,14 @@ export function ModelVersionMultiSelect({
             </Stack>
           </Card>
         ) : (
-          <Text size="sm" c="dimmed">
-            No model versions required (any model allowed)
-          </Text>
-        )}
-
-        {canAdd && !disabled && (
-          <Button
-            variant="light"
-            leftSection={<IconPlus size={16} />}
-            onClick={handleOpenResourceSelect}
-            size="sm"
-          >
-            Add Model Version
-          </Button>
+          <Card p="xs" className="flex items-start" withBorder>
+            <Text size="md" c="dimmed">
+              No resources selected
+            </Text>
+            <Text size="sm" c="dimmed">
+              Any model allowed
+            </Text>
+          </Card>
         )}
 
         {!canAdd && (

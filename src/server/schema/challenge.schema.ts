@@ -279,3 +279,9 @@ export type ImageEligibilityResult = {
   eligible: boolean;
   reasons: string[];
 };
+
+// System challenge config update schema
+export const updateChallengeConfigSchema = z.object({
+  defaultJudgeId: z.number().nullable(),
+});
+export type UpdateChallengeConfigInput = z.infer<typeof updateChallengeConfigSchema>;

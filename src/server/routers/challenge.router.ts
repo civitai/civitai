@@ -8,6 +8,7 @@ import {
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   upsertChallengeSchema,
+  updateChallengeConfigSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -30,6 +31,8 @@ import {
   upsertChallenge,
   voidChallenge,
   getActiveJudges,
+  getChallengeSystemConfig,
+  updateChallengeSystemConfig,
 } from '~/server/services/challenge.service';
 
 // Router definition
@@ -98,6 +101,17 @@ export const challengeRouter = router({
   getJudges: moderatorProcedure
     .use(isFlagProtected('challengePlatform'))
     .query(() => getActiveJudges()),
+
+  // Moderator: Get system challenge config
+  getSystemConfig: moderatorProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getChallengeSystemConfig()),
+
+  // Moderator: Update system challenge config
+  updateSystemConfig: moderatorProcedure
+    .input(updateChallengeConfigSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => updateChallengeSystemConfig(input)),
 
   // Moderator: Delete a challenge
   delete: moderatorProcedure

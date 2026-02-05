@@ -19,6 +19,7 @@ import {
   type ImageEligibilityResult,
   type UpcomingTheme,
   type UpsertChallengeInput,
+  type UpdateChallengeConfigInput,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
@@ -35,6 +36,7 @@ import type { CollectionMetadataSchema } from '~/server/schema/collection.schema
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getChallengeConfig,
+  setChallengeConfig,
   getChallengeTypeConfig,
   getJudgePrompts,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -1235,4 +1237,43 @@ export async function checkImageEligibility(
 
     return { imageId, eligible: reasons.length === 0, reasons };
   });
+}
+
+/**
+ * Get system challenge configuration with resolved judge info.
+ */
+export async function getChallengeSystemConfig() {
+  const config = await getChallengeConfig();
+
+  let defaultJudge: { id: number; name: string; bio: string | null } | null = null;
+  if (config.defaultJudgeId) {
+    const judge = await dbRead.challengeJudge.findUnique({
+      where: { id: config.defaultJudgeId },
+      select: { id: true, name: true, bio: true },
+    });
+    if (judge) defaultJudge = judge;
+  }
+
+  return { defaultJudgeId: config.defaultJudgeId, defaultJudge };
+}
+
+/**
+ * Update system challenge configuration (e.g., default judge).
+ */
+export async function updateChallengeSystemConfig(input: UpdateChallengeConfigInput) {
+  if (input.defaultJudgeId !== null) {
+    const judge = await dbRead.challengeJudge.findUnique({
+      where: { id: input.defaultJudgeId },
+      select: { id: true, active: true },
+    });
+    if (!judge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Judge not found' });
+    if (!judge.active)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Cannot set an inactive judge as default',
+      });
+  }
+
+  await setChallengeConfig({ defaultJudgeId: input.defaultJudgeId });
+  return getChallengeSystemConfig();
 }

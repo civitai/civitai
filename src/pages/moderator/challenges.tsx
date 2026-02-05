@@ -8,18 +8,22 @@ import {
   Group,
   Loader,
   Menu,
+  Popover,
   Select,
   Stack,
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
+import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import {
   IconDots,
   IconFilter,
   IconPencil,
   IconPlus,
+  IconRobot,
+  IconSettings,
   IconTrash,
   IconTrophy,
   IconX,
@@ -62,6 +66,95 @@ const statusColors: Record<ChallengeStatus, string> = {
   [ChallengeStatus.Completed]: 'teal',
   [ChallengeStatus.Cancelled]: 'red',
 };
+
+function SystemSettingsPopover() {
+  const [opened, { close, toggle }] = useDisclosure(false);
+  const queryUtils = trpc.useUtils();
+  const { data: config, isLoading: configLoading } = trpc.challenge.getSystemConfig.useQuery();
+  const { data: judges = [], isLoading: judgesLoading } = trpc.challenge.getJudges.useQuery();
+
+  const updateMutation = trpc.challenge.updateSystemConfig.useMutation({
+    onMutate: async (newConfig) => {
+      // Cancel outgoing refetches
+      await queryUtils.challenge.getSystemConfig.cancel();
+
+      // Snapshot previous value
+      const previousConfig = queryUtils.challenge.getSystemConfig.getData();
+
+      // Optimistically update cache
+      const selectedJudge = newConfig.defaultJudgeId
+        ? judges.find((j) => j.id === newConfig.defaultJudgeId)
+        : null;
+
+      queryUtils.challenge.getSystemConfig.setData(undefined, {
+        defaultJudgeId: newConfig.defaultJudgeId,
+        defaultJudge: selectedJudge
+          ? { id: selectedJudge.id, name: selectedJudge.name, bio: selectedJudge.bio }
+          : null,
+      });
+
+      return { previousConfig };
+    },
+    onSuccess: () => {
+      showSuccessNotification({ message: 'Default judge updated' });
+      close();
+    },
+    onError: (error, _variables, context) => {
+      // Rollback on error
+      if (context?.previousConfig) {
+        queryUtils.challenge.getSystemConfig.setData(undefined, context.previousConfig);
+      }
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+
+  const isLoading = configLoading || judgesLoading;
+
+  return (
+    <Popover
+      opened={opened}
+      onChange={toggle}
+      position="bottom-end"
+      width={320}
+      shadow="md"
+      withinPortal
+    >
+      <Popover.Target>
+        <Tooltip label="System Settings" position="bottom">
+          <ActionIcon variant="default" size="lg" onClick={toggle}>
+            <IconSettings size={18} />
+          </ActionIcon>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="sm">
+          <Text fw={600} size="sm">
+            System Challenge Settings
+          </Text>
+          {isLoading ? (
+            <Center py="sm">
+              <Loader size="sm" />
+            </Center>
+          ) : (
+            <Select
+              label="Default Judge"
+              description="For auto-generated challenges"
+              placeholder="Select a judge"
+              data={judges.map((j) => ({ value: String(j.id), label: j.name }))}
+              defaultValue={config?.defaultJudgeId ? String(config.defaultJudgeId) : null}
+              onChange={(v) => updateMutation.mutate({ defaultJudgeId: v ? Number(v) : null })}
+              disabled={updateMutation.isPending}
+              leftSection={<IconRobot size={16} />}
+              size="sm"
+              clearable={false}
+              allowDeselect={false}
+            />
+          )}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
 
 export default function ModeratorChallengesPage() {
   const currentUser = useCurrentUser();
@@ -213,13 +306,16 @@ export default function ModeratorChallengesPage() {
                   </Text>
                 </div>
               </Group>
-              <Button
-                component={Link}
-                href="/moderator/challenges/create"
-                leftSection={<IconPlus size={16} />}
-              >
-                Create Challenge
-              </Button>
+              <Group gap="sm">
+                <SystemSettingsPopover />
+                <Button
+                  component={Link}
+                  href="/moderator/challenges/create"
+                  leftSection={<IconPlus size={16} />}
+                >
+                  Create Challenge
+                </Button>
+              </Group>
             </Group>
           </Card>
 

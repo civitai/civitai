@@ -261,7 +261,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 <InputSimpleImageUpload
                   name="coverImage"
                   label="Cover Image"
-                  aspectRatio={3 / 4}
+                  description="Suggested size: 1024x768 (4:3 aspect ratio)"
                   withAsterisk
                   withNsfwLevel={false}
                   disabled={isTerminal}
@@ -272,8 +272,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <InputRTE
               name="description"
               label="Description"
-              description="Full challenge description"
-              placeholder="Enter challenge description..."
+              placeholder="What is the challenge about? Provide details, rules, and any other information participants should know."
               includeControls={['heading', 'formatting', 'list', 'link']}
               editorSize="lg"
               stickyToolbar
@@ -287,7 +286,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           <InputModelVersionMultiSelect
             name="modelVersionIds"
             label="Eligible Models"
-            description="Specify which models are allowed for this challenge. Entries must use at least one. Leave empty to allow any model."
+            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
             disabled={isActive || isTerminal}
           />
         </Paper>
