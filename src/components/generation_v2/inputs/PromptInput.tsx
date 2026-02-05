@@ -1,16 +1,23 @@
-import { Textarea, type TextareaProps } from '@mantine/core';
+import { Button, Textarea, type TextareaProps } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
-import type { KeyboardEvent } from 'react';
+import { IconSparkles } from '@tabler/icons-react';
+import type { ClipboardEvent, KeyboardEvent } from 'react';
+import { useState } from 'react';
 import { create } from 'zustand';
+
+import { parsePromptMetadata } from '~/utils/metadata';
 
 // Store to track prompt focus state for whatIf debouncing
 export const usePromptFocusedStore = create<{ focused: boolean }>(() => ({ focused: false }));
 
 export type PromptInputProps = Omit<TextareaProps, 'onChange'> & {
   onChange?: (value: string) => void;
+  onFillForm?: (metadata: Record<string, unknown>) => void;
 };
 
-export function PromptInput(props: PromptInputProps) {
+export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
+  const [showFillForm, setShowFillForm] = useState(false);
+
   function handleArrowUpOrDown(event: KeyboardEvent<HTMLElement> | globalThis.KeyboardEvent) {
     if (props.name) {
       const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
@@ -24,14 +31,40 @@ export function PromptInput(props: PromptInputProps) {
     ['mod+ArrowDown', handleArrowUpOrDown],
   ]);
 
+  function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!onFillForm) return;
+    const text = e.clipboardData?.getData('text/plain');
+    if (text) setShowFillForm(text.includes('Steps:'));
+  }
+
+  function handleFillForm() {
+    const metadata = parsePromptMetadata(String(props.value ?? ''));
+    onFillForm?.(metadata);
+    setShowFillForm(false);
+  }
+
   return (
-    <Textarea
-      {...props}
-      onChange={(e) => props.onChange?.(e.target.value)}
-      onKeyDown={keyHandler}
-      onFocus={() => usePromptFocusedStore.setState({ focused: true })}
-      onBlur={() => usePromptFocusedStore.setState({ focused: false })}
-    />
+    <div className="relative">
+      <Textarea
+        {...props}
+        onChange={(e) => props.onChange?.(e.target.value)}
+        onKeyDown={keyHandler}
+        onPaste={handlePaste}
+        onFocus={() => usePromptFocusedStore.setState({ focused: true })}
+        onBlur={() => usePromptFocusedStore.setState({ focused: false })}
+      />
+      {showFillForm && (
+        <Button
+          size="compact-xs"
+          variant="light"
+          leftSection={<IconSparkles size={14} />}
+          onClick={handleFillForm}
+          className="absolute right-2 top-2"
+        >
+          Fill Form
+        </Button>
+      )}
+    </div>
   );
 }
 

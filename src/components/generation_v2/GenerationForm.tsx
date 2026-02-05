@@ -349,6 +349,10 @@ export function GenerationForm() {
                     name="prompt"
                     value={value}
                     onChange={onChange}
+                    onFillForm={(metadata) => {
+                      const { resources, ...data } = metadata;
+                      graph.set(data as Parameters<typeof graph.set>[0]);
+                    }}
                     placeholder="Your prompt goes here..."
                     autosize
                     minRows={2}

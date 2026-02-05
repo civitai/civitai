@@ -14,6 +14,7 @@ import type { GenerationData } from '~/server/services/generation/generation.ser
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { remixStore } from '~/store/remix.store';
 import { QS } from '~/utils/qs';
 
 // =============================================================================
@@ -125,6 +126,11 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
             const isMedia = ['audio', 'image', 'video'].includes(input.type);
             const resources = result.resources.map(substituteResource).map(toResourceData);
 
+            // Update remix store for similarity tracking
+            if (isMedia && result.remixOfId) {
+              remixStore.setRemix(result.remixOfId, result.params);
+            }
+
             set((state) => {
               state.data = {
                 params: result.params,
@@ -147,6 +153,11 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
       close: () => useGenerationPanelStore.setState({ opened: false }),
 
       setData: ({ params, resources, runType = 'replay', remixOfId }) => {
+        // Update remix store for similarity tracking
+        if ((runType === 'remix' || runType === 'replay') && remixOfId) {
+          remixStore.setRemix(remixOfId, params);
+        }
+
         set((state) => {
           state.data = {
             params,

@@ -16,6 +16,7 @@ import {
   DailyBoostRewardClaim,
   useDailyBoostReward,
 } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
@@ -30,15 +31,20 @@ import { GenerateButton } from '~/components/Orchestrator/components/GenerateBut
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { Controller, useGraph } from '~/libs/data-graph/react';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { Controller, useGraph, MultiController } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useTipStore } from '~/store/tip.store';
 import { hashify } from '~/utils/string-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
-import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { SourceMetadata, sourceMetadataStore } from '~/store/source-metadata.store';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { useRemixOfId } from './hooks/useRemixOfId';
+import { remixStore } from '~/store/remix.store';
 
 // =============================================================================
 // Helper Functions
@@ -196,6 +202,9 @@ export function FormFooter() {
   const status = useGenerationStatus();
   const { running, helpers } = useTourContext();
   const { creatorTip, civitaiTip } = useTipStore();
+  const features = useFeatureFlags();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const remixOfId = useRemixOfId();
 
   const [submitError, setSubmitError] = useState<string | undefined>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
@@ -208,6 +217,19 @@ export function FormFooter() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
+
+  // Get whatIf data for buzz transaction checking
+  const { data: whatIfData } = useWhatIfContext();
+
+  // Setup buzz transaction handling
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    accountTypes: buzzSpendTypes,
+    message: (requiredBalance) =>
+      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy or earn more Buzz to perform this action.`,
+    performTransactionOnPurchase: true,
+  });
 
   const generateMutation = useGenerateFromGraph({
     onError: (error) => {
@@ -255,7 +277,7 @@ export function FormFooter() {
     const isEnhancement =
       workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
 
-    let sourceMetadata;
+    let sourceMetadata: SourceMetadata | undefined;
     if (isEnhancement) {
       // Get the image/video URL from the snapshot
       const imageUrl = snapshot.images?.[0]?.url;
@@ -267,18 +289,35 @@ export function FormFooter() {
       }
     }
 
-    await generateMutation.mutateAsync({
-      input: inputData,
-      creatorTip: hasCreatorTip ? creatorTip : 0,
-      civitaiTip,
-      ...(sourceMetadata ? { sourceMetadata } : {}),
-    });
+    // Calculate total cost including tips
+    const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
+    const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
+    const base = whatIfData?.cost?.base ?? 0;
+    const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
+    const totalCost = (whatIfData?.cost?.total ?? 0) + totalTip;
+
+    // Wrap the mutation call with buzz transaction check
+    const performTransaction = async () => {
+      await generateMutation.mutateAsync({
+        input: {
+          ...inputData,
+          disablePoi: browsingSettingsAddons.settings.disablePoi,
+          remixOfId,
+        },
+        creatorTip: hasCreatorTip ? creatorTip : 0,
+        civitaiTip,
+        ...(sourceMetadata ? { sourceMetadata } : {}),
+      });
+    };
+
+    conditionalPerformTransaction(totalCost, performTransaction);
   };
 
   const handleReset = () => {
     // Don't exclude 'model' - it should be reset to match the baseModel
     // The checkpointNode factory will select a default model for the baseModel
     graph.reset({ exclude: ['workflow', 'ecosystem'] });
+    remixStore.clearRemix();
     clearWarning();
     setSubmitError(undefined);
   };
