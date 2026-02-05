@@ -71,7 +71,7 @@ class OrchestratorCaller extends HttpCaller {
 
   public getJobStatusByToken({ token }: { token: string }) {
     return this.get<Orchestrator.JobStatusCollection>('/v1/consumer/jobs', {
-      queryParams: { token },
+      queryParams: { token, detailed: true },
     });
   }
 

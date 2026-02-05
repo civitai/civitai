@@ -307,7 +307,7 @@ export const useAutoLabelPolling = (
         // Skip jobs that are still in progress
         if (job.scheduled || !job.lastEvent) continue;
 
-        const { type: eventType, context } = job.lastEvent;
+        const { type: eventType, jobHasCompleted } = job.lastEvent;
 
         // Check if job failed
         if (eventType === 'Failed') {
@@ -320,13 +320,25 @@ export const useAutoLabelPolling = (
           return;
         }
 
-        // Check if job completed
-        if (eventType === 'Succeeded' && context) {
-          const data = context.data as TagDataResponse | CaptionDataResponse | undefined;
-          const isDone = context.isDone as boolean;
+        // Check if job completed - results are in job.result, not lastEvent.context
+        if (eventType === 'Succeeded' && jobHasCompleted) {
+          // The result contains the tagging/captioning data
+          const result = job.result as { data?: TagDataResponse | CaptionDataResponse } | undefined;
+          const data = result?.data;
 
-          // Skip if no data yet
-          if (!data) continue;
+          // Skip if no data in result
+          if (!data) {
+            // Job completed but no data - mark as done anyway
+            showSuccessNotification({
+              title: 'Auto-labeling job completed',
+              message: 'Job finished but no results were returned. Results may have been delivered via signals.',
+            });
+            setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+            return;
+          }
+
+          // We have data, process it
+          const isDone = true; // Job is completed
 
           if (labelType === 'tag') {
             const tagData = data as TagDataResponse;
