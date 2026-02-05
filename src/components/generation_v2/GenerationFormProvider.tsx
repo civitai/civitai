@@ -36,9 +36,8 @@ const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,
   groups: [
     // Workflow is the primary selector - stored globally
-    { keys: ['workflow', 'outputFormat', 'priority'] },
+    { keys: ['workflow', 'outputFormat', 'priority', 'prompt', 'negativePrompt', 'seed', 'quantity'] },
     { name: 'output', keys: ['ecosystem'], scope: 'output' },
-    { name: 'common', keys: ['prompt', 'negativePrompt', 'seed', 'quantity'] },
     // ecosystem is scoped to workflow (different workflows may use different ecosystems)
     // { name: 'workflow', keys: ['ecosystem'], scope: 'workflow' },
     {
@@ -125,10 +124,14 @@ function InnerProvider({
       const split = splitResourcesByType(data.resources);
 
       if (data.runType === 'remix' || data.runType === 'replay') {
-        // Full override: reset graph, then apply all values
-        graph.reset();
+        // Full override: reset graph (excluding output settings), then apply all values
+        // Exclude output settings from reset to preserve user's current preferences
+        graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
+
+        // Exclude output settings from remixed params so they don't override current values
+        const { quantity, priority, outputFormat, ...paramsWithoutOutputSettings } = data.params;
         const values = {
-          ...data.params,
+          ...paramsWithoutOutputSettings,
           model: split.model,
           resources: split.resources,
           vae: split.vae,

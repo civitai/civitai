@@ -73,6 +73,10 @@ export type GenerationContext = {
   civitaiTip?: number;
   creatorTip?: number;
   tags?: string[];
+  sourceMetadata?: {
+    params?: Record<string, unknown>;
+    resources?: Array<Record<string, unknown>>;
+  };
 };
 
 /** Options for submitting a generation */
@@ -467,7 +471,8 @@ async function createStepInput(
 export async function createWorkflowStepFromGraph(
   data: GenerationGraphOutput,
   isWhatIf = false,
-  user?: { id?: number; isModerator?: boolean }
+  user?: { id?: number; isModerator?: boolean },
+  sourceMetadata?: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>>, transformations?: StepMetadataTransformation[] }
 ): Promise<WorkflowStepTemplate> {
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
@@ -504,25 +509,43 @@ export async function createWorkflowStepFromGraph(
     }
   );
 
-  // Remove empty/undefined fields from each resource to keep metadata clean
-  const cleanResources = stepMetadata.resources.map((r) =>
-    Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined && v !== null))
-  );
+  const metadata: Record<string, unknown> = isWhatIf
+    ? {}
+    : {
+        isPrivateGeneration,
+        ...stepMetadata,
+      };
 
-  // TODO - if the workflow is comes from an enhancement category, store the enhancement as a transformation with the original workflow params/resources preserved
+  // Check if this is an enhancement workflow with source metadata
+  const workflowCategory = workflowConfigByKey.get(data.workflow)?.category;
+  const isEnhancement =
+    workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
+
+  // For enhancement workflows with source metadata, restructure metadata to preserve original generation
+  if (!isWhatIf && isEnhancement && sourceMetadata) {
+    // Use original params/resources as the root-level metadata
+    metadata.params = sourceMetadata.params ?? {};
+    metadata.resources = sourceMetadata.resources ?? [];
+
+    // Build the new transformation for this enhancement
+    const newTransformation = {
+      workflow: data.workflow,
+      params: stepMetadata.params,
+      resources: stepMetadata.resources,
+    };
+
+    // If sourceMetadata already has transformations (chained enhancements), append to the array
+    // Otherwise, create a new transformations array with just this enhancement
+    const existingTransformations = sourceMetadata.transformations ?? [];
+    metadata.transformations = [...existingTransformations, newTransformation];
+  }
 
   return {
     $type,
     input: { ...(input as object), outputFormat: data.outputFormat },
     priority: data.priority,
     timeout,
-    metadata: isWhatIf
-      ? undefined
-      : {
-          isPrivateGeneration,
-          ...stepMetadata,
-          resources: cleanResources,
-        },
+    metadata: isWhatIf ? undefined : metadata,
   } as WorkflowStepTemplate;
 }
 
@@ -552,9 +575,10 @@ export async function generateFromGraph({
   civitaiTip,
   creatorTip,
   tags: customTags = [],
+  sourceMetadata,
 }: GenerateOptions) {
   const data = validateInput(input, externalCtx);
-  const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator });
+  const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator }, sourceMetadata);
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
@@ -767,8 +791,10 @@ export interface NormalizedStepMetadata {
     }
   >;
   /** Transformations applied */
-  transformations?: unknown[];
+  transformations?: StepMetadataTransformation[];
 }
+
+export type StepMetadataTransformation = {workflow: string; params?: Record<string, unknown>; resources?: Record<string, unknown>[]}
 
 /** Normalized workflow step */
 export interface NormalizedStep {
@@ -916,10 +942,11 @@ function formatStepOutputs(
 ): { images: NormalizedWorkflowStepOutput[]; errors: string[] } {
   const items = normalizeStepOutput(step);
   const seed = 'seed' in (step.input ?? {}) ? (step.input as { seed?: number }).seed : undefined;
-  const params = ((step.metadata as Record<string, unknown>)?.params ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const metadata = (step.metadata as Record<string, unknown>) ?? {};
+  const params = (metadata.params ?? {}) as Record<string, unknown>;
+  const transformations = (metadata.transformations ?? []) as Array<{
+    params?: Record<string, unknown>;
+  }>;
 
   const images: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
     const job = step.jobs?.find((j) => j.id === item.jobId);
@@ -927,16 +954,56 @@ function formatStepOutputs(
 
     // Try to get dimensions from various sources
     if (!width || !height) {
-      width = params.width as number | undefined;
-      height = params.height as number | undefined;
+      // Check transformations from last to first to find dimensions
+      if (transformations.length > 0) {
+        for (let i = transformations.length - 1; i >= 0; i--) {
+          const transformation = transformations[i];
+          if (!transformation.params) continue;
+
+          // Check for direct width/height first
+          const directWidth = transformation.params.width as number | undefined;
+          const directHeight = transformation.params.height as number | undefined;
+
+          if (directWidth && directHeight) {
+            width = directWidth;
+            height = directHeight;
+            break;
+          }
+
+          // If not found, check for targetDimensions
+          const targetDimensions = transformation.params.targetDimensions as
+            | { width?: number; height?: number }
+            | undefined;
+          if (targetDimensions?.width && targetDimensions?.height) {
+            width = targetDimensions.width;
+            height = targetDimensions.height;
+            break;
+          }
+        }
+      }
+
+      // Fall back to main params if not found in transformations
+      if (!width || !height) {
+        width = params.width as number | undefined;
+        height = params.height as number | undefined;
+      }
 
       if (!width || !height) {
-        const aspectRatio = params.aspectRatio as string | undefined;
+        const aspectRatio = params.aspectRatio;
         if (aspectRatio) {
-          const [w, h] = aspectRatio.split(':').map(Number);
-          width = w;
-          height = h;
-        } else {
+          // Handle both object format { value, width, height } and legacy string format "w:h"
+          if (typeof aspectRatio === 'object' && aspectRatio !== null) {
+            const ar = aspectRatio as { value?: string; width?: number; height?: number };
+            width = ar.width;
+            height = ar.height;
+          } else if (typeof aspectRatio === 'string') {
+            const [w, h] = aspectRatio.split(':').map(Number);
+            width = w;
+            height = h;
+          }
+        }
+
+        if (!width || !height) {
           const sourceImage = (params.sourceImage ?? (params.images as unknown[])?.[0]) as
             | { width?: number; height?: number }
             | undefined;
@@ -1035,7 +1102,7 @@ function formatStep(
       resources,
       remixOfId: metadata.remixOfId as number | undefined,
       images: metadata.images as NormalizedStepMetadata['images'],
-      transformations: metadata.transformations as unknown[],
+      transformations: metadata.transformations as StepMetadataTransformation[] | undefined,
     },
     images,
     errors: errors.length > 0 ? errors : undefined,

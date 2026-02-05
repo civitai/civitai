@@ -37,6 +37,8 @@ import { hashify } from '~/utils/string-helpers';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 
 // =============================================================================
 // Helper Functions
@@ -239,13 +241,37 @@ export function FormFooter() {
     });
 
     // Only include creator tip if there are user-created resources
-    const snapshot = graph.getSnapshot() as ResourceSnapshot;
+    const snapshot = graph.getSnapshot() as ResourceSnapshot & {
+      workflow?: string;
+      images?: Array<{ url: string }>;
+      video?: string;
+    };
     const hasCreatorTip = getHasCreatorTip(snapshot);
+
+    // Check if this is an enhancement workflow and retrieve source metadata
+    const workflowCategory = snapshot.workflow
+      ? workflowConfigByKey.get(snapshot.workflow)?.category
+      : undefined;
+    const isEnhancement =
+      workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
+
+    let sourceMetadata;
+    if (isEnhancement) {
+      // Get the image/video URL from the snapshot
+      const imageUrl = snapshot.images?.[0]?.url;
+      const videoUrl = snapshot.video;
+      const mediaUrl = imageUrl || videoUrl;
+
+      if (mediaUrl) {
+        sourceMetadata = sourceMetadataStore.getMetadata(mediaUrl);
+      }
+    }
 
     await generateMutation.mutateAsync({
       input: inputData,
       creatorTip: hasCreatorTip ? creatorTip : 0,
       civitaiTip,
+      ...(sourceMetadata ? { sourceMetadata } : {}),
     });
   };
 

@@ -68,6 +68,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { useAppContext } from '~/providers/AppProvider';
 import { isDefined } from '~/utils/type-guards';
 import type { BlobData } from '~/components/ImageGeneration/utils/BlobData';
+import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -312,11 +313,14 @@ export function QueueItem({
               {transformations.length > 0 && (
                 <div className="flex items-center gap-1">
                   <Text size="sm">Transformations:</Text>
-                  {transformations.map((transformation, i) => (
-                    <Badge key={i} size="sm">
-                      {(transformation as { type: string }).type}
-                    </Badge>
-                  ))}
+                  {transformations.map((transformation, i) => {
+                    const workflowConfig = workflowConfigByKey.get(transformation.workflow);
+                    return (
+                      <Badge key={i} size="sm">
+                        {workflowConfig?.label ?? transformation.workflow}
+                      </Badge>
+                    );
+                  })}
                 </div>
               )}
               {resources.length > 0 && (

@@ -280,6 +280,33 @@ function splitResourcesForLegacy(
 }
 
 // =============================================================================
+// Transformation Mapping
+// =============================================================================
+
+/**
+ * Maps legacy transformation objects that use 'type' to the new format using 'workflow'.
+ * Handles backward compatibility for existing metadata.
+ */
+function mapTransformations(
+  transformations?: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> | undefined {
+  if (!transformations || !Array.isArray(transformations)) return undefined;
+
+  return transformations.map((t) => {
+    // If already has 'workflow', pass through
+    if ('workflow' in t && t.workflow) return t;
+
+    // Map legacy 'type' to 'workflow'
+    if ('type' in t && t.type) {
+      const { type, ...params } = t;
+      return { workflow: type, params  };
+    }
+
+    return t;
+  });
+}
+
+// =============================================================================
 // Public API
 // =============================================================================
 
@@ -378,8 +405,12 @@ export function mapDataToGraphInput(
     workflow: _wf,
     aspectRatio: _ar,
     images: _imgs,
+    transformations: _transformations,
     ...rest
   } = params;
+
+  // Map transformations (legacy 'type' → 'workflow')
+  const mappedTransformations = mapTransformations(_transformations as Array<Record<string, unknown>>);
 
   return removeEmpty({
     ...rest,
@@ -387,6 +418,7 @@ export function mapDataToGraphInput(
     ecosystem, // Maps from legacy 'baseModel' field
     aspectRatio,
     images,
+    transformations: mappedTransformations,
     // Map legacy field names to graph node keys
     ...(openAITransparentBackground != null && { transparent: openAITransparentBackground }),
     ...(openAIQuality != null && { quality: openAIQuality }),

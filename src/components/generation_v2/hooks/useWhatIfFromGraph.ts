@@ -110,8 +110,8 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     // for cost calculation (dimensions affect scale factor), so require full validation
     if (config.ecosystemIds.length === 0) return true;
 
-    // Ecosystem workflows need baseModel to determine pricing
-    if (!snapshot.baseModel) return false;
+    // Ecosystem workflows need ecosystem to determine pricing
+    if (!snapshot.ecosystem) return false;
 
     return true;
   }, [snapshot]);

@@ -441,7 +441,7 @@ export function quantityNode(config?: QuantityNodeConfig) {
  * Server-side enrichment (via getResourceData) adds model.name, air, etc.
  * Handlers receive AIR strings via GenerationHandlerCtx instead of computing them.
  */
-const resourceSchema = z.object({
+export const resourceSchema = z.object({
   id: z.number(),
   baseModel: z.string().optional(),
   model: z.object({

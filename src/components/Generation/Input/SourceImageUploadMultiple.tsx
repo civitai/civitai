@@ -36,6 +36,8 @@ import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawi
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { extractSourceMetadataFromUrl } from '~/utils/metadata/extract-source-metadata';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -229,6 +231,8 @@ export function SourceImageUploadMultiple({
     // Call onRemove callback if this is a complete image (for annotation cleanup)
     if (item.status === 'complete') {
       onRemove?.({ url: item.url, width: item.width, height: item.height }, index);
+      // Remove source metadata from store
+      sourceMetadataStore.removeMetadata(item.url);
     }
 
     if (item.id) {
@@ -277,6 +281,24 @@ export function SourceImageUploadMultiple({
       }
     }
   }, [value, warnOnMissingAiMetadata]);
+
+  // Extract and store source metadata for enhancement workflows
+  useEffect(() => {
+    if (!value) return;
+
+    for (const { url } of value) {
+      // Check if metadata already exists in the store
+      const existing = sourceMetadataStore.getMetadata(url);
+      if (existing) continue;
+
+      // Extract metadata from the image
+      extractSourceMetadataFromUrl(url).then((metadata) => {
+        if (metadata) {
+          sourceMetadataStore.setMetadata(url, metadata);
+        }
+      });
+    }
+  }, [value]);
 
   // TODO - better error messaging
 
@@ -455,6 +477,8 @@ export function SourceImageUploadMultiple({
     const imageAtSlot = value[slotIndex];
     if (imageAtSlot) {
       onRemove?.(imageAtSlot, slotIndex);
+      // Remove source metadata from store
+      sourceMetadataStore.removeMetadata(imageAtSlot.url);
     }
 
     const newValue = [...value];

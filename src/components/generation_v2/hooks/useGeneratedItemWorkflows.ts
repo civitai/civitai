@@ -28,6 +28,7 @@ import type {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import type { GenerationResource } from '~/shared/types/generation.types';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
 
 // =============================================================================
 // Types
@@ -167,12 +168,27 @@ function applyWorkflowToForm({
 
   const inputType = getInputTypeForWorkflow(workflowId);
   const stepParams = step.params;
+  const workflowCategory = workflowConfigByKey.get(workflowId)?.category;
 
   // Build images in graph format { url, width, height }[]
   const images =
     inputType === 'image'
       ? [{ url: image.url, width: image.width, height: image.height }]
       : undefined;
+
+  // For enhancement workflows, store the original metadata
+  const isEnhancement =
+    workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
+
+  if (isEnhancement && step.metadata) {
+    // Store source metadata keyed by the image/video URL
+    // Include transformations if this image has already been enhanced
+    sourceMetadataStore.setMetadata(image.url, {
+      params: step.metadata.params,
+      resources: step.metadata.resources,
+      transformations: (step.metadata as any).transformations,
+    });
+  }
 
   generationGraphStore.setData({
     params: {
