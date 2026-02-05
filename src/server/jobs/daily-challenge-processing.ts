@@ -35,7 +35,7 @@ import { createLogger } from '~/utils/logging';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { createJob } from './job';
+import { createJob, type JobContext } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -93,7 +93,7 @@ export async function createUpcomingChallenge() {
       SELECT DISTINCT
         cast(a.metadata->'userId' as int) as "userId"
       FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."modelId"
+      JOIN "Article" a ON a.id = ci."articleId"
       WHERE ci."collectionId" = ${config.challengeCollectionId}
       AND a."status" = 'Published'
       AND a."publishedAt" > now() - ${config.userCooldown}::interval
@@ -594,12 +594,15 @@ async function reviewEntries() {
   }
 }
 
-async function pickWinners() {
+async function pickWinners(ctx: JobContext) {
   // Get current challenge
   const config = await getChallengeConfig();
-  const currentChallenge = await getCurrentChallenge();
+  const articleId = ctx.req?.query?.articleId ? Number(ctx.req.query.articleId) : undefined;
+  const currentChallenge = articleId
+    ? await getChallengeDetails(articleId)
+    : await getCurrentChallenge();
   if (!currentChallenge) {
-    await startNextChallenge(config);
+    if (!articleId) await startNextChallenge(config);
     return;
   }
   const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
@@ -721,7 +724,7 @@ ${outcome}
 
   // Start next challenge
   // ----------------------------------------------
-  await startNextChallenge(config);
+  if (!articleId) await startNextChallenge(config);
 }
 
 // Helper Functions

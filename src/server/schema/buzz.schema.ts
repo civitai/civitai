@@ -133,7 +133,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
     if (
       ctx.value.entityType &&
       ['Image', 'Model', 'Article'].includes(ctx.value.entityType) &&
-      ctx.value.amount > buzzConstants.maxEntityTip
+      ctx.value.amount > buzzConstants.maxTipAmount
     ) {
       ctx.issues.push({
         code: 'custom',
