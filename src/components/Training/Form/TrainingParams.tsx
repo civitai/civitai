@@ -422,6 +422,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       wan_2_1_t2v_14b: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       ltx2: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      zimageturbo: { all: { default: 1e-4 } },
+      zimagebase: { all: { default: 1e-4 } },
     },
   },
   {
@@ -465,6 +467,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { default: 'constant' } },
       wan_2_1_t2v_14b: { all: { default: 'constant' } },
       ltx2: { all: { default: 'constant' } },
+      zimageturbo: { all: { default: 'constant' } },
+      zimagebase: { all: { default: 'constant' } },
     },
   },
   {
