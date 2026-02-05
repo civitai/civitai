@@ -20,7 +20,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,
-  IconArrowFork,
+  IconCopyPlus,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
@@ -370,7 +370,7 @@ const ResourceHeader = () => {
           create this image.
         </InfoPopover>
       </div>
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         {canAdd ? (
           <>
             <Box className="hidden group-hover:block">
@@ -506,7 +506,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   };
 
   const handleCopyResource = () => {
-    if (!otherAvailableIDs.length || !modelVersionId || detected) return;
+    if (!otherAvailableIDs.length || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Copy to All',
@@ -535,51 +535,45 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         className="grow"
       >
         <Box className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5">
-          <Text>
-            {modelName} -{' '}
-            <Text span c="dimmed" size="sm">
+          <Stack gap={0}>
+            <Text lineClamp={1}>{modelName}</Text>
+            <Text span c="dimmed" size="sm" lineClamp={1}>
               {modelVersionName}
             </Text>
-          </Text>
-          <Group gap={2}>
-            <Badge color="gray" size="md" variant="filled">
-              {getDisplayName(modelType ?? 'unknown')}
-            </Badge>
-          </Group>
+          </Stack>
+          <Badge color="gray" size="md" variant="filled">
+            {getDisplayName(modelType ?? 'unknown')}
+          </Badge>
         </Box>
       </Link>
 
-      {!detected && (
-        <Group gap={4} wrap="nowrap">
-          {!otherAvailableIDs.length ? (
-            <></>
-          ) : (
-            <Tooltip label="Copy to All">
-              <LegacyActionIcon
-                color="violet"
-                size="sm"
-                onClick={handleCopyResource}
-                loading={copyResourceMutation.isLoading}
-              >
-                <IconArrowFork size={16} />
-              </LegacyActionIcon>
-            </Tooltip>
-          )}
-          {!canAdd ? (
-            <></>
-          ) : (
-            <Tooltip label="Delete">
-              <LegacyActionIcon
-                color="red"
-                size="sm"
-                onClick={handleRemoveResource}
-                loading={removeResourceMutation.isLoading}
-              >
-                <IconTrash size={16} />
-              </LegacyActionIcon>
-            </Tooltip>
-          )}
-        </Group>
+      {!otherAvailableIDs.length ? (
+        <></>
+      ) : (
+        <Tooltip label="Copy to All">
+          <LegacyActionIcon
+            color="violet"
+            size="sm"
+            onClick={handleCopyResource}
+            loading={copyResourceMutation.isLoading}
+          >
+            <IconCopyPlus size={16} />
+          </LegacyActionIcon>
+        </Tooltip>
+      )}
+      {!canAdd ? (
+        <></>
+      ) : (
+        <Tooltip label="Delete">
+          <LegacyActionIcon
+            color="red"
+            size="sm"
+            onClick={handleRemoveResource}
+            loading={removeResourceMutation.isLoading}
+          >
+            <IconTrash size={16} />
+          </LegacyActionIcon>
+        </Tooltip>
       )}
     </Group>
   ) : (
