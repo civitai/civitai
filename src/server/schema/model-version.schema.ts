@@ -28,7 +28,6 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
-import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -196,7 +195,7 @@ export const trainingDetailsObj = z.object({
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(baseModels),
+  baseModel: z.string(),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
