@@ -302,8 +302,8 @@ export function FormFooter() {
         input: {
           ...inputData,
           disablePoi: browsingSettingsAddons.settings.disablePoi,
-          remixOfId,
         },
+        remixOfId,
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
         ...(sourceMetadata ? { sourceMetadata } : {}),

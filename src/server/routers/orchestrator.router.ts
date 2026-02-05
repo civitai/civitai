@@ -184,7 +184,7 @@ export const orchestratorRouter = router({
   generateFromGraph: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(async ({ ctx, input }) => {
-      const { input: formInput, civitaiTip, creatorTip, tags: inputTags, sourceMetadata } = input;
+      const { input: formInput, civitaiTip, creatorTip, tags: inputTags, sourceMetadata, remixOfId } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(userTier);
@@ -212,6 +212,7 @@ export const orchestratorRouter = router({
         creatorTip,
         tags,
         sourceMetadata,
+        remixOfId,
       });
     }),
 

@@ -77,6 +77,7 @@ export type GenerationContext = {
     params?: Record<string, unknown>;
     resources?: Array<Record<string, unknown>>;
   };
+  remixOfId?: number;
 };
 
 /** Options for submitting a generation */
@@ -468,12 +469,19 @@ async function createStepInput(
  * - Private generation detection
  * - Timeout calculation (base 20 min + 1 min per additional resource)
  */
-export async function createWorkflowStepFromGraph(
-  data: GenerationGraphOutput,
+export async function createWorkflowStepFromGraph({
+  data,
   isWhatIf = false,
-  user?: { id?: number; isModerator?: boolean },
-  sourceMetadata?: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>>, transformations?: StepMetadataTransformation[] }
-): Promise<WorkflowStepTemplate> {
+  user,
+  sourceMetadata,
+  remixOfId,
+}: {
+  data: GenerationGraphOutput;
+  isWhatIf?: boolean;
+  user?: { id?: number; isModerator?: boolean };
+  sourceMetadata?: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>>; transformations?: StepMetadataTransformation[] };
+  remixOfId?: number;
+}): Promise<WorkflowStepTemplate> {
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   const { enrichedResources, isPrivateGeneration, hasPoiResource } =
@@ -513,6 +521,7 @@ export async function createWorkflowStepFromGraph(
     ? {}
     : {
         isPrivateGeneration,
+        remixOfId,
         ...stepMetadata,
       };
 
@@ -576,9 +585,15 @@ export async function generateFromGraph({
   creatorTip,
   tags: customTags = [],
   sourceMetadata,
+  remixOfId,
 }: GenerateOptions) {
   const data = validateInput(input, externalCtx);
-  const step = await createWorkflowStepFromGraph(data, false, { id: userId, isModerator }, sourceMetadata);
+  const step = await createWorkflowStepFromGraph({
+    data,
+    user: { id: userId, isModerator },
+    sourceMetadata,
+    remixOfId,
+  });
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
@@ -690,7 +705,11 @@ export async function whatIfFromGraph({
   currencies,
 }: WhatIfOptions) {
   const data = validateInput(applyWhatIfDefaults(input), externalCtx);
-  const step = await createWorkflowStepFromGraph(data, true, userId ? { id: userId } : undefined);
+  const step = await createWorkflowStepFromGraph({
+    data,
+    isWhatIf: true,
+    user: userId ? { id: userId } : undefined,
+  });
 
   // Submit what-if request to orchestrator
   const workflow = await submitWorkflow({
