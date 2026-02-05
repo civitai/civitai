@@ -65,7 +65,7 @@ function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?
 export function useInvalidateWhatIf() {
   const queryUtils = trpc.useUtils();
   return function () {
-    queryUtils.orchestrator.getImageWhatIf.invalidate();
+    queryUtils.orchestrator.whatIfFromGraph.invalidate();
   };
 }
 
@@ -204,38 +204,6 @@ function updateTextToImageRequests({
   );
 }
 
-export function useSubmitCreateImage() {
-  return trpc.orchestrator.generateImage.useMutation({
-    onSuccess: (data, input) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const item = data as any;
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(item);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(item);
-          }
-        },
-      });
-      // updateFromEvents();
-    },
-    // onError: (error) => {
-    //   showErrorNotification({
-    //     title: 'Failed to generate',
-    //     error: new Error(error.message),
-    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-    //   });
-    // },
-  });
-}
-
 export function useUpdateWorkflow() {
   return trpc.orchestrator.updateWorkflow.useMutation({
     onSuccess: (response, { workflowId }) => {
@@ -251,30 +219,6 @@ export function useUpdateWorkflow() {
         },
       });
     },
-  });
-}
-
-export function useGenerate(args?: { onError?: (e: any) => void }) {
-  return trpc.orchestrator.generate.useMutation({
-    onSuccess: (data) => {
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(data as any);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data as any);
-          }
-        },
-      });
-      // updateFromEvents();
-    },
-    ...args,
   });
 }
 
@@ -299,35 +243,6 @@ export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
     },
     ...args,
   });
-}
-
-export function useGenerateWithCost(cost = 0) {
-  const { conditionalPerformTransaction } = useBuzzTransaction({
-    message: (requiredBalance) =>
-      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
-        requiredBalance
-      )}. Buy or earn more Buzz to perform this action.`,
-    performTransactionOnPurchase: true,
-    accountTypes: buzzSpendTypes,
-  });
-
-  const generate = useGenerate();
-
-  return useMemo(() => {
-    async function mutateAsync(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, async () => {
-        return await generate.mutateAsync(...args);
-      });
-    }
-
-    function mutate(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, () => {
-        generate.mutate(...args);
-      });
-    }
-
-    return { ...generate, mutateAsync, mutate };
-  }, [cost, generate]);
 }
 
 export function useDeleteTextToImageRequest() {

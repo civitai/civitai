@@ -1,11 +1,5 @@
-import type {
-  ComfyStepTemplate,
-  ImageGenStepTemplate,
-  TextToImageStepTemplate,
-} from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import {
   buildGenerationContext,
   generateFromGraph,
@@ -14,12 +8,7 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { generatorFeedbackReward } from '~/server/rewards';
-import {
-  generateImageSchema,
-  generateImageWhatIfSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -30,17 +19,8 @@ import {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { updateWorkflow } from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
-import {
-  createTextToImage,
-  createTextToImageStep,
-} from '~/server/services/orchestrator/textToImage/textToImage';
-import {
-  createImageGen,
-  createImageGenStep,
-} from '~/server/services/orchestrator/imageGen/imageGen';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -197,171 +177,6 @@ export const orchestratorRouter = router({
       hideMatureContent: ctx.hideMatureContent,
     })
   ),
-  generateImage: orchestratorGuardedProcedure
-    .input(generateImageSchema)
-    .mutation(async ({ ctx, input }) => {
-      // Audit prompt (skip for whatIf requests)
-      if (!input.whatIf && input.params.prompt) {
-        const { auditPromptServer } = await import('~/server/services/orchestrator/promptAuditing');
-        await auditPromptServer({
-          prompt: input.params.prompt,
-          negativePrompt: input.params.negativePrompt,
-          userId: ctx.user.id,
-          isGreen: ctx.features.isGreen,
-          isModerator: ctx.user.isModerator,
-          track: ctx.track,
-        });
-      }
-
-      delete input.params.experimental;
-      const group = getBaseModelGroup(input.params.baseModel);
-      if (
-        EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group) &&
-        input.params.enhancedCompatibility
-      ) {
-        input.params.engine = 'comfyui';
-      } else {
-        if (input.params.engine === 'comfyui') {
-          delete input.params.engine;
-        }
-        delete input.params.enhancedCompatibility;
-      }
-      const experimental = ctx.experimental;
-
-      const args = {
-        ...input,
-        user: ctx.user,
-        token: ctx.token,
-        experimental,
-        batchAll: ctx.batchAll,
-        isGreen: ctx.features.isGreen,
-        allowMatureContent: ctx.allowMatureContent,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      };
-
-      if (ctx.domain === 'green') {
-        args.tags = [...(args.tags ?? []), 'green'];
-      }
-      // if ('sourceImage' in args.params && args.params.sourceImage) {
-      //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
-      //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
-      //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
-      // }
-      // TODO - handle createImageGen
-      const engine = input.params.engine;
-      if (engine && !['flux-pro-raw', 'comfyui'].includes(engine)) {
-        return await createImageGen(args);
-      } else if (input.params.workflow === 'txt2img') {
-        return await createTextToImage({ ...args });
-      } else {
-        return await createComfy({ ...args });
-      }
-    }),
-  getImageWhatIf: orchestratorGuardedProcedure
-    .input(generateImageWhatIfSchema)
-    // can't use edge cache due to values dependent on individual users
-    // .use(edgeCacheIt({ ttl: CacheTTL.hour }))
-    .query(async ({ ctx, input }) => {
-      try {
-        const args = {
-          ...input,
-          resources: input.resources.map((x) => ({ ...x, strength: 1 })),
-          user: ctx.user,
-          token: ctx.token,
-          batchAll: ctx.batchAll,
-          allowMatureContent: ctx.allowMatureContent,
-          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-        };
-
-        let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
-        if (args.params.engine && args.params.engine !== 'flux-pro-raw') {
-          step = await createImageGenStep({ ...args, whatIf: true });
-        } else if (args.params.workflow === 'txt2img') {
-          step = await createTextToImageStep({ ...args, whatIf: true });
-        } else {
-          step = await createComfyStep({ ...args, whatIf: true });
-        }
-
-        const workflow = await submitWorkflow({
-          token: args.token,
-          body: {
-            steps: [step],
-            tips: args.tips,
-            experimental: ctx.experimental,
-            // @ts-ignore - BuzzSpendType is properly supported.
-            currencies: args.currencies,
-          },
-          query: {
-            whatif: true,
-          },
-        });
-
-        let ready = true;
-
-        for (const step of workflow.steps ?? []) {
-          for (const job of step.jobs ?? []) {
-            const { queuePosition } = job;
-            if (!queuePosition) continue;
-
-            const { support } = queuePosition;
-            if (support !== 'available' && ready) ready = false;
-          }
-        }
-
-        return {
-          allowMatureContent: workflow.allowMatureContent,
-          transactions: workflow.transactions?.list,
-          cost: workflow.cost,
-          ready,
-        };
-      } catch (e) {
-        logToAxiom({
-          name: 'generate-image-what-if',
-          type: 'error',
-          payload: input,
-          error:
-            e instanceof TRPCError
-              ? {
-                  code: e.code,
-                  name: e.name,
-                  message: e.message,
-                }
-              : e,
-        }).catch();
-        throw e;
-      }
-    }),
-  whatIf: orchestratorGuardedProcedure
-    .input(generationSchema)
-    // .use(edgeCacheIt({ ttl: 60 }))
-    .query(({ ctx, input }) =>
-      whatIf({
-        ...input,
-        userId: ctx.user.id,
-        token: ctx.token,
-        experimental: ctx.experimental,
-        allowMatureContent: ctx.allowMatureContent,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      })
-    ),
-  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) => {
-    if (ctx.domain === 'green') {
-      input.tags = [...(input.tags ?? []), 'green'];
-    }
-
-    return generate({
-      ...input,
-      userId: ctx.user.id,
-      token: ctx.token,
-      experimental: ctx.experimental,
-      isGreen: ctx.features.isGreen,
-      allowMatureContent: ctx.allowMatureContent,
-      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      isModerator: ctx.user.isModerator,
-      track: ctx.track,
-    });
-  }),
-
   // #region [Generation Graph V2 endpoints]
   /**
    * Generate from graph - unified endpoint for all generation types
