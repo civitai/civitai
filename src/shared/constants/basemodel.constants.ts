@@ -1749,7 +1749,7 @@ export const baseModels: BaseModelRecord[] = [
   },
   {
     id: BM.Flux2Klein_9B_base,
-    name: 'Flux.2 Klein 9B Base',
+    name: 'Flux.2 Klein 9B-base',
     description: 'Flux.2 Klein 9 billion parameter base model',
     type: 'image',
     ecosystemId: ECO.Flux2Klein_9B_base,
@@ -1765,7 +1765,7 @@ export const baseModels: BaseModelRecord[] = [
   },
   {
     id: BM.Flux2Klein_4B_base,
-    name: 'Flux.2 Klein 4B Base',
+    name: 'Flux.2 Klein 4B-base',
     description: 'Flux.2 Klein 4 billion parameter base model',
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B_base,
