@@ -36,7 +36,17 @@ const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,
   groups: [
     // Workflow is the primary selector - stored globally
-    { keys: ['workflow', 'outputFormat', 'priority', 'prompt', 'negativePrompt', 'seed', 'quantity'] },
+    {
+      keys: [
+        'workflow',
+        'outputFormat',
+        'priority',
+        'prompt',
+        'negativePrompt',
+        'seed',
+        'quantity',
+      ],
+    },
     { name: 'output', keys: ['ecosystem'], scope: 'output' },
     // ecosystem is scoped to workflow (different workflows may use different ecosystems)
     // { name: 'workflow', keys: ['ecosystem'], scope: 'workflow' },

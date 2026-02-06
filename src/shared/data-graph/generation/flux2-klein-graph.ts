@@ -113,6 +113,7 @@ const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
   )
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
+  .node('steps', stepsNode({ min: 4, max: 12, defaultValue: 8 }))
   .node('seed', seedNode())
   .node('enhancedCompatibility', enhancedCompatibilityNode());
 

@@ -800,7 +800,7 @@ function formatWorkflowStepOutput({
         sourceImage?: SourceImageProps;
         images?: SourceImageProps[];
         engine?: string;
-        aspectRatio?: string;
+        aspectRatio?: string | { value?: string; width?: number; height?: number };
       };
 
       width = params.width;
@@ -808,9 +808,21 @@ function formatWorkflowStepOutput({
 
       if (!width || !height) {
         if (params.aspectRatio) {
-          const split = params.aspectRatio.split(':').map(Number);
-          width = split[0];
-          height = split[1];
+          // Handle both string ("16:9") and object ({ value, width, height }) formats
+          if (typeof params.aspectRatio === 'object') {
+            width = params.aspectRatio.width;
+            height = params.aspectRatio.height;
+            if (!width || !height) {
+              const arValue = params.aspectRatio.value ?? '1:1';
+              const split = arValue.split(':').map(Number);
+              width = split[0];
+              height = split[1];
+            }
+          } else {
+            const split = params.aspectRatio.split(':').map(Number);
+            width = split[0];
+            height = split[1];
+          }
         } else {
           const image = params.sourceImage ?? params.images?.[0];
           if (image) {
@@ -829,8 +841,11 @@ function formatWorkflowStepOutput({
             aspect = 1.325;
             break;
           default: {
-            if (!params.aspectRatio) params.aspectRatio = '16:9';
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            const arValue =
+              typeof params.aspectRatio === 'object'
+                ? params.aspectRatio?.value ?? '16:9'
+                : params.aspectRatio ?? '16:9';
+            const [rw, rh] = arValue.split(':').map(Number);
             aspect = rw / rh;
             break;
           }
@@ -872,27 +887,4 @@ function formatWorkflowStepOutput({
     images,
     errors,
   };
-}
-
-export type WorkflowStatusUpdate = AsyncReturnType<typeof getWorkflowStatusUpdate>;
-export async function getWorkflowStatusUpdate({
-  token,
-  workflowId,
-}: {
-  token: string;
-  workflowId: string;
-}) {
-  const result = await getWorkflow({ token, path: { workflowId: workflowId as string } });
-  if (result) {
-    return {
-      id: workflowId,
-      status: result.status!,
-      steps: result.steps?.map((step) => ({
-        name: step.name,
-        status: step.status,
-        completedAt: step.completedAt,
-        ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
-      })),
-    };
-  }
 }

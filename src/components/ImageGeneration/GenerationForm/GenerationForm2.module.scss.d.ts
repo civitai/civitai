@@ -1,0 +1,11 @@
+export declare const accordionContent: string;
+export declare const accordionControl: string;
+export declare const accordionItem: string;
+export declare const accordionLabel: string;
+export declare const fillForm: string;
+export declare const formError: string;
+export declare const generateButtonQuantityInput: string;
+export declare const hasError: string;
+export declare const noFillForm: string;
+export declare const promptInputLabel: string;
+export declare const promptPaper: string;

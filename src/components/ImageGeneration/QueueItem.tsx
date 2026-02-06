@@ -326,12 +326,7 @@ export function QueueItem({
               {resources.length > 0 && (
                 <div className="flex items-center gap-1">
                   <Text size="sm">Resources:</Text>
-                  <Collection
-                    items={resources}
-                    limit={3}
-                    renderItem={ResourceBadge}
-                    grouped
-                  />
+                  <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
                 </div>
               )}
             </div>

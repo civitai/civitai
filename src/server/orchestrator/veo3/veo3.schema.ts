@@ -125,7 +125,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
         data.aspectRatio = findClosestAspectRatio(image, [...veo3AspectRatios]);
       }
     }
-    return data;
+    return { ...data, baseModel: 'Veo3' };
   },
   // transformFn: (data) => {
   //   if (!data.sourceImage) {

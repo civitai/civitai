@@ -28,7 +28,13 @@ import type {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
+import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
+import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
+import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
+import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
+import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
+import { getSourceImageFromUrl } from '~/utils/image-utils';
 
 // =============================================================================
 // Types
@@ -204,17 +210,109 @@ function applyWorkflowToForm({
   });
 }
 
+// =============================================================================
+// Modal Handlers for Legacy Generator
+// =============================================================================
+
+/** Workflows that have dedicated modals for legacy generator users */
+const MODAL_WORKFLOWS = [
+  'img2img:upscale',
+  'img2img:remove-background',
+  'vid2vid:interpolate',
+  'vid2vid:upscale',
+];
+
+/**
+ * Check if a workflow should open a modal for legacy generator users.
+ */
+function shouldOpenModal(workflowId: string): boolean {
+  const useLegacy = useLegacyGeneratorStore.getState().useLegacy;
+  return useLegacy && MODAL_WORKFLOWS.includes(workflowId);
+}
+
+/**
+ * Get source metadata for an image/video from the step.
+ */
+function getSourceMetadataFromStep(
+  step: Omit<NormalizedGeneratedImageStep, 'images'>
+): Omit<SourceMetadata, 'extractedAt'> | undefined {
+  if (!step.metadata) return undefined;
+  return {
+    params: step.metadata.params,
+    resources: step.metadata.resources,
+    transformations: (step.metadata as any).transformations,
+  };
+}
+
+/**
+ * Open the appropriate modal for an enhancement workflow.
+ * Returns true if a modal was opened, false otherwise.
+ */
+async function openEnhancementModal(
+  workflowId: string,
+  image: NormalizedGeneratedImage,
+  step: Omit<NormalizedGeneratedImageStep, 'images'>
+): Promise<boolean> {
+  const metadata = getSourceMetadataFromStep(step);
+
+  switch (workflowId) {
+    case 'img2img:upscale': {
+      const sourceImage = await getSourceImageFromUrl({ url: image.url, upscale: true });
+      dialogStore.trigger({
+        component: UpscaleImageModal,
+        props: { sourceImage, metadata },
+      });
+      return true;
+    }
+
+    case 'img2img:remove-background': {
+      const sourceImage = await getSourceImageFromUrl({ url: image.url });
+      dialogStore.trigger({
+        component: BackgroundRemovalModal,
+        props: { sourceImage, metadata },
+      });
+      return true;
+    }
+
+    case 'vid2vid:interpolate': {
+      dialogStore.trigger({
+        component: VideoInterpolationModal,
+        props: { videoUrl: image.url, metadata },
+      });
+      return true;
+    }
+
+    case 'vid2vid:upscale': {
+      dialogStore.trigger({
+        component: UpscaleVideoModal,
+        props: { videoUrl: image.url, metadata },
+      });
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
 /**
  * Apply a workflow to the form with a compatibility check.
  * Shows confirmation modal for incompatible workflows before proceeding.
+ * For legacy generator users, opens dedicated modals for enhancement workflows.
  */
-export function applyWorkflowWithCheck({
+export async function applyWorkflowWithCheck({
   workflowId,
   ecosystemKey,
   image,
   step,
   compatible,
 }: ApplyWorkflowOptions & { ecosystemKey?: string; compatible: boolean }) {
+  // For legacy generator users, check if we should open a modal instead
+  if (shouldOpenModal(workflowId)) {
+    const modalOpened = await openEnhancementModal(workflowId, image, step);
+    if (modalOpened) return;
+  }
+
   const isCrossMedia = isCrossMediaWorkflow(image, workflowId);
   const isStandalone = (workflowConfigByKey.get(workflowId)?.ecosystemIds.length ?? 0) === 0;
 

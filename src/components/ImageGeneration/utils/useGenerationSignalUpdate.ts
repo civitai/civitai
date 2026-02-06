@@ -7,7 +7,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/common';
+import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import { COMPLETE_STATUSES, POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';

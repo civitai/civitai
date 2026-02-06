@@ -79,8 +79,10 @@ export function GeneratedItemWorkflowMenu({
 
   function handleRemix(seed?: number | null) {
     dialogStore.closeById('generated-image');
+
     // Params are already mapped via mapDataToGraphInput (workflow, ecosystem, aspectRatio, etc.)
     // Use step.resources (enriched) for splitResourcesByType to work correctly
+    // Legacy form sync (type/engine) is handled by generationGraphStore.setData
     generationGraphStore.setData({
       params: { ...step.metadata.params, seed: seed ?? null },
       resources: step.resources as GenerationResource[],

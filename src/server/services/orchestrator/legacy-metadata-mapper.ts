@@ -64,6 +64,32 @@ const FLUX_ULTRA_ASPECT_RATIOS: Record<string, { width: number; height: number }
 };
 
 /**
+ * Maps new fluxMode string values to legacy AIR strings.
+ * The legacy form uses AIR strings for fluxMode, while the new graph uses simple mode names.
+ */
+const FLUX_MODE_TO_AIR: Record<string, string> = {
+  draft: 'urn:air:flux1:checkpoint:civitai:618692@699279',
+  standard: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+  pro: 'urn:air:flux1:checkpoint:civitai:618692@922358',
+  krea: 'urn:air:flux1:checkpoint:civitai:618692@2068000',
+  ultra: 'urn:air:flux1:checkpoint:civitai:618692@1088507',
+};
+
+/**
+ * Maps Flux Ultra aspect ratio values to legacy index format.
+ * The legacy form uses an index string ("0", "1", etc.) while the new graph uses ratio strings.
+ */
+const FLUX_ULTRA_ASPECT_RATIO_TO_INDEX: Record<string, string> = {
+  '21:9': '0',
+  '16:9': '1',
+  '4:3': '2',
+  '1:1': '3',
+  '3:4': '4',
+  '9:16': '5',
+  '9:21': '6',
+};
+
+/**
  * Builds a ResourceData for the model from a fluxMode AIR string.
  * Used when no checkpoint was found in the enriched resources.
  */
@@ -76,22 +102,12 @@ function modelFromFluxModeAir(air: string): ResourceData | undefined {
   } as ResourceData;
 }
 
-/**
- * Maps legacy video engine values to their baseModel/ecosystem key.
- * Used when params.baseModel is missing but params.engine is present.
- */
-const ENGINE_TO_BASE_MODEL: Record<string, string> = {
-  wan: 'WanVideo',
-  vidu: 'Vidu',
-  kling: 'Kling',
-  hunyuan: 'HyV1',
-  minimax: 'MiniMax',
-  mochi: 'Mochi',
-  sora: 'Sora2',
-  veo3: 'Veo3',
-  haiper: 'Haiper',
-  lightricks: 'Lightricks',
-};
+// Re-export shared engine utilities for backwards compatibility
+export { getEngineFromEcosystem } from '~/shared/utils/engine.utils';
+import { ENGINE_TO_ECOSYSTEM } from '~/shared/utils/engine.utils';
+
+// Alias for backwards compatibility with existing code
+const ENGINE_TO_BASE_MODEL = ENGINE_TO_ECOSYSTEM;
 
 /**
  * Checks if a baseModel key's ecosystem is listed in a workflow config's ecosystemIds.
@@ -196,7 +212,17 @@ export function resolveWorkflow(
     return resolveImg2ImgWorkflow(baseModel);
   }
 
-  // 6. Fallback
+  // 6. Detect video workflow from engine parameter
+  // Video workflows typically have an engine but may not have process/workflow set
+  if (params.engine && ENGINE_TO_BASE_MODEL[params.engine]) {
+    // If there are source images, it's img2vid; otherwise txt2vid
+    if (imageCount > 0) {
+      return resolveImg2VidWorkflow(baseModel, imageCount);
+    }
+    return 'txt2vid';
+  }
+
+  // 7. Fallback
   return 'txt2img';
 }
 
@@ -299,7 +325,7 @@ function mapTransformations(
     // Map legacy 'type' to 'workflow'
     if ('type' in t && t.type) {
       const { type, ...params } = t;
-      return { workflow: type, params  };
+      return { workflow: type, params };
     }
 
     return t;
@@ -346,7 +372,7 @@ export function mapDataToGraphInput(
   const workflow = resolveWorkflow(options?.stepType, p, ecosystem, imageCount);
 
   // Build aspect ratio from width/height in graph format { value, width, height }
-  let aspectRatio: { value: string; width: number; height: number } | undefined;
+  let aspectRatio: { value: string; width: number; height: number } | string | undefined;
 
   // Flux Ultra uses its own aspect ratio set
   if (p?.fluxUltraAspectRatio) {
@@ -364,6 +390,11 @@ export function mapDataToGraphInput(
       width: p.width,
       height: p.height,
     };
+  }
+
+  // For video engines: preserve string aspectRatio when no width/height conversion is available
+  if (!aspectRatio && p?.aspectRatio && typeof p.aspectRatio === 'string') {
+    aspectRatio = p.aspectRatio;
   }
 
   // Build images from sourceImage or images array
@@ -410,7 +441,9 @@ export function mapDataToGraphInput(
   } = params;
 
   // Map transformations (legacy 'type' → 'workflow')
-  const mappedTransformations = mapTransformations(_transformations as Array<Record<string, unknown>>);
+  const mappedTransformations = mapTransformations(
+    _transformations as Array<Record<string, unknown>>
+  );
 
   return removeEmpty({
     ...rest,
@@ -530,6 +563,7 @@ export function mapGraphToLegacyParams(
     images,
     transparent,
     quality,
+    fluxMode,
     // Pass through everything else
     ...rest
   } = graphOutput;
@@ -560,13 +594,31 @@ export function mapGraphToLegacyParams(
     }
   }
 
+  // Convert fluxMode from simple string to legacy AIR format
+  // New format: 'draft', 'standard', 'pro', 'krea', 'ultra'
+  // Legacy format: 'urn:air:flux1:checkpoint:civitai:618692@699279', etc.
+  let legacyFluxMode: string | undefined;
+  if (typeof fluxMode === 'string') {
+    legacyFluxMode = FLUX_MODE_TO_AIR[fluxMode] ?? fluxMode;
+  }
+
+  // For Flux Ultra, convert aspectRatio value to legacy index format
+  // New format: '21:9', '16:9', etc.
+  // Legacy format: '0', '1', '2', etc. (index into fluxUltraAspectRatios array)
+  let fluxUltraAspectRatio: string | undefined;
+  if (fluxMode === 'ultra' && aspectRatioValue) {
+    fluxUltraAspectRatio = FLUX_ULTRA_ASPECT_RATIO_TO_INDEX[aspectRatioValue];
+  }
+
   return removeEmpty({
     ...rest,
     baseModel: ecosystem, // Map back to legacy field name
     aspectRatio: aspectRatioValue,
+    fluxUltraAspectRatio,
     width,
     height,
     sourceImage,
+    fluxMode: legacyFluxMode,
     // Map back to legacy field names
     ...(transparent != null && { openAITransparentBackground: transparent }),
     ...(quality != null && { openAIQuality: quality }),

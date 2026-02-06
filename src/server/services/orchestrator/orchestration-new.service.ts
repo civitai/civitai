@@ -36,7 +36,8 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
-import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
@@ -479,7 +480,11 @@ export async function createWorkflowStepFromGraph({
   data: GenerationGraphOutput;
   isWhatIf?: boolean;
   user?: { id?: number; isModerator?: boolean };
-  sourceMetadata?: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>>; transformations?: StepMetadataTransformation[] };
+  sourceMetadata?: {
+    params?: Record<string, unknown>;
+    resources?: Array<Record<string, unknown>>;
+    transformations?: StepMetadataTransformation[];
+  };
   remixOfId?: number;
 }): Promise<WorkflowStepTemplate> {
   // Validate and enrich resources
@@ -761,7 +766,6 @@ import type {
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
-import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
 
@@ -813,7 +817,11 @@ export interface NormalizedStepMetadata {
   transformations?: StepMetadataTransformation[];
 }
 
-export type StepMetadataTransformation = {workflow: string; params?: Record<string, unknown>; resources?: Record<string, unknown>[]}
+export type StepMetadataTransformation = {
+  workflow: string;
+  params?: Record<string, unknown>;
+  resources?: Record<string, unknown>[];
+};
 
 /** Normalized workflow step */
 export interface NormalizedStep {
@@ -955,7 +963,7 @@ function normalizeStepOutput(step: StepWithOutput): Array<ImageBlob | VideoBlob>
 /**
  * Formats step outputs into normalized images array
  */
-function formatStepOutputs(
+export function formatStepOutputs(
   workflowId: string,
   step: StepWithOutput
 ): { images: NormalizedWorkflowStepOutput[]; errors: string[] } {
@@ -1200,4 +1208,55 @@ export async function queryGeneratedImageWorkflows2({
     items: await formatGenerationResponse2(items as Workflow[], user),
     nextCursor,
   };
+}
+
+// =============================================================================
+// Workflow Status Update
+// =============================================================================
+
+export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUpdate>>;
+export async function getWorkflowStatusUpdate({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const result = await getWorkflow({ token, path: { workflowId } });
+  if (result) {
+    return {
+      id: workflowId,
+      status: result.status!,
+      steps: result.steps?.map((step) => {
+        const metadata = (step.metadata ?? {}) as Record<string, unknown>;
+
+        // Get params from either new format (input) or legacy format (params)
+        let params: Record<string, unknown>;
+        if (
+          metadata.input &&
+          typeof metadata.input === 'object' &&
+          'workflow' in (metadata.input as object)
+        ) {
+          // New format: metadata.input already contains graph-compatible data
+          params = metadata.input as Record<string, unknown>;
+        } else {
+          // Legacy format: map params using legacy-metadata-mapper
+          const legacyParams = (metadata.params ?? {}) as Record<string, unknown>;
+          params = mapDataToGraphInput(legacyParams, [], { stepType: step.$type });
+        }
+
+        // Format step outputs using the shared utility
+        const { images, errors } = formatStepOutputs(workflowId, step as StepWithOutput);
+
+        return {
+          name: step.name,
+          status: step.status,
+          completedAt: step.completedAt,
+          params,
+          images,
+          errors: errors.length > 0 ? errors : undefined,
+        };
+      }),
+    };
+  }
 }

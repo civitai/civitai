@@ -24,10 +24,8 @@ import type {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
-import type {
-  WorkflowStatusUpdate,
-  WorkflowStepFormatted,
-} from '~/server/services/orchestrator/common';
+import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
+import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,

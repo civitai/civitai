@@ -679,9 +679,6 @@ export function createCheckpointGraph(options?: {
         const ecosystemDefaults = ecosystem ? getEcosystemDefaults(ecosystem.id) : undefined;
         const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
-        const compatibleBaseModels = ecosystem
-          ? getCompatibleBaseModels(ecosystem.id, 'Checkpoint').full.map((m) => m.name)
-          : [];
 
         const checkpointInputSchema = z
           .union([

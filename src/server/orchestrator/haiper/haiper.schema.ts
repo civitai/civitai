@@ -44,7 +44,7 @@ export const haiperGenerationConfig = VideoGenerationConfig2({
     } else if (data.process === 'img2vid') {
       delete data.aspectRatio;
     }
-    return data;
+    return { ...data, baseModel: 'Haiper' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

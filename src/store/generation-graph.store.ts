@@ -12,8 +12,12 @@ import { immer } from 'zustand/middleware/immer';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import type { GenerationData } from '~/server/services/generation/generation.service';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { getOutputTypeForWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import { getEngineFromEcosystem } from '~/shared/utils/engine.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
+import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { generationFormStore } from '~/store/generation-form.store';
 import { remixStore } from '~/store/remix.store';
 import { QS } from '~/utils/qs';
 
@@ -58,6 +62,29 @@ interface GenerationGraphState {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+/**
+ * TEMPORARY: Sync legacy form store when graph data changes.
+ * Sets the correct media type and video engine so the legacy form
+ * shows the right UI. Remove when legacy generator is removed.
+ * See docs/legacy-generator-files.md
+ */
+function syncLegacyFormStore(params: Record<string, unknown>) {
+  const workflow = params.workflow as string | undefined;
+  const ecosystem = params.ecosystem as string | undefined;
+
+  if (workflow) {
+    const outputType = getOutputTypeForWorkflow(workflow);
+    generationFormStore.setType(outputType);
+
+    if (outputType === 'video' && ecosystem) {
+      const engine = getEngineFromEcosystem(ecosystem) as OrchestratorEngine2 | undefined;
+      if (engine) {
+        generationFormStore.setEngine(engine);
+      }
+    }
+  }
+}
 
 /** Convert GenerationResource to ResourceData (matching data-graph resourceSchema) */
 function toResourceData(r: GenerationResource): ResourceData {
@@ -126,6 +153,9 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
             const isMedia = ['audio', 'image', 'video'].includes(input.type);
             const resources = result.resources.map(substituteResource).map(toResourceData);
 
+            // TEMPORARY: Sync legacy form store (remove with legacy generator)
+            syncLegacyFormStore(result.params);
+
             // Update remix store for similarity tracking
             if (isMedia && result.remixOfId) {
               remixStore.setRemix(result.remixOfId, result.params);
@@ -153,6 +183,9 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
       close: () => useGenerationPanelStore.setState({ opened: false }),
 
       setData: ({ params, resources, runType = 'replay', remixOfId }) => {
+        // TEMPORARY: Sync legacy form store (remove with legacy generator)
+        syncLegacyFormStore(params);
+
         // Update remix store for similarity tracking
         if ((runType === 'remix' || runType === 'replay') && remixOfId) {
           remixStore.setRemix(remixOfId, params);
