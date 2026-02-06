@@ -521,8 +521,8 @@ export async function getChallengesReadyToStart(): Promise<DailyChallengeDetails
 }
 
 /**
- * Gets an upcoming system-created challenge (scheduled or active) in legacy format.
- * Returns null if no system challenge exists.
+ * Gets an upcoming system-created challenge (scheduled) in legacy format.
+ * Returns null if no scheduled system challenge exists.
  */
 export async function getUpcomingSystemChallenge(): Promise<DailyChallengeDetails | null> {
   const challenge = await getUpcomingSystemChallengeFromDb();

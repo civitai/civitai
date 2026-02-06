@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ChallengeSource, ChallengeStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -224,7 +225,7 @@ export const upsertChallengeBaseSchema = z.object({
   invitation: z.string().optional(),
   coverImage: imageSchema,
   nsfwLevel: z.number().min(1).max(32).default(1),
-  allowedNsfwLevel: z.number().min(1).max(63).default(1),
+  allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
   modelVersionIds: z.array(z.number()).default([]),
   judgeId: z.number().optional().nullable(),
   judgingPrompt: z.string().optional().nullable(),

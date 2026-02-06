@@ -27,6 +27,7 @@ import {
   getUpcomingSystemChallenge,
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   generateArticle,
   generateCollectionDetails,
@@ -251,6 +252,7 @@ async function createChallengeFromSelection(
       resource,
       image,
       challengeDate: endsAt,
+      allowedNsfwLevel: sfwBrowsingLevelsFlag,
       ...prizeConfig,
       config: judgingConfig,
     }),
@@ -303,7 +305,7 @@ async function createChallengeFromSelection(
     invitation: challengeContent.invitation,
     coverImageId,
     nsfwLevel: 1,
-    allowedNsfwLevel: 1,
+    allowedNsfwLevel: sfwBrowsingLevelsFlag,
     modelVersionIds,
     collectionId: collection.id,
     maxEntriesPerUser: config.entryPrizeRequirement * 2,

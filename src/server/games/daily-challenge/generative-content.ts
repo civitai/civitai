@@ -7,6 +7,10 @@ import type {
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { openrouter, AI_MODELS } from '~/server/services/ai/openrouter';
+import {
+  parseBitwiseBrowsingLevel,
+  browsingLevelLabels,
+} from '~/shared/constants/browsingLevel.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
@@ -78,6 +82,7 @@ type GenerateArticleInput = {
   prizes: Array<Prize>;
   entryPrizeRequirement: number;
   entryPrize: Prize;
+  allowedNsfwLevel: number;
   config: JudgingConfig;
 };
 type GeneratedArticle = {
@@ -93,6 +98,7 @@ export async function generateArticle({
   prizes,
   entryPrizeRequirement,
   entryPrize,
+  allowedNsfwLevel,
   config,
 }: GenerateArticleInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
@@ -171,7 +177,9 @@ export async function generateArticle({
     1. All entries must be submitted before the end of ${dayjs(challengeDate).format(
       'MMMM DD'
     )} (23:59 UTC).
-    2. All submitted images must be SFW (PG) and adhere to our **Terms of Service**.
+    2. All submitted images must be rated ${parseBitwiseBrowsingLevel(allowedNsfwLevel)
+      .map((level) => browsingLevelLabels[level as keyof typeof browsingLevelLabels])
+      .join(', ')} and adhere to our **Terms of Service**.
     3. Participants can submit up to ${entryPrizeRequirement * 2} images.
     4. Low-effort entries are not allowed. Submitting entries with no relevance to the challenge, with the intention of farming Participation Reward Buzz, may result in a Contest Ban. Contest-banned users will be prohibited from participating in all future Civitai contests!
     5. Entries must use the provided model.

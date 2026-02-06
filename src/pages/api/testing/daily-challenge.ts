@@ -11,6 +11,7 @@ import {
   challengeToLegacyFormat,
   getChallengeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   generateArticle,
   generateCollectionDetails,
@@ -97,6 +98,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         prizes: config.prizes,
         entryPrize: config.entryPrize,
         entryPrizeRequirement: config.entryPrizeRequirement,
+        allowedNsfwLevel: sfwBrowsingLevelsFlag,
         config: judgingConfig,
       });
       return res.status(200).json(result);

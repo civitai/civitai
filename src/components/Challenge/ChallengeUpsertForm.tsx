@@ -302,6 +302,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 name="visibleAt"
                 label="Visible From"
                 placeholder="When challenge appears in feed"
+                valueFormat="lll"
                 disabled={isTerminal}
               />
 
@@ -309,6 +310,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 name="startsAt"
                 label="Starts At"
                 placeholder="When submissions open"
+                valueFormat="lll"
                 disabled={isActive || isTerminal}
               />
 
@@ -316,6 +318,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 name="endsAt"
                 label="Ends At"
                 placeholder="When submissions close"
+                valueFormat="lll"
                 disabled={isTerminal}
               />
             </SimpleGrid>

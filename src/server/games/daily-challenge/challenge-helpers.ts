@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
 import type { Prize } from './daily-challenge.utils';
 
@@ -183,16 +184,16 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
 }
 
 /**
- * Gets an upcoming system-created challenge (scheduled or active).
+ * Gets an upcoming system-created challenge (scheduled).
  * Used to determine if auto-generation of a new system challenge is needed.
- * Returns null if no system challenge exists.
+ * Returns null if no scheduled system challenge exists.
  */
 export async function getUpcomingSystemChallengeFromDb(): Promise<ChallengeDetails | null> {
   const [row] = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id
     FROM "Challenge"
     WHERE source = ${ChallengeSource.System}::"ChallengeSource"
-    AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+    AND status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     ORDER BY "startsAt" ASC
     LIMIT 1
   `;
@@ -277,7 +278,7 @@ export async function createChallengeCollection(input: {
         maxItemsPerUser: input.maxEntriesPerUser,
         submissionStartDate: input.startsAt,
         submissionEndDate: input.endsAt,
-        forcedBrowsingLevel: input.allowedNsfwLevel ?? 1, // Enforce NSFW restrictions
+        forcedBrowsingLevel: input.allowedNsfwLevel ?? sfwBrowsingLevelsFlag, // Enforce NSFW restrictions
       },
     },
     select: { id: true },
