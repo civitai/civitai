@@ -29,6 +29,7 @@ import {
   aspectRatioNode,
   cfgScaleNode,
   stepsNode,
+  enumNode,
   resourcesNode,
   createCheckpointGraph,
   type ResourceData,
@@ -218,12 +219,7 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: '480p' as const,
     meta: { options: wan21Resolutions },
   })
-  .node('duration', {
-    input: z.coerce.number().optional(),
-    output: z.number(),
-    defaultValue: 5,
-    meta: { options: wanDurations },
-  })
+  .node('duration', enumNode({ options: wanDurations, defaultValue: 5 }))
   .node(
     'resources',
     (ctx) =>
@@ -241,17 +237,15 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
 
       const resolution = ctx.resolution as '480p' | '720p';
       const targetModel = wan21Img2VidModels[resolution];
-      const targetEcosystemKey = resolution === '480p' ? 'WanVideo14B_I2V_480p' : 'WanVideo14B_I2V_720p';
+      const targetEcosystemKey =
+        resolution === '480p' ? 'WanVideo14B_I2V_480p' : 'WanVideo14B_I2V_720p';
 
       // Skip if already using the correct model variant and ecosystem
       if (ctx.model?.id === targetModel.id && ctx.ecosystem === targetEcosystemKey) return;
 
       // Skip if current ecosystem is not a Wan 2.1 variant
       // (e.g., user selected Wan 2.2, don't force back to 2.1)
-      if (
-        ctx.ecosystem !== 'WanVideo14B_I2V_480p' &&
-        ctx.ecosystem !== 'WanVideo14B_I2V_720p'
-      ) {
+      if (ctx.ecosystem !== 'WanVideo14B_I2V_480p' && ctx.ecosystem !== 'WanVideo14B_I2V_720p') {
         return;
       }
 
@@ -395,12 +389,7 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: '480p' as const,
     meta: { options: wan25Resolutions },
   })
-  .node('duration', {
-    input: z.coerce.number().optional(),
-    output: z.number(),
-    defaultValue: 5,
-    meta: { options: wan25Durations },
-  })
+  .node('duration', enumNode({ options: wan25Durations, defaultValue: 5 }))
   .node(
     'resources',
     (ctx) =>

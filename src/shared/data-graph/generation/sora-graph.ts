@@ -15,7 +15,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, createCheckpointGraph } from './common';
+import { seedNode, aspectRatioNode, enumNode, createCheckpointGraph } from './common';
 
 // =============================================================================
 // Constants
@@ -86,12 +86,7 @@ export const soraGraph = new DataGraph<SoraCtx, GenerationCtx>()
   })
 
   // Duration node
-  .node('duration', {
-    input: z.coerce.number().optional(),
-    output: z.number(),
-    defaultValue: 4,
-    meta: { options: soraDurations },
-  });
+  .node('duration', enumNode({ options: soraDurations, defaultValue: 4 }));
 
 // Export constants for use in components
 export { soraAspectRatios, soraResolutions, soraDurations };

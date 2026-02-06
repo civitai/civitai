@@ -13,7 +13,6 @@
  * - resources: Additional LoRAs
  */
 
-import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
@@ -21,6 +20,7 @@ import {
   aspectRatioNode,
   cfgScaleNode,
   stepsNode,
+  enumNode,
   resourcesNode,
   createCheckpointGraph,
 } from './common';
@@ -84,12 +84,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
   )
 
   // Duration node
-  .node('duration', {
-    input: z.coerce.number().optional(),
-    output: z.number(),
-    defaultValue: 5,
-    meta: { options: ltxv2Durations },
-  })
+  .node('duration', enumNode({ options: ltxv2Durations, defaultValue: 5 }))
 
   // Steps node
   .node(

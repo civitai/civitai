@@ -33,12 +33,14 @@ export const createSoraInput = defineHandler<SoraCtx, SoraInput>((data, ctx) => 
     duration: 'duration' in data ? data.duration : undefined,
     quantity: data.quantity ?? 1,
     seed: data.seed,
+    operation: 'text-to-video',
   };
 
   if (hasImages) {
     return removeEmpty({
       ...baseInput,
       images: data.images?.map((x) => x.url),
+      operation: 'image-to-video',
     }) as Sora2ImageToVideoInput;
   } else {
     return removeEmpty(baseInput) as Sora2TextToVideoInput;

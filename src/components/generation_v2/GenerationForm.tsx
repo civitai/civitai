@@ -470,8 +470,9 @@ export function GenerationForm() {
                 <div className="flex flex-col gap-1">
                   <Input.Label>Duration</Input.Label>
                   <SegmentedControl
+                    key={value?.toString()} // Force remount when value changes to reset internal state
                     value={value?.toString()}
-                    onChange={(v) => onChange(Number(v))}
+                    onChange={(v) => onChange(v)}
                     data={
                       options?.map((o) => ({ label: o.label, value: o.value.toString() })) ?? []
                     }

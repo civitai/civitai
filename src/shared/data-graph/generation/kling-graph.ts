@@ -28,6 +28,7 @@ import {
   negativePromptNode,
   aspectRatioNode,
   cfgScaleNode,
+  enumNode,
   createCheckpointGraph,
 } from './common';
 
@@ -142,14 +143,7 @@ export const klingGraph = new DataGraph<KlingCtx, GenerationCtx>()
   )
 
   // Duration node
-  .node('duration', {
-    input: z.enum(['5', '10']).optional(),
-    output: z.enum(['5', '10']),
-    defaultValue: '5' as const,
-    meta: {
-      options: klingDurations,
-    },
-  })
+  .node('duration', enumNode({ options: klingDurations, defaultValue: '5' }))
 
   // CFG scale node
   .node(

@@ -326,7 +326,7 @@ export function seedNode() {
 // =============================================================================
 
 /** Option type for enum node */
-export type EnumOption<T extends string> = {
+export type EnumOption<T extends string | number> = {
   label: string;
   value: T;
 };
@@ -336,8 +336,11 @@ export type EnumOption<T extends string> = {
  * Input validates against allowed values, output is the enum type.
  * Meta contains: options (for UI rendering)
  *
+ * Supports both string and numeric values. Numeric values are coerced
+ * from strings on input (e.g., SegmentedControl passes string values).
+ *
  * @example
- * // Simple usage with string array
+ * // String enum
  * .node('style', enumNode({
  *   options: [
  *     { label: 'General', value: 'general' },
@@ -346,28 +349,33 @@ export type EnumOption<T extends string> = {
  *   defaultValue: 'general',
  * }))
  *
- * // With explicit type
- * .node('mode', enumNode<'fast' | 'standard'>({
+ * // Numeric enum
+ * .node('duration', enumNode({
  *   options: [
- *     { label: 'Fast', value: 'fast' },
- *     { label: 'Standard', value: 'standard' },
+ *     { label: '5 seconds', value: 5 },
+ *     { label: '10 seconds', value: 10 },
  *   ],
- *   defaultValue: 'fast',
+ *   defaultValue: 5,
  * }))
  */
-export function enumNode<T extends string>({
+export function enumNode<T extends string | number>({
   options,
   defaultValue,
 }: {
   options: readonly EnumOption<T>[];
-  defaultValue: T;
+  defaultValue?: T;
 }) {
-  const values = options.map((o) => o.value) as [T, ...T[]];
+  const values = options.map((o) => o.value);
+  const isNumeric = typeof values[0] === 'number';
+
+  // Coerce to the option type and validate against allowed values
+  const coerce = isNumeric ? z.coerce.number() : z.coerce.string();
+  const schema = coerce.refine((v) => values.includes(v as T)) as unknown as z.ZodType<T>;
 
   return {
-    input: z.enum(values).optional(),
-    output: z.enum(values),
-    defaultValue,
+    input: schema.optional(),
+    output: schema,
+    defaultValue: defaultValue ?? values[0],
     meta: {
       options,
     },
