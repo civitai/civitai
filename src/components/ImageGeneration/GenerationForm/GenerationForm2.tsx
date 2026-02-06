@@ -2029,9 +2029,9 @@ export function GenerationFormContent() {
 
 // #region [ready section]
 function ReadySection() {
-  const { data } = useTextToImageWhatIfContext();
+  const { data, isLoading } = useTextToImageWhatIfContext();
 
-  return data?.ready === false ? (
+  return data?.ready === false && !isLoading ? (
     <Card.Section m={0}>
       <Alert color="yellow" title="Potentially slow generation" radius={0}>
         <Text size="xs">

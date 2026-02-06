@@ -187,9 +187,9 @@ export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProp
  * Must be used inside a WhatIfProvider.
  */
 export function ReadyAlert() {
-  const { data } = useWhatIfContext();
+  const { data, isLoading } = useWhatIfContext();
 
-  if (data?.ready !== false) {
+  if (data?.ready !== false || isLoading) {
     return null;
   }
 

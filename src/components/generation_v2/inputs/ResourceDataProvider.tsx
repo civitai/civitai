@@ -112,13 +112,18 @@ export function ResourceDataProvider({ children }: ResourceDataProviderProps) {
     [registeredIds, isLoading, fetchStatus]
   );
 
+  // When no IDs are registered, the query is disabled and React Query keeps
+  // isLoading=true (no data, never fetched). We should report not loading
+  // since there's nothing to wait for.
+  const effectiveIsLoading = idsToFetch.length > 0 && isLoading;
+
   const value = useMemo(
     () => ({
       registerResourceId,
       unregisterResourceId,
       getResourceData,
       resources,
-      isLoading,
+      isLoading: effectiveIsLoading,
       isResourceLoading,
     }),
     [
@@ -126,7 +131,7 @@ export function ResourceDataProvider({ children }: ResourceDataProviderProps) {
       unregisterResourceId,
       getResourceData,
       resources,
-      isLoading,
+      effectiveIsLoading,
       isResourceLoading,
     ]
   );
