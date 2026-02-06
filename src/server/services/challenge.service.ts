@@ -42,6 +42,8 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { generateWinners } from '~/server/games/daily-challenge/generative-content';
 import { getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import { collectionsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
@@ -861,10 +863,9 @@ export async function updateChallengeStatus(id: number, status: ChallengeStatus)
 }
 
 export async function deleteChallenge(id: number) {
-  // Get the challenge to find its collection
   const challenge = await dbRead.challenge.findUnique({
     where: { id },
-    select: { collectionId: true },
+    select: { id: true, status: true, collectionId: true },
   });
 
   if (!challenge) {
@@ -874,24 +875,28 @@ export async function deleteChallenge(id: number) {
     });
   }
 
-  // Check if challenge collection has any entries
-  if (challenge.collectionId) {
-    const entryCount = await dbRead.collectionItem.count({
-      where: { collectionId: challenge.collectionId },
+  // Block deletion of active challenges
+  if (challenge.status === ChallengeStatus.Active) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Cannot delete an active challenge. Cancel it first.',
     });
-
-    if (entryCount > 0) {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: `Cannot delete challenge with ${entryCount} entries. Cancel the challenge instead.`,
-      });
-    }
   }
 
-  // Delete the challenge (collection deletion would need separate handling based on business rules)
-  await dbWrite.challenge.delete({
-    where: { id },
-  });
+  const collectionId = challenge.collectionId;
+
+  // Delete challenge first (cascades to ChallengeWinner)
+  await dbWrite.challenge.delete({ where: { id } });
+
+  // Delete the associated collection and all its data
+  if (collectionId) {
+    await dbWrite.collection.delete({ where: { id: collectionId } });
+
+    // Remove from search index
+    await collectionsSearchIndex.queueUpdate([
+      { id: collectionId, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+  }
 
   return { success: true };
 }
