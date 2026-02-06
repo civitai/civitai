@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   IconAssembly,
+  IconBook,
   IconCategory,
   IconLayoutList,
   IconPencilMinus,
@@ -69,6 +70,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconPencilMinus {...props} />,
       count: userOverview?.articleCount ?? 0,
       disabled: !articles || !!user?.bannedAt,
+    },
+    comics: {
+      url: `${baseUrl}/comics`,
+      icon: (props) => <IconBook {...props} />,
+      count: userOverview?.comicCount ?? 0,
+      disabled: !!user?.bannedAt,
     },
     collections: {
       url: `${baseUrl}/collections`,

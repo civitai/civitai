@@ -2,6 +2,7 @@ import { Badge, Button, Group, Menu, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
+  IconBook,
   IconCalendar,
   IconCaretDown,
   IconCategory,
@@ -68,6 +69,12 @@ export const homeOptions: HomeOption[] = [
     key: 'articles',
     url: '/articles',
     icon: (props: IconProps) => <IconFileText {...props} />,
+  },
+  {
+    key: 'comics',
+    url: '/comics',
+    icon: (props: IconProps) => <IconBook {...props} />,
+    new: new Date('2026-03-01'),
   },
   {
     key: 'bounties',

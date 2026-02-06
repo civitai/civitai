@@ -1735,9 +1735,7 @@ export function GenerationFormContent() {
                                       </div>
                                     }
                                     data={
-                                      isZImageBase
-                                        ? [...zImageSchedules]
-                                        : [...flux2KleinSchedules]
+                                      isZImageBase ? [...zImageSchedules] : [...flux2KleinSchedules]
                                     }
                                     presets={[{ label: 'Default', value: 'simple' }]}
                                   />

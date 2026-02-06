@@ -23,9 +23,7 @@ export async function planChapterPanels(input: {
   }
 
   const userMessage = [
-    input.characterNames.length > 0
-      ? `Characters: ${input.characterNames.join(', ')}`
-      : null,
+    input.characterNames.length > 0 ? `Characters: ${input.characterNames.join(', ')}` : null,
     `Story: ${input.storyDescription}`,
   ]
     .filter(Boolean)

@@ -29,7 +29,10 @@ export class TaskBatcherIntervals<T> {
   private interval: number;
   private maxAttempts?: number;
   private taskBatcher: TaskBatcher<T>;
-  private dictionary: Record<string, { interval: ReturnType<typeof setInterval>; attempts: number }> = {};
+  private dictionary: Record<
+    string,
+    { interval: ReturnType<typeof setInterval>; attempts: number }
+  > = {};
 
   configure = ({ callback }: { callback: (batched: T[]) => void }) => {
     this.taskBatcher.configure({ callback });

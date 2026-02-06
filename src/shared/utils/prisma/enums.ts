@@ -842,23 +842,13 @@ export const ComicProjectStatus = {
 
 export type ComicProjectStatus = (typeof ComicProjectStatus)[keyof typeof ComicProjectStatus];
 
-export const ComicCharacterStatus = {
+export const ComicReferenceStatus = {
   Pending: 'Pending',
-  Processing: 'Processing',
-  Training: 'Training',
-  GeneratingRefs: 'GeneratingRefs',
   Ready: 'Ready',
   Failed: 'Failed',
 } as const;
 
-export type ComicCharacterStatus = (typeof ComicCharacterStatus)[keyof typeof ComicCharacterStatus];
-
-export const ComicCharacterSourceType = {
-  Upload: 'Upload',
-  ExistingModel: 'ExistingModel',
-} as const;
-
-export type ComicCharacterSourceType = (typeof ComicCharacterSourceType)[keyof typeof ComicCharacterSourceType];
+export type ComicReferenceStatus = (typeof ComicReferenceStatus)[keyof typeof ComicReferenceStatus];
 
 export const ComicPanelStatus = {
   Pending: 'Pending',
@@ -868,6 +858,45 @@ export const ComicPanelStatus = {
 } as const;
 
 export type ComicPanelStatus = (typeof ComicPanelStatus)[keyof typeof ComicPanelStatus];
+
+export const ComicChapterStatus = {
+  Draft: 'Draft',
+  Published: 'Published',
+} as const;
+
+export type ComicChapterStatus = (typeof ComicChapterStatus)[keyof typeof ComicChapterStatus];
+
+export const ComicReferenceType = {
+  Character: 'Character',
+  Location: 'Location',
+  Item: 'Item',
+} as const;
+
+export type ComicReferenceType = (typeof ComicReferenceType)[keyof typeof ComicReferenceType];
+
+export const ComicEngagementType = {
+  Notify: 'Notify',
+  Hide: 'Hide',
+} as const;
+
+export type ComicEngagementType = (typeof ComicEngagementType)[keyof typeof ComicEngagementType];
+
+export const ComicGenre = {
+  Action: 'Action',
+  Adventure: 'Adventure',
+  Comedy: 'Comedy',
+  Drama: 'Drama',
+  Fantasy: 'Fantasy',
+  Horror: 'Horror',
+  Mystery: 'Mystery',
+  Romance: 'Romance',
+  SciFi: 'SciFi',
+  SliceOfLife: 'SliceOfLife',
+  Thriller: 'Thriller',
+  Other: 'Other',
+} as const;
+
+export type ComicGenre = (typeof ComicGenre)[keyof typeof ComicGenre];
 
 export const UserRestrictionStatus = {
   Pending: 'Pending',

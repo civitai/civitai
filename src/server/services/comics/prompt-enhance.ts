@@ -35,11 +35,22 @@ export async function enhanceComicPrompt(input: {
   const { userPrompt, characterName, characterNames, trainedWords, previousPanel, storyContext } =
     input;
 
-  // Fallback: just return the user prompt (no trained words for NanoBanana path)
+  // Resolve @mentions: replace @ReferenceName with the exact name
+  // This allows users to reference characters/locations/items by name in prompts
+  let resolvedPrompt = userPrompt;
+  if (characterNames && characterNames.length > 0) {
+    for (const name of characterNames) {
+      // Match @Name (case-insensitive) and replace with exact name
+      const pattern = new RegExp(`@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi');
+      resolvedPrompt = resolvedPrompt.replace(pattern, name);
+    }
+  }
+
+  // Fallback: just return the resolved prompt (no trained words for NanoBanana path)
   const fallback =
     trainedWords && trainedWords.length > 0
-      ? `${trainedWords.join(', ')}, ${userPrompt}`
-      : userPrompt;
+      ? `${trainedWords.join(', ')}, ${resolvedPrompt}`
+      : resolvedPrompt;
 
   if (!openai) {
     console.warn('OpenAI client not configured — skipping prompt enhancement');
@@ -54,11 +65,15 @@ export async function enhanceComicPrompt(input: {
       storyContext && `Overall story: ${storyContext.storyDescription}`,
       storyContext &&
         storyContext.previousPanelPrompts.length > 0 &&
-        `Previous panels in this chapter:\n${storyContext.previousPanelPrompts.map((p, i) => `  Panel ${i + 1}: ${p}`).join('\n')}`,
+        `Previous panels in this chapter:\n${storyContext.previousPanelPrompts
+          .map((p, i) => `  Panel ${i + 1}: ${p}`)
+          .join('\n')}`,
       !storyContext &&
         previousPanel &&
         `Previous panel prompt: ${previousPanel.enhancedPrompt ?? previousPanel.prompt}`,
-      `New scene (panel ${storyContext ? storyContext.previousPanelPrompts.length + 1 : 'next'}): ${userPrompt}`,
+      `New scene (panel ${
+        storyContext ? storyContext.previousPanelPrompts.length + 1 : 'next'
+      }): ${resolvedPrompt}`,
     ]
       .filter(Boolean)
       .join('\n');

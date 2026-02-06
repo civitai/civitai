@@ -8,7 +8,6 @@ import {
   Menu,
   Modal,
   ScrollArea,
-  Select,
   SimpleGrid,
   Stack,
   Switch,
@@ -82,7 +81,7 @@ function ProjectWorkspace() {
   const [debugPanelId, setDebugPanelId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
-  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
+  const [selectedReferenceIds, setSelectedReferenceIds] = useState<Set<string>>(new Set());
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<string | null>(null);
 
@@ -107,7 +106,7 @@ function ProjectWorkspace() {
   const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
   const [smartChapterName, setSmartChapterName] = useState('New Chapter');
   const [smartStory, setSmartStory] = useState('');
-  const [smartCharacterId, setSmartCharacterId] = useState<string | null>(null);
+  const [smartCharacterIds, setSmartCharacterIds] = useState<Set<string>>(new Set());
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
   const [smartEnhance, setSmartEnhance] = useState(true);
 
@@ -115,10 +114,11 @@ function ProjectWorkspace() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  const { data: project, isLoading, refetch } = trpc.comics.getProject.useQuery(
-    { id: projectId },
-    { enabled: !!projectId }
-  );
+  const {
+    data: project,
+    isLoading,
+    refetch,
+  } = trpc.comics.getProject.useQuery({ id: projectId }, { enabled: !!projectId });
 
   // Dynamic cost estimate from orchestrator
   const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(undefined, {
@@ -134,32 +134,22 @@ function ProjectWorkspace() {
   }, [project?.chapters, activeChapterId]);
 
   // Combine project characters and library characters
-  const allCharacters = useMemo(() => [
-    ...(project?.characters ?? []),
-    ...(project?.libraryCharacters ?? []),
-  ], [project?.characters, project?.libraryCharacters]);
+  const allCharacters = useMemo(
+    () => [...(project?.references ?? []), ...(project?.libraryReferences ?? [])],
+    [project?.references, project?.libraryReferences]
+  );
 
-  // Fetch cover images for characters that have a linked model
-  const characterModelEntities = useMemo(
-    () =>
-      allCharacters
-        .filter((c) => c.modelId)
-        .map((c) => ({ entityType: 'Model' as const, entityId: c.modelId! })),
-    [allCharacters]
-  );
-  const { data: characterCoverImages } = trpc.image.getEntitiesCoverImage.useQuery(
-    { entities: characterModelEntities },
-    { enabled: characterModelEntities.length > 0 }
-  );
+  // Build character image map from reference images
   const characterImageMap = useMemo(() => {
-    const map = new Map<number, { url: string; type: string; metadata?: any }>();
-    if (characterCoverImages) {
-      for (const img of characterCoverImages) {
-        map.set(img.entityId, { url: img.url, type: img.type, metadata: img.metadata });
+    const map = new Map<string, { url: string }>();
+    for (const c of allCharacters) {
+      const firstImage = (c as any).images?.[0]?.image;
+      if (firstImage?.url) {
+        map.set(c.id, { url: firstImage.url });
       }
     }
     return map;
-  }, [characterCoverImages]);
+  }, [allCharacters]);
 
   const createPanelMutation = trpc.comics.createPanel.useMutation({
     onSuccess: () => {
@@ -204,7 +194,7 @@ function ProjectWorkspace() {
     },
   });
 
-  const deleteCharacterMutation = trpc.comics.deleteCharacter.useMutation({
+  const deleteCharacterMutation = trpc.comics.deleteReference.useMutation({
     onSuccess: () => refetch(),
   });
 
@@ -234,10 +224,7 @@ function ProjectWorkspace() {
 
   // Poll for panels actively generating
   const generatingPanelIds = useMemo(
-    () =>
-      (activeChapter?.panels ?? [])
-        .filter((p) => p.status === 'Generating')
-        .map((p) => p.id),
+    () => (activeChapter?.panels ?? []).filter((p) => p.status === 'Generating').map((p) => p.id),
     [activeChapter?.panels]
   );
 
@@ -249,22 +236,16 @@ function ProjectWorkspace() {
           generatingPanelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
         );
         if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }, 3000);
     return () => clearInterval(interval);
   }, [generatingPanelIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll for characters in Pending/Processing state
+  // Poll for characters in Pending state (waiting for images)
   const processingCharacterIds = useMemo(
-    () =>
-      allCharacters
-        .filter((c) =>
-          c.status === 'Pending' ||
-          c.status === 'Processing' ||
-          c.status === 'Training' ||
-          c.status === 'GeneratingRefs'
-        )
-        .map((c) => c.id),
+    () => allCharacters.filter((c) => c.status === 'Pending').map((c) => c.id),
     [allCharacters]
   );
 
@@ -273,10 +254,14 @@ function ProjectWorkspace() {
     const interval = setInterval(async () => {
       try {
         const results = await Promise.all(
-          processingCharacterIds.map((cid) => utils.comics.pollCharacterStatus.fetch({ characterId: cid }))
+          processingCharacterIds.map((cid) =>
+            utils.comics.pollReferenceStatus.fetch({ referenceId: cid })
+          )
         );
         if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }, 5000);
     return () => clearInterval(interval);
   }, [processingCharacterIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -298,6 +283,25 @@ function ProjectWorkspace() {
     return map;
   }, [allCharacters]);
 
+  const activeCharacters = useMemo(
+    () => allCharacters.filter((c) => c.status === 'Ready'),
+    [allCharacters]
+  );
+
+  // Auto-select all ready references if none explicitly selected
+  const effectiveSelectedIds = useMemo(() => {
+    if (selectedReferenceIds.size > 0) return selectedReferenceIds;
+    return new Set(activeCharacters.map((c) => c.id));
+  }, [selectedReferenceIds, activeCharacters]);
+
+  const selectedRefsHaveImages = useMemo(
+    () =>
+      activeCharacters
+        .filter((c) => effectiveSelectedIds.has(c.id))
+        .some((c) => ((c as any).images?.length ?? 0) > 0),
+    [activeCharacters, effectiveSelectedIds]
+  );
+
   if (isLoading || !project) {
     return (
       <Container size="xl" py="xl">
@@ -309,16 +313,6 @@ function ProjectWorkspace() {
     );
   }
 
-  const activeCharacters = allCharacters.filter((c) => c.status === 'Ready');
-  const activeCharacter = activeCharacters.find((c) => c.id === selectedCharacterId)
-    ?? activeCharacters[0]
-    ?? null;
-
-  const activeCharacterHasRefs = activeCharacter && (
-    ((activeCharacter.generatedReferenceImages as any[])?.length ?? 0) > 0 ||
-    ((activeCharacter.referenceImages as any[])?.length ?? 0) > 0
-  );
-
   const hasReadyPanelsWithImages = project.chapters.some((ch) =>
     ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
   );
@@ -329,9 +323,10 @@ function ProjectWorkspace() {
   const detailPanel = detailPanelId
     ? project.chapters.flatMap((ch) => ch.panels).find((p) => p.id === detailPanelId)
     : null;
-  const detailPanelIndex = detailPanel && activeChapter
-    ? activeChapter.panels.findIndex((p) => p.id === detailPanel.id)
-    : -1;
+  const detailPanelIndex =
+    detailPanel && activeChapter
+      ? activeChapter.panels.findIndex((p) => p.id === detailPanel.id)
+      : -1;
 
   const handlePanelDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -341,17 +336,21 @@ function ProjectWorkspace() {
     const newIndex = panels.findIndex((p) => p.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
     const reordered = arrayMove(panels, oldIndex, newIndex);
-    reorderPanelsMutation.mutate({ chapterId: activeChapter.id, panelIds: reordered.map((p) => p.id) });
+    reorderPanelsMutation.mutate({
+      chapterId: activeChapter.id,
+      panelIds: reordered.map((p) => p.id),
+    });
   };
 
   const handleGeneratePanel = async () => {
-    if (!prompt.trim() || !activeCharacter || !activeChapter || !activeCharacterHasRefs) return;
+    const refIds = Array.from(effectiveSelectedIds);
+    if (!prompt.trim() || refIds.length === 0 || !activeChapter || !selectedRefsHaveImages) return;
     if (regeneratingPanelId) {
       await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
     }
     createPanelMutation.mutate({
       chapterId: activeChapter.id,
-      characterId: activeCharacter.id,
+      referenceIds: refIds,
       prompt: prompt.trim(),
       enhance: enhancePrompt,
       ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
@@ -375,7 +374,8 @@ function ProjectWorkspace() {
       title: 'Delete Chapter',
       children: (
         <Text size="sm">
-          Are you sure you want to delete &quot;{chapterName}&quot;? All panels in this chapter will be permanently deleted.
+          Are you sure you want to delete &quot;{chapterName}&quot;? All panels in this chapter will
+          be permanently deleted.
         </Text>
       ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
@@ -395,14 +395,19 @@ function ProjectWorkspace() {
       title: 'Delete Character',
       children: (
         <Text size="sm">
-          Are you sure you want to delete &quot;{characterName}&quot;? Existing panels will be preserved but unlinked.
+          Are you sure you want to delete &quot;{characterName}&quot;? Existing panels will be
+          preserved but unlinked.
         </Text>
       ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        deleteCharacterMutation.mutate({ characterId });
-        if (selectedCharacterId === characterId) setSelectedCharacterId(null);
+        deleteCharacterMutation.mutate({ referenceId: characterId });
+        setSelectedReferenceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(characterId);
+          return next;
+        });
       },
     });
   };
@@ -434,7 +439,7 @@ function ProjectWorkspace() {
     setSmartStep('input');
     setSmartChapterName('New Chapter');
     setSmartStory('');
-    setSmartCharacterId(null);
+    setSmartCharacterIds(new Set());
     setSmartPanels([]);
     setSmartEnhance(true);
   };
@@ -445,12 +450,15 @@ function ProjectWorkspace() {
   };
 
   const handleSmartCreate = () => {
-    const smartChar = activeCharacters.find((c) => c.id === smartCharacterId) ?? activeCharacters[0];
-    if (!smartChar || smartPanels.length === 0) return;
+    const smartRefIds =
+      smartCharacterIds.size > 0
+        ? Array.from(smartCharacterIds)
+        : activeCharacters.map((c) => c.id);
+    if (smartRefIds.length === 0 || smartPanels.length === 0) return;
     smartCreateMutation.mutate({
       projectId,
       chapterName: smartChapterName.trim() || 'New Chapter',
-      characterId: smartChar.id,
+      referenceIds: smartRefIds,
       storyDescription: smartStory.trim(),
       panels: smartPanels.filter((p) => p.prompt.trim()),
       enhance: smartEnhance,
@@ -461,18 +469,12 @@ function ProjectWorkspace() {
     if (status === 'Failed') return styles.failed;
     if (status === 'Ready' && !hasRefs) return styles.noRefs;
     if (status === 'Ready') return styles.ready;
-    if (status === 'Training') return styles.training;
-    if (status === 'GeneratingRefs') return styles.generatingRefs;
-    if (status === 'Processing') return styles.processing;
     return styles.pending;
   };
 
   const getStatusLabel = (status: string, hasRefs: boolean, isFailed: boolean) => {
     if (isFailed) return 'Failed';
     if (status === 'Ready' && !hasRefs) return 'No refs';
-    if (status === 'Training') return 'Training...';
-    if (status === 'GeneratingRefs') return 'Generating refs...';
-    if (status === 'Processing') return 'Processing...';
     return status;
   };
 
@@ -556,7 +558,9 @@ function ProjectWorkspace() {
                 {allCharacters.length === 0 ? (
                   <div className="flex flex-col items-center py-8 text-center">
                     <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
-                    <Text size="sm" c="dimmed" mb="md">No characters yet</Text>
+                    <Text size="sm" c="dimmed" mb="md">
+                      No characters yet
+                    </Text>
                     <button
                       className={styles.gradientBtn}
                       onClick={() => router.push(`/comics/project/${projectId}/character`)}
@@ -568,17 +572,30 @@ function ProjectWorkspace() {
                 ) : (
                   <>
                     {/* Project characters */}
-                    {(project.characters ?? []).length > 0 && (
+                    {(project.references ?? []).length > 0 && (
                       <>
-                        <Text size="xs" c="dimmed" fw={600} mt={4} mb={-4} px={4}>Project</Text>
-                        {project.characters.map((character) => (
+                        <Text size="xs" c="dimmed" fw={600} mt={4} mb={-4} px={4}>
+                          Project
+                        </Text>
+                        {project.references.map((character) => (
                           <CharacterSidebarItem
                             key={character.id}
                             character={character}
                             projectId={projectId}
-                            isSelected={selectedCharacterId === character.id || (!selectedCharacterId && activeCharacter?.id === character.id)}
+                            isSelected={effectiveSelectedIds.has(character.id)}
                             characterImageMap={characterImageMap}
-                            onSelect={setSelectedCharacterId}
+                            onToggle={(id) =>
+                              setSelectedReferenceIds((prev) => {
+                                // If nothing was explicitly selected, start from the auto-set
+                                const base =
+                                  prev.size === 0
+                                    ? new Set(activeCharacters.map((c) => c.id))
+                                    : new Set(prev);
+                                if (base.has(id)) base.delete(id);
+                                else base.add(id);
+                                return base;
+                              })
+                            }
                             onDelete={handleDeleteCharacter}
                             getStatusDotClass={getStatusDotClass}
                             getStatusLabel={getStatusLabel}
@@ -588,17 +605,29 @@ function ProjectWorkspace() {
                     )}
 
                     {/* Library characters */}
-                    {(project.libraryCharacters ?? []).length > 0 && (
+                    {(project.libraryReferences ?? []).length > 0 && (
                       <>
-                        <Text size="xs" c="dimmed" fw={600} mt={8} mb={-4} px={4}>My Library</Text>
-                        {project.libraryCharacters!.map((character) => (
+                        <Text size="xs" c="dimmed" fw={600} mt={8} mb={-4} px={4}>
+                          My Library
+                        </Text>
+                        {project.libraryReferences!.map((character) => (
                           <CharacterSidebarItem
                             key={character.id}
                             character={character}
                             projectId={projectId}
-                            isSelected={selectedCharacterId === character.id || (!selectedCharacterId && activeCharacter?.id === character.id)}
+                            isSelected={effectiveSelectedIds.has(character.id)}
                             characterImageMap={characterImageMap}
-                            onSelect={setSelectedCharacterId}
+                            onToggle={(id) =>
+                              setSelectedReferenceIds((prev) => {
+                                const base =
+                                  prev.size === 0
+                                    ? new Set(activeCharacters.map((c) => c.id))
+                                    : new Set(prev);
+                                if (base.has(id)) base.delete(id);
+                                else base.add(id);
+                                return base;
+                              })
+                            }
                             onDelete={handleDeleteCharacter}
                             getStatusDotClass={getStatusDotClass}
                             getStatusLabel={getStatusLabel}
@@ -625,10 +654,7 @@ function ProjectWorkspace() {
                   return (
                     <div
                       key={chapter.id}
-                      className={clsx(
-                        styles.chapterItem,
-                        isActive && styles.chapterItemActive
-                      )}
+                      className={clsx(styles.chapterItem, isActive && styles.chapterItemActive)}
                       onClick={() => {
                         if (editingChapterId !== chapter.id) setActiveChapterId(chapter.id);
                       }}
@@ -700,7 +726,10 @@ function ProjectWorkspace() {
                   <button
                     className={styles.gradientBtn}
                     style={{ padding: '8px 12px', fontSize: 13, width: '100%' }}
-                    onClick={() => { resetSmartState(); openSmartModal(); }}
+                    onClick={() => {
+                      resetSmartState();
+                      openSmartModal();
+                    }}
                   >
                     <IconSparkles size={14} />
                     Smart Create
@@ -712,48 +741,56 @@ function ProjectWorkspace() {
             {/* ── Main: Panels ───────────────────── */}
             <div>
               {/* Status messages */}
-              {!activeCharacter && allCharacters.length === 0 && (
+              {activeCharacters.length === 0 && allCharacters.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
                   <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                  <Text c="dimmed" mb="md">Add a character first to start generating panels</Text>
+                  <Text c="dimmed" mb="md">
+                    Add a reference first to start generating panels
+                  </Text>
                   <button
                     className={styles.gradientBtn}
                     onClick={() => router.push(`/comics/project/${projectId}/character`)}
                   >
                     <IconPlus size={14} />
-                    Add Character
+                    Add Reference
                   </button>
                 </div>
               )}
 
-              {!activeCharacter && allCharacters.length > 0 && (
+              {activeCharacters.length === 0 && allCharacters.length > 0 && (
                 <div className="py-8 text-center">
                   <Text c="dimmed" size="sm">
-                    Wait for your character to finish processing before generating panels.
+                    Wait for your references to finish processing before generating panels.
                   </Text>
                 </div>
               )}
 
-              {activeCharacter && !activeCharacterHasRefs && (
-                <div className="flex items-center justify-between py-4 px-4 rounded-lg" style={{ background: '#2C2E33', border: '1px solid #373A40' }}>
+              {activeCharacters.length > 0 && !selectedRefsHaveImages && (
+                <div
+                  className="flex items-center justify-between py-4 px-4 rounded-lg"
+                  style={{ background: '#2C2E33', border: '1px solid #373A40' }}
+                >
                   <Text c="dimmed" size="sm">
-                    {activeCharacter.name} needs reference images before generating panels.
+                    Selected references need images before generating panels.
                   </Text>
                   <button
                     className={styles.subtleBtn}
-                    onClick={() => router.push(`/comics/project/${projectId}/character?characterId=${activeCharacter.id}`)}
+                    onClick={() => router.push(`/comics/project/${projectId}/character`)}
                   >
                     Add References
                   </button>
                 </div>
               )}
 
-              {activeChapter && activeChapter.panels.length === 0 && activeCharacter && activeCharacterHasRefs && (
-                <div className="flex flex-col items-center py-12 text-center">
-                  <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                  <Text c="dimmed">No panels yet. Create your first panel!</Text>
-                </div>
-              )}
+              {activeChapter &&
+                activeChapter.panels.length === 0 &&
+                activeCharacters.length > 0 &&
+                selectedRefsHaveImages && (
+                  <div className="flex flex-col items-center py-12 text-center">
+                    <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
+                    <Text c="dimmed">No panels yet. Create your first panel!</Text>
+                  </div>
+                )}
 
               {/* Active chapter title */}
               {activeChapter && (
@@ -763,21 +800,42 @@ function ProjectWorkspace() {
               )}
 
               {/* Panel grid */}
-              <DndContext sensors={panelSensors} collisionDetection={closestCenter} onDragEnd={handlePanelDragEnd}>
+              <DndContext
+                sensors={panelSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handlePanelDragEnd}
+              >
                 <SortableContext items={(activeChapter?.panels ?? []).map((p) => p.id)}>
-                  <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+                  <div
+                    className="grid gap-4"
+                    style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}
+                  >
                     {(activeChapter?.panels ?? []).map((panel, index) => (
                       <SortablePanel key={panel.id} id={panel.id}>
                         <PanelCard
                           panel={panel}
                           position={index + 1}
-                          characterName={panel.characterId ? characterNameMap.get(panel.characterId) ?? null : null}
+                          referenceNames={
+                            (panel.references ?? [])
+                              .map((r: { referenceId: string }) =>
+                                characterNameMap.get(r.referenceId)
+                              )
+                              .filter(Boolean) as string[]
+                          }
                           onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
-                          onViewDebug={() => { setDebugPanelId(panel.id); openDebugModal(); }}
+                          onViewDebug={() => {
+                            setDebugPanelId(panel.id);
+                            openDebugModal();
+                          }}
                           onRegenerate={() => {
                             setRegeneratingPanelId(panel.id);
                             setPrompt(panel.prompt);
-                            if (panel.characterId) setSelectedCharacterId(panel.characterId);
+                            const panelRefIds = (panel.references ?? []).map(
+                              (r: { referenceId: string }) => r.referenceId
+                            );
+                            if (panelRefIds.length > 0) {
+                              setSelectedReferenceIds(new Set(panelRefIds));
+                            }
                             openPanelModal();
                           }}
                           onInsertAfter={() => {
@@ -790,7 +848,7 @@ function ProjectWorkspace() {
                     ))}
 
                     {/* Add panel button */}
-                    {activeCharacter && activeCharacterHasRefs && (
+                    {activeCharacters.length > 0 && selectedRefsHaveImages && (
                       <button className={styles.addPanelBtn} onClick={openPanelModal}>
                         <IconPlus size={28} />
                       </button>
@@ -826,7 +884,10 @@ function ProjectWorkspace() {
                 {detailPanel.imageUrl ? (
                   <img src={getEdgeUrl(detailPanel.imageUrl, { width: 800 })} alt="Panel" />
                 ) : (
-                  <div className="w-full flex items-center justify-center" style={{ background: '#2C2E33', aspectRatio: '3/4' }}>
+                  <div
+                    className="w-full flex items-center justify-center"
+                    style={{ background: '#2C2E33', aspectRatio: '3/4' }}
+                  >
                     {detailPanel.status === 'Generating' || detailPanel.status === 'Pending' ? (
                       <div className={styles.spinner} />
                     ) : (
@@ -839,21 +900,29 @@ function ProjectWorkspace() {
               {/* Status + Character row */}
               <div className="flex items-center gap-3 flex-wrap">
                 <div className={styles.detailStatusBadge}>
-                  <span className={clsx(styles.detailStatusDot, {
-                    [styles.ready]: detailPanel.status === 'Ready',
-                    [styles.generating]: detailPanel.status === 'Generating' || detailPanel.status === 'Pending',
-                    [styles.failed]: detailPanel.status === 'Failed',
-                  })} />
+                  <span
+                    className={clsx(styles.detailStatusDot, {
+                      [styles.ready]: detailPanel.status === 'Ready',
+                      [styles.generating]:
+                        detailPanel.status === 'Generating' || detailPanel.status === 'Pending',
+                      [styles.failed]: detailPanel.status === 'Failed',
+                    })}
+                  />
                   {detailPanel.status === 'Pending' ? 'Queued' : detailPanel.status}
                 </div>
-                {detailPanel.characterId && characterNameMap.has(detailPanel.characterId) && (
-                  <span className={styles.detailCharacterPill}>
-                    <IconUser size={14} />
-                    {characterNameMap.get(detailPanel.characterId)}
-                  </span>
-                )}
+                {(detailPanel.references ?? []).map((r: { referenceId: string }) => {
+                  const name = characterNameMap.get(r.referenceId);
+                  return name ? (
+                    <span key={r.referenceId} className={styles.detailCharacterPill}>
+                      <IconUser size={14} />
+                      {name}
+                    </span>
+                  ) : null;
+                })}
                 <div className="flex-1" />
-                <Text size="xs" c="dimmed">{new Date(detailPanel.createdAt).toLocaleDateString()}</Text>
+                <Text size="xs" c="dimmed">
+                  {new Date(detailPanel.createdAt).toLocaleDateString()}
+                </Text>
               </div>
 
               {/* Original prompt */}
@@ -866,7 +935,9 @@ function ProjectWorkspace() {
               {detailPanel.enhancedPrompt && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <span className={styles.detailSectionTitle} style={{ marginBottom: 0 }}>Enhanced Prompt</span>
+                    <span className={styles.detailSectionTitle} style={{ marginBottom: 0 }}>
+                      Enhanced Prompt
+                    </span>
                     <span className={styles.enhancedBadge}>
                       <IconSparkles size={12} />
                       Enhanced
@@ -882,7 +953,10 @@ function ProjectWorkspace() {
               {detailPanel.errorMessage && (
                 <div>
                   <div className={styles.detailSectionTitle}>Error</div>
-                  <div className={styles.promptBox} style={{ borderColor: '#fa5252', color: '#fa5252' }}>
+                  <div
+                    className={styles.promptBox}
+                    style={{ borderColor: '#fa5252', color: '#fa5252' }}
+                  >
                     {detailPanel.errorMessage}
                   </div>
                 </div>
@@ -897,7 +971,12 @@ function ProjectWorkspace() {
                       setDetailPanelId(null);
                       setRegeneratingPanelId(detailPanel.id);
                       setPrompt(detailPanel.prompt);
-                      if (detailPanel.characterId) setSelectedCharacterId(detailPanel.characterId);
+                      const panelRefIds = (detailPanel.references ?? []).map(
+                        (r: { referenceId: string }) => r.referenceId
+                      );
+                      if (panelRefIds.length > 0) {
+                        setSelectedReferenceIds(new Set(panelRefIds));
+                      }
                       openPanelModal();
                     }}
                   >
@@ -905,7 +984,7 @@ function ProjectWorkspace() {
                     Regenerate
                   </button>
                 )}
-                {detailPanelIndex >= 0 && activeCharacter && activeCharacterHasRefs && (
+                {detailPanelIndex >= 0 && activeCharacters.length > 0 && selectedRefsHaveImages && (
                   <button
                     className={styles.subtleBtn}
                     onClick={() => {
@@ -953,27 +1032,57 @@ function ProjectWorkspace() {
       {/* ── Generate Panel Modal ─────────────────── */}
       <Modal
         opened={panelModalOpened}
-        onClose={() => { closePanelModal(); setRegeneratingPanelId(null); setInsertAtPosition(null); }}
-        title={regeneratingPanelId ? 'Regenerate Panel' : insertAtPosition != null ? 'Insert Panel' : 'Generate Panel'}
+        onClose={() => {
+          closePanelModal();
+          setRegeneratingPanelId(null);
+          setInsertAtPosition(null);
+        }}
+        title={
+          regeneratingPanelId
+            ? 'Regenerate Panel'
+            : insertAtPosition != null
+            ? 'Insert Panel'
+            : 'Generate Panel'
+        }
         size="lg"
       >
         <Stack gap="md">
-          {activeCharacters.length > 1 ? (
-            <Select
-              label="Character"
-              data={activeCharacters.map((c) => ({ value: c.id, label: c.name }))}
-              value={selectedCharacterId ?? activeCharacter?.id ?? null}
-              onChange={(v) => setSelectedCharacterId(v)}
-            />
-          ) : activeCharacter ? (
-            <Group>
-              <Text size="sm" c="dimmed">Character:</Text>
-              <span className={styles.detailCharacterPill} style={{ padding: '3px 10px', fontSize: 12 }}>
-                <IconUser size={12} />
-                {activeCharacter.name}
-              </span>
+          <div>
+            <Text size="sm" fw={500} mb={4}>
+              References ({effectiveSelectedIds.size} selected)
+            </Text>
+            <Group gap="xs">
+              {activeCharacters.map((c) => (
+                <button
+                  key={c.id}
+                  className={clsx(
+                    styles.detailCharacterPill,
+                    effectiveSelectedIds.has(c.id) && styles.characterPillSelected
+                  )}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    opacity: effectiveSelectedIds.has(c.id) ? 1 : 0.5,
+                  }}
+                  onClick={() =>
+                    setSelectedReferenceIds((prev) => {
+                      const base =
+                        prev.size === 0
+                          ? new Set(activeCharacters.map((r) => r.id))
+                          : new Set(prev);
+                      if (base.has(c.id)) base.delete(c.id);
+                      else base.add(c.id);
+                      return base;
+                    })
+                  }
+                >
+                  <IconUser size={12} />
+                  {c.name}
+                </button>
+              ))}
             </Group>
-          ) : null}
+          </div>
 
           <Textarea
             label="Describe the scene"
@@ -996,13 +1105,21 @@ function ProjectWorkspace() {
               Cost: {panelCost > 0 ? `${panelCost} Buzz` : 'Estimating...'}
             </Text>
             <Group>
-              <Button variant="default" onClick={() => { closePanelModal(); setRegeneratingPanelId(null); }}>
+              <Button
+                variant="default"
+                onClick={() => {
+                  closePanelModal();
+                  setRegeneratingPanelId(null);
+                }}
+              >
                 Cancel
               </Button>
               <button
                 className={styles.gradientBtn}
                 onClick={handleGeneratePanel}
-                disabled={!prompt.trim() || deletePanelMutation.isPending || createPanelMutation.isPending}
+                disabled={
+                  !prompt.trim() || deletePanelMutation.isPending || createPanelMutation.isPending
+                }
               >
                 {insertAtPosition != null ? 'Insert' : 'Generate'}
               </button>
@@ -1014,8 +1131,13 @@ function ProjectWorkspace() {
       {/* ── Smart Create Modal ────────────────────── */}
       <Modal
         opened={smartModalOpened}
-        onClose={() => { closeSmartModal(); resetSmartState(); }}
-        title={smartStep === 'input' ? 'Smart Create Chapter' : `Review Panels — ${smartChapterName}`}
+        onClose={() => {
+          closeSmartModal();
+          resetSmartState();
+        }}
+        title={
+          smartStep === 'input' ? 'Smart Create Chapter' : `Review Panels — ${smartChapterName}`
+        }
         size="lg"
       >
         {smartStep === 'input' ? (
@@ -1026,22 +1148,48 @@ function ProjectWorkspace() {
               onChange={(e) => setSmartChapterName(e.target.value)}
             />
 
-            {activeCharacters.length > 1 ? (
-              <Select
-                label="Character"
-                data={activeCharacters.map((c) => ({ value: c.id, label: c.name }))}
-                value={smartCharacterId ?? activeCharacters[0]?.id ?? null}
-                onChange={(v) => setSmartCharacterId(v)}
-              />
-            ) : activeCharacters[0] ? (
-              <Group>
-                <Text size="sm" c="dimmed">Character:</Text>
-                <span className={styles.detailCharacterPill} style={{ padding: '3px 10px', fontSize: 12 }}>
-                  <IconUser size={12} />
-                  {activeCharacters[0].name}
-                </span>
+            <div>
+              <Text size="sm" fw={500} mb={4}>
+                References
+              </Text>
+              <Group gap="xs">
+                {activeCharacters.map((c) => {
+                  const effectiveSmartIds =
+                    smartCharacterIds.size > 0
+                      ? smartCharacterIds
+                      : new Set(activeCharacters.map((r) => r.id));
+                  return (
+                    <button
+                      key={c.id}
+                      className={clsx(
+                        styles.detailCharacterPill,
+                        effectiveSmartIds.has(c.id) && styles.characterPillSelected
+                      )}
+                      style={{
+                        padding: '3px 10px',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        opacity: effectiveSmartIds.has(c.id) ? 1 : 0.5,
+                      }}
+                      onClick={() =>
+                        setSmartCharacterIds((prev) => {
+                          const base =
+                            prev.size === 0
+                              ? new Set(activeCharacters.map((r) => r.id))
+                              : new Set(prev);
+                          if (base.has(c.id)) base.delete(c.id);
+                          else base.add(c.id);
+                          return base;
+                        })
+                      }
+                    >
+                      <IconUser size={12} />
+                      {c.name}
+                    </button>
+                  );
+                })}
               </Group>
-            ) : null}
+            </div>
 
             <Textarea
               label="Describe the story or scene"
@@ -1055,7 +1203,13 @@ function ProjectWorkspace() {
             />
 
             <Group justify="flex-end">
-              <Button variant="default" onClick={() => { closeSmartModal(); resetSmartState(); }}>
+              <Button
+                variant="default"
+                onClick={() => {
+                  closeSmartModal();
+                  resetSmartState();
+                }}
+              >
                 Cancel
               </Button>
               <button
@@ -1080,7 +1234,9 @@ function ProjectWorkspace() {
           </Stack>
         ) : (
           <Stack gap="md">
-            <Text size="sm" c="dimmed">{smartPanels.length} panels planned</Text>
+            <Text size="sm" c="dimmed">
+              {smartPanels.length} panels planned
+            </Text>
 
             <ScrollArea.Autosize mah="50vh">
               <Stack gap="sm">
@@ -1135,8 +1291,12 @@ function ProjectWorkspace() {
             />
 
             <Text size="sm" c="dimmed">
-              Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x {panelCost > 0 ? panelCost : '...'} ={' '}
-              {panelCost > 0 ? smartPanels.filter((p) => p.prompt.trim()).length * panelCost : 'Estimating...'} Buzz
+              Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
+              {panelCost > 0 ? panelCost : '...'} ={' '}
+              {panelCost > 0
+                ? smartPanels.filter((p) => p.prompt.trim()).length * panelCost
+                : 'Estimating...'}{' '}
+              Buzz
             </Text>
 
             <Group justify="space-between">
@@ -1155,9 +1315,7 @@ function ProjectWorkspace() {
                   smartCreateMutation.isPending
                 }
               >
-                {smartCreateMutation.isPending ? (
-                  <Loader size={14} color="dark" />
-                ) : null}
+                {smartCreateMutation.isPending ? <Loader size={14} color="dark" /> : null}
                 {smartCreateMutation.isPending ? 'Creating...' : 'Create Chapter'}
               </button>
             </Group>
@@ -1174,7 +1332,11 @@ function ProjectWorkspace() {
       {/* ── Settings Modal ───────────────────────── */}
       <Modal opened={settingsOpened} onClose={closeSettings} title="Project Settings" size="md">
         <Stack gap="md">
-          <TextInput label="Project name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+          <TextInput
+            label="Project name"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+          />
           <Textarea
             label="Description"
             placeholder="A brief description of your comic project..."
@@ -1185,34 +1347,65 @@ function ProjectWorkspace() {
           />
 
           <div>
-            <Text size="sm" fw={500} mb={4}>Cover Image</Text>
+            <Text size="sm" fw={500} mb={4}>
+              Cover Image
+            </Text>
             {editCoverUrl ? (
               <div className="relative inline-block">
-                <div className="rounded-lg overflow-hidden" style={{ width: 120, height: 160, background: '#2C2E33' }}>
-                  <img src={getEdgeUrl(editCoverUrl, { width: 240 })} alt="Cover" className="w-full h-full object-cover" />
+                <div
+                  className="rounded-lg overflow-hidden"
+                  style={{ width: 120, height: 160, background: '#2C2E33' }}
+                >
+                  <img
+                    src={getEdgeUrl(editCoverUrl, { width: 240 })}
+                    alt="Cover"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
-                <ActionIcon variant="filled" color="dark" size="xs" className="absolute -top-2 -right-2" onClick={() => setEditCoverUrl(null)}>
+                <ActionIcon
+                  variant="filled"
+                  color="dark"
+                  size="xs"
+                  className="absolute -top-2 -right-2"
+                  onClick={() => setEditCoverUrl(null)}
+                >
                   <IconX size={12} />
                 </ActionIcon>
               </div>
             ) : (
               <Dropzone onDrop={handleCoverDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
                 <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
-                  <Dropzone.Accept><IconUpload size={24} className="text-blue-500" /></Dropzone.Accept>
-                  <Dropzone.Reject><IconX size={24} className="text-red-500" /></Dropzone.Reject>
-                  <Dropzone.Idle><IconPhoto size={24} style={{ color: '#909296' }} /></Dropzone.Idle>
-                  <Text size="sm" c="dimmed">Drop a cover image or click to browse</Text>
+                  <Dropzone.Accept>
+                    <IconUpload size={24} className="text-blue-500" />
+                  </Dropzone.Accept>
+                  <Dropzone.Reject>
+                    <IconX size={24} className="text-red-500" />
+                  </Dropzone.Reject>
+                  <Dropzone.Idle>
+                    <IconPhoto size={24} style={{ color: '#909296' }} />
+                  </Dropzone.Idle>
+                  <Text size="sm" c="dimmed">
+                    Drop a cover image or click to browse
+                  </Text>
                 </Group>
               </Dropzone>
             )}
             {coverUploadFiles.some((f) => f.status === 'uploading') && (
-              <Text size="xs" c="dimmed" mt={4}>Uploading...</Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                Uploading...
+              </Text>
             )}
           </div>
 
           <Group justify="flex-end">
-            <Button variant="default" onClick={closeSettings}>Cancel</Button>
-            <button className={styles.gradientBtn} onClick={handleSaveSettings} disabled={!editName.trim()}>
+            <Button variant="default" onClick={closeSettings}>
+              Cancel
+            </Button>
+            <button
+              className={styles.gradientBtn}
+              onClick={handleSaveSettings}
+              disabled={!editName.trim()}
+            >
               Save
             </button>
           </Group>
@@ -1231,34 +1424,31 @@ function CharacterSidebarItem({
   projectId,
   isSelected,
   characterImageMap,
-  onSelect,
+  onToggle,
   onDelete,
   getStatusDotClass,
   getStatusLabel,
 }: {
-  character: { id: string; name: string; status: string; modelId: number | null; generatedReferenceImages: any; referenceImages: any };
+  character: { id: string; name: string; status: string; images?: any[] };
   projectId: string;
   isSelected: boolean;
-  characterImageMap: Map<number, { url: string; type: string; metadata?: any }>;
-  onSelect: (id: string) => void;
+  characterImageMap: Map<string, { url: string }>;
+  onToggle: (id: string) => void;
   onDelete: (id: string, name: string) => void;
   getStatusDotClass: (status: string, hasRefs: boolean) => string;
   getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
 }) {
-  const coverImage = character.modelId ? characterImageMap.get(character.modelId) : undefined;
-  const charRefs = character.generatedReferenceImages as any[] | null;
-  const charHasRefs = (charRefs?.length ?? 0) > 0 ||
-    ((character.referenceImages as any[] | null)?.length ?? 0) > 0;
+  const coverImage = characterImageMap.get(character.id);
+  const charHasRefs = (character.images?.length ?? 0) > 0;
   const isFailed = character.status === 'Failed';
   const isReady = character.status === 'Ready';
 
   return (
     <div
-      className={clsx(
-        styles.characterCard,
-        isSelected && isReady && styles.characterCardSelected
-      )}
-      onClick={() => { if (isReady) onSelect(character.id); }}
+      className={clsx(styles.characterCard, isSelected && isReady && styles.characterCardSelected)}
+      onClick={() => {
+        if (isReady) onToggle(character.id);
+      }}
     >
       <Link
         href={`/comics/project/${projectId}/character?characterId=${character.id}`}
@@ -1270,12 +1460,18 @@ function CharacterSidebarItem({
         ) : coverImage ? (
           <EdgeMedia2
             src={coverImage.url}
-            type={coverImage.type as any}
-            metadata={coverImage.metadata}
+            type="image"
             name={character.name}
             alt={character.name}
             width={80}
-            style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', display: 'block' }}
+            style={{
+              maxWidth: '100%',
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              objectPosition: 'top center',
+              display: 'block',
+            }}
           />
         ) : (
           <IconUser size={18} style={{ color: '#909296' }} />
@@ -1291,7 +1487,9 @@ function CharacterSidebarItem({
           {character.name}
         </Link>
         <p className={styles.characterStatus}>
-          <span className={clsx(styles.statusDot, getStatusDotClass(character.status, charHasRefs))} />
+          <span
+            className={clsx(styles.statusDot, getStatusDotClass(character.status, charHasRefs))}
+          />
           {getStatusLabel(character.status, charHasRefs, isFailed)}
         </p>
       </div>
@@ -1315,7 +1513,9 @@ function CharacterSidebarItem({
 
 // ── Sortable panel wrapper ─────────────────────────
 function SortablePanel({ id, children }: { id: string; children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
   return (
     <div
       ref={setNodeRef}
@@ -1344,7 +1544,7 @@ interface PanelCardProps {
     errorMessage: string | null;
   };
   position: number;
-  characterName: string | null;
+  referenceNames: string[];
   onDelete: () => void;
   onViewDebug: () => void;
   onRegenerate: () => void;
@@ -1352,14 +1552,27 @@ interface PanelCardProps {
   onClick: () => void;
 }
 
-function PanelCard({ panel, position, characterName, onDelete, onViewDebug, onRegenerate, onInsertAfter, onClick }: PanelCardProps) {
+function PanelCard({
+  panel,
+  position,
+  referenceNames,
+  onDelete,
+  onViewDebug,
+  onRegenerate,
+  onInsertAfter,
+  onClick,
+}: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
 
   return (
     <div className={styles.panelCard} onClick={onClick}>
       {imageUrl ? (
         <>
-          <img src={getEdgeUrl(imageUrl, { width: 450 })} alt={prompt} className={styles.panelImage} />
+          <img
+            src={getEdgeUrl(imageUrl, { width: 450 })}
+            alt={prompt}
+            className={styles.panelImage}
+          />
           <div className={styles.panelOverlay}>
             <div className="flex justify-between items-start">
               <span className={styles.panelNumber}>#{position}</span>
@@ -1377,17 +1590,42 @@ function PanelCard({ panel, position, characterName, onDelete, onViewDebug, onRe
                   </Menu.Target>
                   <Menu.Dropdown>
                     {(status === 'Ready' || status === 'Failed') && (
-                      <Menu.Item leftSection={<IconRefreshDot size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onRegenerate(); }}>
+                      <Menu.Item
+                        leftSection={<IconRefreshDot size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onRegenerate();
+                        }}
+                      >
                         Regenerate
                       </Menu.Item>
                     )}
-                    <Menu.Item leftSection={<IconPlus size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onInsertAfter(); }}>
+                    <Menu.Item
+                      leftSection={<IconPlus size={14} />}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        onInsertAfter();
+                      }}
+                    >
                       Insert after
                     </Menu.Item>
-                    <Menu.Item leftSection={<IconBug size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onViewDebug(); }}>
+                    <Menu.Item
+                      leftSection={<IconBug size={14} />}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        onViewDebug();
+                      }}
+                    >
                       Debug Info
                     </Menu.Item>
-                    <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(); }}>
+                    <Menu.Item
+                      color="red"
+                      leftSection={<IconTrash size={14} />}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        onDelete();
+                      }}
+                    >
                       Delete
                     </Menu.Item>
                   </Menu.Dropdown>
@@ -1395,11 +1633,15 @@ function PanelCard({ panel, position, characterName, onDelete, onViewDebug, onRe
               </div>
             </div>
             <div className="flex flex-col gap-1">
-              {characterName && (
-                <span className={styles.panelCharacterPill}>
-                  <IconUser size={10} />
-                  {characterName}
-                </span>
+              {referenceNames.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {referenceNames.map((name) => (
+                    <span key={name} className={styles.panelCharacterPill}>
+                      <IconUser size={10} />
+                      {name}
+                    </span>
+                  ))}
+                </div>
               )}
               <p className={styles.panelPrompt}>{prompt}</p>
             </div>
@@ -1415,8 +1657,14 @@ function PanelCard({ panel, position, characterName, onDelete, onViewDebug, onRe
           ) : status === 'Failed' ? (
             <div className={styles.panelFailed}>
               <IconAlertTriangle size={28} />
-              <Text size="xs" c="red">Failed</Text>
-              {errorMessage && <Text size="xs" c="dimmed" ta="center" lineClamp={2} px="xs">{errorMessage}</Text>}
+              <Text size="xs" c="red">
+                Failed
+              </Text>
+              {errorMessage && (
+                <Text size="xs" c="dimmed" ta="center" lineClamp={2} px="xs">
+                  {errorMessage}
+                </Text>
+              )}
             </div>
           ) : (
             <div className={styles.panelEmpty}>
@@ -1433,7 +1681,15 @@ function PanelCard({ panel, position, characterName, onDelete, onViewDebug, onRe
 }
 
 // ── Debug modal ────────────────────────────────────
-function PanelDebugModal({ panelId, opened, onClose }: { panelId: string | null; opened: boolean; onClose: () => void }) {
+function PanelDebugModal({
+  panelId,
+  opened,
+  onClose,
+}: {
+  panelId: string | null;
+  opened: boolean;
+  onClose: () => void;
+}) {
   const { data, isLoading } = trpc.comics.getPanelDebugInfo.useQuery(
     { panelId: panelId! },
     { enabled: opened && !!panelId }
@@ -1445,30 +1701,42 @@ function PanelDebugModal({ panelId, opened, onClose }: { panelId: string | null;
     <Modal opened={opened} onClose={onClose} title="Panel Debug Info" size="lg">
       <ScrollArea.Autosize mah="70vh">
         {isLoading ? (
-          <Stack align="center" py="xl"><Loader /></Stack>
+          <Stack align="center" py="xl">
+            <Loader />
+          </Stack>
         ) : data ? (
           <Stack gap="md">
             {data.panel.errorMessage && (
               <div>
-                <Text fw={600} size="sm" mb={4} c="red">Error</Text>
-                <Code block color="red">{data.panel.errorMessage}</Code>
+                <Text fw={600} size="sm" mb={4} c="red">
+                  Error
+                </Text>
+                <Code block color="red">
+                  {data.panel.errorMessage}
+                </Code>
               </div>
             )}
             <div>
               <Group gap="xs" mb={4}>
-                <Text fw={600} size="sm">Prompts</Text>
+                <Text fw={600} size="sm">
+                  Prompts
+                </Text>
                 <Badge size="xs" variant="light" color={meta?.enhanceEnabled ? 'teal' : 'gray'}>
                   Enhance {meta?.enhanceEnabled ? 'ON' : 'OFF'}
                 </Badge>
               </Group>
               <Stack gap="xs">
                 <div>
-                  <Text size="xs" c="dimmed" mb={2}>Original</Text>
+                  <Text size="xs" c="dimmed" mb={2}>
+                    Original
+                  </Text>
                   <Code block>{data.panel.prompt}</Code>
                 </div>
                 {data.panel.enhancedPrompt && (
                   <div>
-                    <Text size="xs" c="dimmed" mb={2}>Enhanced</Text>
+                    <Text size="xs" c="dimmed" mb={2}>
+                      Enhanced
+                    </Text>
                     <Code block>{data.panel.enhancedPrompt}</Code>
                   </div>
                 )}
@@ -1476,61 +1744,120 @@ function PanelDebugModal({ panelId, opened, onClose }: { panelId: string | null;
             </div>
             {meta?.previousPanelId && (
               <div>
-                <Text fw={600} size="sm" mb={4}>Previous Panel Context</Text>
+                <Text fw={600} size="sm" mb={4}>
+                  Previous Panel Context
+                </Text>
                 <Stack gap="xs">
-                  <Group gap="xs"><Text size="xs" c="dimmed">ID:</Text><Code>{meta.previousPanelId}</Code></Group>
+                  <Group gap="xs">
+                    <Text size="xs" c="dimmed">
+                      ID:
+                    </Text>
+                    <Code>{meta.previousPanelId}</Code>
+                  </Group>
                   {meta.previousPanelPrompt && (
-                    <div><Text size="xs" c="dimmed" mb={2}>Prompt used</Text><Code block>{meta.previousPanelPrompt}</Code></div>
+                    <div>
+                      <Text size="xs" c="dimmed" mb={2}>
+                        Prompt used
+                      </Text>
+                      <Code block>{meta.previousPanelPrompt}</Code>
+                    </div>
                   )}
                   <Group gap="xs">
-                    <Text size="xs" c="dimmed">Had image:</Text>
-                    <Badge size="xs" variant="light" color={meta.previousPanelImageUrl ? 'green' : 'gray'}>{meta.previousPanelImageUrl ? 'Yes' : 'No'}</Badge>
+                    <Text size="xs" c="dimmed">
+                      Had image:
+                    </Text>
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color={meta.previousPanelImageUrl ? 'green' : 'gray'}
+                    >
+                      {meta.previousPanelImageUrl ? 'Yes' : 'No'}
+                    </Badge>
                   </Group>
                 </Stack>
               </div>
             )}
             {meta?.referenceImages?.length > 0 && (
               <div>
-                <Text fw={600} size="sm" mb={4}>Reference Images ({meta!.referenceImages.length})</Text>
+                <Text fw={600} size="sm" mb={4}>
+                  Reference Images ({meta!.referenceImages.length})
+                </Text>
                 <Stack gap="xs">
-                  {(meta!.referenceImages as { url: string; width: number; height: number }[]).map((img, i) => (
-                    <Group key={i} gap="xs">
-                      <Badge size="xs" variant="light">{img.width}x{img.height}</Badge>
-                      <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }} lineClamp={1}>{img.url}</Text>
-                    </Group>
-                  ))}
+                  {(meta!.referenceImages as { url: string; width: number; height: number }[]).map(
+                    (img, i) => (
+                      <Group key={i} gap="xs">
+                        <Badge size="xs" variant="light">
+                          {img.width}x{img.height}
+                        </Badge>
+                        <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }} lineClamp={1}>
+                          {img.url}
+                        </Text>
+                      </Group>
+                    )
+                  )}
                 </Stack>
               </div>
             )}
             <div>
-              <Text fw={600} size="sm" mb={4}>Character</Text>
-              {meta?.characterName ? (
+              <Text fw={600} size="sm" mb={4}>
+                References ({data.references?.length ?? 0})
+              </Text>
+              {data.references && data.references.length > 0 ? (
                 <Stack gap="xs">
-                  <Group gap="xs"><Text size="xs" c="dimmed">Active:</Text><Text size="xs">{meta.characterName}</Text></Group>
-                  {meta.allCharacterNames && (
-                    <Group gap="xs"><Text size="xs" c="dimmed">All:</Text><Text size="xs">{(meta.allCharacterNames as string[]).join(', ')}</Text></Group>
-                  )}
-                  {data.character && (
-                    <Group gap="xs"><Text size="xs" c="dimmed">Source:</Text><Badge size="xs" variant="light">{data.character.sourceType}</Badge></Group>
+                  {data.references.map((ref: any) => (
+                    <Group key={ref.id} gap="xs">
+                      <Text size="xs">{ref.name}</Text>
+                      <Badge size="xs" variant="light">
+                        {ref.images?.length ?? 0} images
+                      </Badge>
+                    </Group>
+                  ))}
+                  {meta?.allCharacterNames && (
+                    <Group gap="xs">
+                      <Text size="xs" c="dimmed">
+                        All known:
+                      </Text>
+                      <Text size="xs">{(meta.allCharacterNames as string[]).join(', ')}</Text>
+                    </Group>
                   )}
                 </Stack>
-              ) : data.character ? (
-                <Code block>{JSON.stringify(data.character, null, 2)}</Code>
               ) : (
-                <Text size="xs" c="dimmed">No character info</Text>
+                <Text size="xs" c="dimmed">
+                  No reference info
+                </Text>
               )}
             </div>
             <div>
-              <Text fw={600} size="sm" mb={4}>Generation Parameters</Text>
-              <Code block>{JSON.stringify(meta?.generationParams ?? data.generation, null, 2)}</Code>
+              <Text fw={600} size="sm" mb={4}>
+                Generation Parameters
+              </Text>
+              <Code block>
+                {JSON.stringify(meta?.generationParams ?? data.generation, null, 2)}
+              </Code>
             </div>
             <div>
-              <Text fw={600} size="sm" mb={4}>Panel Record</Text>
-              <Code block>{JSON.stringify({ id: data.panel.id, status: data.panel.status, workflowId: data.panel.workflowId, createdAt: data.panel.createdAt, updatedAt: data.panel.updatedAt }, null, 2)}</Code>
+              <Text fw={600} size="sm" mb={4}>
+                Panel Record
+              </Text>
+              <Code block>
+                {JSON.stringify(
+                  {
+                    id: data.panel.id,
+                    status: data.panel.status,
+                    workflowId: data.panel.workflowId,
+                    createdAt: data.panel.createdAt,
+                    updatedAt: data.panel.updatedAt,
+                  },
+                  null,
+                  2
+                )}
+              </Code>
             </div>
             {data.workflow && (
               <div>
-                <Text fw={600} size="sm" mb={4}>Orchestrator Workflow</Text>
+                <Text fw={600} size="sm" mb={4}>
+                  Orchestrator Workflow
+                </Text>
                 <Code block>{JSON.stringify(data.workflow, null, 2)}</Code>
               </div>
             )}

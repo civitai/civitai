@@ -506,9 +506,8 @@ export default function UserTrainingModels() {
                     </HoverCard.Target>
                     <HoverCard.Dropdown>
                       <Text size="sm">
-                        Training success can vary based on system conditions and
-                        configuration. Check for service updates at the top of the page or
-                        on the{' '}
+                        Training success can vary based on system conditions and configuration.
+                        Check for service updates at the top of the page or on the{' '}
                         <Anchor href="/changelog" target="_blank">
                           Updates page
                         </Anchor>{' '}

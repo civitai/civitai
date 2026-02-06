@@ -43,13 +43,13 @@ createCharacterFromModel
      -> store workflow ID
   -> set status to Processing, store all workflow IDs
 
-pollCharacterStatus (new endpoint)
+pollReferenceStatus (new endpoint)
   -> check each workflow via getWorkflow()
   -> when all 3 complete: extract URLs, store in generatedReferenceImages, set Ready
   -> if any fail: set Failed
 ```
 
-Frontend polls `pollCharacterStatus` every 5s for characters in Pending/Processing state.
+Frontend polls `pollReferenceStatus` every 5s for characters in Pending/Processing state.
 
 ## Schema Changes
 
@@ -60,7 +60,7 @@ Projects now have Chapters, and Chapters contain Panels (Project -> Chapter -> P
 - `projectId` -> `chapterId` (FK to ComicChapter instead of ComicProject)
 - Index: `@@index([chapterId, position])` instead of `@@index([projectId, position])`
 
-### Modified: ComicCharacter
+### Modified: ComicReference
 - Added `generatedReferenceImages Json?` — Array of { url, width, height, view } objects
 - Added `referenceImageWorkflowIds Json?` — Orchestrator workflow IDs for polling
 
@@ -73,7 +73,7 @@ Destructive migration (dev phase): drops and recreates all comic tables with new
 - Added `ComicChapter` model
 - Changed `ComicProject.panels` to `ComicProject.chapters`
 - Changed `ComicPanel.projectId` to `ComicPanel.chapterId`
-- Added `generatedReferenceImages` and `referenceImageWorkflowIds` to `ComicCharacter`
+- Added `generatedReferenceImages` and `referenceImageWorkflowIds` to `ComicReference`
 
 ### 2. Migration SQL
 - Destructive migration: DROP all comic tables, recreate with new structure
@@ -92,7 +92,7 @@ Destructive migration (dev phase): drops and recreates all comic tables with new
   - images: character reference images from `generatedReferenceImages`
   - 1728x2304 portrait dimensions
 - **`createCharacterFromModel`** generates 3 reference images (front/side/back) via `createTextToImage()` with the LoRA
-- **`pollCharacterStatus`** new endpoint to check reference image generation progress
+- **`pollReferenceStatus`** new endpoint to check reference image generation progress
 - **Chapter CRUD**: `createChapter`, `updateChapter`, `deleteChapter`, `reorderChapters`
 - **`createProject`** auto-creates "Chapter 1" via nested Prisma create
 - **`getProject`** includes chapters with nested panels
@@ -114,7 +114,7 @@ import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen
 
 ### 6. `src/pages/comics/project/[id]/character.tsx`
 - For ExistingModel characters in Processing: shows "Generating reference images..."
-- Added polling via `pollCharacterStatus` (every 5s)
+- Added polling via `pollReferenceStatus` (every 5s)
 - Displays generated front/side/back reference images when Ready
 - Updated cost label: "Cost: 50 Buzz (reference image generation)"
 

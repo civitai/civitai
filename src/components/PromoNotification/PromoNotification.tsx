@@ -47,7 +47,8 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
     setIsVisible(false);
   };
 
-  const message = promo.message || (promo.discount ? `${promo.discount} on ${vendorName} purchases` : '');
+  const message =
+    promo.message || (promo.discount ? `${promo.discount} on ${vendorName} purchases` : '');
 
   const isCompact = !promo.code;
 
@@ -58,11 +59,15 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
       px="md"
       py="xs"
       withBorder
-      className={`${classes.promoNotification} flex items-center ${promo.code ? 'cursor-pointer justify-between' : ''}`}
+      className={`${classes.promoNotification} flex items-center ${
+        promo.code ? 'cursor-pointer justify-between' : ''
+      }`}
       style={isCompact ? { width: 'fit-content' } : undefined}
     >
       <div
-        className={`${classes.promoContent} flex flex-1 items-center justify-between gap-2 ${isCompact ? 'flex-nowrap' : 'flex-wrap'}`}
+        className={`${classes.promoContent} flex flex-1 items-center justify-between gap-2 ${
+          isCompact ? 'flex-nowrap' : 'flex-wrap'
+        }`}
       >
         {/* Description */}
         <Text size="sm" fw={500} className={classes.promoText}>
@@ -114,11 +119,7 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
   if (promo.code) {
     return (
       <CopyButton value={promo.code} timeout={2000}>
-        {({ copied, copy }) => (
-          <div onClick={copy}>
-            {content}
-          </div>
-        )}
+        {({ copied, copy }) => <div onClick={copy}>{content}</div>}
       </CopyButton>
     );
   }

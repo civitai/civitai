@@ -387,7 +387,9 @@ model User {
 
   // Comics
   comicProjects              ComicProject[]
-  comicCharacters            ComicCharacter[]
+  comicReferences            ComicReference[]
+  comicProjectEngagements    ComicProjectEngagement[]
+  comicChapterReads          ComicChapterRead[]
 
   @@index([deletedAt])
 }
@@ -1485,6 +1487,8 @@ model Image {
   tagsNew             TagsOnImageNew[]
   imageResourceNew    ImageResourceNew[]
   imageTagsForReview  ImageTagForReview[]
+  comicPanels             ComicPanel[]
+  comicReferenceImages    ComicReferenceImage[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2152,6 +2156,8 @@ model Thread {
   bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
   clubPostId    Int?            @unique
   clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
+  comicChapterId String?        @unique
+  comicChapter   ComicChapter?  @relation(fields: [comicChapterId], references: [id], onDelete: SetNull)
 
   metadata Json @default("{}") // unused
   commentCount Int      @default(0)
@@ -4775,18 +4781,10 @@ enum ComicProjectStatus {
   Deleted
 }
 
-enum ComicCharacterStatus {
+enum ComicReferenceStatus {
   Pending
-  Processing
-  Training
-  GeneratingRefs
   Ready
   Failed
-}
-
-enum ComicCharacterSourceType {
-  Upload        // User uploaded images, triggers training
-  ExistingModel // User selected an existing LoRA
 }
 
 enum ComicPanelStatus {
@@ -4794,6 +4792,37 @@ enum ComicPanelStatus {
   Generating
   Ready
   Failed
+}
+
+enum ComicChapterStatus {
+  Draft
+  Published
+}
+
+enum ComicReferenceType {
+  Character
+  Location
+  Item
+}
+
+enum ComicEngagementType {
+  Notify
+  Hide
+}
+
+enum ComicGenre {
+  Action
+  Adventure
+  Comedy
+  Drama
+  Fantasy
+  Horror
+  Mystery
+  Romance
+  SciFi
+  SliceOfLife
+  Thriller
+  Other
 }
 
 model ComicProject {
@@ -4805,78 +4834,82 @@ model ComicProject {
   coverImageUrl String?            @db.VarChar(500)
   status        ComicProjectStatus @default(Active)
   baseModel     String?            @db.VarChar(50)
+  genre         ComicGenre?
+  nsfwLevel     Int                @default(0)
+  publishedAt   DateTime?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
-  characters ComicCharacter[]
-  chapters   ComicChapter[]
+  references  ComicReference[]
+  chapters    ComicChapter[]
+  engagements ComicProjectEngagement[]
 
   @@index([userId])
   @@index([status])
-  @@map("comic_projects")
 }
 
 model ComicChapter {
-  id        String       @id @default(cuid())
+  id        String             @id @default(cuid())
   projectId String
-  project   ComicProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String       @db.VarChar(255) @default("Chapter 1")
-  position  Int          @default(0)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  project   ComicProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String             @db.VarChar(255) @default("Chapter 1")
+  position  Int                @default(0)
+  status    ComicChapterStatus @default(Draft)
+  publishedAt DateTime?
+  nsfwLevel   Int              @default(0)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
 
-  panels ComicPanel[]
+  panels      ComicPanel[]
+  readHistory ComicChapterRead[]
+  thread      Thread?
 
   @@index([projectId])
   @@index([projectId, position])
-  @@map("comic_chapters")
 }
 
-model ComicCharacter {
+model ComicReference {
   id         String                     @id @default(cuid())
   projectId  String?
   project    ComicProject?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
   userId     Int
   user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   name       String                     @db.VarChar(255)
-  status     ComicCharacterStatus       @default(Pending)
-  sourceType ComicCharacterSourceType   @default(Upload)
+  type       ComicReferenceType         @default(Character)
+  description String?                   @db.Text
+  status     ComicReferenceStatus       @default(Pending)
 
-  // For ExistingModel path - user selects an existing LoRA
-  modelId        Int? // Reference to Model table
-  modelVersionId Int? // Reference to ModelVersion table (the specific version to use)
-
-  // For Upload path - user uploads images, triggers training
-  referenceImages        Json?   // Array of S3 URLs
-  trainingJobId          String? @db.VarChar(100) // Training job reference
-  trainedModelId         Int?    // Model ID created after training
-  trainedModelVersionId  Int?    // ModelVersion ID created after training
-
-  // Generated reference images (front/side/back views from LoRA)
-  generatedReferenceImages   Json?   // Array of { url, width, height, view } objects
-  referenceImageWorkflowIds  Json?   // Orchestrator workflow IDs for polling
-
-  // Common fields
   errorMessage String?  @db.Text
-  buzzCost     Int      @default(50)
+  buzzCost     Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  panels ComicPanel[]
+  images          ComicReferenceImage[]
+  panelReferences ComicPanelReference[]
 
   @@index([projectId])
   @@index([userId])
   @@index([status])
-  @@index([modelVersionId])
-  @@map("comic_characters")
+}
+
+model ComicReferenceImage {
+  referenceId String
+  reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image          @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  position    Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  @@id([referenceId, imageId])
+  @@index([imageId], type: Hash)
 }
 
 model ComicPanel {
   id           String           @id @default(cuid())
   chapterId    String
   chapter      ComicChapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  characterId  String?
-  character    ComicCharacter?  @relation(fields: [characterId], references: [id], onDelete: SetNull)
+  imageId      Int?
+  image        Image?           @relation(fields: [imageId], references: [id], onDelete: SetNull)
   prompt          String           @db.Text
   enhancedPrompt  String?          @db.Text
   imageUrl        String?          @db.VarChar(500)
@@ -4890,11 +4923,46 @@ model ComicPanel {
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
+  references ComicPanelReference[]
+
   @@index([chapterId, position])
-  @@index([characterId])
+  @@index([imageId])
   @@index([status])
-  @@map("comic_panels")
-} 
+}
+
+model ComicProjectEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   ComicProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type      ComicEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, projectId])
+  @@index([projectId], type: Hash)
+}
+
+model ComicChapterRead {
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapterId String
+  chapter   ComicChapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  readAt    DateTime     @default(now())
+
+  @@id([userId, chapterId])
+  @@index([chapterId], type: Hash)
+}
+
+model ComicPanelReference {
+  panelId     String
+  panel       ComicPanel     @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  referenceId String
+  reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+
+  @@id([panelId, referenceId])
+  @@index([referenceId], type: Hash)
+}
+
 // Generation restriction system — tracks restrictions issued for prohibited prompt violations
 model UserRestriction {
   id              Int                   @id @default(autoincrement())

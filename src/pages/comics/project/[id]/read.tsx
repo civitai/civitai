@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Button,
-  Container,
-  Group,
-  Select,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { ActionIcon, Button, Container, Group, Select, Stack, Text, Title } from '@mantine/core';
 import {
   IconArrowLeft,
   IconChevronLeft,
@@ -120,11 +111,7 @@ function ComicReader() {
           <Container size="sm">
             <Group justify="space-between" py="xs">
               <Group gap="sm">
-                <ActionIcon
-                  variant="subtle"
-                  component={Link}
-                  href={`/comics/project/${projectId}`}
-                >
+                <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
                   <IconArrowLeft size={20} />
                 </ActionIcon>
                 <Title order={5} lineClamp={1} style={{ maxWidth: 200 }}>
@@ -166,11 +153,7 @@ function ComicReader() {
             <Stack align="center" gap="md" py={80}>
               <IconPhotoOff size={48} style={{ color: 'var(--mantine-color-dark-3)' }} />
               <Text c="dimmed">No panels in this chapter yet</Text>
-              <Button
-                variant="subtle"
-                component={Link}
-                href={`/comics/project/${projectId}`}
-              >
+              <Button variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
                 Back to editor
               </Button>
             </Stack>
