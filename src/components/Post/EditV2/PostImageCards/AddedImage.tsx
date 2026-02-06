@@ -562,7 +562,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           </LegacyActionIcon>
         </Tooltip>
       )}
-      {!canAdd ? (
+      {!canAdd || detected ? (
         <></>
       ) : (
         <Tooltip label="Delete">
