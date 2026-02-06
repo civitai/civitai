@@ -700,8 +700,7 @@ export function GenerationFormContent() {
               : isFlux2Klein
               ? [...flux2KleinSampleMethods]
               : generation.samplers;
-            const disableSteps =
-              isFluxUltra || isFluxKontext || isSeedream || isFlux2KleinDistilled;
+            const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
               isFlux ||
@@ -726,7 +725,7 @@ export function GenerationFormContent() {
               isSeedream ||
               isZImageTurbo ||
               isZImageBase;
-            const disableDenoise = !features.denoise || isFluxKontext;
+            const disableDenoise = !features.denoise || isFluxKontext || isImageGen;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
               (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
