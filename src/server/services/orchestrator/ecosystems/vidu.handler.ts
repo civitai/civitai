@@ -19,15 +19,34 @@ type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
  * Supports txt2vid, img2vid, img2vid:first-last-frame, and img2vid:ref2vid workflows.
  */
 export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, ctx) => {
-  const hasImages = !!data.images?.length;
+  const images = data.images;
+  const isRef2Vid = data.workflow === 'img2vid:ref2vid';
+  const isFirstLastFrame = data.workflow === 'img2vid:first-last-frame';
+
+  // For ref2vid: generate placeholder prompt if user didn't provide one
+  const prompt =
+    isRef2Vid && !data.prompt.length && images?.length
+      ? images.map((_, index) => `[@image${index + 1}]`).join()
+      : data.prompt;
+
+  // Map images to the correct API properties based on workflow:
+  // - img2vid: first image → sourceImage
+  // - img2vid:first-last-frame: first → sourceImage, second → endSourceImage
+  // - img2vid:ref2vid: all images → images array
+  const sourceImage = !isRef2Vid && images?.length ? images[0]?.url : undefined;
+  const endSourceImage =
+    isFirstLastFrame && images && images.length > 1 ? images[1]?.url : undefined;
+  const refImages = isRef2Vid ? images?.map((x) => x.url) : undefined;
 
   return removeEmpty({
     engine: 'vidu',
-    prompt: data.prompt,
+    prompt,
     aspectRatio: data.aspectRatio?.value as ViduVideoGenInput['aspectRatio'],
     style: 'style' in data ? data.style : undefined,
     movementAmplitude: 'movementAmplitude' in data ? data.movementAmplitude : undefined,
-    images: hasImages ? data.images?.map((x) => x.url) : undefined,
+    sourceImage,
+    endSourceImage,
+    images: refImages,
     quantity: data.quantity ?? 1,
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,

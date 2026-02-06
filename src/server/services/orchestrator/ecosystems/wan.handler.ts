@@ -102,7 +102,7 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
         ...baseInput,
         aspectRatio: data.aspectRatio?.value as Wan21FalVideoGenInput['aspectRatio'],
         enablePromptExpansion: false,
-        images: hasImages ? data.images?.map((x) => x.url) : undefined,
+        sourceImage: hasImages ? data.images?.[0]?.url : undefined,
       }) as Wan21FalVideoGenInput;
     }
 
