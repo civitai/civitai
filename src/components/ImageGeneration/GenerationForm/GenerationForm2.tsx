@@ -368,7 +368,6 @@ export function GenerationFormContent() {
           ...params,
           // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
           disablePoi: browsingSettingsAddons.settings.disablePoi,
-          experimental: data.enhancedCompatibility,
         },
         tips,
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -1736,9 +1735,7 @@ export function GenerationFormContent() {
                                       </div>
                                     }
                                     data={
-                                      isZImageBase
-                                        ? [...zImageSchedules]
-                                        : [...flux2KleinSchedules]
+                                      isZImageBase ? [...zImageSchedules] : [...flux2KleinSchedules]
                                     }
                                     presets={[{ label: 'Default', value: 'simple' }]}
                                   />

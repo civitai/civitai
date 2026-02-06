@@ -48,7 +48,7 @@ const featureFlags = createFeatureFlags({
   flux2Training: ['public'],
   zimageturboTraining: ['mod'],
   zimagebaseTraining: ['mod'],
-  flux2kleinTraining: ['mod'],
+  fluxTwoKleinTraining: ['mod'],
   ltx2Training: ['mod'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
