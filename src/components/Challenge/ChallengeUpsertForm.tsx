@@ -38,6 +38,7 @@ import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prism
 import { upsertChallengeBaseSchema, type Prize } from '~/server/schema/challenge.schema';
 import type { GetActiveJudgesItem } from '~/types/router';
 import { IconCheck } from '@tabler/icons-react';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 // Wrapped custom components for form integration
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
@@ -121,7 +122,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       coverImage: challenge?.coverImage ?? undefined,
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
-      allowedNsfwLevel: challenge?.allowedNsfwLevel ?? 1,
+      allowedNsfwLevel: challenge?.allowedNsfwLevel ?? sfwBrowsingLevelsFlag,
       judgeId: challenge?.judgeId ? String(challenge.judgeId) : null,
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
