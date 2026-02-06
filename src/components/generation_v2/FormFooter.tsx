@@ -41,7 +41,8 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
-import { SourceMetadata, sourceMetadataStore } from '~/store/source-metadata.store';
+import type { SourceMetadata } from '~/store/source-metadata.store';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { useRemixOfId } from './hooks/useRemixOfId';
 import { remixStore } from '~/store/remix.store';
@@ -114,15 +115,17 @@ function PriorityAlertSpace({ submitError, onClearSubmitError }: PriorityAlertSp
         {submitError}
       </Notification>
     );
-  } else if (membershipUpsell.canShow) {
-    priorityAlert = <MembershipUpsell />;
   } else {
     priorityAlert = <QueueSnackbar />;
   }
 
   return (
     <>
-      {dailyBoost.canShow && <DailyBoostRewardClaim />}
+      {dailyBoost.canShow ? (
+        <DailyBoostRewardClaim />
+      ) : membershipUpsell.canShow ? (
+        <MembershipUpsell />
+      ) : null}
       {priorityAlert}
     </>
   );

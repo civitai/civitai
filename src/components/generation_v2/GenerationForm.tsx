@@ -187,10 +187,16 @@ export function GenerationForm() {
           </Group>
 
           {/* Selected workflow display */}
-          <Controller
+          <MultiController
             graph={graph}
-            name="workflow"
-            render={({ value }) => <SelectedWorkflowDisplay workflowId={value} />}
+            names={['workflow', 'ecosystem'] as const}
+            render={({ values }) => (
+              <SelectedWorkflowDisplay
+                workflowId={values.workflow as string}
+                ecosystemKey={values.ecosystem as string}
+                onChange={handleWorkflowChange}
+              />
+            )}
           />
 
           {/* Checkpoint/Model selector with version selector */}

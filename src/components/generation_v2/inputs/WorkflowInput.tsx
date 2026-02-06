@@ -6,7 +6,7 @@
  * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Badge, Button, Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconChevronDown,
@@ -23,9 +23,12 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   getAllWorkflowsGrouped,
+  getWorkflowsForEcosystem,
   workflowOptionById,
+  type WorkflowOption as ConfigWorkflowOption,
 } from '~/shared/data-graph/generation/config/workflows';
 
 // =============================================================================
@@ -303,18 +306,88 @@ function WorkflowSelectModal({
 export interface SelectedWorkflowDisplayProps {
   /** The workflow ID to display */
   workflowId?: string;
+  /** The current ecosystem key (used to determine available workflows) */
+  ecosystemKey?: string;
+  /** Called when the user selects a different workflow */
+  onChange?: (workflowId: string) => void;
   /** Additional class name */
   className?: string;
 }
 
+const INPUT_TYPE_LABELS: Record<string, string> = {
+  text: 'From text',
+  image: 'From image',
+  video: 'From video',
+};
+
 /**
- * Displays the currently selected workflow with its label and description.
- * Can be used independently from WorkflowInput.
+ * Displays the currently selected workflow with input type buttons and workflow badges.
+ * - When multiple input types are available, shows buttons to switch between them.
+ * - Always shows the selected workflow as a badge (with sibling badges when multiple exist).
+ * - Falls back to a simple label when only one workflow total is available.
  */
-export function SelectedWorkflowDisplay({ workflowId, className }: SelectedWorkflowDisplayProps) {
+export function SelectedWorkflowDisplay({
+  workflowId,
+  ecosystemKey,
+  onChange,
+  className,
+}: SelectedWorkflowDisplayProps) {
   const workflow = workflowId ? workflowOptionById.get(workflowId) : undefined;
 
+  // Get available workflows for the current ecosystem, excluding enhancements,
+  // grouped by input type (text, image, video)
+  const workflowsByInputType = useMemo(() => {
+    if (!ecosystemKey) return new Map<string, ConfigWorkflowOption[]>();
+    const ecosystem = ecosystemByKey.get(ecosystemKey);
+    if (!ecosystem) return new Map<string, ConfigWorkflowOption[]>();
+
+    const available = getWorkflowsForEcosystem(ecosystem.id).filter(
+      (w) => !w.category.endsWith('enhancements')
+    );
+
+    const groups = new Map<string, ConfigWorkflowOption[]>();
+    for (const w of available) {
+      const existing = groups.get(w.inputType) ?? [];
+      existing.push(w);
+      groups.set(w.inputType, existing);
+    }
+    return groups;
+  }, [ecosystemKey]);
+
   if (!workflow) return null;
+
+  const currentInputType = workflow.inputType;
+  const inputTypes = Array.from(workflowsByInputType.keys());
+  const hasMultipleInputTypes = inputTypes.length > 1;
+  const currentTypeWorkflows = workflowsByInputType.get(currentInputType) ?? [];
+
+  // Nothing interesting to show — single workflow, single input type
+  if (!hasMultipleInputTypes && currentTypeWorkflows.length <= 1) {
+    return (
+      <div
+        className={clsx(
+          'rounded-lg border border-gray-2 bg-gray-0 px-3 py-2.5 dark:border-dark-4 dark:bg-dark-6',
+          className
+        )}
+      >
+        <Text size="md" fw={600} className="leading-tight">
+          {workflow.label}
+        </Text>
+        {workflow.description && (
+          <Text size="sm" c="dimmed" className="mt-0.5">
+            {workflow.description}
+          </Text>
+        )}
+      </div>
+    );
+  }
+
+  const handleInputTypeChange = (newInputType: string) => {
+    const workflows = workflowsByInputType.get(newInputType);
+    if (workflows?.length) {
+      onChange?.(workflows[0].id);
+    }
+  };
 
   return (
     <div
@@ -323,11 +396,35 @@ export function SelectedWorkflowDisplay({ workflowId, className }: SelectedWorkf
         className
       )}
     >
-      <Text size="md" fw={600} className="leading-tight">
-        {workflow.label}
-      </Text>
+      {hasMultipleInputTypes && (
+        <Group gap={6} wrap="nowrap">
+          {inputTypes.map((type) => (
+            <Button
+              key={type}
+              size="compact-xs"
+              variant={type === currentInputType ? 'filled' : 'default'}
+              onClick={() => handleInputTypeChange(type)}
+            >
+              {INPUT_TYPE_LABELS[type] ?? type}
+            </Button>
+          ))}
+        </Group>
+      )}
+      <Group gap={6} wrap="wrap" className={hasMultipleInputTypes ? 'mt-2' : ''}>
+        {currentTypeWorkflows.map((w) => (
+          <Badge
+            key={w.id}
+            variant={w.id === workflowId ? 'filled' : 'light'}
+            color={w.id === workflowId ? 'blue' : 'gray'}
+            className="cursor-pointer"
+            onClick={() => onChange?.(w.id)}
+          >
+            {w.label}
+          </Badge>
+        ))}
+      </Group>
       {workflow.description && (
-        <Text size="sm" c="dimmed" className="mt-0.5">
+        <Text size="sm" c="dimmed" className="mt-1.5">
           {workflow.description}
         </Text>
       )}
