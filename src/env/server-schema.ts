@@ -264,4 +264,15 @@ export const serverSchema = z.object({
 
   FLIPT_URL: z.string(),
   FLIPT_FETCHER_SECRET: z.string(),
+
+  // B2 Upload (gated by Flipt flag)
+  S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
+  S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
+  S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
+  S3_UPLOAD_B2_BUCKET: z.string().optional(),
+  S3_UPLOAD_B2_REGION: z.string().optional(),
+
+  // Storage resolver internal API (for registering B2 uploads)
+  STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
+  STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
 });

@@ -10,6 +10,7 @@ export enum FLIPT_FEATURE_FLAGS {
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
+  B2_UPLOAD_DEFAULT = 'b2-upload-default',
 }
 
 class FliptSingleton {
