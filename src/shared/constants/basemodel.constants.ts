@@ -174,6 +174,7 @@ export const ECO = {
   Haiper: 50,
   Lightricks: 51,
   Seedance: 52,
+  Anima: 59,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -555,6 +556,7 @@ export const ecosystems: EcosystemRecord[] = [
   },
 
   // Standalone ecosystems (no family)
+  { id: ECO.Anima, key: 'Anima', name: 'anima', displayName: 'Anima', sortOrder: 199 },
   { id: ECO.AuraFlow, key: 'AuraFlow', name: 'auraflow', displayName: 'AuraFlow', sortOrder: 200 },
   { id: ECO.Chroma, key: 'Chroma', name: 'chroma', displayName: 'Chroma', sortOrder: 201 },
   {
@@ -1432,6 +1434,7 @@ export const BM = {
   MiniMax: 68,
   Kling: 69,
   Seedance: 70,
+  Anima: 77,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -1588,6 +1591,13 @@ export const licenses: LicenseRecord[] = [
     name: 'Pony',
     url: 'https://purplesmart.ai/license',
   },
+  {
+    id: 25,
+    name: 'CircleStone Labs Non-Commercial License v1.0',
+    url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
+    notice:
+      'The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -1668,6 +1678,16 @@ export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f
 // =============================================================================
 
 export const baseModels: BaseModelRecord[] = [
+  // Anima
+  {
+    id: BM.Anima,
+    name: 'Anima',
+    description: 'Image generation model from CircleStone Labs',
+    type: 'image',
+    ecosystemId: ECO.Anima,
+    licenseId: 25,
+  },
+
   // AuraFlow
   {
     id: BM.AuraFlow,
