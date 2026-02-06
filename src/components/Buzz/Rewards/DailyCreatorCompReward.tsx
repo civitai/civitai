@@ -147,7 +147,7 @@ export function DailyCreatorCompReward({
               return `${formatDate(tooltipItems[0].parsed.x)}`;
             },
             label(tooltipItem) {
-              return `${formatCurrencyForDisplay(tooltipItem.parsed.y, 'BUZZ')}`;
+              return `${formatCurrencyForDisplay(tooltipItem.parsed.y ?? 0, 'BUZZ')}`;
             },
           },
         },

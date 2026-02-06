@@ -3,18 +3,31 @@ import dayjs from '~/shared/utils/dayjs';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
-import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
-  endChallenge,
-  getChallengeConfig,
-  getChallengeDetails,
-  getChallengeTypeConfig,
-  getCurrentChallenge,
-  getUpcomingChallenge,
-  setCurrentChallenge,
+  createChallengeRecord,
+  createChallengeWinner,
+  getChallengeById,
+  setChallengeActive,
+  updateChallengeStatus,
+  type RecentEntry,
+  type SelectedResource,
+} from '~/server/games/daily-challenge/challenge-helpers';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import type {
+  ChallengeConfig,
+  DailyChallengeDetails,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import {
+  challengeToLegacyFormat,
+  endChallenge,
+  getActiveChallenges,
+  getChallengeConfig,
+  getJudgingConfig,
+  getUpcomingSystemChallenge,
+  type JudgingConfig,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   generateArticle,
   generateCollectionDetails,
@@ -22,7 +35,7 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
@@ -32,114 +45,152 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
-import { markdownToHtml } from '~/utils/markdown-helpers';
-import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
+import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { createJob, type JobContext } from './job';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { createJob } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
-const dailyChallengeSetupJob = createJob(
-  'daily-challenge-setup',
-  '0 22 * * *',
-  createUpcomingChallenge
-);
+/**
+ * Get judging config efficiently using cached default judge when possible.
+ * Falls back to DB query if the judge differs from default or there's a prompt override.
+ */
+async function getJudgingConfigForChallenge(
+  judgeId: number,
+  cachedDefaultJudge: JudgingConfig | null,
+  judgingPromptOverride?: string | null
+): Promise<JudgingConfig> {
+  // If this is the default judge and no prompt override, use cached config
+  if (cachedDefaultJudge && judgeId === cachedDefaultJudge.judgeId && !judgingPromptOverride) {
+    return cachedDefaultJudge;
+  }
+  // Otherwise fetch from DB (different judge or has prompt override)
+  return getJudgingConfig(judgeId, judgingPromptOverride);
+}
 
-const processDailyChallengeEntriesJob = createJob(
-  'daily-challenge-process-entries',
-  '*/10 * * * *',
-  reviewEntries
-);
-
-const pickDailyChallengeWinnersJob = createJob(
-  'daily-challenge-pick-winners',
-  '0 0 * * *',
-  pickWinners
-);
-
-export const dailyChallengeJobs = [
-  dailyChallengeSetupJob,
-  processDailyChallengeEntriesJob,
-  pickDailyChallengeWinnersJob,
-];
-
-// Job Functions
+// Types for batch processing
 // ----------------------------------------------
-export async function createUpcomingChallenge() {
-  // Stop if we already have an upcoming challenge
-  const upcomingChallenge = await getUpcomingChallenge();
-  if (upcomingChallenge) return upcomingChallenge;
-  log('Setting up daily challenge');
+type ChallengeCreationContext = {
+  config: ChallengeConfig;
+  judgingConfig: JudgingConfig;
+  sourceCollectionId: number;
+  availableUsers: { userId: number }[];
+  cooldownResourceIds: number[];
+  prizeConfig: {
+    prizes: ChallengeConfig['prizes'];
+    entryPrize: ChallengeConfig['entryPrize'];
+    entryPrizeRequirement: number;
+  };
+};
+
+type PreSelectedChallenge = {
+  targetDate: Date;
+  challengeDate: Date;
+  resource: SelectedResource;
+  resourceUserId: number;
+  modelVersionIds: number[];
+  image: { id: number; url: string };
+};
+
+// Pre-compute shared context (runs 3 DB queries with Promise.all instead of 5 sequential)
+// ----------------------------------------------
+async function preComputeContext(): Promise<ChallengeCreationContext> {
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
+  const judgingConfig = config.defaultJudge;
 
-  // Get date of the challenge (should be the next day if it's past 1pm UTC)
-  const addDays = dayjs().utc().hour() >= 13 ? 1 : 0;
-  const challengeDate = dayjs().utc().add(addDays, 'day').startOf('day').toDate();
+  const sourceCollectionId = judgingConfig.sourceCollectionId ?? config.challengeCollectionId;
+  if (!sourceCollectionId) throw new Error('No sourceCollectionId configured for judge');
 
-  // Pick Resource
-  // ----------------------------------------------
-  // Get all users
-  const users = await dbRead.$queryRaw<{ userId: number }[]>`
+  // Run all 3 DB queries in parallel
+  const [users, cooldownUsers, cooldownResources] = await Promise.all([
+    dbRead.$queryRaw<{ userId: number }[]>`
       SELECT DISTINCT m."userId"
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
-      WHERE "collectionId" = ${challengeTypeConfig.collectionId}
+      WHERE "collectionId" = ${sourceCollectionId}
       AND ci."status" = 'ACCEPTED'
-    `;
-
-  // Get Users on cooldown
-  const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
+    `,
+    dbRead.$queryRaw<{ userId: number }[]>`
       SELECT DISTINCT
-        cast(a.metadata->'userId' as int) as "userId"
-      FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."articleId"
-      WHERE ci."collectionId" = ${config.challengeCollectionId}
-      AND a."status" = 'Published'
-      AND a."publishedAt" > now() - ${config.userCooldown}::interval
-    `;
+        cast(c.metadata->'resourceUserId' as int) as "userId"
+      FROM "Challenge" c
+      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+      AND c."startsAt" > now() - ${config.userCooldown}::interval
+    `,
+    dbRead.$queryRaw<{ modelId: number }[]>`
+      SELECT DISTINCT mv."modelId"
+      FROM "Challenge" c
+      JOIN unnest(c."modelVersionIds") AS mvid ON TRUE
+      JOIN "ModelVersion" mv ON mv.id = mvid
+      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+      AND c."startsAt" > now() - ${config.resourceCooldown}::interval
+    `,
+  ]);
 
-  // Remove users on cooldown
-  const availableUsers = users.filter(
-    (user) => !cooldownUsers.some((cu) => cu.userId === user.userId)
-  );
+  const cooldownUserIds = cooldownUsers.map((u) => u.userId).filter(isDefined);
+  const availableUsers = users.filter((user) => !cooldownUserIds.includes(user.userId));
+  if (!availableUsers.length) {
+    throw new Error(
+      `No available users found: ${users.length} total users, ${cooldownUserIds.length} on cooldown (source collection: ${sourceCollectionId})`
+    );
+  }
 
-  // Get resources on cooldown
-  const cooldownResources = (
-    await dbRead.$queryRaw<{ modelId: number }[]>`
-      SELECT DISTINCT
-        cast(metadata->'modelId' as int) as "modelId"
-      FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."articleId"
-      WHERE ci."collectionId" = ${config.challengeCollectionId}
-      AND a."status" = 'Published'
-      AND "publishedAt" > now() - ${config.resourceCooldown}::interval
-    `
-  ).map((x) => x.modelId);
+  const cooldownResourceIds = cooldownResources.map((x) => x.modelId);
+
+  return {
+    config,
+    judgingConfig,
+    sourceCollectionId,
+    availableUsers,
+    cooldownResourceIds,
+    prizeConfig: {
+      prizes: config.prizes,
+      entryPrize: config.entryPrize,
+      entryPrizeRequirement: config.entryPrizeRequirement,
+    },
+  };
+}
+
+// Select a resource for a specific date, respecting cooldowns + batch exclusions
+// ----------------------------------------------
+async function selectResourceForDate(
+  ctx: ChallengeCreationContext,
+  targetDate: Date,
+  excludeModelIds: Set<number>
+): Promise<PreSelectedChallenge> {
+  const challengeDate = dayjs(targetDate).utc().startOf('day').toDate();
+  const allExcludedModelIds = [...ctx.cooldownResourceIds, ...excludeModelIds];
 
   let resource: SelectedResource | undefined;
   let randomUser: { userId: number } | undefined;
   let attempts = 0;
   while (!resource) {
     attempts++;
-    if (attempts > 100) throw new Error('Failed to find resource');
+    if (attempts > 100) {
+      throw new Error(
+        `Failed to find resource after 100 attempts for ${dayjs(targetDate).format(
+          'YYYY-MM-DD'
+        )} (${ctx.availableUsers.length} available users, ${
+          allExcludedModelIds.length
+        } excluded resources)`
+      );
+    }
 
-    // Pick a user
-    randomUser = getRandom(availableUsers);
-
-    // Get resources from that user
+    randomUser = getRandom(ctx.availableUsers);
     const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
       SELECT DISTINCT(ci."modelId") as id
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
       JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
-      WHERE "collectionId" = ${challengeTypeConfig.collectionId}
+      WHERE "collectionId" = ${ctx.sourceCollectionId}
       AND ci."status" = 'ACCEPTED'
       AND m."userId" = ${randomUser.userId}
       AND m.status = 'Published'
       ${
-        cooldownResources.length
-          ? Prisma.sql`AND m.id NOT IN (${Prisma.join(cooldownResources)})`
+        allExcludedModelIds.length
+          ? Prisma.sql`AND m.id NOT IN (${Prisma.join(allExcludedModelIds)})`
           : Prisma.empty
       }
       AND m.mode IS NULL
@@ -147,44 +198,80 @@ export async function createUpcomingChallenge() {
     `;
     if (!resourceIds.length) continue;
 
-    // Pick a resource
     const randomResourceId = getRandom(resourceIds);
-
-    // Get resource details
     [resource] = await dbRead.$queryRaw<SelectedResource[]>`
-        SELECT
-          m.id as "modelId",
-          u."username" as creator,
-          m.name as title
-        FROM "Model" m
-        JOIN "User" u ON u.id = m."userId"
-        WHERE m.id = ${randomResourceId.id}
-        LIMIT 1
-      `;
+      SELECT
+        m.id as "modelId",
+        u."username" as creator,
+        m.name as title
+      FROM "Model" m
+      JOIN "User" u ON u.id = m."userId"
+      WHERE m.id = ${randomResourceId.id}
+      LIMIT 1
+    `;
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
-  // Get cover of resource
-  const image = await getCoverOfModel(resource.modelId);
+  // Get model versions and cover image in parallel
+  const [modelVersionRows, image] = await Promise.all([
+    dbRead.$queryRaw<{ id: number }[]>`
+      SELECT mv.id
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ${resource.modelId}
+      AND mv.status = 'Published'
+      ORDER BY mv.index ASC
+    `,
+    getCoverOfModel(resource.modelId),
+  ]);
 
-  // Setup Collection
-  // ----------------------------------------------
-  // Generate title and description
-  const collectionDetails = await generateCollectionDetails({
+  return {
+    targetDate,
+    challengeDate,
     resource,
+    resourceUserId: randomUser.userId,
+    modelVersionIds: modelVersionRows.map((v) => v.id),
     image,
-    config: challengeTypeConfig,
-  });
+  };
+}
+
+// Create a challenge from pre-selected data (AI calls run in parallel)
+// ----------------------------------------------
+async function createChallengeFromSelection(
+  selection: PreSelectedChallenge,
+  ctx: ChallengeCreationContext
+): Promise<number> {
+  const { resource, image, challengeDate, modelVersionIds, resourceUserId } = selection;
+  const { judgingConfig, config, prizeConfig } = ctx;
+  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+
+  // Run both AI calls in parallel - they share inputs but outputs are independent
+  log('Generating AI content in parallel for', dayjs(challengeDate).format('YYYY-MM-DD'));
+  const [collectionDetails, challengeContent] = await Promise.all([
+    generateCollectionDetails({ resource, image, config: judgingConfig }),
+    generateArticle({
+      resource,
+      image,
+      challengeDate: endsAt,
+      allowedNsfwLevel: sfwBrowsingLevelsFlag,
+      ...prizeConfig,
+      config: judgingConfig,
+    }),
+  ]);
+  log(
+    'AI content generated:',
+    `collection="${collectionDetails.name}"`,
+    `title="${challengeContent.title}"`
+  );
 
   // Create collection cover image
-  const coverImageId = await duplicateImage(image.id, challengeTypeConfig.userId);
+  const coverImageId = await duplicateImage(image.id, judgingConfig.userId);
 
   // Create collection
   const collection = await dbWrite.collection.create({
     data: {
       ...collectionDetails,
       imageId: coverImageId,
-      userId: challengeTypeConfig.userId,
+      userId: judgingConfig.userId,
       read: CollectionReadConfiguration.Private,
       write: CollectionReadConfiguration.Private,
       type: 'Image',
@@ -193,7 +280,7 @@ export async function createUpcomingChallenge() {
         modelId: resource.modelId,
         challengeDate,
         maxItemsPerUser: config.entryPrizeRequirement * 2,
-        endsAt: dayjs(challengeDate).add(1, 'day').toDate(),
+        endsAt,
         disableTagRequired: true,
         disableFollowOnSubmission: true,
       },
@@ -207,104 +294,318 @@ export async function createUpcomingChallenge() {
     VALUES (${collection.id}, ${config.judgedTagId}, true);
   `;
 
-  const prizeConfig = {
-    prizes: config.prizes,
-    entryPrize: config.entryPrize,
-    entryPrizeRequirement: config.entryPrizeRequirement,
-  };
-
-  // Setup Article
-  // ----------------------------------------------
-  // Generate article
-  const articleDetails = await generateArticle({
-    resource,
-    image,
+  // Create Challenge record
+  const challengeId = await createChallengeRecord({
+    startsAt: challengeDate,
+    endsAt,
+    visibleAt: dayjs(challengeDate).subtract(3, 'day').toDate(),
+    title: challengeContent.title,
+    description: challengeContent.content,
+    theme: challengeContent.theme,
+    invitation: challengeContent.invitation,
+    coverImageId,
+    nsfwLevel: 1,
+    allowedNsfwLevel: sfwBrowsingLevelsFlag,
+    modelVersionIds,
     collectionId: collection.id,
-    challengeDate,
-    ...prizeConfig,
-    config: challengeTypeConfig,
-  });
-
-  // Create article
-  const article = await dbWrite.article.create({
-    data: {
-      title: articleDetails.title,
-      content: articleDetails.content,
-      nsfw: false,
-      nsfwLevel: 1,
-      userNsfwLevel: 1,
-      userId: challengeTypeConfig.userId,
-      coverId: coverImageId,
-      metadata: {
-        modelId: resource.modelId,
-        invitation: articleDetails.invitation,
-        theme: articleDetails.theme,
-        challengeDate,
-        collectionId: collection.id,
-        challengeType: config.challengeType,
-        status: 'pending',
-        userId: randomUser.userId,
-        ...prizeConfig,
-      },
-    },
-    select: { id: true },
-  });
-
-  // Add relevant tag:
-  await dbWrite.$executeRaw`
-    INSERT INTO "TagsOnArticle" ("articleId", "tagId")
-    VALUES (${article.id}, ${config.articleTagId});
-  `;
-
-  await preventReplicationLag('article', article.id);
-
-  log('Article created:', article);
-
-  // Add to challenge collection
-  await dbWrite.collectionItem.create({
-    data: {
-      collectionId: config.challengeCollectionId,
-      articleId: article.id,
-      addedById: challengeTypeConfig.userId,
-      status: 'REVIEW',
+    maxEntriesPerUser: config.entryPrizeRequirement * 2,
+    prizes: prizeConfig.prizes,
+    entryPrize: prizeConfig.entryPrize,
+    prizePool: prizeConfig.prizes.reduce((sum, p) => sum + p.buzz, 0),
+    createdById: judgingConfig.userId,
+    source: ChallengeSource.System,
+    status: ChallengeStatus.Scheduled,
+    judgeId: config.defaultJudgeId,
+    metadata: {
+      challengeType: config.challengeType,
+      resourceUserId,
+      resourceModelId: resource.modelId,
     },
   });
-  log('Added to challenge collection');
 
   // Add link back to challenge from collection
   await dbWrite.$executeRawUnsafe(`
     UPDATE "Collection"
-      SET description = COALESCE(description, ' [View Daily Challenge](/articles/${article.id})')
+      SET description = COALESCE(description, ' [View Daily Challenge](/challenges/${challengeId})')
     WHERE id = ${collection.id};
   `);
 
-  const challenge = await getChallengeDetails(article.id);
-  if (!challenge) throw new Error('Failed to create challenge');
-  return challenge;
+  log(
+    'Challenge created:',
+    `id=${challengeId}`,
+    `date=${dayjs(challengeDate).format('YYYY-MM-DD')}`,
+    `title="${challengeContent.title}"`,
+    `collectionId=${collection.id}`
+  );
+
+  return challengeId;
 }
 
-async function reviewEntries() {
-  try {
-    // Get current challenge
-    const currentChallenge = await getCurrentChallenge();
-    console.log('currentChallenge', currentChallenge);
-    if (!currentChallenge) return;
-    log('Processing entries for challenge:', currentChallenge);
-    const config = await getChallengeConfig();
-    const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
+// Batch orchestrator: precompute → select sequentially → create in parallel
+// ----------------------------------------------
+export async function createChallengesBatch(targetDates: Date[]) {
+  if (!targetDates.length) return { created: 0, failed: 0, skipped: 0 };
 
-    // Update pending entries
-    // ----------------------------------------------
-    const reviewing = Date.now();
-    // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
-    const reviewedCount = await dbWrite.$executeRaw`
+  log(`Batch creating challenges for ${targetDates.length} dates`);
+
+  // Phase 1: Pre-compute shared context (once)
+  const ctx = await preComputeContext();
+  log(
+    'Context loaded:',
+    `${ctx.availableUsers.length} available users,`,
+    `${ctx.cooldownResourceIds.length} resources on cooldown`
+  );
+
+  // Phase 2: Select resources sequentially (prevents duplicate model selection)
+  const excludeModelIds = new Set<number>();
+  const selections: PreSelectedChallenge[] = [];
+  let skipped = 0;
+
+  for (const targetDate of targetDates) {
+    try {
+      // Check if challenge already exists for this date
+      const existingForDate = await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Challenge"
+        WHERE DATE_TRUNC('day', "startsAt") = DATE_TRUNC('day', ${targetDate}::timestamp)
+        AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+        LIMIT 1
+      `;
+      if (existingForDate.length > 0) {
+        log(`Challenge already exists for ${dayjs(targetDate).format('YYYY-MM-DD')}, skipping`);
+        skipped++;
+        continue;
+      }
+
+      const selection = await selectResourceForDate(ctx, targetDate, excludeModelIds);
+      excludeModelIds.add(selection.resource.modelId);
+      selections.push(selection);
+      log(
+        `Selected resource for ${dayjs(targetDate).format('YYYY-MM-DD')}:`,
+        `modelId=${selection.resource.modelId}`,
+        `title="${selection.resource.title}"`
+      );
+    } catch (error) {
+      const err = error as Error;
+      log(
+        `Failed to select resource for ${dayjs(targetDate).format('YYYY-MM-DD')}: ${err.message}`
+      );
+    }
+  }
+
+  if (!selections.length) {
+    log('No selections made, nothing to create');
+    return { created: 0, failed: targetDates.length - skipped, skipped };
+  }
+
+  // Phase 3: Create challenges in parallel (concurrency of 3 = up to 6 AI calls)
+  let created = 0;
+  let failed = 0;
+
+  const tasks = selections.map((selection) => async () => {
+    try {
+      await createChallengeFromSelection(selection, ctx);
+      created++;
+    } catch (error) {
+      failed++;
+      const err = error as Error;
+      log(
+        `Failed to create challenge for ${dayjs(selection.targetDate).format('YYYY-MM-DD')}: ${
+          err.message
+        }`
+      );
+    }
+  });
+  await limitConcurrency(tasks, 3);
+
+  log(`Batch complete: ${created} created, ${failed} failed, ${skipped} skipped`);
+  return { created, failed, skipped };
+}
+
+const dailyChallengeSetupJob = createJob('daily-challenge-setup', '0 22 * * *', async () =>
+  createUpcomingChallenge()
+);
+
+const processDailyChallengeEntriesJob = createJob(
+  'daily-challenge-process-entries',
+  '*/10 * * * *',
+  reviewEntries
+);
+
+export const dailyChallengeJobs = [dailyChallengeSetupJob, processDailyChallengeEntriesJob];
+
+// Job Functions
+// ----------------------------------------------
+export async function createUpcomingChallenge(targetDate?: Date) {
+  // Check if challenge platform is enabled
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
+    log('Challenge platform disabled, skipping job');
+    return;
+  }
+
+  // Use provided targetDate or calculate from current time (legacy behavior)
+  const challengeDate = targetDate
+    ? dayjs(targetDate).utc().startOf('day').toDate()
+    : dayjs()
+        .utc()
+        .add(dayjs().utc().hour() >= 13 ? 1 : 0, 'day')
+        .startOf('day')
+        .toDate();
+
+  // If targetDate provided, check if challenge already exists for that specific date
+  if (targetDate) {
+    const existingForDate = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Challenge"
+      WHERE DATE_TRUNC('day', "startsAt") = DATE_TRUNC('day', ${targetDate}::timestamp)
+      AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+      LIMIT 1
+    `;
+    if (existingForDate.length > 0) {
+      log(`Challenge already exists for ${dayjs(targetDate).format('YYYY-MM-DD')}, skipping`);
+      return undefined;
+    }
+  } else {
+    // Original behavior: check for any upcoming system challenge
+    const existingSystemChallenge = await getUpcomingSystemChallenge();
+    if (existingSystemChallenge) {
+      log('System challenge already exists, skipping creation');
+      return existingSystemChallenge;
+    }
+  }
+
+  log('Setting up daily challenge for', dayjs(challengeDate).format('YYYY-MM-DD'));
+
+  // Use shared internals for single-challenge creation (gets parallel AI calls for free)
+  const ctx = await preComputeContext();
+  log('Using source collection:', ctx.sourceCollectionId);
+  log('Total available users:', ctx.availableUsers.length);
+  log('Resources on cooldown:', ctx.cooldownResourceIds.length);
+
+  const selection = await selectResourceForDate(ctx, targetDate ?? challengeDate, new Set());
+  log(
+    'Selected resource:',
+    `modelId=${selection.resource.modelId}`,
+    `title="${selection.resource.title}"`,
+    `creator="${selection.resource.creator}"`
+  );
+  log('Model version IDs:', selection.modelVersionIds.length);
+  log('Cover image:', selection.image.id);
+
+  const challengeId = await createChallengeFromSelection(selection, ctx);
+
+  const challenge = await getChallengeById(challengeId);
+  if (!challenge) throw new Error('Failed to create challenge');
+
+  log('Challenge creation complete:', `id=${challengeId}`);
+
+  return challengeToLegacyFormat(challenge);
+}
+
+export async function reviewEntries() {
+  // Check if challenge platform is enabled
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
+    log('Challenge platform disabled, skipping job');
+    return;
+  }
+
+  try {
+    // Get ALL active challenges (supports multiple concurrent challenges)
+    const activeChallenges = await getActiveChallenges();
+    if (!activeChallenges.length) {
+      log('No active challenges to process');
+      return;
+    }
+
+    log(`Processing entries for ${activeChallenges.length} active challenge(s)`);
+
+    // Process each challenge with error isolation
+    for (const challenge of activeChallenges) {
+      try {
+        await reviewEntriesForChallenge(challenge);
+      } catch (error) {
+        // Log error but continue with other challenges
+        const err = error as Error;
+        logToAxiom({
+          type: 'error',
+          name: 'daily-challenge-process-entries',
+          message: err.message,
+          challengeId: challenge.challengeId,
+          collectionId: challenge.collectionId,
+        });
+        log(`Failed to process challenge ${challenge.challengeId}:`, error);
+      }
+    }
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({
+      type: 'error',
+      name: 'daily-challenge-process-entries-global',
+      message: error.message,
+    });
+    throw e;
+  }
+}
+
+/**
+ * Process entries for a single challenge.
+ * Extracted from reviewEntries() to support multi-challenge processing.
+ */
+async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
+  log('Processing entries for challenge:', currentChallenge.challengeId);
+  const config = await getChallengeConfig();
+
+  // Update pending entries
+  // ----------------------------------------------
+  const reviewing = Date.now();
+
+  // Get the Challenge record to check allowedNsfwLevel and judgeId
+  // Fall back to PG-only (1) and default judge for old article-based challenges
+  const [challengeRecord] = await dbRead.$queryRaw<
+    [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
+  >`
+    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt"
+    FROM "Challenge"
+    WHERE id = ${currentChallenge.challengeId}
+    LIMIT 1
+  `;
+  const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+
+  // Get judging config from ChallengeJudge (or cached default judge if not assigned)
+  const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+  // Use cached default judge if applicable, otherwise fetch from DB
+  const judgingConfig = await getJudgingConfigForChallenge(
+    judgeId,
+    config.defaultJudge,
+    challengeRecord?.judgingPrompt
+  );
+
+  // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
+  // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
+
+  // Log diagnostic info for debugging model version validation issues
+  log('Review parameters:', {
+    challengeId: currentChallenge.challengeId,
+    modelVersionIds: currentChallenge.modelVersionIds,
+    modelVersionIdsLength: currentChallenge.modelVersionIds.length,
+    allowedNsfwLevel,
+    challengeDate: currentChallenge.date,
+  });
+
+  // Handle empty modelVersionIds array: empty means "allow all models" (same as client-side logic)
+  // When modelVersionIds is populated, we check if the image has a matching resource
+  // When modelVersionIds is empty, we skip the resource check entirely (allow all)
+  const hasModelVersionRestriction = currentChallenge.modelVersionIds.length > 0;
+
+  const reviewedCount = await dbWrite.$executeRaw`
     WITH source AS (
       SELECT
       i.id,
-      i."nsfwLevel" = 1 as "isSafe",
-      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" IN (${Prisma.join(
-        currentChallenge.modelVersionIds
-      )}) AND ir."imageId" = i.id) as "hasResource",
+      (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
+      ${
+        hasModelVersionRestriction
+          ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id)`
+          : Prisma.sql`true`
+      } as "hasResource",
       i."createdAt" >= ${currentChallenge.date} as "isRecent"
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"
@@ -318,14 +619,14 @@ async function reviewEntries() {
         ELSE 'REJECTED'::"CollectionItemStatus"
       END,
       "reviewedAt" = now(),
-      "reviewedById" = ${challengeTypeConfig.userId}
+      "reviewedById" = ${judgingConfig.userId}
     FROM source s
     WHERE s.id = ci."imageId";
   `;
-    log('Reviewed entries:', reviewedCount);
+  log('Reviewed entries:', reviewedCount);
 
-    // Notify users of rejection
-    const rejectedUsers = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
+  // Notify users of rejection
+  const rejectedUsers = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
     SELECT
       i."userId",
       CAST(COUNT(*) as int) as count
@@ -335,35 +636,36 @@ async function reviewEntries() {
     AND ci.status = 'REJECTED'
     GROUP BY 1;
   `;
-    const processingDateStr = dayjs().utc().startOf('hour').format('HH');
-    const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
-      await createNotification({
-        type: 'challenge-rejection',
-        category: NotificationCategory.System,
-        key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}:${userId}`,
-        userId,
-        details: {
-          articleId: currentChallenge.articleId,
-          collectionId: currentChallenge.collectionId,
-          challengeName: currentChallenge.title,
-          count,
-        },
-      });
+  const processingDateStr = dayjs().utc().startOf('hour').format('HH');
+  const notificationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
+  const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
+    await createNotification({
+      type: 'challenge-rejection',
+      category: NotificationCategory.System,
+      key: `challenge-rejection:${notificationKeyId}:${processingDateStr}:${userId}`,
+      userId,
+      details: {
+        challengeId: currentChallenge.challengeId,
+        collectionId: currentChallenge.collectionId,
+        challengeName: currentChallenge.title,
+        count,
+      },
     });
-    await limitConcurrency(notificationTasks, 3);
+  });
+  await limitConcurrency(notificationTasks, 3);
 
-    // Remove rejected entries from collection
-    await dbWrite.$executeRaw`
+  // Remove rejected entries from collection
+  await dbWrite.$executeRaw`
     DELETE FROM "CollectionItem"
     WHERE "collectionId" = ${currentChallenge.collectionId}
     AND status = 'REJECTED';
   `;
 
-    // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
+  // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
 
-    // TEMP: Remove judged tag from unjudged entries
-    // Doing this because users can still manually add it
-    await dbWrite.$executeRaw`
+  // TEMP: Remove judged tag from unjudged entries
+  // Doing this because users can still manually add it
+  await dbWrite.$executeRaw`
     UPDATE "CollectionItem"
       SET "tagId" = NULL
     WHERE "collectionId" = ${currentChallenge.collectionId}
@@ -371,20 +673,25 @@ async function reviewEntries() {
     AND note IS NULL;
   `;
 
-    // Rate new entries
-    // ----------------------------------------------
-    // Get last time reviewed
-    const [article] = await dbRead.$queryRaw<{ reviewedAt: number }[]>`
-    SELECT
-      coalesce(cast(metadata->'reviewedAt' as bigint), 0) as "reviewedAt"
-    FROM "Article"
-    WHERE id = ${currentChallenge.articleId}
-  `;
-    const lastReviewedAt = new Date(Number(article.reviewedAt));
-    log('Last reviewed at:', lastReviewedAt);
+  // Rate new entries
+  // ----------------------------------------------
+  // Get last time reviewed from Challenge metadata or default to challenge start
+  let lastReviewedAt = currentChallenge.date ?? new Date(0); // Default to challenge start
+  if (currentChallenge.challengeId) {
+    const [challengeReviewState] = await dbRead.$queryRaw<{ reviewedAt: number | null }[]>`
+      SELECT
+        cast(metadata->>'reviewedAt' as bigint) as "reviewedAt"
+      FROM "Challenge"
+      WHERE id = ${currentChallenge.challengeId}
+    `;
+    if (challengeReviewState?.reviewedAt) {
+      lastReviewedAt = new Date(Number(challengeReviewState.reviewedAt));
+    }
+  }
+  log('Last reviewed at:', lastReviewedAt);
 
-    // Get count of already-scored entries per user for this challenge (for per-user cap)
-    const userScoredCounts = await dbWrite.$queryRaw<{ userId: number; count: bigint }[]>`
+  // Get count of already-scored entries per user for this challenge (for per-user cap)
+  const userScoredCounts = await dbWrite.$queryRaw<{ userId: number; count: bigint }[]>`
     SELECT i."userId", COUNT(*) as count
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
@@ -392,11 +699,11 @@ async function reviewEntries() {
     AND ci."tagId" = ${config.judgedTagId}
     GROUP BY i."userId"
   `;
-    const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
-    log('Users with scored entries:', scoredCountMap.size);
+  const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
+  log('Users with scored entries:', scoredCountMap.size);
 
-    // Get entries approved since last reviewed
-    const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
+  // Get entries approved since last reviewed
+  const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
       i."userId",
@@ -410,27 +717,27 @@ async function reviewEntries() {
     AND ci."tagId" IS NULL
     AND ci."reviewedAt" >= ${lastReviewedAt}
   `;
-    log('Recent entries:', recentEntries.length);
+  log('Recent entries:', recentEntries.length);
 
-    // Randomly select entries to review up to the limit
-    let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
-    const shuffledEntries = shuffle(recentEntries);
-    const toReview: typeof shuffledEntries = [];
-    const reviewingUsers = new Set<number>();
-    for (const entry of shuffledEntries) {
-      if (toReviewCount <= 0) break;
-      if (reviewingUsers.has(entry.userId)) continue;
-      // Skip users who have already hit the per-user scored cap
-      const userScored = scoredCountMap.get(entry.userId) ?? 0;
-      if (userScored >= config.maxScoredPerUser) continue;
-      toReview.push(entry);
-      reviewingUsers.add(entry.userId);
-      toReviewCount--;
-    }
-    log('Entries to review:', toReview.length);
+  // Randomly select entries to review up to the limit
+  let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
+  const shuffledEntries = shuffle(recentEntries);
+  const toReview: typeof shuffledEntries = [];
+  const reviewingUsers = new Set<number>();
+  for (const entry of shuffledEntries) {
+    if (toReviewCount <= 0) break;
+    if (reviewingUsers.has(entry.userId)) continue;
+    // Skip users who have already hit the per-user scored cap
+    const userScored = scoredCountMap.get(entry.userId) ?? 0;
+    if (userScored >= config.maxScoredPerUser) continue;
+    toReview.push(entry);
+    reviewingUsers.add(entry.userId);
+    toReviewCount--;
+  }
+  log('Entries to review:', toReview.length);
 
-    // Get forced to review entries (also respecting per-user cap)
-    const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
+  // Get forced to review entries (also respecting per-user cap)
+  const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
       i."userId",
@@ -443,89 +750,92 @@ async function reviewEntries() {
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" = ${config.reviewMeTagId}
   `;
-    log('Requested review:', requestReview.length);
-    // Filter reviewMe entries to also respect per-user cap
-    for (const entry of requestReview) {
-      const userScored = scoredCountMap.get(entry.userId) ?? 0;
-      if (userScored >= config.maxScoredPerUser) continue;
-      if (reviewingUsers.has(entry.userId)) continue;
-      toReview.push(entry);
-      reviewingUsers.add(entry.userId);
-    }
+  log('Requested review:', requestReview.length);
+  // Filter reviewMe entries to also respect per-user cap
+  for (const entry of requestReview) {
+    const userScored = scoredCountMap.get(entry.userId) ?? 0;
+    if (userScored >= config.maxScoredPerUser) continue;
+    if (reviewingUsers.has(entry.userId)) continue;
+    toReview.push(entry);
+    reviewingUsers.add(entry.userId);
+  }
 
-    // Rate entries
-    const tasks = toReview.map((entry) => async () => {
-      try {
-        log('Reviewing entry:', entry);
-        const review = await generateReview({
-          theme: currentChallenge.theme,
-          creator: entry.username,
-          imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-          config: challengeTypeConfig,
-        });
-        log('Review prepared', entry.imageId, review);
+  // Rate entries
+  const tasks = toReview.map((entry) => async () => {
+    try {
+      log('Reviewing entry:', entry);
+      const review = await generateReview({
+        theme: currentChallenge.theme,
+        creator: entry.username,
+        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+        config: judgingConfig,
+      });
+      log('Review prepared', entry.imageId, review);
 
-        // Add tag and score note to collection item
-        const note = JSON.stringify({
-          score: review.score,
-          summary: review.summary,
-        });
-        await dbWrite.$executeRaw`
+      // Add tag and score note to collection item (include judgeId for tracking)
+      const note = JSON.stringify({
+        score: review.score,
+        summary: review.summary,
+        judgeId: judgingConfig.judgeId,
+      });
+      await dbWrite.$executeRaw`
         UPDATE "CollectionItem"
         SET "tagId" = ${config.judgedTagId}, note = ${note}
         WHERE
           "collectionId" = ${currentChallenge.collectionId}
           AND "imageId" = ${entry.imageId};
       `;
-        log('Tag and note added', entry.imageId);
+      log('Tag and note added', entry.imageId);
 
-        // Send comment
-        await upsertComment({
-          userId: challengeTypeConfig.userId,
+      // Send comment
+      await upsertComment({
+        userId: judgingConfig.userId,
+        entityType: 'image',
+        entityId: entry.imageId,
+        content: review.comment,
+      });
+      log('Comment sent', entry.imageId);
+
+      // Send reaction
+      try {
+        await toggleReaction({
           entityType: 'image',
           entityId: entry.imageId,
-          content: review.comment,
+          reaction: review.reaction,
+          userId: judgingConfig.userId,
         });
-        log('Comment sent', entry.imageId);
-
-        // Send reaction
-        try {
-          await toggleReaction({
-            entityType: 'image',
-            entityId: entry.imageId,
-            reaction: review.reaction,
-            userId: challengeTypeConfig.userId,
-          });
-          log('Reaction sent', entry.imageId);
-        } catch (error) {
-          log('Failed to send reaction', entry.imageId, review.reaction);
-        }
+        log('Reaction sent', entry.imageId);
       } catch (error) {
-        const err = error as Error;
-        logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
-        log('Failed to review entry', entry.imageId, error);
+        log('Failed to send reaction', entry.imageId, review.reaction);
       }
-    });
-    await limitConcurrency(tasks, 5);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
+      log('Failed to review entry', entry.imageId, error);
+    }
+  });
+  await limitConcurrency(tasks, 5);
 
-    // Reward entry prizes
-    // ----------------------------------------------
-    // Get users that have recently added new entries
-    const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
-    if (userIds.length > 0) {
-      // Process event engagement for approved entries
+  // Reward entry prizes
+  // ----------------------------------------------
+  // Get users that have recently added new entries
+  const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
+  if (userIds.length > 0) {
+    // Process event engagement for approved entries
+    if (currentChallenge.challengeId) {
       const eventEngagementTasks = userIds.map((userId) => async () => {
         eventEngine.processEngagement({
           entityType: 'challenge',
-          entityId: currentChallenge.articleId,
+          entityId: currentChallenge.challengeId!,
           type: 'entered',
           userId,
         });
       });
       await limitConcurrency(eventEngagementTasks, 3);
+    }
 
-      // Send prizes to users that have met the entry requirement
-      const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
+    // Send prizes to users that have met the entry requirement
+    const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
       SELECT
       i."userId",
       COUNT(*) as count
@@ -538,76 +848,80 @@ async function reviewEntries() {
       GROUP BY 1
       HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
     `;
-      log('Earned prizes:', earnedPrizes.length);
+    log('Earned prizes:', earnedPrizes.length);
 
-      if (earnedPrizes.length > 0) {
-        const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
-        await withRetries(() =>
-          createBuzzTransactionMany(
-            earnedPrizes.map(({ userId }) => ({
-              type: TransactionType.Reward,
-              toAccountId: userId,
-              fromAccountId: 0, // central bank
-              amount: currentChallenge.entryPrize.buzz,
-              description: `Challenge Entry Prize: ${dateStr}`,
-              externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
-              toAccountType: 'blue',
-            }))
-          )
-        );
+    if (earnedPrizes.length > 0) {
+      await withRetries(() =>
+        createBuzzTransactionMany(
+          earnedPrizes.map(({ userId }) => ({
+            type: TransactionType.Reward,
+            toAccountId: userId,
+            fromAccountId: 0, // central bank
+            amount: currentChallenge.entryPrize.buzz,
+            description: `Challenge Entry Prize: ${currentChallenge.title}`,
+            externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
+            toAccountType: 'blue',
+          }))
+        )
+      );
 
-        log('Prizes sent');
+      log('Prizes sent');
 
-        // Notify them
-        const notifyDate = dayjs(currentChallenge.date).format('HH-mm');
-        await createNotification({
-          type: 'challenge-participation',
-          category: NotificationCategory.System,
-          key: `challenge-participation:${currentChallenge.articleId}:${notifyDate}`,
-          userIds: earnedPrizes.map((entry) => entry.userId),
-          details: {
-            articleId: currentChallenge.articleId,
-            challengeName: currentChallenge.title,
-            prize: currentChallenge.entryPrize.buzz,
-          },
-        });
-        log('Users notified');
-      }
+      // Notify them
+      const notifyDate = dayjs(currentChallenge.date).format('HH-mm');
+      const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
+      await createNotification({
+        type: 'challenge-participation',
+        category: NotificationCategory.System,
+        key: `challenge-participation:${participationKeyId}:${notifyDate}`,
+        userIds: earnedPrizes.map((entry) => entry.userId),
+        details: {
+          challengeId: currentChallenge.challengeId,
+          challengeName: currentChallenge.title,
+          prize: currentChallenge.entryPrize.buzz,
+        },
+      });
+      log('Users notified');
     }
-
-    // Update last review time
-    // ----------------------------------------------
-    await dbWrite.$executeRawUnsafe(`
-    UPDATE "Article"
-    SET metadata = metadata::jsonb || '{"reviewedAt": ${reviewing}}'
-    WHERE id = ${currentChallenge.articleId};
-  `);
-    log('Last reviewed at updated');
-  } catch (e) {
-    const error = e as Error;
-    logToAxiom({
-      type: 'error',
-      name: 'daily-challenge-process-entries',
-      message: error.message,
-    });
-    throw e;
   }
+
+  // Update last review time in Challenge metadata
+  // ----------------------------------------------
+  if (currentChallenge.challengeId) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Challenge"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"reviewedAt": ${reviewing}}'
+      WHERE id = ${currentChallenge.challengeId};
+    `);
+  }
+  log('Last reviewed at updated');
 }
 
-async function pickWinners(ctx: JobContext) {
-  // Get current challenge
-  const config = await getChallengeConfig();
-  const articleId = ctx.req?.query?.articleId ? Number(ctx.req.query.articleId) : undefined;
-  const currentChallenge = articleId
-    ? await getChallengeDetails(articleId)
-    : await getCurrentChallenge();
-  if (!currentChallenge) {
-    if (!articleId) await startNextChallenge(config);
-    return;
-  }
-  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
+/**
+ * Pick winners for a single challenge.
+ */
+export async function pickWinnersForChallenge(
+  currentChallenge: DailyChallengeDetails,
+  config: ChallengeConfig
+) {
+  log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  log('Picking winners for challenge:', currentChallenge);
+  // Get judging config from ChallengeJudge (or cached default judge if not assigned)
+  const [challengeJudgeRow] = await dbRead.$queryRaw<
+    [{ judgeId: number | null; judgingPrompt: string | null } | undefined]
+  >`
+    SELECT "judgeId", "judgingPrompt" FROM "Challenge"
+    WHERE id = ${currentChallenge.challengeId}
+    LIMIT 1
+  `;
+  const judgeId = challengeJudgeRow?.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+  // Use cached default judge if applicable, otherwise fetch from DB
+  const judgingConfig = await getJudgingConfigForChallenge(
+    judgeId,
+    config.defaultJudge,
+    challengeJudgeRow?.judgingPrompt
+  );
 
   // Close challenge
   // ----------------------------------------------
@@ -619,7 +933,10 @@ async function pickWinners(ctx: JobContext) {
   // Get top judged entries
   const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config);
   if (!judgedEntries.length) {
-    await startNextChallenge(config);
+    log('No judged entries for challenge:', currentChallenge.challengeId);
+    // Still need to mark the challenge as completed even with no entries
+    await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
+    log('Challenge marked as completed (no entries)');
     return;
   }
 
@@ -633,7 +950,7 @@ async function pickWinners(ctx: JobContext) {
       summary: entry.summary,
       score: entry.score,
     })),
-    config: challengeTypeConfig,
+    config: judgingConfig,
   });
 
   // Map winners to entries
@@ -652,50 +969,16 @@ async function pickWinners(ctx: JobContext) {
       };
     })
     .filter(isDefined);
-  const winnerUserIds = winningEntries.map((entry) => entry.userId);
-
-  // Update Article with winners, process/outcome, and metadata
-  const updateContent = await markdownToHtml(`## Challenge Complete!
-${process}
-
-
-## Winners
-${winningEntries
-  .map(
-    (entry) => `### ${asOrdinal(entry.position)}. [${entry.username}](/user/${entry.username})
-${entry.reason}
-
-**[View Entry](/images/${entry.imageId})**
-`
-  )
-  .join('\n')}
-
-${outcome}
-
----`);
-
-  await dbWrite.$executeRaw`
-    UPDATE "Article"
-    SET
-      metadata = metadata::jsonb || '{"status": "complete", "winners": ${Prisma.raw(
-        JSON.stringify(winnerUserIds)
-      )} }',
-      content = CONCAT(${updateContent}, content),
-      title = CONCAT('Completed: ', title),
-      "updatedAt" = now()
-    WHERE id = ${currentChallenge.articleId};
-  `;
-  log('Article updated');
-
   // Send notifications to winners
+  const notificationKey = currentChallenge.challengeId ?? currentChallenge.collectionId;
   for (const entry of winningEntries) {
     await createNotification({
       type: 'challenge-winner',
       category: NotificationCategory.System,
-      key: `challenge-winner:${currentChallenge.articleId}:${entry.position}`,
+      key: `challenge-winner:${notificationKey}:${entry.position}`,
       userId: entry.userId,
       details: {
-        articleId: currentChallenge.articleId,
+        challengeId: currentChallenge.challengeId,
         challengeName: currentChallenge.title,
         position: entry.position,
         prize: entry.prize,
@@ -706,7 +989,6 @@ ${outcome}
 
   // Send prizes to winners
   // ----------------------------------------------
-  const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
   await withRetries(() =>
     createBuzzTransactionMany(
       winningEntries.map((entry, i) => ({
@@ -714,17 +996,181 @@ ${outcome}
         toAccountId: entry.userId,
         fromAccountId: 0, // central bank
         amount: currentChallenge.prizes[i].buzz,
-        description: `Challenge Winner Prize ${i + 1}: ${dateStr}`,
-        externalTransactionId: `challenge-winner-prize-${dateStr}-${i + 1}`,
+        description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
+        externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
         toAccountType: 'yellow',
       }))
     )
   );
   log('Prizes sent');
 
-  // Start next challenge
+  // Send entry participation prizes to all eligible users
   // ----------------------------------------------
-  if (!articleId) await startNextChallenge(config);
+  if (currentChallenge.entryPrize && currentChallenge.entryPrize.buzz > 0) {
+    const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT i."userId"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+      GROUP BY i."userId"
+      HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement}
+    `;
+
+    if (earnedEntryPrizes.length > 0) {
+      const winnerUserIds = winningEntries.map((e) => e.userId);
+      // Exclude winners from entry prizes (they get winner prizes instead)
+      const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+
+      if (entryPrizeUsers.length > 0) {
+        await withRetries(() =>
+          createBuzzTransactionMany(
+            entryPrizeUsers.map(({ userId }) => ({
+              type: TransactionType.Reward,
+              toAccountId: userId,
+              fromAccountId: 0, // central bank
+              amount: currentChallenge.entryPrize.buzz,
+              description: `Challenge Entry Prize: ${currentChallenge.title}`,
+              externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
+              toAccountType: 'blue',
+            }))
+          )
+        );
+        log('Entry participation prizes sent:', entryPrizeUsers.length);
+
+        // Notify entry prize recipients
+        const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
+        await createNotification({
+          type: 'challenge-participation',
+          category: NotificationCategory.System,
+          key: `challenge-participation:${participationKeyId}:final`,
+          userIds: entryPrizeUsers.map((e) => e.userId),
+          details: {
+            challengeId: currentChallenge.challengeId,
+            challengeName: currentChallenge.title,
+            prize: currentChallenge.entryPrize.buzz,
+          },
+        });
+        log('Entry prize users notified');
+      }
+    }
+  }
+
+  // Create ChallengeWinner records (new system - dual write during transition)
+  // Find the Challenge by collectionId
+  const winnerChallengeRecords = await dbRead.$queryRaw<{ id: number; metadata: unknown }[]>`
+    SELECT id, metadata FROM "Challenge"
+    WHERE id = ${currentChallenge.challengeId}
+    AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
+    LIMIT 1
+  `;
+  const winnerChallengeRecord = winnerChallengeRecords[0];
+  if (winnerChallengeRecord) {
+    for (const entry of winningEntries) {
+      await createChallengeWinner({
+        challengeId: winnerChallengeRecord.id,
+        userId: entry.userId,
+        imageId: entry.imageId,
+        place: entry.position,
+        buzzAwarded: entry.prize,
+        pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
+        reason: entry.reason,
+      });
+    }
+    // Update Challenge status to Completed and store completion summary
+    const existingMetadata =
+      typeof winnerChallengeRecord.metadata === 'object' ? winnerChallengeRecord.metadata : {};
+    await dbWrite.challenge.update({
+      where: { id: winnerChallengeRecord.id },
+      data: {
+        metadata: {
+          ...existingMetadata,
+          completionSummary: {
+            judgingProcess: process,
+            outcome: outcome,
+            completedAt: new Date().toISOString(),
+          },
+        },
+        status: ChallengeStatus.Completed,
+      },
+    });
+    log('ChallengeWinner records created and status updated to Completed');
+  }
+}
+
+/**
+ * Start a scheduled challenge that is ready to begin.
+ * Start a scheduled challenge that is ready to begin.
+ */
+export async function startScheduledChallenge(
+  challenge: DailyChallengeDetails,
+  config: ChallengeConfig
+) {
+  log('Starting scheduled challenge:', challenge.challengeId);
+
+  // Open collection
+  await dbWrite.$executeRaw`
+    UPDATE "Collection"
+    SET write = 'Review'::"CollectionWriteConfiguration",
+        read = 'Public'::"CollectionReadConfiguration"
+    WHERE id = ${challenge.collectionId};
+  `;
+  log('Collection opened');
+
+  // Update Challenge status to Active (includes Redis cache)
+  if (challenge.challengeId) {
+    await setChallengeActive(challenge.challengeId);
+    log('Challenge status updated to Active:', challenge.challengeId);
+  }
+
+  // Give cosmetic to resource owner
+  if (config.resourceCosmeticId) {
+    await dbWrite.$executeRaw`
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
+      SELECT
+        "userId",
+        ${config.resourceCosmeticId},
+        now(),
+        now(),
+        id,
+        'Model',
+        id,
+        'Model'
+      FROM "Model"
+      WHERE id = ${challenge.modelId};
+    `;
+    log('Cosmetic given');
+  }
+
+  // Notify to owner of the resource (only if modelId exists)
+  if (challenge.modelId > 0) {
+    const model = await dbRead.model.findUnique({
+      where: { id: challenge.modelId },
+      select: { userId: true, name: true },
+    });
+    if (model) {
+      const resourceKeyId = challenge.challengeId ?? challenge.collectionId;
+      createNotification({
+        type: 'challenge-resource',
+        category: NotificationCategory.System,
+        key: `challenge-resource:${resourceKeyId}`,
+        userId: model.userId,
+        details: {
+          challengeId: challenge.challengeId,
+          challengeName: challenge.title,
+          resourceName: model.name,
+        },
+      }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'challenge-resource-notification',
+          message: error.message,
+        });
+        log('Failed to notify resource owner', error);
+      });
+      log('Resource owner notified');
+    }
+  }
 }
 
 // Helper Functions
@@ -860,113 +1306,8 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
   return judgedEntries.slice(0, config.finalReviewAmount);
 }
 
-export async function startNextChallenge(config: ChallengeConfig) {
-  let upcomingChallenge = await getUpcomingChallenge();
-  if (!upcomingChallenge) {
-    try {
-      await createUpcomingChallenge();
-      upcomingChallenge = await getUpcomingChallenge();
-      if (!upcomingChallenge) throw new Error('Failed to create upcoming challenge');
-    } catch (e) {
-      const error = e as Error;
-      logToAxiom({
-        type: 'error',
-        name: 'failed-to-create-upcoming-challenge',
-        message: error.message,
-      });
-      return;
-    }
-  }
-  log('Starting next challenge');
-
-  // Open collection
-  await dbWrite.$executeRaw`
-    UPDATE "Collection"
-    SET write = 'Review'::"CollectionWriteConfiguration",
-        read = 'Public'::"CollectionReadConfiguration"
-    WHERE id = ${upcomingChallenge.collectionId};
-  `;
-  log('Collection opened');
-
-  // Publish article
-  await dbWrite.$executeRaw`
-    UPDATE "Article"
-    SET
-      status = 'Published',
-      "publishedAt" = now(),
-      metadata = metadata::jsonb || '{"status": "active"}',
-      "updatedAt" = now()
-    WHERE id = ${upcomingChallenge.articleId};
-  `;
-  log('Article published');
-
-  // Accept Collection Item in Challenge Collection
-  await dbWrite.$executeRaw`
-    UPDATE "CollectionItem"
-    SET status = 'ACCEPTED'
-    WHERE "collectionId" = ${config.challengeCollectionId}
-    AND "articleId" = ${upcomingChallenge.articleId};
-  `;
-  log('Collection item accepted');
-
-  // Give cosmetic to resource owner
-  if (config.resourceCosmeticId) {
-    await dbWrite.$executeRaw`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
-      SELECT
-        "userId",
-        ${config.resourceCosmeticId},
-        now(),
-        now(),
-        id,
-        'Model',
-        id,
-        'Model'
-      FROM "Model"
-      WHERE id = ${upcomingChallenge.modelId};
-    `;
-    log('Cosmetic given');
-  }
-
-  // Notify to owner of the resource
-  const model = await dbRead.model.findUnique({
-    where: { id: upcomingChallenge.modelId },
-    select: { userId: true, name: true },
-  });
-  if (model) {
-    createNotification({
-      type: 'challenge-resource',
-      category: NotificationCategory.System,
-      key: `challenge-resource:${upcomingChallenge.articleId}`,
-      userId: model.userId,
-      details: {
-        articleId: upcomingChallenge.articleId,
-        challengeName: upcomingChallenge.title,
-        resourceName: model.name,
-      },
-    }).catch((error) => {
-      logToAxiom({
-        type: 'error',
-        name: 'challenge-resource-notification',
-        message: error.message,
-      });
-      log('Failed to notify resource owner', error);
-    });
-    log('Resource owner notified');
-  }
-
-  // Set as current challenge
-  await setCurrentChallenge(upcomingChallenge.articleId);
-}
-
 // Types
 // ----------------------------------------------
-type RecentEntry = {
-  imageId: number;
-  userId: number;
-  username: string;
-  url: string;
-};
 
 type JudgedEntry = {
   imageId: number;
@@ -974,10 +1315,4 @@ type JudgedEntry = {
   username: string;
   note: string;
   engagement: number;
-};
-
-type SelectedResource = {
-  modelId: number;
-  creator: string;
-  title: string;
 };

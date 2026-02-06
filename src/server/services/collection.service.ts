@@ -2255,6 +2255,18 @@ export const bulkSaveItems = async ({
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
 
+  // Check for challenge entry prize eligibility (Contest mode collections only)
+  if (collection.mode === CollectionMode.Contest && count > 0) {
+    // Import dynamically to avoid circular dependencies
+    const { checkAndAwardEntryPrize } = await import(
+      '~/server/games/daily-challenge/challenge-prize'
+    );
+    // Fire and forget - don't block the response
+    checkAndAwardEntryPrize({ userId, collectionId }).catch(() => {
+      // Silently ignore errors - prize distribution is not critical path
+    });
+  }
+
   // return imageIds for use in controller updateEntityMetrics
   return {
     count,

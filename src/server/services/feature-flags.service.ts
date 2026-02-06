@@ -146,6 +146,7 @@ const featureFlags = createFeatureFlags({
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
+  challengePlatform: ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
