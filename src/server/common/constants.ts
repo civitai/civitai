@@ -506,6 +506,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
     name: 'LTXV2',
   },
+  anima: {
+    url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
+    name: 'Anima',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -581,6 +585,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],
   ZImageBase: baseLicenses['apache 2.0'],
+  Anima: baseLicenses['anima'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
