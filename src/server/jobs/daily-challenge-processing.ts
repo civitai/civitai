@@ -68,6 +68,357 @@ async function getJudgingConfigForChallenge(
   return getJudgingConfig(judgeId, judgingPromptOverride);
 }
 
+// Types for batch processing
+// ----------------------------------------------
+type ChallengeCreationContext = {
+  config: ChallengeConfig;
+  judgingConfig: JudgingConfig;
+  sourceCollectionId: number;
+  availableUsers: { userId: number }[];
+  cooldownResourceIds: number[];
+  prizeConfig: {
+    prizes: ChallengeConfig['prizes'];
+    entryPrize: ChallengeConfig['entryPrize'];
+    entryPrizeRequirement: number;
+  };
+};
+
+type PreSelectedChallenge = {
+  targetDate: Date;
+  challengeDate: Date;
+  resource: SelectedResource;
+  resourceUserId: number;
+  modelVersionIds: number[];
+  image: { id: number; url: string };
+};
+
+// Pre-compute shared context (runs 3 DB queries with Promise.all instead of 5 sequential)
+// ----------------------------------------------
+async function preComputeContext(): Promise<ChallengeCreationContext> {
+  const config = await getChallengeConfig();
+  if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
+  const judgingConfig = config.defaultJudge;
+
+  const sourceCollectionId = judgingConfig.sourceCollectionId ?? config.challengeCollectionId;
+  if (!sourceCollectionId) throw new Error('No sourceCollectionId configured for judge');
+
+  // Run all 3 DB queries in parallel
+  const [users, cooldownUsers, cooldownResources] = await Promise.all([
+    dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT m."userId"
+      FROM "CollectionItem" ci
+      JOIN "Model" m ON m.id = ci."modelId"
+      WHERE "collectionId" = ${sourceCollectionId}
+      AND ci."status" = 'ACCEPTED'
+    `,
+    dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT
+        cast(c.metadata->'resourceUserId' as int) as "userId"
+      FROM "Challenge" c
+      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+      AND c."startsAt" > now() - ${config.userCooldown}::interval
+    `,
+    dbRead.$queryRaw<{ modelId: number }[]>`
+      SELECT DISTINCT mv."modelId"
+      FROM "Challenge" c
+      JOIN unnest(c."modelVersionIds") AS mvid ON TRUE
+      JOIN "ModelVersion" mv ON mv.id = mvid
+      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+      AND c."startsAt" > now() - ${config.resourceCooldown}::interval
+    `,
+  ]);
+
+  const cooldownUserIds = cooldownUsers.map((u) => u.userId).filter(isDefined);
+  const availableUsers = users.filter((user) => !cooldownUserIds.includes(user.userId));
+  if (!availableUsers.length) {
+    throw new Error(
+      `No available users found: ${users.length} total users, ${cooldownUserIds.length} on cooldown (source collection: ${sourceCollectionId})`
+    );
+  }
+
+  const cooldownResourceIds = cooldownResources.map((x) => x.modelId);
+
+  return {
+    config,
+    judgingConfig,
+    sourceCollectionId,
+    availableUsers,
+    cooldownResourceIds,
+    prizeConfig: {
+      prizes: config.prizes,
+      entryPrize: config.entryPrize,
+      entryPrizeRequirement: config.entryPrizeRequirement,
+    },
+  };
+}
+
+// Select a resource for a specific date, respecting cooldowns + batch exclusions
+// ----------------------------------------------
+async function selectResourceForDate(
+  ctx: ChallengeCreationContext,
+  targetDate: Date,
+  excludeModelIds: Set<number>
+): Promise<PreSelectedChallenge> {
+  const challengeDate = dayjs(targetDate).utc().startOf('day').toDate();
+  const allExcludedModelIds = [...ctx.cooldownResourceIds, ...excludeModelIds];
+
+  let resource: SelectedResource | undefined;
+  let randomUser: { userId: number } | undefined;
+  let attempts = 0;
+  while (!resource) {
+    attempts++;
+    if (attempts > 100) {
+      throw new Error(
+        `Failed to find resource after 100 attempts for ${dayjs(targetDate).format(
+          'YYYY-MM-DD'
+        )} (${ctx.availableUsers.length} available users, ${
+          allExcludedModelIds.length
+        } excluded resources)`
+      );
+    }
+
+    randomUser = getRandom(ctx.availableUsers);
+    const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT DISTINCT(ci."modelId") as id
+      FROM "CollectionItem" ci
+      JOIN "Model" m ON m.id = ci."modelId"
+      JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
+      WHERE "collectionId" = ${ctx.sourceCollectionId}
+      AND ci."status" = 'ACCEPTED'
+      AND m."userId" = ${randomUser.userId}
+      AND m.status = 'Published'
+      ${
+        allExcludedModelIds.length
+          ? Prisma.sql`AND m.id NOT IN (${Prisma.join(allExcludedModelIds)})`
+          : Prisma.empty
+      }
+      AND m.mode IS NULL
+      AND gc.covered IS TRUE
+    `;
+    if (!resourceIds.length) continue;
+
+    const randomResourceId = getRandom(resourceIds);
+    [resource] = await dbRead.$queryRaw<SelectedResource[]>`
+      SELECT
+        m.id as "modelId",
+        u."username" as creator,
+        m.name as title
+      FROM "Model" m
+      JOIN "User" u ON u.id = m."userId"
+      WHERE m.id = ${randomResourceId.id}
+      LIMIT 1
+    `;
+  }
+  if (!randomUser || !resource) throw new Error('Failed to pick resource');
+
+  // Get model versions and cover image in parallel
+  const [modelVersionRows, image] = await Promise.all([
+    dbRead.$queryRaw<{ id: number }[]>`
+      SELECT mv.id
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ${resource.modelId}
+      AND mv.status = 'Published'
+      ORDER BY mv.index ASC
+    `,
+    getCoverOfModel(resource.modelId),
+  ]);
+
+  return {
+    targetDate,
+    challengeDate,
+    resource,
+    resourceUserId: randomUser.userId,
+    modelVersionIds: modelVersionRows.map((v) => v.id),
+    image,
+  };
+}
+
+// Create a challenge from pre-selected data (AI calls run in parallel)
+// ----------------------------------------------
+async function createChallengeFromSelection(
+  selection: PreSelectedChallenge,
+  ctx: ChallengeCreationContext
+): Promise<number> {
+  const { resource, image, challengeDate, modelVersionIds, resourceUserId } = selection;
+  const { judgingConfig, config, prizeConfig } = ctx;
+  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+
+  // Run both AI calls in parallel - they share inputs but outputs are independent
+  log('Generating AI content in parallel for', dayjs(challengeDate).format('YYYY-MM-DD'));
+  const [collectionDetails, challengeContent] = await Promise.all([
+    generateCollectionDetails({ resource, image, config: judgingConfig }),
+    generateArticle({
+      resource,
+      image,
+      challengeDate: endsAt,
+      ...prizeConfig,
+      config: judgingConfig,
+    }),
+  ]);
+  log(
+    'AI content generated:',
+    `collection="${collectionDetails.name}"`,
+    `title="${challengeContent.title}"`
+  );
+
+  // Create collection cover image
+  const coverImageId = await duplicateImage(image.id, judgingConfig.userId);
+
+  // Create collection
+  const collection = await dbWrite.collection.create({
+    data: {
+      ...collectionDetails,
+      imageId: coverImageId,
+      userId: judgingConfig.userId,
+      read: CollectionReadConfiguration.Private,
+      write: CollectionReadConfiguration.Private,
+      type: 'Image',
+      mode: 'Contest',
+      metadata: {
+        modelId: resource.modelId,
+        challengeDate,
+        maxItemsPerUser: config.entryPrizeRequirement * 2,
+        endsAt,
+        disableTagRequired: true,
+        disableFollowOnSubmission: true,
+      },
+    },
+    select: { id: true },
+  });
+
+  // Add Judged tag
+  await dbWrite.$executeRaw`
+    INSERT INTO "TagsOnCollection" ("collectionId", "tagId", "filterableOnly")
+    VALUES (${collection.id}, ${config.judgedTagId}, true);
+  `;
+
+  // Create Challenge record
+  const challengeId = await createChallengeRecord({
+    startsAt: challengeDate,
+    endsAt,
+    visibleAt: dayjs(challengeDate).subtract(3, 'day').toDate(),
+    title: challengeContent.title,
+    description: challengeContent.content,
+    theme: challengeContent.theme,
+    invitation: challengeContent.invitation,
+    coverImageId,
+    nsfwLevel: 1,
+    allowedNsfwLevel: 1,
+    modelVersionIds,
+    collectionId: collection.id,
+    maxEntriesPerUser: config.entryPrizeRequirement * 2,
+    prizes: prizeConfig.prizes,
+    entryPrize: prizeConfig.entryPrize,
+    prizePool: prizeConfig.prizes.reduce((sum, p) => sum + p.buzz, 0),
+    createdById: judgingConfig.userId,
+    source: ChallengeSource.System,
+    status: ChallengeStatus.Scheduled,
+    judgeId: config.defaultJudgeId,
+    metadata: {
+      challengeType: config.challengeType,
+      resourceUserId,
+      resourceModelId: resource.modelId,
+    },
+  });
+
+  // Add link back to challenge from collection
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "Collection"
+      SET description = COALESCE(description, ' [View Daily Challenge](/challenges/${challengeId})')
+    WHERE id = ${collection.id};
+  `);
+
+  log(
+    'Challenge created:',
+    `id=${challengeId}`,
+    `date=${dayjs(challengeDate).format('YYYY-MM-DD')}`,
+    `title="${challengeContent.title}"`,
+    `collectionId=${collection.id}`
+  );
+
+  return challengeId;
+}
+
+// Batch orchestrator: precompute → select sequentially → create in parallel
+// ----------------------------------------------
+export async function createChallengesBatch(targetDates: Date[]) {
+  if (!targetDates.length) return { created: 0, failed: 0, skipped: 0 };
+
+  log(`Batch creating challenges for ${targetDates.length} dates`);
+
+  // Phase 1: Pre-compute shared context (once)
+  const ctx = await preComputeContext();
+  log(
+    'Context loaded:',
+    `${ctx.availableUsers.length} available users,`,
+    `${ctx.cooldownResourceIds.length} resources on cooldown`
+  );
+
+  // Phase 2: Select resources sequentially (prevents duplicate model selection)
+  const excludeModelIds = new Set<number>();
+  const selections: PreSelectedChallenge[] = [];
+  let skipped = 0;
+
+  for (const targetDate of targetDates) {
+    try {
+      // Check if challenge already exists for this date
+      const existingForDate = await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Challenge"
+        WHERE DATE_TRUNC('day', "startsAt") = DATE_TRUNC('day', ${targetDate}::timestamp)
+        AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+        LIMIT 1
+      `;
+      if (existingForDate.length > 0) {
+        log(`Challenge already exists for ${dayjs(targetDate).format('YYYY-MM-DD')}, skipping`);
+        skipped++;
+        continue;
+      }
+
+      const selection = await selectResourceForDate(ctx, targetDate, excludeModelIds);
+      excludeModelIds.add(selection.resource.modelId);
+      selections.push(selection);
+      log(
+        `Selected resource for ${dayjs(targetDate).format('YYYY-MM-DD')}:`,
+        `modelId=${selection.resource.modelId}`,
+        `title="${selection.resource.title}"`
+      );
+    } catch (error) {
+      const err = error as Error;
+      log(
+        `Failed to select resource for ${dayjs(targetDate).format('YYYY-MM-DD')}: ${err.message}`
+      );
+    }
+  }
+
+  if (!selections.length) {
+    log('No selections made, nothing to create');
+    return { created: 0, failed: targetDates.length - skipped, skipped };
+  }
+
+  // Phase 3: Create challenges in parallel (concurrency of 3 = up to 6 AI calls)
+  let created = 0;
+  let failed = 0;
+
+  const tasks = selections.map((selection) => async () => {
+    try {
+      await createChallengeFromSelection(selection, ctx);
+      created++;
+    } catch (error) {
+      failed++;
+      const err = error as Error;
+      log(
+        `Failed to create challenge for ${dayjs(selection.targetDate).format('YYYY-MM-DD')}: ${
+          err.message
+        }`
+      );
+    }
+  });
+  await limitConcurrency(tasks, 3);
+
+  log(`Batch complete: ${created} created, ${failed} failed, ${skipped} skipped`);
+  return { created, failed, skipped };
+}
+
 const dailyChallengeSetupJob = createJob('daily-challenge-setup', '0 22 * * *', async () =>
   createUpcomingChallenge()
 );
@@ -120,245 +471,29 @@ export async function createUpcomingChallenge(targetDate?: Date) {
   }
 
   log('Setting up daily challenge for', dayjs(challengeDate).format('YYYY-MM-DD'));
-  const config = await getChallengeConfig();
-  if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
-  const judgingConfig = config.defaultJudge;
 
-  // Validate source collection is configured
-  const sourceCollectionId = judgingConfig.sourceCollectionId ?? config.challengeCollectionId;
-  if (!sourceCollectionId) throw new Error('No sourceCollectionId configured for judge');
-  log('Using source collection:', sourceCollectionId);
+  // Use shared internals for single-challenge creation (gets parallel AI calls for free)
+  const ctx = await preComputeContext();
+  log('Using source collection:', ctx.sourceCollectionId);
+  log('Total available users:', ctx.availableUsers.length);
+  log('Resources on cooldown:', ctx.cooldownResourceIds.length);
 
-  // Pick Resource
-  // ----------------------------------------------
-  // Get all users
-  const users = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT DISTINCT m."userId"
-    FROM "CollectionItem" ci
-    JOIN "Model" m ON m.id = ci."modelId"
-    WHERE "collectionId" = ${sourceCollectionId}
-    AND ci."status" = 'ACCEPTED'
-  `;
-  log('Total users in source collection:', users.length);
-
-  // Get Users on cooldown (from Challenge table)
-  const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT DISTINCT
-      cast(c.metadata->'resourceUserId' as int) as "userId"
-    FROM "Challenge" c
-    WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
-    AND c."startsAt" > now() - ${config.userCooldown}::interval
-  `;
-  const cooldownUserIds = cooldownUsers.map((u) => u.userId).filter(isDefined);
-  log('Users on cooldown:', cooldownUserIds.length, `(cooldown: ${config.userCooldown})`);
-
-  // Remove users on cooldown
-  const availableUsers = users.filter((user) => !cooldownUserIds.includes(user.userId));
-  log('Available users after cooldown filter:', availableUsers.length);
-  if (!availableUsers.length) {
-    throw new Error(
-      `No available users found: ${users.length} total users, ${cooldownUserIds.length} on cooldown (source collection: ${sourceCollectionId})`
-    );
-  }
-
-  // Get resources on cooldown (from Challenge table via model versions)
-  const cooldownResources = (
-    await dbRead.$queryRaw<{ modelId: number }[]>`
-      SELECT DISTINCT mv."modelId"
-      FROM "Challenge" c
-      JOIN unnest(c."modelVersionIds") AS mvid ON TRUE
-      JOIN "ModelVersion" mv ON mv.id = mvid
-      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
-      AND c."startsAt" > now() - ${config.resourceCooldown}::interval
-    `
-  ).map((x) => x.modelId);
-  log('Resources on cooldown:', cooldownResources.length, `(cooldown: ${config.resourceCooldown})`);
-
-  let resource: SelectedResource | undefined;
-  let randomUser: { userId: number } | undefined;
-  let attempts = 0;
-  while (!resource) {
-    attempts++;
-    if (attempts > 100) {
-      throw new Error(
-        `Failed to find resource after 100 attempts (${availableUsers.length} available users, ${cooldownResources.length} resources on cooldown)`
-      );
-    }
-
-    // Pick a user
-    randomUser = getRandom(availableUsers);
-
-    // Get resources from that user
-    const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT DISTINCT(ci."modelId") as id
-      FROM "CollectionItem" ci
-      JOIN "Model" m ON m.id = ci."modelId"
-      JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
-      WHERE "collectionId" = ${sourceCollectionId}
-      AND ci."status" = 'ACCEPTED'
-      AND m."userId" = ${randomUser.userId}
-      AND m.status = 'Published'
-      ${
-        cooldownResources.length
-          ? Prisma.sql`AND m.id NOT IN (${Prisma.join(cooldownResources)})`
-          : Prisma.empty
-      }
-      AND m.mode IS NULL
-      AND gc.covered IS TRUE
-    `;
-    if (!resourceIds.length) continue;
-
-    // Pick a resource
-    const randomResourceId = getRandom(resourceIds);
-
-    // Get resource details
-    [resource] = await dbRead.$queryRaw<SelectedResource[]>`
-      SELECT
-        m.id as "modelId",
-        u."username" as creator,
-        m.name as title
-      FROM "Model" m
-      JOIN "User" u ON u.id = m."userId"
-      WHERE m.id = ${randomResourceId.id}
-      LIMIT 1
-    `;
-  }
-  if (!randomUser || !resource) throw new Error('Failed to pick resource');
+  const selection = await selectResourceForDate(ctx, targetDate ?? challengeDate, new Set());
   log(
-    `Selected resource after ${attempts} attempt(s):`,
-    `modelId=${resource.modelId}`,
-    `title="${resource.title}"`,
-    `creator="${resource.creator}"`
+    'Selected resource:',
+    `modelId=${selection.resource.modelId}`,
+    `title="${selection.resource.title}"`,
+    `creator="${selection.resource.creator}"`
   );
+  log('Model version IDs:', selection.modelVersionIds.length);
+  log('Cover image:', selection.image.id);
 
-  // Get published model version IDs for this model
-  const modelVersionIds = (
-    await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT mv.id
-      FROM "ModelVersion" mv
-      WHERE mv."modelId" = ${resource.modelId}
-      AND mv.status = 'Published'
-      ORDER BY mv.index ASC
-    `
-  ).map((v) => v.id);
-  log('Model version IDs:', modelVersionIds.length);
-
-  // Get cover of resource
-  const image = await getCoverOfModel(resource.modelId);
-  log('Cover image:', image.id);
-
-  // Setup Collection
-  // ----------------------------------------------
-  // Generate title and description
-  log('Generating collection details via AI...');
-  const collectionDetails = await generateCollectionDetails({
-    resource,
-    image,
-    config: judgingConfig,
-  });
-  log('Collection details generated:', collectionDetails.name);
-
-  // Create collection cover image
-  const coverImageId = await duplicateImage(image.id, judgingConfig.userId);
-
-  // Create collection
-  const collection = await dbWrite.collection.create({
-    data: {
-      ...collectionDetails,
-      imageId: coverImageId,
-      userId: judgingConfig.userId,
-      read: CollectionReadConfiguration.Private,
-      write: CollectionReadConfiguration.Private,
-      type: 'Image',
-      mode: 'Contest',
-      metadata: {
-        modelId: resource.modelId,
-        challengeDate,
-        maxItemsPerUser: config.entryPrizeRequirement * 2,
-        endsAt: dayjs(challengeDate).add(1, 'day').toDate(),
-        disableTagRequired: true,
-        disableFollowOnSubmission: true,
-      },
-    },
-    select: { id: true },
-  });
-
-  // Add Judged tag
-  await dbWrite.$executeRaw`
-    INSERT INTO "TagsOnCollection" ("collectionId", "tagId", "filterableOnly")
-    VALUES (${collection.id}, ${config.judgedTagId}, true);
-  `;
-
-  const prizeConfig = {
-    prizes: config.prizes,
-    entryPrize: config.entryPrize,
-    entryPrizeRequirement: config.entryPrizeRequirement,
-  };
-
-  // Generate challenge content (title, description, invitation, theme)
-  log('Generating challenge article via AI...');
-  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
-  const challengeContent = await generateArticle({
-    resource,
-    image,
-    challengeDate: endsAt,
-    ...prizeConfig,
-    config: judgingConfig,
-  });
-  log(
-    'Challenge article generated:',
-    `title="${challengeContent.title}"`,
-    `theme="${challengeContent.theme}"`
-  );
-
-  // Create Challenge record
-  const challengeId = await createChallengeRecord({
-    startsAt: challengeDate,
-    endsAt,
-    visibleAt: dayjs(challengeDate).subtract(3, 'day').toDate(), // Visible 3 days before start
-    title: challengeContent.title,
-    description: challengeContent.content,
-    theme: challengeContent.theme,
-    invitation: challengeContent.invitation,
-    coverImageId,
-    nsfwLevel: 1,
-    allowedNsfwLevel: 1, // PG only for auto-generated challenges
-    modelVersionIds,
-    collectionId: collection.id,
-    maxEntriesPerUser: config.entryPrizeRequirement * 2,
-    prizes: prizeConfig.prizes,
-    entryPrize: prizeConfig.entryPrize,
-    prizePool: prizeConfig.prizes.reduce((sum, p) => sum + p.buzz, 0),
-    createdById: judgingConfig.userId,
-    source: ChallengeSource.System,
-    status: ChallengeStatus.Scheduled,
-    judgeId: config.defaultJudgeId,
-    metadata: {
-      challengeType: config.challengeType,
-      resourceUserId: randomUser.userId,
-      resourceModelId: resource.modelId,
-    },
-  });
-  log('Challenge record created:', challengeId);
-
-  // Add link back to challenge from collection
-  await dbWrite.$executeRawUnsafe(`
-    UPDATE "Collection"
-      SET description = COALESCE(description, ' [View Daily Challenge](/challenges/${challengeId})')
-    WHERE id = ${collection.id};
-  `);
+  const challengeId = await createChallengeFromSelection(selection, ctx);
 
   const challenge = await getChallengeById(challengeId);
   if (!challenge) throw new Error('Failed to create challenge');
 
-  log(
-    'Challenge creation complete:',
-    `id=${challengeId}`,
-    `date=${dayjs(challengeDate).format('YYYY-MM-DD')}`,
-    `title="${challengeContent.title}"`,
-    `collectionId=${collection.id}`,
-    `visibleAt=${dayjs(challengeDate).subtract(3, 'day').format('YYYY-MM-DD')}`
-  );
+  log('Challenge creation complete:', `id=${challengeId}`);
 
   return challengeToLegacyFormat(challenge);
 }

@@ -33,7 +33,7 @@ export async function generateCollectionDetails(input: GenerateCollectionDetails
 
   const results = await openrouter.getJsonCompletion<CollectionDetails>({
     retries: 3,
-    model: AI_MODELS.GPT_5_NANO,
+    model: AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -99,7 +99,7 @@ export async function generateArticle({
 
   const result = await openrouter.getJsonCompletion<GeneratedArticle>({
     retries: 3,
-    model: AI_MODELS.GPT_5_NANO,
+    model: AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         config,
@@ -203,7 +203,7 @@ export async function generateReview(input: GenerateReviewInput) {
 
   const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
-    model: AI_MODELS.GPT_5_NANO,
+    model: AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -265,7 +265,7 @@ export async function generateWinners(input: GenerateWinnersInput) {
 
   const result = await openrouter.getJsonCompletion<GeneratedWinners>({
     retries: 3,
-    model: AI_MODELS.GPT_5_NANO,
+    model: AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,

@@ -21,29 +21,13 @@ import {
   createUpcomingChallenge,
   getCoverOfModel,
   getJudgedEntries,
-  pickWinnersForChallenge,
-  reviewEntries,
-  startScheduledChallenge,
 } from '~/server/jobs/daily-challenge-processing';
-import {
-  getEndedActiveChallenges,
-  getChallengesReadyToStart,
-} from '~/server/games/daily-challenge/daily-challenge.utils';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
   .object({
-    action: z.enum([
-      'article',
-      'collection',
-      'review',
-      'winners',
-      'complete-review',
-      'complete-challenge',
-      'create-challenge',
-    ]),
+    action: z.enum(['content', 'collection', 'review', 'winners', 'create-challenge']),
     modelId: z.coerce.number().optional(),
-    type: z.string().optional(),
     imageId: z.coerce.number().optional(),
     theme: z.string().optional(),
     challengeId: z.coerce.number().optional(),
@@ -74,7 +58,7 @@ const schema = z
       });
     }
 
-    if ((data.action === 'article' || data.action === 'collection') && !data.modelId) {
+    if ((data.action === 'content' || data.action === 'collection') && !data.modelId) {
       ctx.addIssue({
         code: 'custom',
         message: 'modelId is required for action article or collection',
@@ -84,14 +68,14 @@ const schema = z
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const payload = schema.parse(req.query);
-  const { action, modelId, type, imageId, challengeId } = payload;
+  const { action, modelId, imageId, challengeId } = payload;
   let { theme } = payload;
 
   const config = await getChallengeConfig();
   if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
   const judgingConfig = config.defaultJudge;
 
-  if (action === 'article' || action === 'collection') {
+  if (action === 'content' || action === 'collection') {
     // Get resource details
     const [resource] = await dbRead.$queryRaw<SelectedResource[]>`
       SELECT
@@ -105,7 +89,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     `;
 
     const image = await getCoverOfModel(modelId!);
-    if (action === 'article') {
+    if (action === 'content') {
       const result = await generateArticle({
         resource,
         image,
@@ -172,42 +156,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       config: judgingConfig,
     });
     return res.status(200).json(result);
-  }
-
-  if (action === 'complete-review') {
-    if (payload.dryRun) {
-      return res.status(200).json({
-        action: 'complete-review',
-        dryRun: true,
-        message: 'Would execute reviewEntries() to process and review challenge entries',
-      });
-    }
-    await reviewEntries();
-    return res.status(200).json({ success: true, action: 'complete-review' });
-  }
-
-  if (action === 'complete-challenge') {
-    if (payload.dryRun) {
-      return res.status(200).json({
-        action: 'complete-challenge',
-        dryRun: true,
-        message: 'Would complete ended challenges and activate scheduled challenges',
-      });
-    }
-
-    // Complete ended challenges
-    const endedChallenges = await getEndedActiveChallenges();
-    for (const challenge of endedChallenges) {
-      await pickWinnersForChallenge(challenge, config);
-    }
-
-    // Activate scheduled challenges
-    const challengesToStart = await getChallengesReadyToStart();
-    for (const challenge of challengesToStart) {
-      await startScheduledChallenge(challenge, config);
-    }
-
-    return res.status(200).json({ success: true, action: 'complete-challenge' });
   }
 
   if (action === 'create-challenge') {

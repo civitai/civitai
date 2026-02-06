@@ -10,7 +10,7 @@ import { dbRead } from '~/server/db/client';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
-import { createUpcomingChallenge } from './daily-challenge-processing';
+import { createChallengesBatch } from './daily-challenge-processing';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 const log = createLogger('jobs:challenge-auto-queue', 'cyan');
@@ -76,47 +76,17 @@ async function ensureChallengeHorizon() {
 
   log(`Found ${missingDates.length} dates without challenges`);
 
-  // Create challenges for missing dates with rate limiting
-  // Process sequentially to avoid overwhelming AI APIs
-  let created = 0;
-  let failed = 0;
+  // Batch create challenges: precompute once, select sequentially, create in parallel
+  const result = await createChallengesBatch(missingDates);
 
-  for (const targetDate of missingDates) {
-    try {
-      const dateStr = dayjs(targetDate).format('YYYY-MM-DD');
-      log(`Creating challenge for ${dateStr}...`);
-
-      const challenge = await createUpcomingChallenge(targetDate);
-
-      if (challenge) {
-        created++;
-        log(`Successfully created challenge for ${dateStr}`);
-      } else {
-        log(`Skipped ${dateStr} (may already exist)`);
-      }
-
-      // Rate limit: wait between AI API calls to avoid overwhelming services
-      // Each challenge makes 2 AI calls (generateCollectionDetails, generateArticle)
-      if (missingDates.indexOf(targetDate) < missingDates.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay
-      }
-    } catch (error) {
-      failed++;
-      const err = error as Error;
-      log(
-        `Failed to create challenge for ${dayjs(targetDate).format('YYYY-MM-DD')}: ${err.message}`
-      );
-      // Continue with next date instead of failing entire job
-    }
-  }
-
-  log(`Auto-queue complete: ${created} created, ${failed} failed`);
+  log(
+    `Auto-queue complete: ${result.created} created, ${result.failed} failed, ${result.skipped} skipped`
+  );
 
   return {
     horizonDays: HORIZON_DAYS,
-    created,
-    failed,
-    filledCount: HORIZON_DAYS - missingDates.length + created,
+    ...result,
+    filledCount: HORIZON_DAYS - missingDates.length + result.created,
   };
 }
 
