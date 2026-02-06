@@ -80,6 +80,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants as appConstants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 /** Open the generation panel for a challenge's model versions. */
 function openChallengeGenerator(modelVersionIds: number[]) {
@@ -742,11 +743,6 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
               <Title order={2}>Challenge Winners</Title>
               <IconTrophy size={32} className="text-yellow-500" />
             </Group>
-            <Text c="dimmed" size="sm">
-              {challenge.judge
-                ? `Judged by ${challenge.judge.name}`
-                : 'Selected based on theme, creativity, and aesthetic quality'}
-            </Text>
           </div>
 
           {/* Podium Layout - Desktop: 2nd | 1st (elevated) | 3rd */}
@@ -818,7 +814,9 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     </Text>
                     <Spoiler maxHeight={120} showLabel="Show more" hideLabel="Show less">
                       <div className="text-sm">
-                        <RenderHtml html={challenge.completionSummary.judgingProcess} />
+                        <CustomMarkdown>
+                          {challenge.completionSummary.judgingProcess}
+                        </CustomMarkdown>
                       </div>
                     </Spoiler>
                   </div>
@@ -831,7 +829,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     </Text>
                     <Spoiler maxHeight={80} showLabel="Show more" hideLabel="Show less">
                       <div className="text-sm">
-                        <RenderHtml html={challenge.completionSummary.outcome} />
+                        <CustomMarkdown>{challenge.completionSummary.outcome}</CustomMarkdown>
                       </div>
                     </Spoiler>
                   </div>
