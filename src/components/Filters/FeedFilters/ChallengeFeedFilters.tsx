@@ -5,6 +5,7 @@ import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { ChallengeFiltersDropdown } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const sortOptions = [
   { value: ChallengeSort.Newest, label: 'Newest' },
@@ -16,6 +17,7 @@ const sortOptions = [
 export function ChallengeFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
   const sort = (router.query.sort as ChallengeSort) || ChallengeSort.Newest;
+  const sortLabel = sortOptions.find((option) => option.value === sort)?.label || 'Newest';
 
   const handleSortChange = (value: ChallengeSort) => {
     router.replace(
@@ -27,7 +29,12 @@ export function ChallengeFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      <SelectMenuV2 label={sort} value={sort} onClick={handleSortChange} options={sortOptions} />
+      <SelectMenuV2
+        label={sortLabel}
+        value={sort}
+        onClick={handleSortChange}
+        options={sortOptions}
+      />
       <ChallengeFiltersDropdown />
     </Group>
   );

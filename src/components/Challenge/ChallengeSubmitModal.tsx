@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  AspectRatio,
   Badge,
   Box,
   Button,
@@ -20,6 +21,7 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
@@ -36,7 +38,7 @@ import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generat
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
@@ -48,6 +50,11 @@ import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from '~/components/Collections/collection.utils';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import {
+  parseBitwiseBrowsingLevel,
+  browsingLevelLabels,
+  orchestratorNsfwLevelMap,
+} from '~/shared/constants/browsingLevel.constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { isDefined } from '~/utils/type-guards';
 import { hideNotification, showNotification } from '@mantine/notifications';
@@ -116,6 +123,17 @@ const useGeneratorStore = create<GeneratorStoreState>()(
 );
 
 // ---------------------------------------------------------------------------
+// Color mapping for NSFW levels
+// ---------------------------------------------------------------------------
+const nsfwLevelColors: Record<number, string> = {
+  [NsfwLevel.PG]: 'green',
+  [NsfwLevel.PG13]: 'yellow',
+  [NsfwLevel.R]: 'orange',
+  [NsfwLevel.X]: 'red',
+  [NsfwLevel.XXX]: 'grape',
+};
+
+// ---------------------------------------------------------------------------
 // Main Modal
 // ---------------------------------------------------------------------------
 type Props = {
@@ -154,25 +172,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const maxEntries = challenge?.maxEntriesPerUser ?? 20;
   const remainingEntries = Math.max(0, maxEntries - userEntryCount);
 
-  // Eligibility check for selected library images
-  const { data: eligibilityData } = trpc.challenge.checkEntryEligibility.useQuery(
-    { challengeId, imageIds: selectedImageIds },
-    { enabled: selectedImageIds.length > 0 }
-  );
-  const eligibilityMap = useMemo(() => {
-    if (!eligibilityData) return new Map<number, { eligible: boolean; reasons: string[] }>();
-    return new Map(eligibilityData.map((e) => [e.imageId, e]));
-  }, [eligibilityData]);
-
-  // Pre-filter to only eligible library images (used by submit + button label)
-  const eligibleImageIds = useMemo(
-    () =>
-      selectedImageIds.filter((id) => {
-        const e = eligibilityMap.get(id);
-        return !e || e.eligible;
-      }),
-    [selectedImageIds, eligibilityMap]
-  );
+  // Parse allowed NSFW levels for display
+  const allowedLevels = useMemo(() => {
+    if (!challenge) return [];
+    return parseBitwiseBrowsingLevel(challenge.allowedNsfwLevel);
+  }, [challenge]);
 
   const availableTags = (collection?.tags ?? []).filter((t) => !t.filterableOnly);
 
@@ -226,9 +230,9 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   // Submit library images (bulk save existing image IDs)
   const handleSubmitLibrary = () => {
     setError('');
-    if (!validateEntryCount(eligibleImageIds.length)) return;
+    if (!validateEntryCount(selectedImageIds.length)) return;
 
-    const data = { collectionId, imageIds: eligibleImageIds, tagId };
+    const data = { collectionId, imageIds: selectedImageIds, tagId };
     const results = bulkSaveCollectionItemsInput.safeParse(data);
     if (!results.success) {
       setError('You must select at least one image.');
@@ -344,10 +348,10 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const loading =
     uploading || addSimpleImagePostMutation.isPending || bulkSaveItemsMutation.isPending;
 
-  // Count for submit button
+  // Count for submit button (users can only select eligible images)
   const submitCount =
     activeTab === 'library'
-      ? eligibleImageIds.length
+      ? selectedImageIds.length
       : activeTab === 'generator'
       ? generatorSelected.length
       : uploadedFiles.filter((f) => f.status === 'success').length;
@@ -361,6 +365,18 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           <Text size="sm" c="dimmed">
             Your Entries: {userEntryCount} / {maxEntries}
           </Text>
+          {allowedLevels.length > 0 && (
+            <Group gap={4}>
+              <Text size="xs" c="dimmed">
+                Allowed Ratings:
+              </Text>
+              {allowedLevels.map((level) => (
+                <Badge key={level} size="xs" color={nsfwLevelColors[level]} variant="filled">
+                  {browsingLevelLabels[level as keyof typeof browsingLevelLabels]}
+                </Badge>
+              ))}
+            </Group>
+          )}
         </Stack>
       }
       size="80%"
@@ -397,38 +413,37 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           <Tabs.Panel value="library">
             {challenge && (
               <ChallengeContext.Provider value={challenge}>
-                <ChallengeEligibilityContext.Provider value={eligibilityMap}>
-                  <ScrollArea
-                    scrollRestore={{ enabled: false, key: 'challenge-submit-library' }}
-                    style={{ maxHeight: 440, overflowY: 'auto' }}
+                <ScrollArea
+                  scrollRestore={{ enabled: false, key: 'challenge-submit-library' }}
+                  style={{ maxHeight: 440, overflowY: 'auto' }}
+                >
+                  <MasonryProvider
+                    columnWidth={constants.cardSizes.image}
+                    maxColumnCount={4}
+                    maxSingleColumnWidth={450}
                   >
-                    <MasonryProvider
-                      columnWidth={constants.cardSizes.image}
-                      maxColumnCount={4}
-                      maxSingleColumnWidth={450}
-                    >
-                      <MasonryContainer m={0} p={0} px={0}>
-                        <ImagesInfinite
-                          filters={{
-                            collectionId: undefined,
-                            userId: currentUser?.id,
-                            period: 'AllTime',
-                            sort: ImageSort.Newest,
-                            hidden: undefined,
-                            types: undefined,
-                            withMeta: undefined,
-                            followed: undefined,
-                            fromPlatform: undefined,
-                            hideAutoResources: undefined,
-                            hideManualResources: undefined,
-                          }}
-                          renderItem={LibraryImageCard}
-                          disableStoreFilters
-                        />
-                      </MasonryContainer>
-                    </MasonryProvider>
-                  </ScrollArea>
-                </ChallengeEligibilityContext.Provider>
+                    <MasonryContainer m={0} p={0} px={0}>
+                      <ImagesInfinite
+                        filters={{
+                          collectionId: undefined,
+                          userId: currentUser?.id,
+                          period: 'AllTime',
+                          sort: ImageSort.Newest,
+                          hidden: undefined,
+                          types: undefined,
+                          withMeta: undefined,
+                          followed: undefined,
+                          fromPlatform: undefined,
+                          hideAutoResources: undefined,
+                          hideManualResources: undefined,
+                          includeBaseModel: true,
+                        }}
+                        renderItem={LibraryImageCard}
+                        disableStoreFilters
+                      />
+                    </MasonryContainer>
+                  </MasonryProvider>
+                </ScrollArea>
               </ChallengeContext.Provider>
             )}
           </Tabs.Panel>
@@ -545,12 +560,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
 function LibraryImageCard({ data: image }: { data: ImageGetInfinite[number] }) {
   const toggleSelected = useStore((state) => state.toggleSelected);
   const selected = useStore(useCallback((state) => !!state.selected[image.id], [image.id]));
-
-  // We access challenge data from the nearest ChallengeSubmitModal context.
-  // Since ImagesInfinite doesn't support passing extra props, we use a simple
-  // approach: store the challenge data in a module-level ref.
   const challenge = useChallengeContext();
-  const eligibility = useChallengeEligibility(image.id);
 
   if (!challenge) return null;
 
@@ -560,7 +570,6 @@ function LibraryImageCard({ data: image }: { data: ImageGetInfinite[number] }) {
       challenge={challenge}
       selected={selected}
       onToggle={toggleSelected}
-      serverEligibility={eligibility}
     />
   );
 }
@@ -570,20 +579,11 @@ function LibraryImageCard({ data: image }: { data: ImageGetInfinite[number] }) {
 // ---------------------------------------------------------------------------
 const ChallengeContext = createContext<Pick<
   ChallengeDetail,
-  'allowedNsfwLevel' | 'startsAt'
+  'allowedNsfwLevel' | 'startsAt' | 'modelVersionIds'
 > | null>(null);
-
-const ChallengeEligibilityContext = createContext<
-  Map<number, { eligible: boolean; reasons: string[] }>
->(new Map());
 
 function useChallengeContext() {
   return useContext(ChallengeContext);
-}
-
-function useChallengeEligibility(imageId: number) {
-  const map = useContext(ChallengeEligibilityContext);
-  return map.get(imageId);
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +634,7 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
 
   return (
     <Box mah={440} style={{ overflowY: 'auto' }}>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-2">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(275px,1fr))] gap-2 p-2">
         {generatedMedia.map((img) => (
           <GeneratorImageCard
             key={`${img.workflowId}_${img.stepName}_${img.id}`}
@@ -672,25 +672,43 @@ function GeneratorImageCard({
     useCallback((state) => state.selected.some((s) => s.url === image.url), [image.url])
   );
 
-  // Check model version eligibility client-side for generator images
+  // Convert orchestrator nsfwLevel (string like 'pg', 'r') to numeric NsfwLevel
+  const numericNsfwLevel = useMemo(() => {
+    if (!image.nsfwLevel) return null;
+    // Handle both string and number types
+    if (typeof image.nsfwLevel === 'number') return image.nsfwLevel;
+    const levelStr = String(image.nsfwLevel).toLowerCase();
+    return orchestratorNsfwLevelMap[levelStr] ?? null;
+  }, [image.nsfwLevel]);
+
+  // Check eligibility client-side for generator images (model version + NSFW level)
   const eligibility = useMemo(() => {
-    if (!challenge || challenge.modelVersionIds.length === 0) {
-      return { eligible: true, reasons: [] as string[] };
+    const reasons: string[] = [];
+
+    // Check NSFW level
+    if (challenge && numericNsfwLevel !== null) {
+      if ((numericNsfwLevel & challenge.allowedNsfwLevel) === 0) {
+        reasons.push('NSFW restricted');
+      }
     }
 
-    const imageResourceIds = (image.resources ?? [])
-      .map((r) => ('id' in r && typeof r.id === 'number' ? r.id : null))
-      .filter(isDefined);
+    // Check model version requirement
+    if (challenge && challenge.modelVersionIds.length > 0) {
+      const imageResourceIds = (image.resources ?? [])
+        .map((r) => ('id' in r && typeof r.id === 'number' ? r.id : null))
+        .filter(isDefined);
 
-    const hasEligibleModel = imageResourceIds.some((vid) =>
-      challenge.modelVersionIds.includes(vid)
-    );
+      const hasEligibleModel = imageResourceIds.some((vid) =>
+        challenge.modelVersionIds.includes(vid)
+      );
 
-    if (!hasEligibleModel) {
-      return { eligible: false, reasons: ['Wrong model'] };
+      if (!hasEligibleModel) {
+        reasons.push('Wrong model');
+      }
     }
-    return { eligible: true, reasons: [] as string[] };
-  }, [challenge, image.resources]);
+
+    return { eligible: reasons.length === 0, reasons };
+  }, [challenge, image.resources, numericNsfwLevel]);
 
   const handleClick = () => {
     if (!eligibility.eligible) return;
@@ -719,22 +737,34 @@ function GeneratorImageCard({
       )}
       onClick={handleClick}
     >
-      <EdgeMedia
-        alt="Generated image"
-        src={image.url}
-        type={image.type}
-        className="h-[180px] w-full object-cover"
-        anim
-      />
-      <div className="absolute left-2 top-2">
-        {eligibility.eligible ? (
-          <Checkbox checked={isSelected} readOnly size="sm" />
-        ) : (
-          <Badge color="red" variant="filled" size="xs">
-            {eligibility.reasons[0]}
-          </Badge>
-        )}
-      </div>
+      <AspectRatio ratio={3 / 4}>
+        <EdgeMedia
+          alt="Generated image"
+          src={image.url}
+          type={image.type}
+          className="size-full object-cover"
+          anim
+        />
+      </AspectRatio>
+      {numericNsfwLevel !== null && (
+        <BrowsingLevelBadge
+          browsingLevel={numericNsfwLevel}
+          size="xs"
+          className="absolute left-1.5 top-1.5"
+        />
+      )}
+      {eligibility.eligible ? (
+        <Checkbox checked={isSelected} readOnly size="lg" className="absolute right-1.5 top-1.5" />
+      ) : (
+        <Badge
+          color="red"
+          variant="filled"
+          size="sm"
+          className="absolute right-1.5 top-1.5 max-w-[calc(100%-12px)]"
+        >
+          {eligibility.reasons[0]}
+        </Badge>
+      )}
     </div>
   );
 }

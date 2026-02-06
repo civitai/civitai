@@ -2,6 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 
 import type {
   ChallengePrompts,
+  JudgingConfig,
   Prize,
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -21,7 +22,7 @@ type GenerateCollectionDetailsInput = {
     id: number;
     url: string;
   };
-  config: ChallengeConfig;
+  config: JudgingConfig;
 };
 type CollectionDetails = {
   name: string;
@@ -32,7 +33,7 @@ export async function generateCollectionDetails(input: GenerateCollectionDetails
 
   const results = await openrouter.getJsonCompletion<CollectionDetails>({
     retries: 3,
-    model: AI_MODELS.GPT_4O,
+    model: AI_MODELS.GPT_5_NANO,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -78,7 +79,7 @@ type GenerateArticleInput = {
   prizes: Array<Prize>;
   entryPrizeRequirement: number;
   entryPrize: Prize;
-  config: ChallengeConfig;
+  config: JudgingConfig;
 };
 type GeneratedArticle = {
   title: string;
@@ -100,11 +101,11 @@ export async function generateArticle({
 
   const result = await openrouter.getJsonCompletion<GeneratedArticle>({
     retries: 3,
-    model: AI_MODELS.GPT_4O,
+    model: AI_MODELS.GPT_5_NANO,
     messages: [
       prepareSystemMessage(
         config,
-        'article',
+        'content',
         `{
           "title": "title of the challenge/article",
           "invitation": "a single sentence invitation to participate in the challenge displayed in the on-site generator",
@@ -196,8 +197,7 @@ type GenerateReviewInput = {
   theme: string;
   creator: string;
   imageUrl: string;
-  config: ChallengeConfig;
-  judgePrompts?: JudgePromptOverrides;
+  config: JudgingConfig;
 };
 type GeneratedReview = {
   score: Score;
@@ -208,15 +208,12 @@ type GeneratedReview = {
 export async function generateReview(input: GenerateReviewInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
-  // Apply judge prompt overrides if available
-  const config = applyJudgeOverrides(input.config, input.judgePrompts);
-
   const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
-    model: AI_MODELS.GPT_4O,
+    model: AI_MODELS.GPT_5_NANO,
     messages: [
       prepareSystemMessage(
-        config,
+        input.config,
         'review',
         `{
           "score": {
@@ -259,8 +256,7 @@ type GenerateWinnersInput = {
     score: Score;
   }>;
   theme: string;
-  config: ChallengeConfig;
-  judgePrompts?: JudgePromptOverrides;
+  config: JudgingConfig;
 };
 type GeneratedWinners = {
   winners: Array<{
@@ -274,15 +270,12 @@ type GeneratedWinners = {
 export async function generateWinners(input: GenerateWinnersInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
-  // Apply judge prompt overrides if available
-  const config = applyJudgeOverrides(input.config, input.judgePrompts);
-
   const result = await openrouter.getJsonCompletion<GeneratedWinners>({
     retries: 3,
-    model: AI_MODELS.GPT_4O,
+    model: AI_MODELS.GPT_5_NANO,
     messages: [
       prepareSystemMessage(
-        config,
+        input.config,
         'winner',
         `{
           "winners": [
@@ -316,35 +309,10 @@ export async function generateWinners(input: GenerateWinnersInput) {
 
 // Helpers
 // ------------------------------------
-export type JudgePromptOverrides = {
-  systemPrompt?: string | null;
-  reviewPrompt?: string | null;
-  winnerSelectionPrompt?: string | null;
-};
-
-/**
- * Apply ChallengeJudge prompt overrides to a config.
- * Fallback chain: challenge-specific judgingPrompt > ChallengeJudge prompts > Redis config defaults.
- */
-function applyJudgeOverrides(
-  config: ChallengeConfig,
-  overrides?: JudgePromptOverrides
-): ChallengeConfig {
-  if (!overrides) return config;
-  return {
-    ...config,
-    prompts: {
-      ...config.prompts,
-      ...(overrides.systemPrompt ? { systemMessage: overrides.systemPrompt } : {}),
-      ...(overrides.reviewPrompt ? { review: overrides.reviewPrompt } : {}),
-      ...(overrides.winnerSelectionPrompt ? { winner: overrides.winnerSelectionPrompt } : {}),
-    },
-  };
-}
 
 function prepareSystemMessage(
-  config: ChallengeConfig,
-  promptType: ChallengePromptType,
+  config: JudgingConfig,
+  promptType: JudgingPromptType,
   responseStructure: string
 ) {
   // Remove leading whitespace
@@ -364,7 +332,5 @@ function prepareSystemMessage(
   };
 }
 
-type ChallengeConfig = {
-  prompts: ChallengePrompts;
-};
-type ChallengePromptType = keyof ChallengePrompts;
+/** Prompt types that can be used with prepareSystemMessage. Excludes deprecated 'article' field. */
+type JudgingPromptType = Exclude<keyof ChallengePrompts, 'article'>;

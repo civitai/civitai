@@ -23,9 +23,9 @@ import {
   endChallenge,
   getActiveChallenges,
   getChallengeConfig,
-  getChallengeTypeConfig,
+  getJudgingConfig,
   getUpcomingSystemChallenge,
-  getJudgePrompts,
+  type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
@@ -50,6 +50,23 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
+
+/**
+ * Get judging config efficiently using cached default judge when possible.
+ * Falls back to DB query if the judge differs from default or there's a prompt override.
+ */
+async function getJudgingConfigForChallenge(
+  judgeId: number,
+  cachedDefaultJudge: JudgingConfig | null,
+  judgingPromptOverride?: string | null
+): Promise<JudgingConfig> {
+  // If this is the default judge and no prompt override, use cached config
+  if (cachedDefaultJudge && judgeId === cachedDefaultJudge.judgeId && !judgingPromptOverride) {
+    return cachedDefaultJudge;
+  }
+  // Otherwise fetch from DB (different judge or has prompt override)
+  return getJudgingConfig(judgeId, judgingPromptOverride);
+}
 
 const dailyChallengeSetupJob = createJob(
   'daily-challenge-setup',
@@ -83,7 +100,12 @@ export async function createUpcomingChallenge() {
   }
   log('Setting up daily challenge');
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
+  const judgingConfig = config.defaultJudge;
+
+  // Validate source collection is configured
+  const sourceCollectionId = judgingConfig.sourceCollectionId ?? config.challengeCollectionId;
+  if (!sourceCollectionId) throw new Error('No sourceCollectionId configured for judge');
 
   // Get date of the challenge (should be the next day if it's past 1pm UTC)
   const addDays = dayjs().utc().hour() >= 13 ? 1 : 0;
@@ -96,7 +118,7 @@ export async function createUpcomingChallenge() {
     SELECT DISTINCT m."userId"
     FROM "CollectionItem" ci
     JOIN "Model" m ON m.id = ci."modelId"
-    WHERE "collectionId" = ${challengeTypeConfig.collectionId}
+    WHERE "collectionId" = ${sourceCollectionId}
     AND ci."status" = 'ACCEPTED'
   `;
 
@@ -142,7 +164,7 @@ export async function createUpcomingChallenge() {
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
       JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
-      WHERE "collectionId" = ${challengeTypeConfig.collectionId}
+      WHERE "collectionId" = ${sourceCollectionId}
       AND ci."status" = 'ACCEPTED'
       AND m."userId" = ${randomUser.userId}
       AND m.status = 'Published'
@@ -193,18 +215,18 @@ export async function createUpcomingChallenge() {
   const collectionDetails = await generateCollectionDetails({
     resource,
     image,
-    config: challengeTypeConfig,
+    config: judgingConfig,
   });
 
   // Create collection cover image
-  const coverImageId = await duplicateImage(image.id, challengeTypeConfig.userId);
+  const coverImageId = await duplicateImage(image.id, judgingConfig.userId);
 
   // Create collection
   const collection = await dbWrite.collection.create({
     data: {
       ...collectionDetails,
       imageId: coverImageId,
-      userId: challengeTypeConfig.userId,
+      userId: judgingConfig.userId,
       read: CollectionReadConfiguration.Private,
       write: CollectionReadConfiguration.Private,
       type: 'Image',
@@ -240,7 +262,7 @@ export async function createUpcomingChallenge() {
     collectionId: collection.id,
     challengeDate,
     ...prizeConfig,
-    config: challengeTypeConfig,
+    config: judgingConfig,
   });
 
   // Create Challenge record
@@ -262,7 +284,7 @@ export async function createUpcomingChallenge() {
     prizes: prizeConfig.prizes,
     entryPrize: prizeConfig.entryPrize,
     prizePool: prizeConfig.prizes.reduce((sum, p) => sum + p.buzz, 0),
-    createdById: challengeTypeConfig.userId,
+    createdById: judgingConfig.userId,
     source: ChallengeSource.System,
     status: ChallengeStatus.Scheduled,
     judgeId: config.defaultJudgeId,
@@ -338,14 +360,13 @@ export async function reviewEntries() {
 async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
   log('Processing entries for challenge:', currentChallenge.challengeId);
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
   // Update pending entries
   // ----------------------------------------------
   const reviewing = Date.now();
 
-  // Get the Challenge record to check allowedNsfwLevel and judgeId (new system)
-  // Fall back to PG-only (1) for old article-based challenges
+  // Get the Challenge record to check allowedNsfwLevel and judgeId
+  // Fall back to PG-only (1) and default judge for old article-based challenges
   const [challengeRecord] = await dbRead.$queryRaw<
     [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
   >`
@@ -356,9 +377,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   `;
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
 
-  // Look up judge prompts for this challenge (if assigned)
-  const judgePrompts = await getJudgePrompts(
-    challengeRecord?.judgeId,
+  // Get judging config from ChallengeJudge (or cached default judge if not assigned)
+  const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+  // Use cached default judge if applicable, otherwise fetch from DB
+  const judgingConfig = await getJudgingConfigForChallenge(
+    judgeId,
+    config.defaultJudge,
     challengeRecord?.judgingPrompt
   );
 
@@ -383,7 +408,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         ELSE 'REJECTED'::"CollectionItemStatus"
       END,
       "reviewedAt" = now(),
-      "reviewedById" = ${challengeTypeConfig.userId}
+      "reviewedById" = ${judgingConfig.userId}
     FROM source s
     WHERE s.id = ci."imageId";
   `;
@@ -532,15 +557,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         theme: currentChallenge.theme,
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-        config: challengeTypeConfig,
-        judgePrompts,
+        config: judgingConfig,
       });
       log('Review prepared', entry.imageId, review);
 
-      // Add tag and score note to collection item
+      // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
         score: review.score,
         summary: review.summary,
+        judgeId: judgingConfig.judgeId,
       });
       await dbWrite.$executeRaw`
         UPDATE "CollectionItem"
@@ -553,7 +578,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
       // Send comment
       await upsertComment({
-        userId: challengeTypeConfig.userId,
+        userId: judgingConfig.userId,
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
@@ -566,7 +591,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           entityType: 'image',
           entityId: entry.imageId,
           reaction: review.reaction,
-          userId: challengeTypeConfig.userId,
+          userId: judgingConfig.userId,
         });
         log('Reaction sent', entry.imageId);
       } catch (error) {
@@ -668,11 +693,9 @@ export async function pickWinnersForChallenge(
   currentChallenge: DailyChallengeDetails,
   config: ChallengeConfig
 ) {
-  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
-
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  // Look up judge prompts for this challenge (if assigned)
+  // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const [challengeJudgeRow] = await dbRead.$queryRaw<
     [{ judgeId: number | null; judgingPrompt: string | null } | undefined]
   >`
@@ -680,8 +703,12 @@ export async function pickWinnersForChallenge(
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
   `;
-  const judgePrompts = await getJudgePrompts(
-    challengeJudgeRow?.judgeId,
+  const judgeId = challengeJudgeRow?.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+  // Use cached default judge if applicable, otherwise fetch from DB
+  const judgingConfig = await getJudgingConfigForChallenge(
+    judgeId,
+    config.defaultJudge,
     challengeJudgeRow?.judgingPrompt
   );
 
@@ -712,8 +739,7 @@ export async function pickWinnersForChallenge(
       summary: entry.summary,
       score: entry.score,
     })),
-    config: challengeTypeConfig,
-    judgePrompts,
+    config: judgingConfig,
   });
 
   // Map winners to entries

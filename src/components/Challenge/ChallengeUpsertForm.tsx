@@ -430,15 +430,15 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               renderOption={(item) => renderJudgeOption({ ...item, judges })}
               onChange={(value) => {
                 const selectedJudge = judges.find((j) => String(j.id) === value);
-                if (selectedJudge?.systemPrompt) {
-                  form.setValue('judgingPrompt', selectedJudge.systemPrompt);
+                if (selectedJudge?.reviewPrompt) {
+                  form.setValue('judgingPrompt', selectedJudge.reviewPrompt);
                 } else {
                   form.setValue('judgingPrompt', '');
                 }
               }}
               allowDeselect={false}
               clearable
-              disabled={isTerminal}
+              disabled={isActive || isTerminal}
             />
             <InputTextArea
               name="judgingPrompt"
@@ -448,7 +448,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               autosize
               minRows={3}
               maxRows={8}
-              disabled={isTerminal}
+              disabled={isActive || isTerminal}
             />
           </Stack>
         </Paper>

@@ -36,6 +36,8 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
+  IconBrush,
+  IconBulb,
   IconClockHour4,
   IconCrown,
   IconCube,
@@ -339,9 +341,15 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.theme && (
                 <>
                   <Divider orientation="vertical" />
-                  <Text c="blue" fw={600} size="lg">
+                  <IconBadge
+                    size="lg"
+                    radius="sm"
+                    icon={<IconBulb size={18} />}
+                    color="violet"
+                    variant="light"
+                  >
                     {challenge.theme}
-                  </Text>
+                  </IconBadge>
                 </>
               )}
             </Group>
@@ -516,15 +524,33 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       {/* Action buttons - hidden on mobile, replaced by sticky CTA */}
       <Group gap={8} wrap="nowrap" visibleFrom="md">
         {isActive && !currentUser?.muted ? (
-          <Button
-            onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
-            leftSection={<IconSparkles size={16} />}
-            variant="filled"
-            color="blue"
-            fullWidth
-          >
-            Enter Challenge
-          </Button>
+          <>
+            <Button
+              onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
+              leftSection={<IconBrush size={16} />}
+              variant="filled"
+              color="blue"
+              fullWidth
+            >
+              Generate
+            </Button>
+            {challenge.collectionId && (
+              <Button
+                onClick={() => {
+                  dialogStore.trigger({
+                    component: ChallengeSubmitModal,
+                    props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+                  });
+                }}
+                leftSection={<IconPhoto size={16} />}
+                variant="light"
+                color="blue"
+                fullWidth
+              >
+                Submit
+              </Button>
+            )}
+          </>
         ) : challenge.status === ChallengeStatus.Completed ? (
           <Group
             gap="xs"
@@ -553,6 +579,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
         ) : null}
         <ShareButton url={router.asPath} title={challenge.title}>
           <Button
+            className="shrink-0 grow-0"
             style={{ paddingLeft: 0, paddingRight: 0, width: '36px' }}
             color={colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
           >
@@ -1003,14 +1030,24 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
               </Text>
             </Group>
             {displaySubmitAction && (
-              <Button
-                size="sm"
-                variant="filled"
-                onClick={handleOpenSubmitModal}
-                leftSection={<IconSparkles size={16} />}
-              >
-                Submit Entry
-              </Button>
+              <Group gap="xs">
+                <Button
+                  size="sm"
+                  variant="filled"
+                  onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
+                  leftSection={<IconBrush size={16} />}
+                >
+                  Generate Entries
+                </Button>
+                <Button
+                  size="sm"
+                  variant="light"
+                  onClick={handleOpenSubmitModal}
+                  leftSection={<IconPhoto size={16} />}
+                >
+                  Submit Entries
+                </Button>
+              </Group>
             )}
           </Group>
 
@@ -1056,15 +1093,33 @@ function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
 
   return (
     <Group gap="xs" wrap="nowrap" hiddenFrom="md" mt="md">
-      <Button
-        onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
-        leftSection={<IconSparkles size={16} />}
-        variant="filled"
-        color="blue"
-        fullWidth
-      >
-        Enter Challenge
-      </Button>
+      <Stack gap="xs" style={{ flex: 1 }}>
+        <Button
+          onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
+          leftSection={<IconBrush size={16} />}
+          variant="filled"
+          color="blue"
+          fullWidth
+        >
+          Generate Entries
+        </Button>
+        {challenge.collectionId && (
+          <Button
+            onClick={() => {
+              dialogStore.trigger({
+                component: ChallengeSubmitModal,
+                props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+              });
+            }}
+            leftSection={<IconPhoto size={16} />}
+            variant="light"
+            color="blue"
+            fullWidth
+          >
+            Submit Entries
+          </Button>
+        )}
+      </Stack>
       <ShareButton url={router.asPath} title={challenge.title}>
         <ActionIcon
           size="lg"

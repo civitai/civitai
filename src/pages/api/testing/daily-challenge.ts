@@ -10,7 +10,6 @@ import {
 import {
   challengeToLegacyFormat,
   getChallengeConfig,
-  getChallengeTypeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
@@ -89,7 +88,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   let { theme } = payload;
 
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(type ?? config.challengeType);
+  if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
+  const judgingConfig = config.defaultJudge;
 
   if (action === 'article' || action === 'collection') {
     // Get resource details
@@ -114,7 +114,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         prizes: config.prizes,
         entryPrize: config.entryPrize,
         entryPrizeRequirement: config.entryPrizeRequirement,
-        config: challengeTypeConfig,
+        config: judgingConfig,
       });
       return res.status(200).json(result);
     }
@@ -123,7 +123,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       const result = await generateCollectionDetails({
         resource,
         image,
-        config: challengeTypeConfig,
+        config: judgingConfig,
       });
       return res.status(200).json(result);
     }
@@ -151,7 +151,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       theme,
       creator: entry.username,
       imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
-      config: challengeTypeConfig,
+      config: judgingConfig,
     });
     return res.status(200).json(result);
   }
@@ -170,7 +170,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         summary: entry.summary,
         score: entry.score,
       })),
-      config: challengeTypeConfig,
+      config: judgingConfig,
     });
     return res.status(200).json(result);
   }

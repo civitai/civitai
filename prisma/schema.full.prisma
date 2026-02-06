@@ -383,7 +383,7 @@ model User {
   userRestrictions            UserRestriction[]               @relation("userRestrictions")
   challengesCreated          Challenge[]
   challengeWins              ChallengeWinner[]
-  challengeJudge             ChallengeJudge?
+  challengeJudges            ChallengeJudge[]
 
   @@index([deletedAt])
 }
@@ -3801,12 +3801,15 @@ model Challenge {
 
 model ChallengeJudge {
   id     Int  @id @default(autoincrement())
-  userId Int  @unique
+  userId Int
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   name                  String  @db.VarChar(255)
   bio                   String? @db.Text
+  sourceCollectionId    Int? // Collection to pick model resources from for this challenge type
   systemPrompt          String? @db.Text
+  collectionPrompt      String? @db.Text
+  contentPrompt         String? @db.Text
   reviewPrompt          String? @db.Text
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
@@ -3816,6 +3819,7 @@ model ChallengeJudge {
 
   challenges Challenge[]
 
+  @@index([userId])
   @@index([active])
 }
 

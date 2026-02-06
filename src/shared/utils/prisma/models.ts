@@ -447,7 +447,7 @@ export interface User {
   userRestrictions?: UserRestriction[];
   challengesCreated?: Challenge[];
   challengeWins?: ChallengeWinner[];
-  challengeJudge?: ChallengeJudge | null;
+  challengeJudges?: ChallengeJudge[];
 }
 
 export interface CustomerSubscription {
@@ -2842,7 +2842,10 @@ export interface ChallengeJudge {
   user?: User;
   name: string;
   bio: string | null;
+  sourceCollectionId: number | null;
   systemPrompt: string | null;
+  collectionPrompt: string | null;
+  contentPrompt: string | null;
   reviewPrompt: string | null;
   winnerSelectionPrompt: string | null;
   active: boolean;

@@ -11,6 +11,10 @@ export const AI_MODELS = {
   CLAUDE_SONNET: 'anthropic/claude-sonnet-4',
   CLAUDE_HAIKU: 'anthropic/claude-3-5-haiku',
 
+  KIMI: 'moonshotai/kimi-k2.5',
+  GROK: 'x-ai/grok-4.1-fast',
+  GPT_5_NANO: 'openai/gpt-5-nano',
+
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',
   VISION_FALLBACK: 'anthropic/claude-sonnet-4',
@@ -86,7 +90,7 @@ function createOpenRouterClient() {
   const customClient = client as CustomOpenRouter;
 
   customClient.getJsonCompletion = async <T>({
-    model = AI_MODELS.GPT_4O,
+    model = AI_MODELS.GPT_5_NANO,
     messages,
     temperature = 1,
     maxTokens = 2048,

@@ -1,6 +1,6 @@
 import { AspectRatio, Badge, Checkbox } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -18,19 +18,18 @@ type EligibilityStatus = {
 
 type Props = {
   image: ImageGetInfinite[number];
-  challenge: Pick<ChallengeDetail, 'allowedNsfwLevel' | 'startsAt'>;
+  challenge: Pick<ChallengeDetail, 'allowedNsfwLevel' | 'startsAt' | 'modelVersionIds'>;
   selected: boolean;
   onToggle: (imageId: number) => void;
-  serverEligibility?: EligibilityStatus;
 };
 
 /**
- * Client-side eligibility checks that can be performed instantly.
- * Model version checks require server-side validation via checkEntryEligibility.
+ * Client-side eligibility checks for challenge entries.
+ * Validates NSFW level, recency, and model version requirements.
  */
-function getClientEligibility(
+function getEligibility(
   image: ImageGetInfinite[number],
-  challenge: Pick<ChallengeDetail, 'allowedNsfwLevel' | 'startsAt'>
+  challenge: Pick<ChallengeDetail, 'allowedNsfwLevel' | 'startsAt' | 'modelVersionIds'>
 ): EligibilityStatus {
   const reasons: string[] = [];
 
@@ -44,28 +43,30 @@ function getClientEligibility(
     reasons.push('Created before challenge');
   }
 
+  // Check model version requirement
+  if (challenge.modelVersionIds.length > 0) {
+    const imageVersionIds = image.modelVersionIds ?? [];
+    const hasEligibleModel = imageVersionIds.some((vid) =>
+      challenge.modelVersionIds.includes(vid)
+    );
+    if (!hasEligibleModel) {
+      reasons.push('Wrong model');
+    }
+  }
+
   return { eligible: reasons.length === 0, reasons };
 }
 
-function ChallengeSelectableImageCard({
-  image,
-  challenge,
-  selected,
-  onToggle,
-  serverEligibility,
-}: Props) {
-  // Combine client + server eligibility
-  const clientCheck = getClientEligibility(image, challenge);
-  const allReasons = [
-    ...clientCheck.reasons,
-    ...(serverEligibility?.reasons ?? []).filter((r) => !clientCheck.reasons.includes(r)),
-  ];
-  const isEligible = clientCheck.eligible && (serverEligibility?.eligible ?? true);
+function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: Props) {
+  const eligibility = useMemo(
+    () => getEligibility(image, challenge),
+    [image, challenge]
+  );
 
   const handleClick = useCallback(() => {
-    if (!isEligible) return;
+    if (!eligibility.eligible) return;
     onToggle(image.id);
-  }, [isEligible, onToggle, image.id]);
+  }, [eligibility.eligible, onToggle, image.id]);
 
   return (
     <MasonryCard
@@ -73,7 +74,7 @@ function ChallengeSelectableImageCard({
       onClick={handleClick}
       className={clsx('cursor-pointer', {
         'opacity-60': selected,
-        'cursor-not-allowed opacity-40 grayscale': !isEligible,
+        'cursor-not-allowed opacity-40 grayscale': !eligibility.eligible,
       })}
       withBorder
     >
@@ -101,7 +102,7 @@ function ChallengeSelectableImageCard({
           )}
         </ImageGuard2>
 
-        {isEligible ? (
+        {eligibility.eligible ? (
           <Checkbox size="lg" checked={selected} className="absolute right-1.5 top-1.5" readOnly />
         ) : (
           <Badge
@@ -110,7 +111,7 @@ function ChallengeSelectableImageCard({
             size="sm"
             className="absolute right-1.5 top-1.5 max-w-[calc(100%-12px)]"
           >
-            {allReasons[0] ?? 'Ineligible'}
+            {eligibility.reasons[0] ?? 'Ineligible'}
           </Badge>
         )}
 

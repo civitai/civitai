@@ -15,6 +15,24 @@ import {
   getUpcomingSystemChallengeFromDb,
 } from './challenge-helpers';
 
+// Schema for ChallengePrompts stored in Redis
+const challengePromptsSchema = z.object({
+  systemMessage: z.string(),
+  collection: z.string(),
+  article: z.string(),
+  content: z.string(),
+  review: z.string(),
+  winner: z.string(),
+});
+
+// Schema for JudgingConfig stored in Redis
+const judgingConfigSchema = z.object({
+  judgeId: z.number(),
+  userId: z.number(),
+  sourceCollectionId: z.number().nullable(),
+  prompts: challengePromptsSchema,
+});
+
 const challengeConfigSchema = z.object({
   challengeType: z.string(),
   challengeCollectionId: z.number(),
@@ -42,6 +60,8 @@ const challengeConfigSchema = z.object({
   resourceCosmeticId: z.number().nullable(),
   articleTagId: z.number(),
   defaultJudgeId: z.number().nullable(),
+  // Cached full judge config - populated when defaultJudgeId is set
+  defaultJudge: judgingConfigSchema.nullable(),
 });
 export type ChallengeConfig = z.infer<typeof challengeConfigSchema>;
 export const dailyChallengeConfig: ChallengeConfig = {
@@ -58,12 +78,13 @@ export const dailyChallengeConfig: ChallengeConfig = {
   ] as Prize[],
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 200, points: 10 } as Prize,
-  reviewAmount: { min: 2, max: 6 },
+  reviewAmount: { min: 6, max: 12 },
   maxScoredPerUser: 5,
   finalReviewAmount: 10,
   resourceCosmeticId: null,
   articleTagId: 128643, // Announcement.
   defaultJudgeId: 1, // CivBot
+  defaultJudge: null, // Cached judge config - populated via setChallengeConfig
 };
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
@@ -76,7 +97,26 @@ export async function getChallengeConfig() {
     console.error('Invalid daily challenge config in redis:', e);
   }
 
-  return { ...dailyChallengeConfig, ...config };
+  const merged = { ...dailyChallengeConfig, ...config };
+
+  // Auto-populate defaultJudge from DB if missing but defaultJudgeId is set
+  if (merged.defaultJudgeId && !merged.defaultJudge) {
+    try {
+      const judgingConfig = await fetchJudgingConfigFromDb(merged.defaultJudgeId);
+      if (judgingConfig) {
+        merged.defaultJudge = judgingConfig;
+        // Cache the fetched judge config for next time
+        await sysRedis.packed.set(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG, {
+          ...config,
+          defaultJudge: judgingConfig,
+        });
+      }
+    } catch (e) {
+      console.error('Failed to fetch default judge config:', e);
+    }
+  }
+
+  return merged;
 }
 
 export async function setChallengeConfig(updates: Partial<ChallengeConfig>): Promise<void> {
@@ -88,13 +128,80 @@ export async function setChallengeConfig(updates: Partial<ChallengeConfig>): Pro
   // Merge updates
   const newConfig = { ...existingConfig, ...updates };
 
+  // If defaultJudgeId is being updated, fetch and cache the full judge config
+  if ('defaultJudgeId' in updates) {
+    if (updates.defaultJudgeId) {
+      const judgingConfig = await fetchJudgingConfigFromDb(updates.defaultJudgeId);
+      newConfig.defaultJudge = judgingConfig;
+    } else {
+      newConfig.defaultJudge = null;
+    }
+  }
+
   await sysRedis.packed.set(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG, newConfig);
+}
+
+/**
+ * Fetch JudgingConfig directly from database.
+ * Used internally for caching in Redis config.
+ */
+async function fetchJudgingConfigFromDb(judgeId: number): Promise<JudgingConfig | null> {
+  const judge = await dbRead.challengeJudge.findUnique({
+    where: { id: judgeId },
+    select: {
+      id: true,
+      userId: true,
+      sourceCollectionId: true,
+      systemPrompt: true,
+      collectionPrompt: true,
+      contentPrompt: true,
+      reviewPrompt: true,
+      winnerSelectionPrompt: true,
+    },
+  });
+
+  if (!judge) return null;
+
+  return {
+    judgeId: judge.id,
+    userId: judge.userId,
+    sourceCollectionId: judge.sourceCollectionId,
+    prompts: {
+      systemMessage: judge.systemPrompt ?? '',
+      collection: judge.collectionPrompt ?? '',
+      content: judge.contentPrompt ?? '',
+      article: judge.contentPrompt ?? '', // Backward compatibility alias
+      review: judge.reviewPrompt ?? '',
+      winner: judge.winnerSelectionPrompt ?? '',
+    },
+  };
+}
+
+/**
+ * Refresh the cached default judge config in Redis.
+ * Call this when the default judge's prompts are updated in the database.
+ */
+export async function refreshDefaultJudgeCache(): Promise<void> {
+  const existingConfig =
+    (await sysRedis.packed.get<Partial<ChallengeConfig>>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG)) ??
+    {};
+
+  const defaultJudgeId = existingConfig.defaultJudgeId ?? dailyChallengeConfig.defaultJudgeId;
+  if (!defaultJudgeId) return;
+
+  const judgingConfig = await fetchJudgingConfigFromDb(defaultJudgeId);
+  if (judgingConfig) {
+    existingConfig.defaultJudge = judgingConfig;
+    await sysRedis.packed.set(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG, existingConfig);
+  }
 }
 
 export type ChallengePrompts = {
   systemMessage: string;
   collection: string;
+  /** @deprecated Use 'content' instead */
   article: string;
+  content: string;
   review: string;
   winner: string;
 };
@@ -104,6 +211,64 @@ type ChallengeType = {
   prompts: ChallengePrompts;
 };
 const DEFAULT_CHALLENGE_TYPE = 'world-morph';
+
+// =============================================================================
+// JudgingConfig - New system replacing ChallengeTypeConfig
+// =============================================================================
+
+/**
+ * Configuration for challenge judging, sourced from ChallengeJudge.
+ * This replaces the legacy ChallengeTypeConfig system.
+ */
+export type JudgingConfig = {
+  judgeId: number;
+  userId: number;
+  sourceCollectionId: number | null; // Collection to pick model resources from
+  prompts: ChallengePrompts;
+};
+
+/**
+ * Get judging configuration from a ChallengeJudge.
+ * This is the new preferred way to get prompts for challenge operations.
+ *
+ * @param judgeId - The ChallengeJudge ID to load config from
+ * @param judgingPromptOverride - Optional per-challenge system prompt override
+ * @returns JudgingConfig with all prompts populated
+ */
+export async function getJudgingConfig(
+  judgeId: number,
+  judgingPromptOverride?: string | null
+): Promise<JudgingConfig> {
+  const judge = await dbRead.challengeJudge.findUnique({
+    where: { id: judgeId },
+    select: {
+      id: true,
+      userId: true,
+      sourceCollectionId: true,
+      systemPrompt: true,
+      collectionPrompt: true,
+      contentPrompt: true,
+      reviewPrompt: true,
+      winnerSelectionPrompt: true,
+    },
+  });
+
+  if (!judge) throw new Error(`ChallengeJudge with id ${judgeId} not found`);
+
+  return {
+    judgeId: judge.id,
+    userId: judge.userId,
+    sourceCollectionId: judge.sourceCollectionId,
+    prompts: {
+      systemMessage: judge.systemPrompt ?? '',
+      collection: judge.collectionPrompt ?? '',
+      content: judge.contentPrompt ?? '',
+      article: judge.contentPrompt ?? '', // Backward compatibility alias
+      review: judgingPromptOverride ?? judge.reviewPrompt ?? '',
+      winner: judge.winnerSelectionPrompt ?? '',
+    },
+  };
+}
 type ChallengeTypeRow = {
   name: string;
   collectionId: number;
@@ -114,6 +279,10 @@ type ChallengeTypeRow = {
   promptReview: string;
   promptWinner: string;
 };
+/**
+ * @deprecated Use getJudgingConfig() instead. This function reads from the
+ * legacy ChallengeType table which is being replaced by ChallengeJudge.
+ */
 export async function getChallengeTypeConfig(type: string | undefined) {
   type ??= DEFAULT_CHALLENGE_TYPE;
   const rows = await dbRead.$queryRaw<ChallengeTypeRow[]>`
@@ -148,6 +317,7 @@ export async function getChallengeTypeConfig(type: string | undefined) {
       systemMessage: result.promptSystemMessage,
       collection: result.promptCollection,
       article: result.promptArticle,
+      content: result.promptArticle, // Alias for backward compatibility
       review: result.promptReview,
       winner: result.promptWinner,
     },
@@ -160,6 +330,9 @@ export type Prize = {
 };
 
 /**
+ * @deprecated Use getJudgingConfig() instead. This function only returns
+ * partial prompt overrides and is being replaced by the full JudgingConfig system.
+ *
  * Get judge prompt overrides for a challenge.
  * Override priority (highest → lowest):
  *   1. Challenge.judgingPrompt (per-challenge override) → used as systemPrompt

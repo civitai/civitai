@@ -37,8 +37,8 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getChallengeConfig,
   setChallengeConfig,
-  getChallengeTypeConfig,
-  getJudgePrompts,
+  getJudgingConfig,
+  type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { generateWinners } from '~/server/games/daily-challenge/generative-content';
 import { getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
@@ -49,6 +49,23 @@ import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
+
+/**
+ * Get judging config efficiently using cached default judge when possible.
+ * Falls back to DB query if the judge differs from default or there's a prompt override.
+ */
+async function getJudgingConfigForChallenge(
+  judgeId: number,
+  cachedDefaultJudge: JudgingConfig | null,
+  judgingPromptOverride?: string | null
+): Promise<JudgingConfig> {
+  // If this is the default judge and no prompt override, use cached config
+  if (cachedDefaultJudge && judgeId === cachedDefaultJudge.judgeId && !judgingPromptOverride) {
+    return cachedDefaultJudge;
+  }
+  // Otherwise fetch from DB (different judge or has prompt override)
+  return getJudgingConfig(judgeId, judgingPromptOverride);
+}
 
 // Helper to parse composite cursor (format: "sortValue:id")
 function parseChallengeCursor(
@@ -926,8 +943,18 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
   // Get challenge config for judging
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
-  const judgePrompts = await getJudgePrompts(challenge.judgeId, challenge.judgingPrompt);
+  const judgeId = challenge.judgeId ?? config.defaultJudgeId;
+  if (!judgeId)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'No judge assigned and no defaultJudgeId configured',
+    });
+  // Use cached default judge if applicable, otherwise fetch from DB
+  const judgingConfig = await getJudgingConfigForChallenge(
+    judgeId,
+    config.defaultJudge,
+    challenge.judgingPrompt
+  );
 
   log('Ending challenge and picking winners:', challengeId);
 
@@ -964,8 +991,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       summary: entry.summary,
       score: entry.score,
     })),
-    config: challengeTypeConfig,
-    judgePrompts,
+    config: judgingConfig,
   });
 
   // Map winners to entries
@@ -1159,7 +1185,7 @@ export async function getActiveJudges() {
       userId: true,
       name: true,
       bio: true,
-      systemPrompt: true,
+      reviewPrompt: true,
     },
   });
 }
