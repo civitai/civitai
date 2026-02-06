@@ -9,6 +9,16 @@ export enum FLIPT_FEATURE_FLAGS {
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
+  IMAGE_TRAINING = 'image-training',
+  VIDEO_TRAINING = 'video-training',
+  AI_TOOLKIT_TRAINING = 'ai-toolkit-training',
+  QWEN_TRAINING = 'qwen-training',
+  FLUX2_TRAINING = 'flux2-training',
+  ZIMAGE_TURBO_TRAINING = 'zimage-turbo-training',
+  ZIMAGE_BASE_TRAINING = 'zimage-base-training',
+  FLUX2_KLEIN_TRAINING = 'flux2-klein-training',
+  LTX2_TRAINING = 'ltx2-training',
+  IMAGE_TRAINING_RESULTS = 'image-training-results',
 }
 
 class FliptSingleton {
@@ -17,6 +27,10 @@ class FliptSingleton {
 
   private constructor() {
     // Prevent direct construction
+  }
+
+  static getInstanceSync(): FliptClient | null {
+    return this.instance;
   }
 
   static async getInstance(): Promise<FliptClient | null> {
@@ -112,5 +126,44 @@ export async function getFliptVariant(
     return null;
   }
 }
+
+/**
+ * Synchronous Flipt evaluation. Returns `boolean` if Flipt is ready,
+ * or `null` if the client hasn't initialized yet (caller should fall back).
+ */
+export function isFliptSync(
+  flag: string,
+  entityId = 'global',
+  context: Record<string, string> = {}
+): boolean | null {
+  const fliptClient = FliptSingleton.getInstanceSync();
+  if (!fliptClient) return null;
+
+  try {
+    const evaluation = fliptClient.evaluateBoolean({
+      flagKey: flag,
+      entityId,
+      context,
+    });
+
+    return evaluation.enabled;
+  } catch (e) {
+    // Flag may not exist in Flipt — return null so caller falls back
+    return null;
+  }
+}
+
+export async function ensureFliptInitialized(): Promise<void> {
+  await FliptSingleton.getInstance();
+}
+
+// Eagerly start Flipt initialization when this module is first imported
+FliptSingleton.getInstance()
+  .then((client) => {
+    console.log(`[Flipt] Eager init complete — client ${client ? 'READY' : 'UNAVAILABLE'}`);
+  })
+  .catch(() => {
+    console.log('[Flipt] Eager init failed');
+  });
 
 export default FliptSingleton;

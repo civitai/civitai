@@ -29,6 +29,8 @@ const featureAvailability = [
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
+// Tracks which flags have ENV overrides so Flipt is skipped for those
+const envOverriddenFlags = new Set<string>();
 const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
@@ -41,16 +43,16 @@ const featureFlags = createFeatureFlags({
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
-  imageTraining: ['user'],
-  videoTraining: ['public'],
-  aiToolkitTraining: ['mod'],
-  qwenTraining: ['mod'],
-  flux2Training: ['public'],
-  zimageturboTraining: ['mod'],
-  zimagebaseTraining: ['mod'],
-  flux2kleinTraining: ['mod'],
-  ltx2Training: ['mod'],
-  imageTrainingResults: ['user'],
+  imageTraining: { availability: ['user'], fliptKey: 'image-training' },
+  videoTraining: { availability: ['public'], fliptKey: 'video-training' },
+  aiToolkitTraining: { availability: ['mod'], fliptKey: 'ai-toolkit-training' },
+  qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
+  flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
+  zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
+  zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
+  flux2kleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
+  ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
+  imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
@@ -238,12 +240,66 @@ function checkRegionAccess(
   return true;
 }
 
+// Lazy-loaded flipt module (server-only — avoids pulling ~/env/server into client bundle)
+type FliptModule = typeof import('~/server/flipt/client');
+let _fliptModule: FliptModule | null = null;
+let _fliptLoading: Promise<FliptModule | null> | null = null;
+
+function loadFliptModule(): Promise<FliptModule | null> {
+  if (_fliptModule) return Promise.resolve(_fliptModule);
+  if (typeof window !== 'undefined') return Promise.resolve(null);
+  if (!_fliptLoading) {
+    _fliptLoading = import('~/server/flipt/client')
+      .then((mod) => {
+        _fliptModule = mod;
+        return mod;
+      })
+      .catch(() => null);
+  }
+  return _fliptLoading;
+}
+
+// Kick off loading immediately on server
+if (typeof window === 'undefined') {
+  loadFliptModule();
+}
+
+function buildFliptContext(user?: SessionUser): Record<string, string> {
+  const ctx: Record<string, string> = {};
+  if (user) {
+    ctx.userId = String(user.id);
+    ctx.isModerator = String(!!user.isModerator);
+    ctx.tier = user.tier ?? 'free';
+    ctx.isLoggedIn = 'true';
+    if (user.permissions) ctx.permissions = user.permissions.join(',');
+  } else {
+    ctx.isLoggedIn = 'false';
+  }
+  return ctx;
+}
+
 const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext
 ) => {
   const feature = featureFlags[key];
   const { availability } = feature;
+
+  // Priority: ENV override > Flipt > static availability
+  // Check Flipt if flag has a fliptKey and is not env-overridden
+  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
+    const fliptResult = _fliptModule.isFliptSync(
+      feature.fliptKey,
+      user ? String(user.id) : 'anonymous',
+      buildFliptContext(user)
+    );
+    if (fliptResult !== null) {
+      console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult} [from Flipt]`);
+      return fliptResult;
+    }
+    console.log(`[Flipt] ${key} (${feature.fliptKey}) => null [falling back to static]`);
+    // Fall through to static evaluation as fallback
+  }
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
@@ -337,6 +393,15 @@ export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
   return obj as FeatureAccess;
 }
 
+export async function getFeatureFlagsAsync(ctx: FeatureAccessContext) {
+  const flipt = await loadFliptModule();
+  if (flipt) {
+    await flipt.ensureFliptInitialized();
+    console.log('[Flipt] getFeatureFlagsAsync — Flipt initialized, evaluating flags');
+  }
+  return getFeatureFlags(ctx);
+}
+
 export const toggleableFeatures = Object.entries(featureFlags)
   .filter(([, value]) => value.toggleable)
   .map(([key, value]) => ({
@@ -361,12 +426,13 @@ type FeatureFlag = {
   toggleable: boolean;
   default?: boolean;
   regions?: GeoRestrictions; // Optional geo restrictions
+  fliptKey?: string; // Optional Flipt flag key for remote toggling
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties
 type FeatureFlagInput =
   | FeatureAvailability[] // Legacy format: ['public']
-  | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
+  | (Partial<FeatureFlag> & { availability: FeatureAvailability[] } & { fliptKey?: string }); // Object with at least availability
 
 function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };
@@ -385,7 +451,10 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
-    if (override) features[key as keyof T].availability = override;
+    if (override) {
+      features[key as keyof T].availability = override;
+      envOverriddenFlags.add(key);
+    }
   }
 
   return features;
