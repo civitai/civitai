@@ -19,6 +19,7 @@ type ArticleChallenge = {
   userId: number;
   publishedAt: Date | null;
   modelId: number | null;
+  resourceUserId: number | null;
   collectionId: number | null;
   theme: string | null;
   invitation: string | null;
@@ -83,9 +84,6 @@ async function migrateChallenge(
     const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
     const visibleAt = challengeDate;
 
-    // Submission window for collection metadata
-    const submissionStartDate = startsAt;
-    const submissionEndDate = endsAt;
     const maxItemsPerUser = entryPrizeRequirement * 2;
 
     // Get model version IDs for the model (if modelId exists)
@@ -127,7 +125,9 @@ async function migrateChallenge(
         status,
         metadata: {
           articleId: article.articleId,
-          modelId: article.modelId,
+          resourceModelId: article.modelId,
+          resourceUserId: article.resourceUserId,
+          challengeType: 'world-morph',
           migratedAt: new Date().toISOString(),
         } as Prisma.InputJsonValue,
       },
@@ -145,10 +145,11 @@ async function migrateChallenge(
             ? CollectionWriteConfiguration.Review
             : CollectionWriteConfiguration.Private,
         metadata: {
+          modelId: article.modelId,
           maxItemsPerUser,
-          submissionStartDate,
-          submissionEndDate,
-          forcedBrowsingLevel: 1,
+          endsAt,
+          disableTagRequired: true,
+          disableFollowOnSubmission: true,
         },
       },
     });
@@ -164,7 +165,7 @@ async function migrateChallenge(
   }
 }
 
-async function migrateAllChallenges() {
+async function migrateActiveChallenge() {
   const articles = await dbRead.$queryRaw<ArticleChallenge[]>`
     SELECT
       a.id as "articleId",
@@ -174,6 +175,7 @@ async function migrateAllChallenges() {
       a."userId",
       a."publishedAt",
       cast(a.metadata->'modelId' as int) as "modelId",
+      cast(a.metadata->'userId' as int) as "resourceUserId",
       cast(a.metadata->'collectionId' as int) as "collectionId",
       (a.metadata->>'theme') as theme,
       (a.metadata->>'invitation') as invitation,
@@ -185,7 +187,9 @@ async function migrateAllChallenges() {
     FROM "CollectionItem" ci
     JOIN "Article" a ON a.id = ci."articleId"
     WHERE ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
+      AND (a.metadata->>'status') = 'active'
     ORDER BY a."publishedAt" DESC NULLS LAST
+    LIMIT 1
   `;
 
   let migrated = 0;
@@ -203,6 +207,6 @@ async function migrateAllChallenges() {
 }
 
 export default WebhookEndpoint(async (req, res) => {
-  const result = await migrateAllChallenges();
+  const result = await migrateActiveChallenge();
   res.status(200).json(result);
 });
