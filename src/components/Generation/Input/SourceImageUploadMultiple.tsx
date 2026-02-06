@@ -433,7 +433,7 @@ export function SourceImageUploadMultiple({
               ? {
                   status: 'error',
                   url: previewUrl,
-                  src: file,
+                  src,
                   error: response.blockedReason ?? 'Upload failed',
                   id: uploadId,
                   slotIndex,
