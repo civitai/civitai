@@ -31,6 +31,7 @@ export const createSoraInput = defineHandler<SoraCtx, SoraInput>((data, ctx) => 
     resolution: 'resolution' in data ? data.resolution : undefined,
     usePro: 'usePro' in data ? data.usePro : undefined,
     duration: 'duration' in data ? data.duration : undefined,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
   };
 

@@ -40,6 +40,7 @@ export const createHunyuanInput = defineHandler<HunyuanCtx, HunyuanVdeoGenInput>
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     steps: 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
   }) as HunyuanVdeoGenInput;

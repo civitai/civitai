@@ -23,6 +23,7 @@ export const createMochiInput = defineHandler<MochiCtx, MochiVideoGenInput>((dat
   return removeEmpty({
     engine: 'mochi',
     prompt: data.prompt,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as MochiVideoGenInput;

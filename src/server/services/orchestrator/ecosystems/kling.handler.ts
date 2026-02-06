@@ -47,6 +47,7 @@ export const createKlingInput = defineHandler<KlingCtx, KlingVideoGenInput>((dat
     duration: 'duration' in data ? data.duration : undefined,
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     images: hasImages ? data.images?.map((x) => x.url) : undefined,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as KlingVideoGenInput;

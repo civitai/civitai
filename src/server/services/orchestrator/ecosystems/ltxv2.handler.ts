@@ -37,6 +37,7 @@ export const createLTXV2Input = defineHandler<LTXV2Ctx, ComfyLtx2CreateVideoInpu
     guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
     steps: 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: Object.keys(loras).length > 0 ? loras : undefined,
   }) as ComfyLtx2CreateVideoInput;

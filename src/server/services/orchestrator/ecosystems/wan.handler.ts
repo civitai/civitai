@@ -90,6 +90,7 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
     prompt: data.prompt,
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     duration: 'duration' in data ? data.duration : undefined,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
   };

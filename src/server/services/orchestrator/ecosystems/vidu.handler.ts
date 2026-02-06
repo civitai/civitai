@@ -28,6 +28,7 @@ export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, 
     style: 'style' in data ? data.style : undefined,
     movementAmplitude: 'movementAmplitude' in data ? data.movementAmplitude : undefined,
     images: hasImages ? data.images?.map((x) => x.url) : undefined,
+    quantity: data.quantity ?? 1,
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as ViduVideoGenInput;
