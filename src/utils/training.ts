@@ -18,7 +18,7 @@ export const trainingBaseModelTypesImage = [
   'flux2klein',
   'chroma',
   'qwen',
-  'zimageturbo',
+  'zimage',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2'] as const;
 export const trainingBaseModelType = [
@@ -219,12 +219,22 @@ export const trainingModelInfo: {
   zimageturbo: {
     label: 'Turbo',
     pretty: 'ZImageTurbo',
-    type: 'zimageturbo',
+    type: 'zimage',
     description: 'High-speed image generation with turbo acceleration.',
     air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
     baseModel: 'ZImageTurbo',
     isNew: true,
     aiToolkit: { ecosystem: 'zimageturbo' },
+  },
+  zimagebase: {
+    label: 'Base',
+    pretty: 'ZImageBase',
+    type: 'zimage',
+    description: 'High-quality image generation with the ZImage Base model.',
+    air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
+    baseModel: 'ZImageBase',
+    isNew: true,
+    aiToolkit: { ecosystem: 'zimagebase' },
   },
   //
   flux2klein_4b: {
@@ -388,7 +398,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'wan',
     'chroma',
     'qwen',
-    'zimageturbo',
+    'zimage',
     'flux2klein',
     'ltx2',
   ];
@@ -397,7 +407,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
 
 // Check if AI Toolkit is mandatory (cannot use other engines)
 export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
-  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimageturbo', 'flux2klein', 'ltx2'];
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimage', 'flux2klein', 'ltx2'];
   return mandatoryTypes.includes(baseType);
 };
 
@@ -407,7 +417,7 @@ export const getDefaultEngine = (
   baseModel?: string
 ): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
-  if (baseType === 'zimageturbo') return 'ai-toolkit'; // ZImageTurbo requires AI Toolkit
+  if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'flux2klein') return 'ai-toolkit'; // Flux2 Klein requires AI Toolkit
   if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';

@@ -368,7 +368,6 @@ export function GenerationFormContent() {
           ...params,
           // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
           disablePoi: browsingSettingsAddons.settings.disablePoi,
-          experimental: data.enhancedCompatibility,
         },
         tips,
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -726,7 +725,7 @@ export function GenerationFormContent() {
               isSeedream ||
               isZImageTurbo ||
               isZImageBase;
-            const disableDenoise = !features.denoise || isFluxKontext;
+            const disableDenoise = !features.denoise || isFluxKontext || isImageGen;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
               (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&

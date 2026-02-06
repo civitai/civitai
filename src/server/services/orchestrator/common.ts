@@ -445,12 +445,18 @@ function getResources(step: WorkflowStep) {
 
 function combineResourcesWithInputResource(
   allResources: GenerationResource[],
-  resources: { id: number; strength?: number | null }[]
+  resources: { id: number; strength?: number | null; epochNumber?: number }[]
 ): GenerationResource[] {
-  return allResources
-    .map((resource) => {
-      const original = resources.find((x) => x.id === resource.id);
-      if (!original) return null;
+  return resources
+    .map((original) => {
+      // Match by both id and epochNumber to handle the same model version used with different epochs
+      const resource =
+        allResources.find(
+          (x) =>
+            x.id === original.id &&
+            (x.epochDetails?.epochNumber ?? x.epochNumber) === original.epochNumber
+        ) ?? allResources.find((x) => x.id === original.id);
+      if (!resource) return null;
       return { ...resource, strength: original.strength ?? resource.strength };
     })
     .filter(isDefined);
@@ -580,9 +586,9 @@ function formatVideoGenStep({
       ? params.resources
       : (metadata.resources as unknown as ResourceInput[])) ?? // this casting is not ideal, but we are now assigning a resource value here when we call createVideoGenStep
     []
-  ).map(({ air, strength }) => {
-    const { version } = parseAIR(air);
-    return { id: version, strength };
+  ).map((r) => {
+    const version = 'air' in r ? parseAIR(r.air).version : ((r as any).id as number);
+    return { id: version, strength: r.strength };
   });
 
   // it's silly, but video resources are nested in the params, where image resources are not
@@ -830,9 +836,21 @@ function formatWorkflowStepOutput({
 
       if (!width || !height) {
         if (params.aspectRatio) {
-          const split = params.aspectRatio.split(':').map(Number);
-          width = split[0];
-          height = split[1];
+          // Handle both string ("16:9") and object ({ value, width, height }) formats
+          if (typeof params.aspectRatio === 'object') {
+            width = (params.aspectRatio as any).width;
+            height = (params.aspectRatio as any).height;
+            if (!width || !height) {
+              const arValue = (params.aspectRatio as any).value ?? '1:1';
+              const split = arValue.split(':').map(Number);
+              width = split[0];
+              height = split[1];
+            }
+          } else {
+            const split = params.aspectRatio.split(':').map(Number);
+            width = split[0];
+            height = split[1];
+          }
         } else {
           const image = params.sourceImage ?? params.images?.[0];
           if (image) {

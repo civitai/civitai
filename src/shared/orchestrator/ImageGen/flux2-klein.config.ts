@@ -111,7 +111,7 @@ export const flux2KleinSchedules = [
   'discrete',
   'karras',
   'exponential',
-  'ays',
+  // 'ays', // Disabled - fails 100% of the time
 ] as const satisfies SdCppSchedule[];
 
 const baseSchema = z.object({
@@ -154,7 +154,7 @@ export const flux2KleinConfig = ImageGenConfig({
     // For distilled variants (9b, 4b), enforce default steps and cfgScale
     const variantDefaults = flux2KleinVariantDefaults[modelVersion];
     const isDistilled = variantDefaults.hideAdvanced;
-    const steps = isDistilled ? variantDefaults.steps : params.steps;
+    const steps = params.steps;
     const cfgScale = isDistilled ? variantDefaults.cfgScale : params.cfgScale;
 
     return {

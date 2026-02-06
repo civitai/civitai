@@ -96,11 +96,10 @@ export const getTrainingFileEpochNumberDetails = (
   file: { type: string | ModelFileType; metadata: FileMetadata },
   epochNumber?: number
 ) => {
-  console.log('getTrainingFileEpochNumberDetails');
   const epoch =
     file.metadata.trainingResults?.epochs?.find((e) =>
       'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
-    ) ?? file.metadata.trainingResults?.epochs?.pop();
+    ) ?? file.metadata.trainingResults?.epochs?.at(-1);
 
   if (!epoch) return null;
 

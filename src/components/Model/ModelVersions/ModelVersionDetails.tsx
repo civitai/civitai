@@ -122,7 +122,6 @@ import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
-import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 
 export function ModelVersionDetails({
   model,
@@ -1526,9 +1525,9 @@ export function ModelVersionDetails({
               limit={CAROUSEL_LIMIT}
             />
           )}
-          {model.descriptionJson ? (
+          {model.description ? (
             <ContentClamp maxHeight={460}>
-              <RenderRichText content={model.descriptionJson} />
+              <RenderHtml html={model.description} />
             </ContentClamp>
           ) : null}
         </Stack>

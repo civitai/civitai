@@ -80,24 +80,25 @@ export const creatorsProgramDistribute = createJob(
         allAffectedUsers.add(participant.userId);
         availablePoolValue -= participantShare;
       }
+
+      // Send pending cash transactions from bank with retry
+      const monthStr = dayjs(month).format('YYYY-MM');
+      await withRetries(async () => {
+        createBuzzTransactionMany(
+          allAllocations.map(([userId, amount]) => ({
+            type: TransactionType.Compensation,
+            toAccountType: 'cashPending',
+            toAccountId: userId,
+            fromAccountId: 0, // central bank
+            amount,
+            description: `Compensation Pool for ${monthStr}`,
+            details: { month },
+            externalTransactionId: `comp-pool-${monthStr}-${userId}-${buzzType}`,
+          }))
+        );
+      });
     }
 
-    // Send pending cash transactions from bank with retry
-    const monthStr = dayjs(month).format('YYYY-MM');
-    await withRetries(async () => {
-      createBuzzTransactionMany(
-        allAllocations.map(([userId, amount]) => ({
-          type: TransactionType.Compensation,
-          toAccountType: 'cashPending',
-          toAccountId: userId,
-          fromAccountId: 0, // central bank
-          amount,
-          description: `Compensation Pool for ${monthStr}`,
-          details: { month },
-          externalTransactionId: `comp-pool-${monthStr}-${userId}`,
-        }))
-      );
-    });
 
     // Bust user caches
     const affectedUsers = Array.from(allAffectedUsers);
