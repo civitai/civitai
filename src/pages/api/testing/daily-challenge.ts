@@ -70,7 +70,7 @@ const schema = z
     if (data.action === 'winners' && !data.challengeId) {
       ctx.addIssue({
         code: 'custom',
-        message: 'collectionId is required for action winners',
+        message: 'challengeId is required for action winners',
       });
     }
 
@@ -109,7 +109,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       const result = await generateArticle({
         resource,
         image,
-        collectionId: 123,
         challengeDate: new Date(),
         prizes: config.prizes,
         entryPrize: config.entryPrize,

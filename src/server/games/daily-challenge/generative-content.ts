@@ -74,7 +74,6 @@ type GenerateArticleInput = {
     id: number;
     url: string;
   };
-  collectionId: number;
   challengeDate: Date;
   prizes: Array<Prize>;
   entryPrizeRequirement: number;
@@ -90,7 +89,6 @@ type GeneratedArticle = {
 export async function generateArticle({
   resource,
   image,
-  collectionId,
   challengeDate,
   prizes,
   entryPrizeRequirement,
@@ -131,21 +129,23 @@ export async function generateArticle({
     ],
   });
 
-  // TODO - Append submission and prize details
   const markdownContent = stripLeadingWhitespace(`
     ${result.body}
 
-    ## 🤔 How to create entries
-    New to these challenges? Here are a few ways to get started:
-    - Visit the [resource page](/models/${
+    ## 🤔 How to Create Entries
+    Use the **Generate** button on this page to open the on-site generator with the challenge model pre-loaded. Type in your prompt, generate images, and submit your favorites!
+
+    You can also:
+    - Browse the [model gallery](/models/${
       resource.modelId
-    }) and click the "Create" button and type in your own prompt to generate images.
-    - Browse the [gallery](/models/${
-      resource.modelId
-    }) and click the "Remix" button on the top right of any image to create your own version.
-    - Download the resource from the [resource page](/models/${
-      resource.modelId
-    }) and use it on your local machine.
+    }) and **Remix** any image to create your own version.
+    - Upload images you've created locally using the challenge [model](/models/${resource.modelId}).
+
+    ## 📝 How to Submit
+    Click the **Submit** button on this page to open the submission panel. You can submit entries from:
+    - **From Generator** — select images you just generated on-site.
+    - **My Images** — choose from your existing image library.
+    - **Upload New** — drag and drop images created outside of Civitai.
 
     ## ⭐ Prizes
     **Winners will receive**:
@@ -158,21 +158,14 @@ export async function generateArticle({
       )
       .join('\n')}
 
-    Winners will be announced at 12am UTC in this article and notified via on-site notification.
+    Winners will be announced at 12am UTC and notified via on-site notification.
 
     **Participation rewards!**:
-    If you submit ${entryPrizeRequirement} entries, you'll be rewarded <span style="color:#228be6">${
+    Submit ${entryPrizeRequirement} valid entries to earn <span style="color:#228be6">${
     entryPrize.buzz
   } Buzz</span> and ${
     entryPrize.points
-  } Challenge Points. Make sure your entries follow the rules though, because only valid entries will be rewarded!
-
-
-    ## 📝 How to Enter
-    Simply head to the [image collection](/collections/${collectionId}) then click the blue **Submit an Entry** button!
-
-
-    ### 👉 [Submit Entries](/collections/${collectionId}) 👈
+  } Challenge Points. Only entries that follow the rules below count toward this reward!
 
     ## 📜 Rules
     1. All entries must be submitted before the end of ${dayjs(challengeDate).format(
@@ -180,7 +173,7 @@ export async function generateArticle({
     )} (23:59 UTC).
     2. All submitted images must be SFW (PG) and adhere to our **Terms of Service**.
     3. Participants can submit up to ${entryPrizeRequirement * 2} images.
-    4. Low-effort entries are not allowed. Submitting entries with no relevance to the current contest, with the intention of farming Participation Reward Buzz, may result in a Contest Ban. Contest-banned users will be prohibited from participating in all future Civitai contests!
+    4. Low-effort entries are not allowed. Submitting entries with no relevance to the challenge, with the intention of farming Participation Reward Buzz, may result in a Contest Ban. Contest-banned users will be prohibited from participating in all future Civitai contests!
     5. Entries must use the provided model.
   `);
   const content = await markdownToHtml(markdownContent);

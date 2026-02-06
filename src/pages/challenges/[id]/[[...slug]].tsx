@@ -84,7 +84,7 @@ import { ImageSort } from '~/server/common/enums';
 /** Open the generation panel for a challenge's model versions. */
 function openChallengeGenerator(modelVersionIds: number[]) {
   if (modelVersionIds.length) {
-    generationPanel.open({ type: 'modelVersions', ids: modelVersionIds });
+    generationPanel.open({ type: 'modelVersions', ids: modelVersionIds.slice(0, 1) });
   } else {
     generationPanel.open();
   }
@@ -672,18 +672,20 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                         </Text>
                       </div>
                     </Link>
-                    <ActionIcon
-                      variant="subtle"
-                      color="blue"
-                      size="md"
-                      onClick={() => {
-                        generationPanel.open({ type: 'modelVersion', id: m.versionId });
-                        generationFormStore.setType('image');
-                      }}
-                      aria-label={`Generate with ${m.name}`}
-                    >
-                      <IconSparkles size={16} />
-                    </ActionIcon>
+                    {isActive && (
+                      <ActionIcon
+                        variant="subtle"
+                        color="blue"
+                        size="md"
+                        onClick={() => {
+                          generationPanel.open({ type: 'modelVersion', id: m.versionId });
+                          generationFormStore.setType('image');
+                        }}
+                        aria-label={`Generate with ${m.name}`}
+                      >
+                        <IconBrush size={16} />
+                      </ActionIcon>
+                    )}
                   </div>
                 ))}
               </ScrollArea.Autosize>

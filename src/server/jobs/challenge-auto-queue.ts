@@ -10,6 +10,8 @@ import { dbRead } from '~/server/db/client';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
+import { createUpcomingChallenge } from './daily-challenge-processing';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 const log = createLogger('jobs:challenge-auto-queue', 'cyan');
 
@@ -56,6 +58,12 @@ async function getDatesWithoutChallenges(horizonDays: number): Promise<Date[]> {
  * Main job function - ensures challenges exist for the next 30 days
  */
 async function ensureChallengeHorizon() {
+  // Check if challenge platform is enabled
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
+    log('Challenge platform disabled, skipping job');
+    return { created: 0, skipped: 0 };
+  }
+
   log('Starting challenge auto-queue job...');
 
   // Get dates that need challenges
@@ -68,27 +76,47 @@ async function ensureChallengeHorizon() {
 
   log(`Found ${missingDates.length} dates without challenges`);
 
-  // For now, we'll call the existing createUpcomingChallenge logic
-  // which creates one challenge at a time. The daily setup job handles this.
-  // This job just reports the gaps.
+  // Create challenges for missing dates with rate limiting
+  // Process sequentially to avoid overwhelming AI APIs
+  let created = 0;
+  let failed = 0;
 
-  // In a full implementation, we would:
-  // 1. Import createUpcomingChallenge and refactor it to accept a targetDate
-  // 2. Call it for each missing date
-  // 3. Handle rate limits to avoid overwhelming AI APIs
+  for (const targetDate of missingDates) {
+    try {
+      const dateStr = dayjs(targetDate).format('YYYY-MM-DD');
+      log(`Creating challenge for ${dateStr}...`);
 
-  // For Phase 1, we just ensure the existing job runs daily and
-  // log any gaps for moderators to fill manually
+      const challenge = await createUpcomingChallenge(targetDate);
 
-  const gaps = missingDates.map((d) => dayjs(d).format('YYYY-MM-DD'));
-  log(`Challenge gaps detected for dates: ${gaps.join(', ')}`);
+      if (challenge) {
+        created++;
+        log(`Successfully created challenge for ${dateStr}`);
+      } else {
+        log(`Skipped ${dateStr} (may already exist)`);
+      }
 
-  // Return stats for monitoring
+      // Rate limit: wait between AI API calls to avoid overwhelming services
+      // Each challenge makes 2 AI calls (generateCollectionDetails, generateArticle)
+      if (missingDates.indexOf(targetDate) < missingDates.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay
+      }
+    } catch (error) {
+      failed++;
+      const err = error as Error;
+      log(
+        `Failed to create challenge for ${dayjs(targetDate).format('YYYY-MM-DD')}: ${err.message}`
+      );
+      // Continue with next date instead of failing entire job
+    }
+  }
+
+  log(`Auto-queue complete: ${created} created, ${failed} failed`);
+
   return {
     horizonDays: HORIZON_DAYS,
-    missingDates: gaps,
-    missingCount: missingDates.length,
-    filledCount: HORIZON_DAYS - missingDates.length,
+    created,
+    failed,
+    filledCount: HORIZON_DAYS - missingDates.length + created,
   };
 }
 

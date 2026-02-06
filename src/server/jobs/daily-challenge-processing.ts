@@ -68,10 +68,8 @@ async function getJudgingConfigForChallenge(
   return getJudgingConfig(judgeId, judgingPromptOverride);
 }
 
-const dailyChallengeSetupJob = createJob(
-  'daily-challenge-setup',
-  '0 22 * * *',
-  createUpcomingChallenge
+const dailyChallengeSetupJob = createJob('daily-challenge-setup', '0 22 * * *', async () =>
+  createUpcomingChallenge()
 );
 
 const processDailyChallengeEntriesJob = createJob(
@@ -84,21 +82,44 @@ export const dailyChallengeJobs = [dailyChallengeSetupJob, processDailyChallenge
 
 // Job Functions
 // ----------------------------------------------
-export async function createUpcomingChallenge() {
+export async function createUpcomingChallenge(targetDate?: Date) {
   // Check if challenge platform is enabled
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
     log('Challenge platform disabled, skipping job');
     return;
   }
 
-  // Stop if we already have any upcoming system challenges (scheduled or active)
-  // This allows user-created challenges to run without blocking system challenge creation
-  const existingSystemChallenge = await getUpcomingSystemChallenge();
-  if (existingSystemChallenge) {
-    log('System challenge already exists, skipping creation');
-    return existingSystemChallenge;
+  // Use provided targetDate or calculate from current time (legacy behavior)
+  const challengeDate = targetDate
+    ? dayjs(targetDate).utc().startOf('day').toDate()
+    : dayjs()
+        .utc()
+        .add(dayjs().utc().hour() >= 13 ? 1 : 0, 'day')
+        .startOf('day')
+        .toDate();
+
+  // If targetDate provided, check if challenge already exists for that specific date
+  if (targetDate) {
+    const existingForDate = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Challenge"
+      WHERE DATE_TRUNC('day', "startsAt") = DATE_TRUNC('day', ${targetDate}::timestamp)
+      AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+      LIMIT 1
+    `;
+    if (existingForDate.length > 0) {
+      log(`Challenge already exists for ${dayjs(targetDate).format('YYYY-MM-DD')}, skipping`);
+      return undefined;
+    }
+  } else {
+    // Original behavior: check for any upcoming system challenge
+    const existingSystemChallenge = await getUpcomingSystemChallenge();
+    if (existingSystemChallenge) {
+      log('System challenge already exists, skipping creation');
+      return existingSystemChallenge;
+    }
   }
-  log('Setting up daily challenge');
+
+  log('Setting up daily challenge for', dayjs(challengeDate).format('YYYY-MM-DD'));
   const config = await getChallengeConfig();
   if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
   const judgingConfig = config.defaultJudge;
@@ -106,10 +127,7 @@ export async function createUpcomingChallenge() {
   // Validate source collection is configured
   const sourceCollectionId = judgingConfig.sourceCollectionId ?? config.challengeCollectionId;
   if (!sourceCollectionId) throw new Error('No sourceCollectionId configured for judge');
-
-  // Get date of the challenge (should be the next day if it's past 1pm UTC)
-  const addDays = dayjs().utc().hour() >= 13 ? 1 : 0;
-  const challengeDate = dayjs().utc().add(addDays, 'day').startOf('day').toDate();
+  log('Using source collection:', sourceCollectionId);
 
   // Pick Resource
   // ----------------------------------------------
@@ -121,6 +139,7 @@ export async function createUpcomingChallenge() {
     WHERE "collectionId" = ${sourceCollectionId}
     AND ci."status" = 'ACCEPTED'
   `;
+  log('Total users in source collection:', users.length);
 
   // Get Users on cooldown (from Challenge table)
   const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
@@ -130,11 +149,17 @@ export async function createUpcomingChallenge() {
     WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
     AND c."startsAt" > now() - ${config.userCooldown}::interval
   `;
+  const cooldownUserIds = cooldownUsers.map((u) => u.userId).filter(isDefined);
+  log('Users on cooldown:', cooldownUserIds.length, `(cooldown: ${config.userCooldown})`);
 
   // Remove users on cooldown
-  const availableUsers = users.filter(
-    (user) => !cooldownUsers.some((cu) => cu.userId === user.userId)
-  );
+  const availableUsers = users.filter((user) => !cooldownUserIds.includes(user.userId));
+  log('Available users after cooldown filter:', availableUsers.length);
+  if (!availableUsers.length) {
+    throw new Error(
+      `No available users found: ${users.length} total users, ${cooldownUserIds.length} on cooldown (source collection: ${sourceCollectionId})`
+    );
+  }
 
   // Get resources on cooldown (from Challenge table via model versions)
   const cooldownResources = (
@@ -147,13 +172,18 @@ export async function createUpcomingChallenge() {
       AND c."startsAt" > now() - ${config.resourceCooldown}::interval
     `
   ).map((x) => x.modelId);
+  log('Resources on cooldown:', cooldownResources.length, `(cooldown: ${config.resourceCooldown})`);
 
   let resource: SelectedResource | undefined;
   let randomUser: { userId: number } | undefined;
   let attempts = 0;
   while (!resource) {
     attempts++;
-    if (attempts > 100) throw new Error('Failed to find resource');
+    if (attempts > 100) {
+      throw new Error(
+        `Failed to find resource after 100 attempts (${availableUsers.length} available users, ${cooldownResources.length} resources on cooldown)`
+      );
+    }
 
     // Pick a user
     randomUser = getRandom(availableUsers);
@@ -194,6 +224,12 @@ export async function createUpcomingChallenge() {
     `;
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
+  log(
+    `Selected resource after ${attempts} attempt(s):`,
+    `modelId=${resource.modelId}`,
+    `title="${resource.title}"`,
+    `creator="${resource.creator}"`
+  );
 
   // Get published model version IDs for this model
   const modelVersionIds = (
@@ -205,18 +241,22 @@ export async function createUpcomingChallenge() {
       ORDER BY mv.index ASC
     `
   ).map((v) => v.id);
+  log('Model version IDs:', modelVersionIds.length);
 
   // Get cover of resource
   const image = await getCoverOfModel(resource.modelId);
+  log('Cover image:', image.id);
 
   // Setup Collection
   // ----------------------------------------------
   // Generate title and description
+  log('Generating collection details via AI...');
   const collectionDetails = await generateCollectionDetails({
     resource,
     image,
     config: judgingConfig,
   });
+  log('Collection details generated:', collectionDetails.name);
 
   // Create collection cover image
   const coverImageId = await duplicateImage(image.id, judgingConfig.userId);
@@ -256,21 +296,26 @@ export async function createUpcomingChallenge() {
   };
 
   // Generate challenge content (title, description, invitation, theme)
+  log('Generating challenge article via AI...');
+  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
   const challengeContent = await generateArticle({
     resource,
     image,
-    collectionId: collection.id,
-    challengeDate,
+    challengeDate: endsAt,
     ...prizeConfig,
     config: judgingConfig,
   });
+  log(
+    'Challenge article generated:',
+    `title="${challengeContent.title}"`,
+    `theme="${challengeContent.theme}"`
+  );
 
   // Create Challenge record
-  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
   const challengeId = await createChallengeRecord({
     startsAt: challengeDate,
     endsAt,
-    visibleAt: challengeDate, // Visible when it starts
+    visibleAt: dayjs(challengeDate).subtract(3, 'day').toDate(), // Visible 3 days before start
     title: challengeContent.title,
     description: challengeContent.content,
     theme: challengeContent.theme,
@@ -305,6 +350,16 @@ export async function createUpcomingChallenge() {
 
   const challenge = await getChallengeById(challengeId);
   if (!challenge) throw new Error('Failed to create challenge');
+
+  log(
+    'Challenge creation complete:',
+    `id=${challengeId}`,
+    `date=${dayjs(challengeDate).format('YYYY-MM-DD')}`,
+    `title="${challengeContent.title}"`,
+    `collectionId=${collection.id}`,
+    `visibleAt=${dayjs(challengeDate).subtract(3, 'day').format('YYYY-MM-DD')}`
+  );
+
   return challengeToLegacyFormat(challenge);
 }
 
@@ -389,12 +444,31 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
   // NSFW check uses bitwise AND: (imageLevel & allowedLevels) > 0 means the image's level is allowed
+
+  // Log diagnostic info for debugging model version validation issues
+  log('Review parameters:', {
+    challengeId: currentChallenge.challengeId,
+    modelVersionIds: currentChallenge.modelVersionIds,
+    modelVersionIdsLength: currentChallenge.modelVersionIds.length,
+    allowedNsfwLevel,
+    challengeDate: currentChallenge.date,
+  });
+
+  // Handle empty modelVersionIds array: empty means "allow all models" (same as client-side logic)
+  // When modelVersionIds is populated, we check if the image has a matching resource
+  // When modelVersionIds is empty, we skip the resource check entirely (allow all)
+  const hasModelVersionRestriction = currentChallenge.modelVersionIds.length > 0;
+
   const reviewedCount = await dbWrite.$executeRaw`
     WITH source AS (
       SELECT
       i.id,
       (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
-      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id) as "hasResource",
+      ${
+        hasModelVersionRestriction
+          ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id)`
+          : Prisma.sql`true`
+      } as "hasResource",
       i."createdAt" >= ${currentChallenge.date} as "isRecent"
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"
