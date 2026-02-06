@@ -265,7 +265,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2vid:ref2vid': {
-    label: 'Reference Video',
+    label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'image-to-video',
     ecosystemIds: [ECO.Vidu],

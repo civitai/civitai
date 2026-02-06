@@ -22,6 +22,7 @@ import {
 import type { InputWrapperProps } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconUpload, IconVideo, IconX } from '@tabler/icons-react';
+import type { DragEvent } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { isOrchestratorUrl, maxVideoFileSize } from '~/server/common/constants';
@@ -209,6 +210,13 @@ export function VideoInput({
         // Dropzone when no video is selected
         <Dropzone
           onDrop={handleDrop}
+          onDropCapture={async (e: DragEvent) => {
+            const url = e.dataTransfer.getData('text/uri-list');
+            if (url?.length) {
+              setUploadError(null);
+              onChange?.({ url, metadata: undefined });
+            }
+          }}
           accept={VIDEO_MIME_TYPE}
           maxFiles={1}
           disabled={disabled || isUploading}

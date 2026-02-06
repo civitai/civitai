@@ -137,8 +137,8 @@ type SourceImageUploadContext = {
   annotations?: ImageAnnotation[] | null;
   disabled?: boolean;
   slots?: ImageSlot[];
-  /** Upload a file to a specific slot (for slots mode) */
-  handleSlotUpload?: (slotIndex: number, file: File) => Promise<void>;
+  /** Upload a file or URL to a specific slot (for slots mode) */
+  handleSlotUpload?: (slotIndex: number, src: File | string) => Promise<void>;
   /** Remove image from a specific slot */
   removeSlotItem?: (slotIndex: number) => void;
 };
@@ -405,15 +405,15 @@ export function SourceImageUploadMultiple({
   }
 
   // Slots mode: upload to a specific slot
-  async function handleSlotUpload(slotIndex: number, file: File) {
-    // Check file size
-    if (file.size > maxOrchestratorImageFileSize) {
+  async function handleSlotUpload(slotIndex: number, src: File | string) {
+    // Check file size (only for File objects)
+    if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
       setError(`Images should not exceed ${maxSizeFormatted}`);
       return;
     }
 
     setError(null);
-    const previewUrl = URL.createObjectURL(file);
+    const previewUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
     const uploadId = getRandomId();
 
     // Add uploading state for this slot
@@ -424,7 +424,7 @@ export function SourceImageUploadMultiple({
     });
 
     try {
-      const response = await uploadOrchestratorImage(file, uploadId);
+      const response = await uploadOrchestratorImage(src, uploadId);
 
       if (response.blockedReason || !response.available || !response.url) {
         setUploads((items) =>
@@ -553,6 +553,11 @@ export function SourceImageUploadMultiple({
             .slice(0, 1);
           if (toUpload.length > 0) await handleChange(toUpload);
         }}
+        onDropCapture={async (e: DragEvent) => {
+          setError(null);
+          const url = e.dataTransfer.getData('text/uri-list');
+          if (url?.length) await handleChange([url]);
+        }}
         accept={IMAGE_MIME_TYPE}
         maxFiles={1}
         disabled={disabled}
@@ -628,6 +633,10 @@ export function SourceImageUploadMultiple({
           <Dropzone
             onDrop={async (files) => {
               if (files.length > 0) await handleSlotUpload(slotIndex, files[0]);
+            }}
+            onDropCapture={async (e: DragEvent) => {
+              const url = e.dataTransfer.getData('text/uri-list');
+              if (url?.length) await handleSlotUpload(slotIndex, url);
             }}
             accept={IMAGE_MIME_TYPE}
             maxFiles={1}
