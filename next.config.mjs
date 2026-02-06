@@ -100,6 +100,7 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       serverSourceMaps: true,
+      instrumentationHook: true, // Enable instrumentation.ts for OTEL
       largePageDataBytes: 512 * 100000,
       optimizePackageImports: [
         '@civitai/client',

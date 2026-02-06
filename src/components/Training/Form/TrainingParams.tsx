@@ -424,6 +424,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx2: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       zimageturbo: { all: { default: 1e-4 } },
       zimagebase: { all: { default: 1e-4 } },
+      flux2klein_4b: { all: { default: 1e-4 } },
+      flux2klein_9b: { all: { default: 1e-4 } },
     },
   },
   {
@@ -469,6 +471,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx2: { all: { default: 'constant' } },
       zimageturbo: { all: { default: 'constant' } },
       zimagebase: { all: { default: 'constant' } },
+      flux2klein_4b: { all: { default: 'constant' } },
+      flux2klein_9b: { all: { default: 'constant' } },
     },
   },
   {
