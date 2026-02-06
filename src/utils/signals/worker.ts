@@ -43,10 +43,10 @@ function emitCurrentConnectionState() {
   emitter.emit('stateChanged', connectionState);
 }
 
-emitter.on('stateChanged', ({ state, message }) => {
+emitter.on('stateChanged', ({ state, message, ...args }) => {
   connectionState = { state, message };
   if (state === 'closed') connection = null;
-  console.log(`SignalR status: ${state}`, message);
+  console.log(`SignalR status: ${state}`, message, args);
 });
 
 // let interval: NodeJS.Timer | undefined;

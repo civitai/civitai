@@ -139,6 +139,7 @@ export enum SignalMessages {
   TopicUpdate = 'topic:connections',
   NewOrderQueueUpdate = 'new-order:queue-update',
   NewOrderPlayerUpdate = 'new-order:player-update',
+  MetricUpdate = 'metric:update',
   SessionRefresh = 'session:refresh',
 }
 
@@ -357,6 +358,7 @@ export enum SignalTopic {
   ModelVersion = 'model-version', // with :modelVersionId
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
+  Metric = 'metrics', // with :entityType:entityId
 }
 
 export enum NewOrderImageRatingStatus {
