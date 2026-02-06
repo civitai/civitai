@@ -441,15 +441,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   const status = useGenerationStatus();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
-  const {
-    modelId,
-    modelName,
-    modelType,
-    modelVersionId,
-    modelVersionName,
-    modelVersionBaseModel,
-    detected,
-  } = resource;
+  const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
 
   const otherAvailableIDs = useMemo(() => {
     return otherImages
@@ -459,26 +451,11 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         // Skip if target image already has this exact resource
         if (oi.resourceHelper.some((rh) => rh.modelVersionId === modelVersionId)) return null;
 
-        // Check base model compatibility if the resource has a base model
-        if (modelVersionBaseModel) {
-          const targetBaseModel = oi.resourceHelper.find(
-            (r) => r.modelVersionBaseModel
-          )?.modelVersionBaseModel;
-
-          // If target has a base model, check compatibility
-          if (targetBaseModel) {
-            const sourceGroup = getBaseModelGroup(modelVersionBaseModel);
-            const targetGroup = getBaseModelGroup(targetBaseModel);
-            // Skip if base model groups are incompatible
-            if (sourceGroup && targetGroup && sourceGroup !== targetGroup) return null;
-          }
-        }
-
         // Allow copy to eligible images
         return oi.id;
       })
       .filter(isDefined);
-  }, [modelVersionBaseModel, modelVersionId, otherImages, status.limits.resources]);
+  }, [modelVersionId, otherImages, status.limits.resources]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
