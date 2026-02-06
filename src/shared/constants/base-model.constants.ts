@@ -70,6 +70,7 @@ export type BaseModelFamily = keyof typeof baseModelFamilyConfig;
 
 // type BaseModel
 const baseModelConfig = [
+  { name: 'Anima', type: 'image', group: 'Anima' },
   { name: 'AuraFlow', type: 'image', group: 'AuraFlow' },
   { name: 'Chroma', type: 'image', group: 'Chroma' },
   { name: 'CogVideoX', type: 'image', group: 'CogVideoX' },
@@ -167,6 +168,11 @@ type BaseModelGroupConfigEntry = {
 };
 
 export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEntry> = {
+  Anima: {
+    name: 'Anima',
+    description:
+      'Anima is an open-source image generation model with strong foundational capabilities, designed to provide high-quality outputs across a wide range of prompts and styles.',
+  },
   AuraFlow: {
     name: 'AuraFlow',
     description: 'Open-source text-to-image model from Fal.ai with strong prompt adherence',
