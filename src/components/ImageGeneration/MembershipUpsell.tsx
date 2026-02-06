@@ -4,11 +4,22 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAppContext } from '~/providers/AppProvider';
 
-export function MembershipUpsell() {
+/**
+ * Hook to check if membership upsell should be shown.
+ */
+export function useMembershipUpsell() {
   const currentUser = useCurrentUser();
   const { domain } = useAppContext();
 
-  if (!domain.blue || currentUser?.isPaidMember) return null;
+  return {
+    canShow: !!domain.blue && !currentUser?.isPaidMember,
+  };
+}
+
+export function MembershipUpsell() {
+  const { canShow } = useMembershipUpsell();
+
+  if (!canShow) return null;
 
   return (
     <Alert p="sm">

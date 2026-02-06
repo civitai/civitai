@@ -7,7 +7,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { generationFormStore, generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { formatDate, isFutureDate, startOfDay } from '~/utils/date-helpers';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 
@@ -61,14 +61,11 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
   function handleAccept() {
     const modelVersionId = props.resources?.[0].id;
     if (modelVersionId)
-      generationPanel.open({
+      generationGraphPanel.open({
         type: 'modelVersion',
         id: modelVersionId,
       });
-    else generationPanel.open();
-
-    generationFormStore.setType(props.engine ? 'video' : 'image');
-    if (props.engine) generationFormStore.setEngine(props.engine);
+    else generationGraphPanel.open();
 
     onClose();
   }

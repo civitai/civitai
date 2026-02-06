@@ -54,7 +54,7 @@ import { trpc } from '~/utils/trpc';
 import type { ReactNode } from 'react';
 import { useCallback } from 'react';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useBase64Audio } from '~/server/utils/audio-utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { openConfirmModal } from '@mantine/modals';

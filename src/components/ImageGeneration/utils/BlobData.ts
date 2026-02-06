@@ -1,21 +1,8 @@
 import type { ImageBlob, VideoBlob, NsfwLevel, WorkflowStatus } from '@civitai/client';
-import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import type {
-  NormalizedWorkflowStepOutput,
-  WorkflowStepFormatted,
-} from '~/server/services/orchestrator/common';
+import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
+import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
-
-type StepMetadataParams = {
-  width?: number;
-  height?: number;
-  sourceImage?: SourceImageProps | null;
-  images?: SourceImageProps[] | null;
-  engine?: string;
-  aspectRatio?: string;
-  isPrivateGeneration?: boolean;
-};
 
 export class BlobData implements NormalizedWorkflowStepOutput {
   url!: string;
@@ -33,6 +20,8 @@ export class BlobData implements NormalizedWorkflowStepOutput {
   blockedReason?: string | null;
   previewUrl?: string | null;
   previewUrlExpiresAt?: string | null;
+  width!: number;
+  height!: number;
 
   constructor({
     data,
@@ -44,7 +33,7 @@ export class BlobData implements NormalizedWorkflowStepOutput {
     data: ImageBlob | VideoBlob;
     /** workflow.allowMatureContent */
     allowMatureContent?: boolean | null;
-    step: Omit<WorkflowStepFormatted, 'images'>;
+    step: Omit<NormalizedGeneratedImageStep, 'images'>;
     domain: Record<ColorDomain, boolean>;
     nsfwEnabled: boolean;
   }) {

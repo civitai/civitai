@@ -6,7 +6,7 @@ import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/
 import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { ResourceSelectHandler } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import clsx from 'clsx';
 

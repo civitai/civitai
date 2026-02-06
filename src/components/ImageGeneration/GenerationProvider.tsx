@@ -120,7 +120,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     const queuedRequests = queued.map((request) => {
       const images = request.steps.flatMap((s) => s.images);
       const quantity = request.steps.reduce(
-        (acc, step) => acc + (`quantity` in step.params ? step.params.quantity : 1),
+        (acc, step) => acc + (step.params.quantity ?? 1),
         0
       );
       return {

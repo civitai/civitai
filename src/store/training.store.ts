@@ -9,7 +9,7 @@ import type {
   TrainingDetailsObj,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { EngineTypes, TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {

@@ -3,7 +3,7 @@ import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { KontextProvider } from '~/components/Ads/Kontext/KontextProvider';
@@ -74,7 +74,7 @@ export function Queue() {
                 Try{' '}
                 <Text
                   c="blue.4"
-                  onClick={() => generationPanel.setView('generate')}
+                  onClick={() => generationGraphPanel.setView('generate')}
                   style={{ cursor: 'pointer' }}
                   span
                 >

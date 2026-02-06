@@ -20,7 +20,11 @@ const allValidSamplers = [
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
-const transformationSchema = z.looseObject({ type: z.string() });
+const transformationSchema = z.looseObject({
+  workflow: z.string(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  resources: z.array(z.record(z.string(), z.unknown())).optional(),
+});
 
 export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
