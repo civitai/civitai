@@ -263,6 +263,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                   name="coverImage"
                   label="Cover Image"
                   description="Suggested size: 1024x768 (4:3 aspect ratio)"
+                  aspectRatio={3 / 4}
+                  style={{ maxWidth: '100%' }}
                   withAsterisk
                   withNsfwLevel={false}
                   disabled={isTerminal}
