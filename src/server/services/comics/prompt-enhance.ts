@@ -110,7 +110,10 @@ export async function enhanceComicPrompt(input: {
       return fallback;
     }
 
-    return enhanced;
+    // Prepend trained words (e.g. trigger words for LoRAs) same as fallback path
+    return trainedWords && trainedWords.length > 0
+      ? `${trainedWords.join(', ')}, ${enhanced}`
+      : enhanced;
   } catch (error) {
     console.warn('Prompt enhancement failed — using fallback:', error);
     return fallback;

@@ -38,7 +38,7 @@ export function MentionTextarea({
   const extractMention = useCallback((text: string, cursorPos: number) => {
     // Walk backwards from cursor to find @ preceded by whitespace or start-of-string
     const before = text.slice(0, cursorPos);
-    const match = before.match(/(?:^|\s)@(\w*)$/);
+    const match = before.match(/(?:^|\s)@([\w\-\u00C0-\u024F]*)$/);
     if (match) {
       // Calculate start: the match includes the leading space/start, find the @ position
       const atIndex = before.lastIndexOf('@', cursorPos - 1);
@@ -91,8 +91,8 @@ export function MentionTextarea({
     const cursorRect = cursor.getBoundingClientRect();
     const mirrorRect = mirror.getBoundingClientRect();
 
-    // Dynamic line height
-    const lineHeight = parseInt(style.lineHeight) || 20;
+    // Dynamic line height — parseFloat handles "normal", "20px", etc.
+    const lineHeight = parseFloat(style.lineHeight) || parseInt(style.fontSize) * 1.2 || 20;
 
     // Subtract scrollTop to account for textarea scrolling
     const top = cursorRect.top - mirrorRect.top - textarea.scrollTop + lineHeight;
@@ -258,7 +258,7 @@ export function MentionTextarea({
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
             boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
-            zIndex: 100,
+            zIndex: 1000,
             minWidth: 180,
             maxWidth: 280,
             overflow: 'hidden',

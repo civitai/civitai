@@ -56,6 +56,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
 
@@ -102,6 +103,7 @@ function ProjectWorkspace() {
     height: number;
   } | null>(null);
   const [enhanceUploading, setEnhanceUploading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const {
     uploadToCF: uploadEnhanceToCF,
     files: enhanceUploadFiles,
@@ -170,6 +172,10 @@ function ProjectWorkspace() {
     return map;
   }, [allReferences]);
 
+  const handleMutationError = (error: any) => {
+    showErrorNotification({ error, title: 'Something went wrong' });
+  };
+
   const createPanelMutation = trpc.comics.createPanel.useMutation({
     onSuccess: () => {
       closePanelModal();
@@ -180,6 +186,7 @@ function ProjectWorkspace() {
       setPanelMode('generate');
       refetch();
     },
+    onError: handleMutationError,
   });
 
   const enhancePanelMutation = trpc.comics.enhancePanel.useMutation({
@@ -192,6 +199,7 @@ function ProjectWorkspace() {
       resetEnhanceFiles();
       refetch();
     },
+    onError: handleMutationError,
   });
 
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
@@ -199,10 +207,12 @@ function ProjectWorkspace() {
       refetch();
       setDetailPanelId(null);
     },
+    onError: handleMutationError,
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
     onSuccess: () => refetch(),
+    onError: handleMutationError,
   });
 
   const createChapterMutation = trpc.comics.createChapter.useMutation({
@@ -210,14 +220,17 @@ function ProjectWorkspace() {
       setActiveChapterId(data.id);
       refetch();
     },
+    onError: handleMutationError,
   });
 
   const updateChapterMutation = trpc.comics.updateChapter.useMutation({
     onSuccess: () => refetch(),
+    onError: handleMutationError,
   });
 
   const deleteChapterMutation = trpc.comics.deleteChapter.useMutation({
     onSuccess: () => refetch(),
+    onError: handleMutationError,
   });
 
   const updateProjectMutation = trpc.comics.updateProject.useMutation({
@@ -225,10 +238,12 @@ function ProjectWorkspace() {
       closeSettings();
       refetch();
     },
+    onError: handleMutationError,
   });
 
   const deleteReferenceMutation = trpc.comics.deleteReference.useMutation({
     onSuccess: () => refetch(),
+    onError: handleMutationError,
   });
 
   const planPanelsMutation = trpc.comics.planChapterPanels.useMutation({
@@ -236,6 +251,7 @@ function ProjectWorkspace() {
       setSmartPanels(data.panels);
       setSmartStep('review');
     },
+    onError: handleMutationError,
   });
 
   const smartCreateMutation = trpc.comics.smartCreateChapter.useMutation({
@@ -245,6 +261,7 @@ function ProjectWorkspace() {
       resetSmartState();
       refetch();
     },
+    onError: handleMutationError,
   });
 
   const utils = trpc.useUtils();
@@ -274,7 +291,8 @@ function ProjectWorkspace() {
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [generatingPanelIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generatingPanelIds.join(','), utils, refetch]);
 
   // Poll for references in Pending state (waiting for images)
   const processingReferenceIds = useMemo(
@@ -297,7 +315,8 @@ function ProjectWorkspace() {
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [processingReferenceIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processingReferenceIds.join(','), utils, refetch]);
 
   // Focus chapter rename input
   useEffect(() => {
@@ -386,36 +405,46 @@ function ProjectWorkspace() {
   };
 
   const handleGeneratePanel = async () => {
-    if (!prompt.trim() || !activeChapter) return;
-    if (regeneratingPanelId) {
-      await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+    if (!prompt.trim() || !activeChapter || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      if (regeneratingPanelId) {
+        await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+      }
+      createPanelMutation.mutate({
+        chapterId: activeChapter.id,
+        prompt: prompt.trim(),
+        enhance: enhancePrompt,
+        useContext,
+        includePreviousImage,
+        ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-    createPanelMutation.mutate({
-      chapterId: activeChapter.id,
-      prompt: prompt.trim(),
-      enhance: enhancePrompt,
-      useContext,
-      includePreviousImage,
-      ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
-    });
   };
 
   const handleEnhancePanel = async () => {
-    if (!activeChapter || !enhanceSourceImage) return;
-    if (regeneratingPanelId) {
-      await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+    if (!activeChapter || !enhanceSourceImage || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      if (regeneratingPanelId) {
+        await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+      }
+      enhancePanelMutation.mutate({
+        chapterId: activeChapter.id,
+        sourceImageUrl: enhanceSourceImage.url,
+        sourceImageWidth: enhanceSourceImage.width,
+        sourceImageHeight: enhanceSourceImage.height,
+        prompt: prompt.trim() || undefined,
+        enhance: enhancePrompt,
+        useContext,
+        includePreviousImage,
+        ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-    enhancePanelMutation.mutate({
-      chapterId: activeChapter.id,
-      sourceImageUrl: enhanceSourceImage.url,
-      sourceImageWidth: enhanceSourceImage.width,
-      sourceImageHeight: enhanceSourceImage.height,
-      prompt: prompt.trim() || undefined,
-      enhance: enhancePrompt,
-      useContext,
-      includePreviousImage,
-      ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
-    });
   };
 
   const handleEnhanceImageDrop = async (files: File[]) => {
@@ -1265,9 +1294,7 @@ function ProjectWorkspace() {
                 <button
                   className={styles.gradientBtn}
                   onClick={handleGeneratePanel}
-                  disabled={
-                    !prompt.trim() || deletePanelMutation.isPending || createPanelMutation.isPending
-                  }
+                  disabled={!prompt.trim() || isSubmitting || createPanelMutation.isPending}
                 >
                   {createPanelMutation.isPending ? <Loader size={14} color="dark" /> : null}
                   {insertAtPosition != null ? 'Insert' : 'Generate'}
@@ -1419,7 +1446,7 @@ function ProjectWorkspace() {
                 <button
                   className={styles.gradientBtn}
                   onClick={handleEnhancePanel}
-                  disabled={!enhanceSourceImage || enhancePanelMutation.isPending}
+                  disabled={!enhanceSourceImage || isSubmitting || enhancePanelMutation.isPending}
                 >
                   {enhancePanelMutation.isPending ? <Loader size={14} color="dark" /> : null}
                   {regeneratingPanelId ? 'Regenerate' : !prompt.trim() ? 'Add Panel' : 'Enhance'}
@@ -1937,7 +1964,7 @@ function PanelDebugModal({
   onClose: () => void;
 }) {
   const { data, isLoading } = trpc.comics.getPanelDebugInfo.useQuery(
-    { panelId: panelId! },
+    { panelId: panelId ?? '' },
     { enabled: opened && !!panelId }
   );
 

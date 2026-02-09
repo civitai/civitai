@@ -174,10 +174,18 @@ function ComicOverview({ project }: { project: Project }) {
           </div>
 
           {/* CTA */}
-          <Link href={`/comics/read/${project.id}?chapter=0`} className={styles.ctaBtn}>
-            <IconBook size={20} />
-            Start Reading
-          </Link>
+          {project.chapters.length > 0 && (
+            <Link
+              href={`/comics/read/${project.id}?chapter=${Math.max(
+                0,
+                project.chapters.findIndex((ch) => ch.panels.length > 0)
+              )}`}
+              className={styles.ctaBtn}
+            >
+              <IconBook size={20} />
+              Start Reading
+            </Link>
+          )}
 
           {/* Chapter list */}
           <div className={styles.chapterSection}>
@@ -389,15 +397,17 @@ function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: 
             </div>
           ) : (
             <div className={styles.readerPanels}>
-              {panels.map((panel) => (
-                <img
-                  key={panel.id}
-                  src={panel.imageUrl!}
-                  alt={panel.prompt}
-                  loading="lazy"
-                  className={styles.readerPanel}
-                />
-              ))}
+              {panels.map((panel) =>
+                panel.imageUrl ? (
+                  <img
+                    key={panel.id}
+                    src={panel.imageUrl}
+                    alt={panel.prompt}
+                    loading="lazy"
+                    className={styles.readerPanel}
+                  />
+                ) : null
+              )}
             </div>
           )}
         </Container>

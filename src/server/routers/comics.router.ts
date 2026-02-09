@@ -825,8 +825,8 @@ export const comicsRouter = router({
     .input(createChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ input }) => {
-      // Auto-increment position
-      const lastChapter = await dbRead.comicChapter.findFirst({
+      // Auto-increment position (use dbWrite to reduce read→write race window)
+      const lastChapter = await dbWrite.comicChapter.findFirst({
         where: { projectId: input.projectId },
         orderBy: { position: 'desc' },
         select: { position: true },
@@ -934,8 +934,8 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
-      // Get current max position
-      const lastImage = await dbRead.comicReferenceImage.findFirst({
+      // Get current max position (use dbWrite to reduce read→write race window)
+      const lastImage = await dbWrite.comicReferenceImage.findFirst({
         where: { referenceId: input.referenceId },
         orderBy: { position: 'desc' },
         select: { position: true },
@@ -1089,8 +1089,8 @@ export const comicsRouter = router({
         });
         nextPosition = input.position;
       } else {
-        // Appending: use the last panel for context
-        contextPanel = await dbRead.comicPanel.findFirst({
+        // Appending: use the last panel for context (use dbWrite to reduce race window)
+        contextPanel = await dbWrite.comicPanel.findFirst({
           where: { chapterId: input.chapterId },
           orderBy: { position: 'desc' },
           select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
@@ -1851,7 +1851,7 @@ export const comicsRouter = router({
         });
         nextPosition = input.position;
       } else {
-        const lastPanel = await dbRead.comicPanel.findFirst({
+        const lastPanel = await dbWrite.comicPanel.findFirst({
           where: { chapterId: input.chapterId },
           orderBy: { position: 'desc' },
           select: { position: true },
@@ -2101,7 +2101,7 @@ export const comicsRouter = router({
         });
         nextPosition = input.position;
       } else {
-        const lastPanel = await dbRead.comicPanel.findFirst({
+        const lastPanel = await dbWrite.comicPanel.findFirst({
           where: { chapterId: input.chapterId },
           orderBy: { position: 'desc' },
           select: { position: true },
@@ -2222,18 +2222,13 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Find or create thread for this chapter
-      let thread = await dbRead.thread.findUnique({
+      // Find or create thread for this chapter (upsert avoids race condition)
+      const thread = await dbWrite.thread.upsert({
         where: { comicChapterId: input.chapterId },
+        create: { comicChapterId: input.chapterId },
+        update: {},
         select: { id: true, locked: true },
       });
-
-      if (!thread) {
-        thread = await dbWrite.thread.create({
-          data: { comicChapterId: input.chapterId },
-          select: { id: true, locked: true },
-        });
-      }
 
       if (thread.locked) {
         throw throwBadRequestError('Comments are locked for this chapter');
