@@ -34,7 +34,7 @@ function getEligibility(
   const reasons: string[] = [];
 
   // Check NSFW level
-  if ((image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
+  if ((image.nsfwLevel as number) !== 0 && (image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
     reasons.push('NSFW restricted');
   }
 
@@ -46,9 +46,7 @@ function getEligibility(
   // Check model version requirement
   if (challenge.modelVersionIds.length > 0) {
     const imageVersionIds = image.modelVersionIds ?? [];
-    const hasEligibleModel = imageVersionIds.some((vid) =>
-      challenge.modelVersionIds.includes(vid)
-    );
+    const hasEligibleModel = imageVersionIds.some((vid) => challenge.modelVersionIds.includes(vid));
     if (!hasEligibleModel) {
       reasons.push('Wrong model');
     }
@@ -58,10 +56,7 @@ function getEligibility(
 }
 
 function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: Props) {
-  const eligibility = useMemo(
-    () => getEligibility(image, challenge),
-    [image, challenge]
-  );
+  const eligibility = useMemo(() => getEligibility(image, challenge), [image, challenge]);
 
   const handleClick = useCallback(() => {
     if (!eligibility.eligible) return;

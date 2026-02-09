@@ -686,7 +686,7 @@ function GeneratorImageCard({
     const reasons: string[] = [];
 
     // Check NSFW level
-    if (challenge && numericNsfwLevel !== null) {
+    if (challenge && numericNsfwLevel !== null && (numericNsfwLevel as number) !== 0) {
       if ((numericNsfwLevel & challenge.allowedNsfwLevel) === 0) {
         reasons.push('NSFW restricted');
       }

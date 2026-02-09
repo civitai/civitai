@@ -2018,7 +2018,9 @@ export const validateContestCollectionEntry = async ({
     });
 
     // filter images that are above the forced browsing level
-    const invalidImages = images.filter((image) => !allowedLevels.includes(image.nsfwLevel));
+    const invalidImages = images.filter(
+      (image) => image.nsfwLevel !== 0 && !allowedLevels.includes(image.nsfwLevel)
+    );
     if (invalidImages.length > 0) {
       throw throwBadRequestError(
         `Some images have a higher rating than the allowed for the contest. Please ensure all images have a rating of ${allowedLevels

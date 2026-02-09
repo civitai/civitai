@@ -1246,7 +1246,7 @@ export async function checkImageEligibility(
     const reasons: string[] = [];
 
     // Check NSFW level
-    if ((image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
+    if (image.nsfwLevel !== 0 && (image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
       reasons.push('NSFW restricted');
     }
 
