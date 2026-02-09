@@ -20,14 +20,10 @@ export const expireStrikesJob = createJob('expire-strikes', '0 2 * * *', async (
  * Process timed mutes that have expired and unmute users.
  * Runs hourly at the top of each hour.
  */
-export const processTimedUnmutesJob = createJob(
-  'process-timed-unmutes',
-  '0 * * * *',
-  async () => {
-    const { unmutedCount } = await processTimedUnmutes();
-    if (unmutedCount > 0) {
-      log(`Unmuted ${unmutedCount} user(s) whose timed mutes expired`);
-    }
-    return { unmutedCount };
+export const processTimedUnmutesJob = createJob('process-timed-unmutes', '0 * * * *', async () => {
+  const { unmutedCount } = await processTimedUnmutes();
+  if (unmutedCount > 0) {
+    log(`Unmuted ${unmutedCount} user(s) whose timed mutes expired`);
   }
-);
+  return { unmutedCount };
+});

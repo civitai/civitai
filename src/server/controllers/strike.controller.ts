@@ -1,6 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import type { Context } from '~/server/createContext';
-import type { CreateStrikeInput, GetStrikesInput, GetMyStrikesInput, VoidStrikeInput } from '~/server/schema/strike.schema';
+import type {
+  CreateStrikeInput,
+  GetStrikesInput,
+  GetMyStrikesInput,
+  VoidStrikeInput,
+} from '~/server/schema/strike.schema';
 import {
   createStrike,
   getStrikesForMod,
@@ -39,11 +44,7 @@ export const voidStrikeHandler = async ({
   }
 };
 
-export const getStrikesHandler = async ({
-  input,
-}: {
-  input: GetStrikesInput;
-}) => {
+export const getStrikesHandler = async ({ input }: { input: GetStrikesInput }) => {
   try {
     return await getStrikesForMod(input);
   } catch (error) {
@@ -52,13 +53,12 @@ export const getStrikesHandler = async ({
   }
 };
 
-export const getUserStrikeHistoryHandler = async ({
-  input,
-}: {
-  input: { userId: number };
-}) => {
+export const getUserStrikeHistoryHandler = async ({ input }: { input: { userId: number } }) => {
   try {
-    return await getStrikesForUser(input.userId, { includeExpired: true });
+    return await getStrikesForUser(input.userId, {
+      includeExpired: true,
+      includeInternalNotes: true, // Mod-only endpoint
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -73,20 +73,21 @@ export const getMyStrikesHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await getStrikesForUser(ctx.user.id, { includeExpired: input.includeExpired });
+    return await getStrikesForUser(ctx.user.id, {
+      includeExpired: input.includeExpired,
+      includeInternalNotes: false, // Never expose internal notes to users
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
 
-export const getMyStrikeSummaryHandler = async ({
-  ctx,
-}: {
-  ctx: DeepNonNullable<Context>;
-}) => {
+export const getMyStrikeSummaryHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const { strikes, totalActivePoints, nextExpiry } = await getStrikesForUser(ctx.user.id);
+    const { strikes, totalActivePoints, nextExpiry } = await getStrikesForUser(ctx.user.id, {
+      includeInternalNotes: false,
+    });
     return {
       activeStrikes: strikes.filter((s) => s.status === 'Active').length,
       totalActivePoints,

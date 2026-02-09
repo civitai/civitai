@@ -1,11 +1,16 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { strikeIssuedEmail } from '~/server/email/templates';
-import type { CreateStrikeInput, GetStrikesInput, VoidStrikeInput } from '~/server/schema/strike.schema';
+import type {
+  CreateStrikeInput,
+  GetStrikesInput,
+  VoidStrikeInput,
+} from '~/server/schema/strike.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -49,19 +54,36 @@ export async function getActiveStrikePoints(userId: number): Promise<number> {
 
 /**
  * Get strikes for a specific user.
+ * @param includeInternalNotes - Only true for mod-facing queries. Users must NOT see internal notes.
  */
 export async function getStrikesForUser(
   userId: number,
-  opts?: { includeExpired?: boolean }
+  opts?: { includeExpired?: boolean; includeInternalNotes?: boolean }
 ) {
-  const { includeExpired = false } = opts ?? {};
+  const { includeExpired = false, includeInternalNotes = false } = opts ?? {};
 
   const strikes = await dbRead.userStrike.findMany({
     where: {
       userId,
       ...(!includeExpired && { status: StrikeStatus.Active }),
     },
-    include: {
+    select: {
+      id: true,
+      userId: true,
+      reason: true,
+      status: true,
+      points: true,
+      description: true,
+      internalNotes: includeInternalNotes,
+      entityType: true,
+      entityId: true,
+      reportId: true,
+      createdAt: true,
+      expiresAt: true,
+      voidedAt: true,
+      voidedBy: true,
+      voidReason: true,
+      issuedBy: true,
       issuedByUser: {
         select: { id: true, username: true },
       },
@@ -75,10 +97,13 @@ export async function getStrikesForUser(
   const activeStrikes = strikes.filter(
     (s) => s.status === StrikeStatus.Active && s.expiresAt > new Date()
   );
-  const nextExpiry = activeStrikes.length > 0
-    ? activeStrikes.reduce((earliest, s) =>
-        s.expiresAt < earliest ? s.expiresAt : earliest, activeStrikes[0].expiresAt)
-    : null;
+  const nextExpiry =
+    activeStrikes.length > 0
+      ? activeStrikes.reduce(
+          (earliest, s) => (s.expiresAt < earliest ? s.expiresAt : earliest),
+          activeStrikes[0].expiresAt
+        )
+      : null;
 
   return { strikes, totalActivePoints, nextExpiry };
 }
@@ -135,12 +160,14 @@ export async function getStrikesForMod(input: GetStrikesInput) {
 // Escalation Engine
 // ============================================================================
 
-export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged';
+export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
 /**
  * Evaluate strike escalation for a user based on their total active points.
- * - 2 points: 3-day mute (timer resets/extends each time)
+ * Handles both escalation (mute/flag) and de-escalation (unmute when points drop).
  * - 3+ points: Indefinite mute + flagged for review
+ * - 2 points: 3-day mute (timer resets/extends each time)
+ * - <2 points: If currently strike-muted, unmute and clear flag
  */
 export async function evaluateStrikeEscalation(
   userId: number
@@ -161,6 +188,8 @@ export async function evaluateStrikeEscalation(
 
   if (totalPoints >= 3) {
     // Indefinite mute + flag for review
+    const alreadyFlagged = user.muted && currentMeta.strikeFlaggedForReview;
+
     await updateUserById({
       id: userId,
       data: {
@@ -175,13 +204,16 @@ export async function evaluateStrikeEscalation(
       updateSource: 'strike-escalation',
     });
 
-    await createNotification({
-      type: 'strike-escalation-muted',
-      category: NotificationCategory.System,
-      key: `strike-escalation-muted:${userId}:${Date.now()}`,
-      userId,
-      details: { muteDays: 'indefinite' },
-    });
+    // Only send notification if this is a new escalation, not a duplicate
+    if (!alreadyFlagged) {
+      await createNotification({
+        type: 'strike-escalation-muted',
+        category: NotificationCategory.System,
+        key: `strike-escalation-muted:${userId}:${Date.now()}`,
+        userId,
+        details: { muteDays: 'indefinite' },
+      });
+    }
 
     await invalidateSession(userId);
 
@@ -189,27 +221,70 @@ export async function evaluateStrikeEscalation(
   } else if (totalPoints >= 2) {
     // 3-day mute (always reset/extend timer)
     const muteExpiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const alreadyTimedMuted = user.muted && user.muteExpiresAt !== null;
 
     await updateUserById({
       id: userId,
       data: {
         muted: true,
         muteExpiresAt,
+        // Clear the review flag if points dropped below 3
+        ...(currentMeta.strikeFlaggedForReview && {
+          meta: {
+            ...currentMeta,
+            strikeFlaggedForReview: false,
+          },
+        }),
       },
       updateSource: 'strike-escalation',
     });
 
-    await createNotification({
-      type: 'strike-escalation-muted',
-      category: NotificationCategory.System,
-      key: `strike-escalation-muted:${userId}:${Date.now()}`,
-      userId,
-      details: { muteDays: 3 },
-    });
+    // Only send notification if this is a new mute, not just extending an existing one
+    if (!alreadyTimedMuted) {
+      await createNotification({
+        type: 'strike-escalation-muted',
+        category: NotificationCategory.System,
+        key: `strike-escalation-muted:${userId}:${Date.now()}`,
+        userId,
+        details: { muteDays: 3 },
+      });
+    }
 
     await invalidateSession(userId);
 
     return { totalPoints, action: 'muted' };
+  }
+
+  // De-escalation: if user is currently muted from strikes, unmute them.
+  // Only unmute if the mute was from strikes (has muteExpiresAt set) or
+  // was flagged for review. Don't touch manual mutes (muteExpiresAt === null
+  // and no strike flag).
+  if (user.muted && (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)) {
+    await updateUserById({
+      id: userId,
+      data: {
+        muted: false,
+        muteExpiresAt: null,
+        ...(currentMeta.strikeFlaggedForReview && {
+          meta: {
+            ...currentMeta,
+            strikeFlaggedForReview: false,
+          },
+        }),
+      },
+      updateSource: 'strike-de-escalation',
+    });
+
+    await createNotification({
+      type: 'strike-de-escalation-unmuted',
+      category: NotificationCategory.System,
+      key: `strike-de-escalation-unmuted:${userId}:${Date.now()}`,
+      userId,
+      details: {},
+    });
+
+    await refreshSession(userId);
+    return { totalPoints, action: 'unmuted' };
   }
 
   return { totalPoints, action: 'none' };
@@ -222,10 +297,28 @@ export async function evaluateStrikeEscalation(
 /**
  * Create a new strike for a user.
  */
-export async function createStrike(
-  input: CreateStrikeInput & { issuedBy?: number }
-) {
-  const { userId, reason, points, description, internalNotes, entityType, entityId, reportId, expiresInDays, issuedBy } = input;
+export async function createStrike(input: CreateStrikeInput & { issuedBy?: number }) {
+  const {
+    userId,
+    reason,
+    points,
+    description,
+    internalNotes,
+    entityType,
+    entityId,
+    reportId,
+    expiresInDays,
+    issuedBy,
+  } = input;
+
+  // Validate user exists
+  const userExists = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { id: true },
+  });
+  if (!userExists) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: `User ${userId} not found` });
+  }
 
   // Rate limit check for non-manual strikes
   if (reason !== StrikeReason.ManualModAction) {
@@ -261,34 +354,41 @@ export async function createStrike(
   // Get updated active points for notification/email
   const activePoints = await getActiveStrikePoints(userId);
 
-  // Send in-app notification
-  await createNotification({
-    type: 'strike-issued',
-    category: NotificationCategory.System,
-    key: `strike-issued:${userId}:${strike.id}`,
-    userId,
-    details: {
-      description,
-      points,
-    },
-  });
-
-  // Send email if user has an email address
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { email: true, username: true },
-  });
-
-  if (user?.email) {
-    await strikeIssuedEmail.send({
-      to: user.email,
-      username: user.username ?? 'User',
-      reason,
-      description,
-      points,
-      activePoints,
-      expiresAt,
+  // Send notifications — don't let notification failures crash strike creation
+  try {
+    await createNotification({
+      type: 'strike-issued',
+      category: NotificationCategory.System,
+      key: `strike-issued:${userId}:${strike.id}`,
+      userId,
+      details: {
+        description,
+        points,
+      },
     });
+  } catch (error) {
+    console.error(`Failed to send strike notification for user ${userId}:`, error);
+  }
+
+  try {
+    const user = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { email: true, username: true },
+    });
+
+    if (user?.email) {
+      await strikeIssuedEmail.send({
+        to: user.email,
+        username: user.username ?? 'User',
+        reason,
+        description,
+        points,
+        activePoints,
+        expiresAt,
+      });
+    }
+  } catch (error) {
+    console.error(`Failed to send strike email for user ${userId}:`, error);
   }
 
   return strike;
@@ -296,21 +396,40 @@ export async function createStrike(
 
 /**
  * Void an existing strike.
+ * Uses atomic updateMany with status guard to prevent race conditions.
  */
-export async function voidStrike(
-  input: VoidStrikeInput & { voidedBy: number }
-) {
+export async function voidStrike(input: VoidStrikeInput & { voidedBy: number }) {
   const { strikeId, voidReason, voidedBy } = input;
 
-  // Update the strike
-  const strike = await dbWrite.userStrike.update({
-    where: { id: strikeId },
+  // Atomic update: only void if currently Active (prevents race conditions)
+  const { count } = await dbWrite.userStrike.updateMany({
+    where: { id: strikeId, status: StrikeStatus.Active },
     data: {
       status: StrikeStatus.Voided,
       voidedAt: new Date(),
       voidedBy,
       voidReason,
     },
+  });
+
+  if (count === 0) {
+    // Determine why: not found vs wrong status
+    const existing = await dbRead.userStrike.findUnique({
+      where: { id: strikeId },
+      select: { status: true },
+    });
+    if (!existing) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Strike not found' });
+    }
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Cannot void a strike with status "${existing.status}". Only active strikes can be voided.`,
+    });
+  }
+
+  // Fetch the updated strike for return value and userId
+  const strike = await dbRead.userStrike.findUniqueOrThrow({
+    where: { id: strikeId },
   });
 
   // Send notification to user
@@ -362,19 +481,24 @@ export async function expireStrikes(): Promise<{ expiredCount: number }> {
     },
   });
 
-  // Send notifications for each expired strike
+  // Send notifications and re-evaluate escalation for affected users
   const uniqueUserIds = [...new Set(strikesToExpire.map((s) => s.userId))];
-  await Promise.all(
-    uniqueUserIds.map((userId) =>
-      createNotification({
+  for (const userId of uniqueUserIds) {
+    try {
+      await createNotification({
         type: 'strike-expired',
         category: NotificationCategory.System,
         key: `strike-expired:${userId}:${Date.now()}`,
         userId,
         details: {},
-      })
-    )
-  );
+      });
+    } catch (error) {
+      console.error(`Failed to send strike-expired notification for user ${userId}:`, error);
+    }
+
+    // Re-evaluate escalation — may de-escalate (unmute) if points dropped below threshold
+    await evaluateStrikeEscalation(userId);
+  }
 
   return { expiredCount: strikesToExpire.length };
 }
@@ -399,9 +523,15 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
     return { unmutedCount: 0 };
   }
 
-  // Unmute each user and refresh their session
-  await Promise.all(
-    usersToUnmute.map(async ({ id }) => {
+  // Re-evaluate escalation for each user before unmuting.
+  // If they still have >= 2 active strike points, they should stay muted.
+  let unmutedCount = 0;
+  for (const { id } of usersToUnmute) {
+    const { action } = await evaluateStrikeEscalation(id);
+
+    // evaluateStrikeEscalation handles re-muting if points are still high.
+    // Only manually unmute if escalation returned 'none' (points < 2) or 'unmuted'.
+    if (action === 'none') {
       await updateUserById({
         id,
         data: {
@@ -411,8 +541,13 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
         updateSource: 'timed-unmute',
       });
       await refreshSession(id);
-    })
-  );
+      unmutedCount++;
+    } else if (action === 'unmuted') {
+      // evaluateStrikeEscalation already unmuted them
+      unmutedCount++;
+    }
+    // If action is 'muted' or 'muted-and-flagged', escalation re-applied the mute
+  }
 
-  return { unmutedCount: usersToUnmute.length };
+  return { unmutedCount };
 }

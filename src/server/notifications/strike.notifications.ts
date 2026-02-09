@@ -24,11 +24,14 @@ export const strikeNotifications = createNotificationProcessor({
     }),
   },
   'strike-escalation-muted': {
-    displayName: 'Account Temporarily Muted',
+    displayName: 'Account Muted',
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your account has been temporarily muted for ${details.muteDays} days due to accumulated strikes. Please review our Terms of Service.`,
+      message:
+        details.muteDays === 'indefinite'
+          ? 'Your account has been muted due to accumulated strikes and is pending review. Please review our Terms of Service.'
+          : `Your account has been temporarily muted for ${details.muteDays} days due to accumulated strikes. Please review our Terms of Service.`,
       url: '/user/account#strikes',
     }),
   },
@@ -38,6 +41,16 @@ export const strikeNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: 'A strike on your account has expired. Your account standing has improved.',
+      url: '/user/account#strikes',
+    }),
+  },
+  'strike-de-escalation-unmuted': {
+    displayName: 'Account Unmuted',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: () => ({
+      message:
+        'Your account mute has been lifted as your strike points have decreased. Please continue to follow our Terms of Service.',
       url: '/user/account#strikes',
     }),
   },
