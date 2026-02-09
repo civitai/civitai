@@ -717,8 +717,8 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.1 S', 'Flux.1 D'],
       },
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Flux.1 Krea'] },
     ],
-    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Flux.1 Krea'] }],
   },
   {
     group: 'FluxKrea',
@@ -727,8 +727,8 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.1 Krea'],
       },
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Flux.1 D'] },
     ],
-    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Flux.1 D'] }],
   },
   {
     group: 'Flux1Kontext',
