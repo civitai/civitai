@@ -337,6 +337,8 @@ export const userMeta = z.object({
     })
     .optional(),
   membershipChangedAt: z.date().optional(),
+  strikeFlaggedForReview: z.boolean().optional(),
+  strikeFlaggedAt: z.date().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

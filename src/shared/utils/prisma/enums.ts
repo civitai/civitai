@@ -859,3 +859,23 @@ export const UserRestrictionStatus = {
 } as const;
 
 export type UserRestrictionStatus = (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
+
+export const StrikeReason = {
+  BlockedContent: 'BlockedContent',
+  RealisticMinorContent: 'RealisticMinorContent',
+  CSAMContent: 'CSAMContent',
+  TOSViolation: 'TOSViolation',
+  HarassmentContent: 'HarassmentContent',
+  ProhibitedContent: 'ProhibitedContent',
+  ManualModAction: 'ManualModAction',
+} as const;
+
+export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];
+
+export const StrikeStatus = {
+  Active: 'Active',
+  Expired: 'Expired',
+  Voided: 'Voided',
+} as const;
+
+export type StrikeStatus = (typeof StrikeStatus)[keyof typeof StrikeStatus];

@@ -264,6 +264,7 @@ model User {
   mutedAt                 DateTime? /// Updated via trigger
   muted                   Boolean                @default(false)
   muteConfirmedAt         DateTime?
+  muteExpiresAt           DateTime? /// For timed mutes from strike escalation
   bannedAt                DateTime?
   autoplayGifs            Boolean?               @default(true)
   filePreferences         Json                   @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
@@ -384,6 +385,9 @@ model User {
   challengesCreated          Challenge[]
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
+  strikes                     UserStrike[]                    @relation("userStrikes")
+  issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
+  voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
 
   @@index([deletedAt])
 }
@@ -4884,4 +4888,48 @@ model PromptAllowlist {
 
   @@unique([trigger, category])
   @@index([category])
+}
+
+// Strike system — graduated user enforcement with points-based escalation
+enum StrikeReason {
+  BlockedContent
+  RealisticMinorContent
+  CSAMContent
+  TOSViolation
+  HarassmentContent
+  ProhibitedContent
+  ManualModAction
+}
+
+enum StrikeStatus {
+  Active
+  Expired
+  Voided
+}
+
+model UserStrike {
+  id            Int           @id @default(autoincrement())
+  userId        Int
+  user          User          @relation("userStrikes", fields: [userId], references: [id], onDelete: Cascade)
+  reason        StrikeReason
+  status        StrikeStatus  @default(Active)
+  points        Int           @default(1)
+  description   String        @db.VarChar(1000)
+  internalNotes String?       @db.VarChar(2000)
+  entityType    EntityType?
+  entityId      Int?
+  reportId      Int?
+  createdAt     DateTime      @default(now())
+  expiresAt     DateTime
+  voidedAt      DateTime?
+  voidedBy      Int?
+  voidedByUser  User?         @relation("strikeVoidedBy", fields: [voidedBy], references: [id], onDelete: SetNull)
+  voidReason    String?       @db.VarChar(1000)
+  issuedBy      Int?
+  issuedByUser  User?         @relation("strikeIssuedBy", fields: [issuedBy], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([userId, expiresAt])
+  @@index([status])
+  @@index([createdAt])
 }
