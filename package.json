@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1402",
+  "version": "5.0.1403",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -105,6 +105,7 @@
     "@next/third-parties": "^15.0.3",
     "@number-flow/react": "^0.5.7",
     "@okikio/sharedworker": "^1.1.0",
+    "@openrouter/sdk": "^0.5.1",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.211.0",
     "@opentelemetry/exporter-logs-otlp-proto": "^0.211.0",

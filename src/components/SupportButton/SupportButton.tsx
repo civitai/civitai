@@ -32,7 +32,7 @@ import clsx from 'clsx';
 type Variant = 'primary' | 'gift' | 'heart' | 'sparkle' | 'royal' | 'premium';
 type SupportButtonOption = {
   text: string;
-  icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+  icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   variant: Variant;
   href: string;
 };
@@ -124,7 +124,7 @@ export const SupportButton = () => {
 interface SupportButtonBaseProps
   extends ButtonProps,
     Omit<React.ComponentPropsWithoutRef<'button'>, keyof ButtonProps> {
-  icon?: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+  icon?: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   position?: FloatingPosition;
   classVariant?: Variant;
 }

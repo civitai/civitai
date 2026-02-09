@@ -170,6 +170,10 @@ export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incide
 
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
+export type ChallengeSource = "System" | "Mod" | "User";
+
+export type ChallengeStatus = "Scheduled" | "Active" | "Completed" | "Cancelled";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -441,6 +445,9 @@ export interface User {
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
   userRestrictions?: UserRestriction[];
+  challengesCreated?: Challenge[];
+  challengeWins?: ChallengeWinner[];
+  challengeJudges?: ChallengeJudge[];
 }
 
 export interface CustomerSubscription {
@@ -1165,6 +1172,8 @@ export interface Image {
   tagsNew?: TagsOnImageNew[];
   imageResourceNew?: ImageResourceNew[];
   imageTagsForReview?: ImageTagForReview[];
+  challengesCover?: Challenge[];
+  challengeWins?: ChallengeWinner[];
 }
 
 export interface ImageTagForReview {
@@ -1984,6 +1993,7 @@ export interface Collection {
   rank?: CollectionRank | null;
   stats?: CollectionStat | null;
   metrics?: CollectionMetric[];
+  challenges?: Challenge[];
 }
 
 export interface CollectionItem {
@@ -2786,6 +2796,77 @@ export interface ReportAutomated {
 
 export interface RestrictedBaseModels {
   baseModel: string;
+}
+
+export interface Challenge {
+  id: number;
+  startsAt: Date;
+  endsAt: Date;
+  visibleAt: Date;
+  title: string;
+  description: string | null;
+  theme: string | null;
+  invitation: string | null;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  nsfwLevel: number;
+  modelVersionIds: number[];
+  allowedNsfwLevel: number;
+  judgingPrompt: string | null;
+  reviewPercentage: number;
+  maxReviews: number | null;
+  collectionId: number | null;
+  collection?: Collection | null;
+  maxEntriesPerUser: number;
+  prizes: JsonValue;
+  entryPrize: JsonValue | null;
+  entryPrizeRequirement: number;
+  prizePool: number;
+  operationBudget: number;
+  operationSpent: number;
+  createdById: number;
+  createdBy?: User;
+  source: ChallengeSource;
+  judgeId: number | null;
+  judge?: ChallengeJudge | null;
+  status: ChallengeStatus;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  winners?: ChallengeWinner[];
+}
+
+export interface ChallengeJudge {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  bio: string | null;
+  sourceCollectionId: number | null;
+  systemPrompt: string | null;
+  collectionPrompt: string | null;
+  contentPrompt: string | null;
+  reviewPrompt: string | null;
+  winnerSelectionPrompt: string | null;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  challenges?: Challenge[];
+}
+
+export interface ChallengeWinner {
+  id: number;
+  challengeId: number;
+  challenge?: Challenge;
+  userId: number;
+  user?: User;
+  imageId: number;
+  image?: Image;
+  place: number;
+  buzzAwarded: number;
+  pointsAwarded: number;
+  reason: string | null;
+  createdAt: Date;
 }
 
 export interface QuestionRank {
