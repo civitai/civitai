@@ -88,6 +88,7 @@ const baseModelConfig = [
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
   { name: 'Illustrious', type: 'image', group: 'Illustrious', ecosystem: 'sdxl' },
   { name: 'Imagen4', type: 'image', group: 'Imagen4', hidden: true },
+  { name: 'Kling', type: 'video', group: 'Kling', hidden: true, engine: 'kling' },
   { name: 'Kolors', type: 'image', group: 'Kolors' },
   { name: 'LTXV', type: 'video', group: 'LTXV', engine: 'lightricks' },
   { name: 'LTXV2', type: 'video', group: 'LTXV2', engine: 'ltx2' },
@@ -146,6 +147,7 @@ const baseModelConfig = [
   { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
+  { name: 'Vidu Q1', type: 'video', group: 'Vidu', hidden: true, engine: 'vidu' },
   { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true, engine: 'wan' },
   { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V', engine: 'wan' },
   { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
@@ -252,6 +254,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'Imagen 4',
     family: 'Google',
     description: 'Text-to-image model with photorealistic capabilities',
+  },
+  Kling: {
+    name: 'Kling',
+    description: "Kuaishou's video generation model",
   },
   Kolors: {
     name: 'Kolors',
@@ -378,6 +384,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'Veo 3',
     family: 'Google',
     description: 'Latest video generation model from DeepMind',
+  },
+  Vidu: {
+    name: 'Vidu Q1',
+    description: 'High-quality video generation model from Vidu',
   },
   WanVideo: {
     name: 'Wan Video',
@@ -922,6 +932,14 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'Veo3',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],
+  },
+  {
+    group: 'Vidu',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Vidu Q1'] }],
+  },
+  {
+    group: 'Kling',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Kling'] }],
   },
   {
     group: 'LTXV',

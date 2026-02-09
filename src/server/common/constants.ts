@@ -510,6 +510,14 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
     name: 'Anima',
   },
+  kling: {
+    url: 'https://klingai.com/terms-of-service',
+    name: 'Kling',
+  },
+  vidu: {
+    url: 'https://www.vidu.com/terms',
+    name: 'Vidu Q1',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -586,6 +594,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   ZImageTurbo: baseLicenses['apache 2.0'],
   ZImageBase: baseLicenses['apache 2.0'],
   Anima: baseLicenses['anima'],
+  Kling: baseLicenses['kling'],
+  'Vidu Q1': baseLicenses['vidu'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
