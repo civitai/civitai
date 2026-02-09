@@ -21,6 +21,7 @@ import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen
 import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { rollupNsfwFromPanel } from '~/server/services/comics/nsfw-rollup';
 import { ingestImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -79,9 +80,8 @@ const getProjectSchema = z.object({
   id: z.string(),
 });
 
-// Reference (character/location/item) creation
+// Reference (character/location/item) creation — always global per user
 const createReferenceSchema = z.object({
-  projectId: z.string().optional(),
   name: z.string().min(1).max(255),
   type: z.nativeEnum(ComicReferenceType).default(ComicReferenceType.Character),
   description: z.string().max(2000).optional(),
@@ -103,9 +103,11 @@ const addReferenceImagesSchema = z.object({
 
 const createPanelSchema = z.object({
   chapterId: z.string(),
-  referenceIds: z.array(z.string()).min(1),
+  referenceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1).max(2000),
   enhance: z.boolean().default(true),
+  useContext: z.boolean().default(true),
+  includePreviousImage: z.boolean().default(false),
   position: z.number().int().min(0).optional(),
 });
 
@@ -154,7 +156,7 @@ const planChapterPanelsSchema = z.object({
 const smartCreateChapterSchema = z.object({
   projectId: z.string(),
   chapterName: z.string().min(1).max(255).default('New Chapter'),
-  referenceIds: z.array(z.string()).min(1),
+  referenceIds: z.array(z.string()).optional(),
   storyDescription: z.string().max(5000).default(''),
   panels: z
     .array(
@@ -165,6 +167,18 @@ const smartCreateChapterSchema = z.object({
     .min(1)
     .max(20),
   enhance: z.boolean().default(true),
+});
+
+const enhancePanelSchema = z.object({
+  chapterId: z.string(),
+  sourceImageUrl: z.string().min(1),
+  sourceImageWidth: z.number().int().positive(),
+  sourceImageHeight: z.number().int().positive(),
+  prompt: z.string().max(2000).optional(),
+  enhance: z.boolean().default(true),
+  useContext: z.boolean().default(true),
+  includePreviousImage: z.boolean().default(false),
+  position: z.number().int().min(0).optional(),
 });
 
 const updateProjectSchema = z.object({
@@ -178,7 +192,7 @@ const deleteReferenceSchema = z.object({
   referenceId: z.string(),
 });
 
-// Shared helper: resolve a character's reference images for generation
+// Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: string) {
   const reference = await dbRead.comicReference.findUnique({
     where: { id: referenceId },
@@ -191,10 +205,10 @@ async function getReferenceImages(referenceId: string) {
     },
   });
 
-  if (!reference) return { characterName: '', refImages: [] };
+  if (!reference) return { referenceName: '', refImages: [] };
 
   return {
-    characterName: reference.name,
+    referenceName: reference.name,
     refImages: reference.images.map((ri) => ({
       url: getEdgeUrl(ri.image.url, { original: true }),
       width: ri.image.width ?? 512,
@@ -216,9 +230,9 @@ async function createSinglePanel(args: {
     enhancedPrompt: string | null;
     imageUrl: string | null;
   } | null;
-  allCharacterNames: string[];
-  characterName: string;
-  characterRefImages: { url: string; width: number; height: number }[];
+  allReferenceNames: string[];
+  primaryReferenceName: string;
+  refImages: { url: string; width: number; height: number }[];
   userId: number;
   ctx: any;
   storyContext?: {
@@ -233,9 +247,9 @@ async function createSinglePanel(args: {
     enhance,
     position,
     contextPanel,
-    allCharacterNames,
-    characterName,
-    characterRefImages,
+    allReferenceNames,
+    primaryReferenceName,
+    refImages,
     userId,
     ctx,
     storyContext,
@@ -246,8 +260,8 @@ async function createSinglePanel(args: {
   if (enhance) {
     fullPrompt = await enhanceComicPrompt({
       userPrompt: prompt,
-      characterName,
-      characterNames: allCharacterNames,
+      characterName: primaryReferenceName,
+      characterNames: allReferenceNames,
       previousPanel: contextPanel ?? undefined,
       storyContext,
     });
@@ -259,10 +273,10 @@ async function createSinglePanel(args: {
     previousPanelId: contextPanel?.id ?? null,
     previousPanelPrompt: contextPanel ? contextPanel.enhancedPrompt ?? contextPanel.prompt : null,
     previousPanelImageUrl: contextPanel?.imageUrl ?? null,
-    referenceImages: characterRefImages,
+    referenceImages: refImages,
     enhanceEnabled: enhance,
-    characterName,
-    allCharacterNames,
+    primaryReferenceName,
+    allReferenceNames,
     generationParams: {
       engine: 'gemini',
       baseModel: 'NanoBanana',
@@ -311,7 +325,7 @@ async function createSinglePanel(args: {
         disablePoi: false,
         priority: 'low',
         sourceImage: null,
-        images: characterRefImages,
+        images: refImages,
       },
       resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
       tags: ['comics'],
@@ -401,15 +415,6 @@ export const comicsRouter = router({
     const project = await dbRead.comicProject.findUnique({
       where: { id: input.id },
       include: {
-        references: {
-          orderBy: { createdAt: 'asc' },
-          include: {
-            images: {
-              orderBy: { position: 'asc' },
-              include: { image: { select: { id: true, url: true, width: true, height: true } } },
-            },
-          },
-        },
         chapters: {
           orderBy: { position: 'asc' },
           include: {
@@ -430,12 +435,9 @@ export const comicsRouter = router({
       throw throwAuthorizationError();
     }
 
-    // Also fetch user's library references (projectId = null)
-    const libraryReferences = await dbRead.comicReference.findMany({
-      where: {
-        userId: ctx.user.id,
-        projectId: null,
-      },
+    // Fetch all user references (global — not project-specific)
+    const references = await dbRead.comicReference.findMany({
+      where: { userId: ctx.user.id },
       orderBy: { createdAt: 'asc' },
       include: {
         images: {
@@ -447,7 +449,7 @@ export const comicsRouter = router({
 
     return {
       ...project,
-      libraryReferences,
+      references,
     };
   }),
 
@@ -902,24 +904,13 @@ export const comicsRouter = router({
       return { success: true };
     }),
 
-  // Characters — single creation path (images added separately)
+  // References — single creation path (images added separately)
 
   createReference: protectedProcedure
     .input(createReferenceSchema)
     .mutation(async ({ ctx, input }) => {
-      if (input.projectId) {
-        const project = await dbRead.comicProject.findUnique({
-          where: { id: input.projectId },
-          select: { userId: true },
-        });
-        if (!project || project.userId !== ctx.user!.id) {
-          throw throwAuthorizationError();
-        }
-      }
-
       const reference = await dbWrite.comicReference.create({
         data: {
-          projectId: input.projectId ?? null,
           userId: ctx.user!.id,
           name: input.name,
           type: input.type,
@@ -1023,114 +1014,17 @@ export const comicsRouter = router({
       };
     }),
 
-  getCharacter: protectedProcedure
-    .input(z.object({ referenceId: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
-        where: { id: input.referenceId },
-        include: {
-          images: {
-            orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
-          },
-        },
-      });
-
-      if (!character || character.userId !== ctx.user.id) {
-        throw throwAuthorizationError();
-      }
-
-      return character;
-    }),
-
-  deleteCharacter: protectedProcedure
-    .input(deleteReferenceSchema)
-    .mutation(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
-        where: { id: input.referenceId },
-        select: { userId: true },
-      });
-
-      if (!character || character.userId !== ctx.user.id) {
-        throw throwAuthorizationError();
-      }
-
-      await dbWrite.comicReference.delete({
-        where: { id: input.referenceId },
-      });
-
-      return { success: true };
-    }),
-
-  // Move a library character into a project
-  addCharacterToProject: protectedProcedure
-    .input(
-      z.object({
-        referenceId: z.string(),
-        projectId: z.string(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
-        where: { id: input.referenceId },
-        select: { userId: true, projectId: true },
-      });
-      if (!character || character.userId !== ctx.user.id) {
-        throw throwAuthorizationError();
-      }
-
-      const project = await dbRead.comicProject.findUnique({
-        where: { id: input.projectId },
-        select: { userId: true },
-      });
-      if (!project || project.userId !== ctx.user.id) {
-        throw throwAuthorizationError();
-      }
-
-      const updated = await dbWrite.comicReference.update({
-        where: { id: input.referenceId },
-        data: { projectId: input.projectId },
-      });
-      return updated;
-    }),
-
-  // Remove a character from its project (move back to library)
-  removeCharacterFromProject: protectedProcedure
-    .input(z.object({ referenceId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
-        where: { id: input.referenceId },
-        select: { userId: true },
-      });
-      if (!character || character.userId !== ctx.user.id) {
-        throw throwAuthorizationError();
-      }
-
-      const updated = await dbWrite.comicReference.update({
-        where: { id: input.referenceId },
-        data: { projectId: null },
-      });
-      return updated;
-    }),
-
   // Panels — NanoBanana generation via createImageGen
   createPanel: protectedProcedure
     .input(createPanelSchema)
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
-      // Verify chapter ownership and get project info + all character names
+      // Verify chapter ownership
       const chapter = await dbRead.comicChapter.findUnique({
         where: { id: input.chapterId },
         include: {
           project: {
-            select: {
-              id: true,
-              userId: true,
-              references: {
-                where: { status: ComicReferenceStatus.Ready },
-                select: { name: true },
-              },
-            },
+            select: { id: true, userId: true },
           },
         },
       });
@@ -1138,15 +1032,36 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
-      // Include both project characters and user's library characters
-      const libraryChars = await dbRead.comicReference.findMany({
-        where: { userId: ctx.user!.id, projectId: null, status: ComicReferenceStatus.Ready },
-        select: { name: true },
+      // Get all user's ready references for prompt context and auto-detection
+      const allUserRefs = await dbRead.comicReference.findMany({
+        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
+        select: { id: true, name: true },
       });
-      const allCharacterNames = [
-        ...chapter.project.references.map((c) => c.name),
-        ...libraryChars.map((c) => c.name),
-      ];
+      const allReferenceNames = allUserRefs.map((r) => r.name);
+
+      // Resolve which references the user explicitly mentioned (for panel association)
+      const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
+      let mentionedReferenceIds: string[];
+      if (input.referenceIds && input.referenceIds.length > 0) {
+        // Validate all provided IDs belong to the current user
+        if (input.referenceIds.some((id) => !allowedRefIds.has(id))) {
+          throw throwAuthorizationError();
+        }
+        mentionedReferenceIds = input.referenceIds;
+      } else {
+        const { mentionedIds } = resolveReferenceMentions({
+          prompt: input.prompt,
+          references: allUserRefs,
+        });
+        mentionedReferenceIds = mentionedIds;
+      }
+
+      // All references are used for generation images; only mentioned ones are tracked on the panel
+      const generationReferenceIds = allUserRefs.length > 0 ? allUserRefs.map((r) => r.id) : [];
+
+      if (generationReferenceIds.length === 0) {
+        throw throwBadRequestError('No references available for generation');
+      }
 
       // If inserting at a specific position, shift existing panels and get the
       // panel just before the insertion point for context. Otherwise use the last panel.
@@ -1183,44 +1098,56 @@ export const comicsRouter = router({
         nextPosition = (contextPanel?.position ?? -1) + 1;
       }
 
-      // Get reference images for generation — all selected references combined
-      let characterName = '';
-      const characterRefImages: { url: string; width: number; height: number }[] = [];
+      // Get reference images for generation — all user references
+      let primaryReferenceName = '';
+      const combinedRefImages: { url: string; width: number; height: number }[] = [];
 
-      for (const refId of input.referenceIds) {
-        const { characterName: name, refImages } = await getReferenceImages(refId);
-        if (!characterName && name) characterName = name; // use first ref as primary name
-        characterRefImages.push(...refImages);
+      for (const refId of generationReferenceIds) {
+        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        combinedRefImages.push(...imgs);
       }
 
-      if (characterRefImages.length === 0) {
+      if (combinedRefImages.length === 0) {
         throw throwBadRequestError('References have no reference images');
       }
+
+      // Conditionally use previous panel context for prompt enhancement
+      const effectiveContext = input.useContext ? contextPanel : null;
 
       // Build prompt — optionally enhance via LLM
       let fullPrompt: string;
       if (input.enhance) {
         fullPrompt = await enhanceComicPrompt({
           userPrompt: input.prompt,
-          characterName,
-          characterNames: allCharacterNames,
-          previousPanel: contextPanel ?? undefined,
+          characterName: primaryReferenceName,
+          characterNames: allReferenceNames,
+          previousPanel: effectiveContext ?? undefined,
         });
       } else {
         fullPrompt = input.prompt;
       }
 
+      // Optionally include previous panel's image in generation
+      const allImages = [...combinedRefImages];
+      if (input.includePreviousImage && contextPanel?.imageUrl) {
+        const prevEdgeUrl = getEdgeUrl(contextPanel.imageUrl, { original: true });
+        allImages.push({ url: prevEdgeUrl, width: PANEL_WIDTH, height: PANEL_HEIGHT });
+      }
+
       // Build metadata for debugging
       const metadata = {
-        previousPanelId: contextPanel?.id ?? null,
-        previousPanelPrompt: contextPanel
-          ? contextPanel.enhancedPrompt ?? contextPanel.prompt
+        previousPanelId: effectiveContext?.id ?? null,
+        previousPanelPrompt: effectiveContext
+          ? effectiveContext.enhancedPrompt ?? effectiveContext.prompt
           : null,
         previousPanelImageUrl: contextPanel?.imageUrl ?? null,
-        referenceImages: characterRefImages,
+        referenceImages: combinedRefImages,
+        useContext: input.useContext,
+        includePreviousImage: input.includePreviousImage,
         enhanceEnabled: input.enhance,
-        characterName,
-        allCharacterNames,
+        primaryReferenceName,
+        allReferenceNames,
         generationParams: {
           engine: 'gemini',
           baseModel: 'NanoBanana',
@@ -1244,10 +1171,10 @@ export const comicsRouter = router({
         },
       });
 
-      // Insert into junction table for multi-reference tracking
-      if (input.referenceIds.length > 0) {
+      // Insert into junction table — only for explicitly mentioned references
+      if (mentionedReferenceIds.length > 0) {
         await dbWrite.comicPanelReference.createMany({
-          data: input.referenceIds.map((referenceId) => ({ panelId: panel.id, referenceId })),
+          data: mentionedReferenceIds.map((referenceId) => ({ panelId: panel.id, referenceId })),
           skipDuplicates: true,
         });
       }
@@ -1271,7 +1198,7 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: characterRefImages,
+            images: allImages,
           },
           resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
           tags: ['comics'],
@@ -1620,30 +1547,15 @@ export const comicsRouter = router({
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
-      const project = await dbRead.comicProject.findUnique({
-        where: { id: input.projectId },
-        select: {
-          userId: true,
-          references: {
-            where: { status: ComicReferenceStatus.Ready },
-            select: { name: true },
-          },
-        },
-      });
-
-      const libraryChars = await dbRead.comicReference.findMany({
-        where: { userId: ctx.user!.id, projectId: null, status: ComicReferenceStatus.Ready },
+      // Get all user's reference names for story planning
+      const allUserRefs = await dbRead.comicReference.findMany({
+        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
         select: { name: true },
       });
 
-      const characterNames = [
-        ...(project?.references ?? []).map((c) => c.name),
-        ...libraryChars.map((c) => c.name),
-      ];
-
       return planChapterPanels({
         storyDescription: input.storyDescription,
-        characterNames,
+        characterNames: allUserRefs.map((r) => r.name),
       });
     }),
 
@@ -1668,36 +1580,34 @@ export const comicsRouter = router({
         },
       });
 
-      // Get ref images from all selected references
-      let characterName = '';
-      const refImages: { url: string; width: number; height: number }[] = [];
-      for (const refId of input.referenceIds) {
-        const { characterName: name, refImages: imgs } = await getReferenceImages(refId);
-        if (!characterName && name) characterName = name;
-        refImages.push(...imgs);
-      }
-      if (refImages.length === 0) {
-        throw throwBadRequestError('Selected references have no reference images');
-      }
+      // Get all user's ready references for prompt context and auto-detection
+      const allUserRefs = await dbRead.comicReference.findMany({
+        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
+        select: { id: true, name: true },
+      });
+      const allReferenceNames = allUserRefs.map((r) => r.name);
 
-      // Get all character names for prompt enhancement (project + library)
-      const project = await dbRead.comicProject.findUnique({
-        where: { id: input.projectId },
-        select: {
-          references: {
-            where: { status: ComicReferenceStatus.Ready },
-            select: { name: true },
-          },
-        },
-      });
-      const smartLibraryChars = await dbRead.comicReference.findMany({
-        where: { userId: ctx.user!.id, projectId: null, status: ComicReferenceStatus.Ready },
-        select: { name: true },
-      });
-      const allCharacterNames = [
-        ...(project?.references ?? []).map((c) => c.name),
-        ...smartLibraryChars.map((c) => c.name),
-      ];
+      // Resolve referenceIds: explicit > all ready refs as fallback
+      const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
+      if (input.referenceIds && input.referenceIds.some((id) => !allowedRefIds.has(id))) {
+        throw throwAuthorizationError();
+      }
+      const baseReferenceIds =
+        input.referenceIds && input.referenceIds.length > 0
+          ? input.referenceIds
+          : allUserRefs.map((r) => r.id);
+
+      // Get ref images from all resolved references
+      let primaryReferenceName = '';
+      const combinedRefImages: { url: string; width: number; height: number }[] = [];
+      for (const refId of baseReferenceIds) {
+        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        combinedRefImages.push(...imgs);
+      }
+      if (combinedRefImages.length === 0) {
+        throw throwBadRequestError('References have no reference images');
+      }
 
       // Create panels sequentially — each panel uses the previous as context
       // Build story context so the enhancer sees the full narrative arc
@@ -1712,16 +1622,23 @@ export const comicsRouter = router({
 
       for (let i = 0; i < input.panels.length; i++) {
         const panelInput = input.panels[i];
+
+        // Per-panel @mention auto-detection: only track explicitly mentioned refs
+        const { mentionedIds } = resolveReferenceMentions({
+          prompt: panelInput.prompt,
+          references: allUserRefs,
+        });
+
         const panel = await createSinglePanel({
           chapterId: chapter.id,
-          referenceIds: input.referenceIds,
+          referenceIds: mentionedIds,
           prompt: panelInput.prompt,
           enhance: input.enhance,
           position: i,
           contextPanel,
-          allCharacterNames,
-          characterName,
-          characterRefImages: refImages,
+          allReferenceNames,
+          primaryReferenceName,
+          refImages: combinedRefImages,
           userId: ctx.user!.id,
           ctx,
           storyContext: {
@@ -1911,6 +1828,248 @@ export const comicsRouter = router({
       return readMap;
     }),
 
+  // ──── Enhance Panel: create from existing image, optionally with img2img ────
+
+  enhancePanel: protectedProcedure
+    .input(enhancePanelSchema)
+    .use(isChapterOwner)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        include: { project: { select: { id: true, userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      // Get next position
+      let nextPosition: number;
+      if (input.position != null) {
+        await dbWrite.comicPanel.updateMany({
+          where: { chapterId: input.chapterId, position: { gte: input.position } },
+          data: { position: { increment: 1 } },
+        });
+        nextPosition = input.position;
+      } else {
+        const lastPanel = await dbRead.comicPanel.findFirst({
+          where: { chapterId: input.chapterId },
+          orderBy: { position: 'desc' },
+          select: { position: true },
+        });
+        nextPosition = (lastPanel?.position ?? -1) + 1;
+      }
+
+      // No prompt → create panel directly from image (free)
+      if (!input.prompt || !input.prompt.trim()) {
+        const image = await dbWrite.image.create({
+          data: {
+            url: input.sourceImageUrl,
+            userId: ctx.user!.id,
+            width: input.sourceImageWidth,
+            height: input.sourceImageHeight,
+            ingestion: 'Pending',
+          },
+        });
+
+        const panel = await dbWrite.comicPanel.create({
+          data: {
+            chapterId: input.chapterId,
+            imageId: image.id,
+            imageUrl: input.sourceImageUrl,
+            prompt: '',
+            position: nextPosition,
+            status: ComicPanelStatus.Ready,
+            metadata: {
+              sourceImageUrl: input.sourceImageUrl,
+              sourceImageWidth: input.sourceImageWidth,
+              sourceImageHeight: input.sourceImageHeight,
+            },
+          },
+        });
+
+        ingestImageById({ id: image.id }).catch((e) =>
+          console.error(`Failed to ingest enhanced panel image ${image.id}:`, e)
+        );
+        rollupNsfwFromPanel(panel.id).catch((e) =>
+          console.error(`Failed to rollup NSFW for panel ${panel.id}:`, e)
+        );
+
+        return panel;
+      }
+
+      // With prompt → img2img generation
+      // Fetch previous panel for context if requested
+      let contextPanel: {
+        id: string;
+        prompt: string;
+        enhancedPrompt: string | null;
+        imageUrl: string | null;
+      } | null = null;
+      if (input.position != null) {
+        contextPanel = await dbRead.comicPanel.findFirst({
+          where: { chapterId: input.chapterId, position: { lt: input.position } },
+          orderBy: { position: 'desc' },
+          select: { id: true, prompt: true, enhancedPrompt: true, imageUrl: true },
+        });
+      } else {
+        contextPanel = await dbRead.comicPanel.findFirst({
+          where: { chapterId: input.chapterId },
+          orderBy: { position: 'desc' },
+          select: { id: true, prompt: true, enhancedPrompt: true, imageUrl: true },
+        });
+      }
+      const effectiveContext = input.useContext ? contextPanel : null;
+
+      const allUserRefs = await dbRead.comicReference.findMany({
+        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
+        select: { id: true, name: true },
+      });
+      const allReferenceNames = allUserRefs.map((r) => r.name);
+
+      // Resolve @mentions from prompt (for panel association only)
+      const { mentionedIds } = resolveReferenceMentions({
+        prompt: input.prompt,
+        references: allUserRefs,
+      });
+      const mentionedReferenceIds = mentionedIds;
+
+      // Gather reference images from all user refs
+      let primaryReferenceName = '';
+      const combinedRefImages: { url: string; width: number; height: number }[] = [];
+      for (const refId of allUserRefs.map((r) => r.id)) {
+        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        combinedRefImages.push(...imgs);
+      }
+
+      // Build images array: source image first, then reference images, then optional previous panel image
+      const sourceEdgeUrl = getEdgeUrl(input.sourceImageUrl, { original: true });
+      const allImages = [
+        {
+          url: sourceEdgeUrl,
+          width: input.sourceImageWidth,
+          height: input.sourceImageHeight,
+        },
+        ...combinedRefImages,
+      ];
+      if (input.includePreviousImage && contextPanel?.imageUrl) {
+        const prevEdgeUrl = getEdgeUrl(contextPanel.imageUrl, { original: true });
+        allImages.push({ url: prevEdgeUrl, width: PANEL_WIDTH, height: PANEL_HEIGHT });
+      }
+
+      // Build prompt — optionally enhance
+      let fullPrompt = input.prompt;
+      if (input.enhance) {
+        fullPrompt = await enhanceComicPrompt({
+          userPrompt: input.prompt,
+          characterName: primaryReferenceName,
+          characterNames: allReferenceNames,
+          previousPanel: effectiveContext ?? undefined,
+        });
+      }
+
+      const metadata = {
+        sourceImageUrl: input.sourceImageUrl,
+        sourceImageWidth: input.sourceImageWidth,
+        sourceImageHeight: input.sourceImageHeight,
+        referenceImages: combinedRefImages,
+        useContext: input.useContext,
+        includePreviousImage: input.includePreviousImage,
+        enhanceEnabled: input.enhance,
+        primaryReferenceName,
+        allReferenceNames,
+        generationParams: {
+          engine: 'gemini',
+          baseModel: 'NanoBanana',
+          checkpointVersionId: NANOBANANA_VERSION_ID,
+          width: PANEL_WIDTH,
+          height: PANEL_HEIGHT,
+          prompt: fullPrompt,
+          negativePrompt: '',
+        },
+      };
+
+      const panel = await dbWrite.comicPanel.create({
+        data: {
+          chapterId: input.chapterId,
+          prompt: input.prompt,
+          enhancedPrompt: input.enhance ? fullPrompt : null,
+          position: nextPosition,
+          status: ComicPanelStatus.Pending,
+          metadata,
+        },
+      });
+
+      if (mentionedReferenceIds.length > 0) {
+        await dbWrite.comicPanelReference.createMany({
+          data: mentionedReferenceIds.map((rid) => ({ panelId: panel.id, referenceId: rid })),
+          skipDuplicates: true,
+        });
+      }
+
+      try {
+        const token = await getOrchestratorToken(ctx.user!.id, ctx);
+        const result = await createImageGen({
+          params: {
+            prompt: fullPrompt,
+            negativePrompt: '',
+            engine: 'gemini',
+            baseModel: 'NanoBanana' as any,
+            width: PANEL_WIDTH,
+            height: PANEL_HEIGHT,
+            workflow: 'txt2img',
+            sampler: 'Euler',
+            steps: 25,
+            quantity: 1,
+            draft: false,
+            disablePoi: false,
+            priority: 'low',
+            sourceImage: null,
+            images: allImages,
+          },
+          resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+          tags: ['comics'],
+          tips: { creators: 0, civitai: 0 },
+          user: ctx.user! as SessionUser,
+          token,
+          currencies: ['yellow'],
+        });
+
+        const updated = await dbWrite.comicPanel.update({
+          where: { id: panel.id },
+          data: { workflowId: result.id, status: ComicPanelStatus.Generating },
+        });
+        return updated;
+      } catch (error: any) {
+        const errorDetails: string[] = [];
+        if (error instanceof Error) {
+          errorDetails.push(error.message);
+          if (error.cause) errorDetails.push(`Cause: ${JSON.stringify(error.cause)}`);
+        } else {
+          errorDetails.push(String(error));
+        }
+        if (error?.response?.data) {
+          errorDetails.push(`Response: ${JSON.stringify(error.response.data)}`);
+        }
+        if (error?.data) {
+          errorDetails.push(`Data: ${JSON.stringify(error.data)}`);
+        }
+
+        const errorMessage = errorDetails.join(' | ');
+        console.error('Comics enhancePanel generation failed:', {
+          panelId: panel.id,
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+
+        const updated = await dbWrite.comicPanel.update({
+          where: { id: panel.id },
+          data: { status: ComicPanelStatus.Failed, errorMessage },
+        });
+        return updated;
+      }
+    }),
+
   // ──── Phase 2: Create panel from existing Image (manual mode) ────
 
   createPanelFromImage: protectedProcedure
@@ -1992,11 +2151,11 @@ export const comicsRouter = router({
   deleteReference: protectedProcedure
     .input(deleteReferenceSchema)
     .mutation(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
+      const reference = await dbRead.comicReference.findUnique({
         where: { id: input.referenceId },
         select: { userId: true },
       });
-      if (!character || character.userId !== ctx.user.id) {
+      if (!reference || reference.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
       await dbWrite.comicReference.delete({
@@ -2027,42 +2186,6 @@ export const comicsRouter = router({
         },
       });
       return references;
-    }),
-
-  addReferenceToProject: protectedProcedure
-    .input(z.object({ referenceId: z.string(), projectId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
-        where: { id: input.referenceId },
-        select: { userId: true },
-      });
-      if (!character || character.userId !== ctx.user.id) throw throwAuthorizationError();
-
-      const project = await dbRead.comicProject.findUnique({
-        where: { id: input.projectId },
-        select: { userId: true },
-      });
-      if (!project || project.userId !== ctx.user.id) throw throwAuthorizationError();
-
-      return dbWrite.comicReference.update({
-        where: { id: input.referenceId },
-        data: { projectId: input.projectId },
-      });
-    }),
-
-  removeReferenceFromProject: protectedProcedure
-    .input(z.object({ referenceId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const character = await dbRead.comicReference.findUnique({
-        where: { id: input.referenceId },
-        select: { userId: true },
-      });
-      if (!character || character.userId !== ctx.user.id) throw throwAuthorizationError();
-
-      return dbWrite.comicReference.update({
-        where: { id: input.referenceId },
-        data: { projectId: null },
-      });
     }),
 
   // ──── Phase 7: Chapter Comments ────

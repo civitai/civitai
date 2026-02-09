@@ -7,7 +7,7 @@ Rules:
 - Each panel should describe a single moment, action, or beat
 - Focus on: action, emotion, camera angle, composition, environment
 - Do NOT describe character appearance — reference images handle that
-- Preserve character names exactly as provided
+- Reference characters with @ prefix (e.g., @Maya, @Dragon) — the generation system uses these to identify which reference images to include
 - Panels should flow naturally and tell a coherent visual story
 - When the story has dialogue, narration, or thoughts, include them directly in the prompt as visual text elements the image generator should render (e.g. "speech bubble saying 'I won't give up!'", "narration box at top reading 'Three days earlier...'", "thought bubble: 'This can't be real...'")
 - Not every panel needs text — only include speech bubbles, narration boxes, or captions where dialogue or narration serves the story
@@ -23,7 +23,9 @@ export async function planChapterPanels(input: {
   }
 
   const userMessage = [
-    input.characterNames.length > 0 ? `Characters: ${input.characterNames.join(', ')}` : null,
+    input.characterNames.length > 0
+      ? `Characters: ${input.characterNames.map((n) => `@${n}`).join(', ')}`
+      : null,
     `Story: ${input.storyDescription}`,
   ]
     .filter(Boolean)

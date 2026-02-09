@@ -1,4 +1,5 @@
 import { openai } from '~/server/services/ai/openai';
+import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 
 const SYSTEM_PROMPT = `You enhance user prompts for AI comic panel generation. The generation model receives separate reference images of the main character, so you do NOT need to describe physical appearance.
 
@@ -36,15 +37,16 @@ export async function enhanceComicPrompt(input: {
     input;
 
   // Resolve @mentions: replace @ReferenceName with the exact name
-  // This allows users to reference characters/locations/items by name in prompts
-  let resolvedPrompt = userPrompt;
-  if (characterNames && characterNames.length > 0) {
-    for (const name of characterNames) {
-      // Match @Name (case-insensitive) and replace with exact name
-      const pattern = new RegExp(`@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi');
-      resolvedPrompt = resolvedPrompt.replace(pattern, name);
-    }
-  }
+  const names =
+    characterNames && characterNames.length > 0
+      ? characterNames
+      : characterName
+      ? [characterName]
+      : [];
+  const { resolvedPrompt } = resolveReferenceMentions({
+    prompt: userPrompt,
+    references: names.map((name) => ({ id: name, name })),
+  });
 
   // Fallback: just return the resolved prompt (no trained words for NanoBanana path)
   const fallback =

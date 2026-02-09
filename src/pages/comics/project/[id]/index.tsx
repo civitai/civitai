@@ -8,7 +8,6 @@ import {
   Menu,
   Modal,
   ScrollArea,
-  SimpleGrid,
   Stack,
   Switch,
   Text,
@@ -28,17 +27,19 @@ import {
   IconDotsVertical,
   IconPencil,
   IconPhoto,
+  IconPhotoUp,
   IconPlus,
-  IconRefresh,
   IconRefreshDot,
   IconSettings,
   IconSparkles,
   IconTrash,
   IconUpload,
   IconUser,
+  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -48,6 +49,8 @@ import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from 
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { MentionTextarea } from '~/components/Comics/MentionTextarea';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -55,6 +58,10 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
+
+const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
+  ssr: false,
+});
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -81,9 +88,25 @@ function ProjectWorkspace() {
   const [debugPanelId, setDebugPanelId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
-  const [selectedReferenceIds, setSelectedReferenceIds] = useState<Set<string>>(new Set());
+  const [useContext, setUseContext] = useState(true);
+  const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<string | null>(null);
+
+  // Panel mode: Generate (prompt from scratch) vs Enhance (start from image)
+  const [panelMode, setPanelMode] = useState<'generate' | 'enhance'>('generate');
+  const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
+    url: string;
+    previewUrl: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [enhanceUploading, setEnhanceUploading] = useState(false);
+  const {
+    uploadToCF: uploadEnhanceToCF,
+    files: enhanceUploadFiles,
+    resetFiles: resetEnhanceFiles,
+  } = useCFImageUpload();
 
   // Chapter rename state
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
@@ -106,7 +129,6 @@ function ProjectWorkspace() {
   const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
   const [smartChapterName, setSmartChapterName] = useState('New Chapter');
   const [smartStory, setSmartStory] = useState('');
-  const [smartCharacterIds, setSmartCharacterIds] = useState<Set<string>>(new Set());
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
   const [smartEnhance, setSmartEnhance] = useState(true);
 
@@ -133,23 +155,20 @@ function ProjectWorkspace() {
     }
   }, [project?.chapters, activeChapterId]);
 
-  // Combine project characters and library characters
-  const allCharacters = useMemo(
-    () => [...(project?.references ?? []), ...(project?.libraryReferences ?? [])],
-    [project?.references, project?.libraryReferences]
-  );
+  // All user references (global — not project-specific)
+  const allReferences = useMemo(() => project?.references ?? [], [project?.references]);
 
-  // Build character image map from reference images
-  const characterImageMap = useMemo(() => {
+  // Build reference image map
+  const referenceImageMap = useMemo(() => {
     const map = new Map<string, { url: string }>();
-    for (const c of allCharacters) {
+    for (const c of allReferences) {
       const firstImage = (c as any).images?.[0]?.image;
       if (firstImage?.url) {
         map.set(c.id, { url: firstImage.url });
       }
     }
     return map;
-  }, [allCharacters]);
+  }, [allReferences]);
 
   const createPanelMutation = trpc.comics.createPanel.useMutation({
     onSuccess: () => {
@@ -157,6 +176,20 @@ function ProjectWorkspace() {
       setPrompt('');
       setRegeneratingPanelId(null);
       setInsertAtPosition(null);
+      setEnhanceSourceImage(null);
+      setPanelMode('generate');
+      refetch();
+    },
+  });
+
+  const enhancePanelMutation = trpc.comics.enhancePanel.useMutation({
+    onSuccess: () => {
+      closePanelModal();
+      setPrompt('');
+      setEnhanceSourceImage(null);
+      setInsertAtPosition(null);
+      setPanelMode('generate');
+      resetEnhanceFiles();
       refetch();
     },
   });
@@ -194,7 +227,7 @@ function ProjectWorkspace() {
     },
   });
 
-  const deleteCharacterMutation = trpc.comics.deleteReference.useMutation({
+  const deleteReferenceMutation = trpc.comics.deleteReference.useMutation({
     onSuccess: () => refetch(),
   });
 
@@ -243,18 +276,18 @@ function ProjectWorkspace() {
     return () => clearInterval(interval);
   }, [generatingPanelIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll for characters in Pending state (waiting for images)
-  const processingCharacterIds = useMemo(
-    () => allCharacters.filter((c) => c.status === 'Pending').map((c) => c.id),
-    [allCharacters]
+  // Poll for references in Pending state (waiting for images)
+  const processingReferenceIds = useMemo(
+    () => allReferences.filter((c) => c.status === 'Pending').map((c) => c.id),
+    [allReferences]
   );
 
   useEffect(() => {
-    if (processingCharacterIds.length === 0) return;
+    if (processingReferenceIds.length === 0) return;
     const interval = setInterval(async () => {
       try {
         const results = await Promise.all(
-          processingCharacterIds.map((cid) =>
+          processingReferenceIds.map((cid) =>
             utils.comics.pollReferenceStatus.fetch({ referenceId: cid })
           )
         );
@@ -264,7 +297,7 @@ function ProjectWorkspace() {
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [processingCharacterIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [processingReferenceIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus chapter rename input
   useEffect(() => {
@@ -274,32 +307,29 @@ function ProjectWorkspace() {
     }
   }, [editingChapterId]);
 
-  // Build character name map for panel cards
-  const characterNameMap = useMemo(() => {
+  // Build reference name map for panel cards
+  const referenceNameMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const c of allCharacters) {
+    for (const c of allReferences) {
       map.set(c.id, c.name);
     }
     return map;
-  }, [allCharacters]);
+  }, [allReferences]);
 
-  const activeCharacters = useMemo(
-    () => allCharacters.filter((c) => c.status === 'Ready'),
-    [allCharacters]
+  const activeReferences = useMemo(
+    () => allReferences.filter((c) => c.status === 'Ready'),
+    [allReferences]
   );
 
-  // Auto-select all ready references if none explicitly selected
-  const effectiveSelectedIds = useMemo(() => {
-    if (selectedReferenceIds.size > 0) return selectedReferenceIds;
-    return new Set(activeCharacters.map((c) => c.id));
-  }, [selectedReferenceIds, activeCharacters]);
+  const anyRefHasImages = useMemo(
+    () => activeReferences.some((c) => ((c as any).images?.length ?? 0) > 0),
+    [activeReferences]
+  );
 
-  const selectedRefsHaveImages = useMemo(
-    () =>
-      activeCharacters
-        .filter((c) => effectiveSelectedIds.has(c.id))
-        .some((c) => ((c as any).images?.length ?? 0) > 0),
-    [activeCharacters, effectiveSelectedIds]
+  // References for MentionTextarea autocomplete
+  const mentionRefs = useMemo(
+    () => activeReferences.map((c) => ({ id: c.id, name: c.name })),
+    [activeReferences]
   );
 
   if (isLoading || !project) {
@@ -342,18 +372,127 @@ function ProjectWorkspace() {
     });
   };
 
+  const handlePanelModalClose = () => {
+    closePanelModal();
+    setRegeneratingPanelId(null);
+    setInsertAtPosition(null);
+    setEnhanceSourceImage(null);
+    setEnhanceUploading(false);
+    setPanelMode('generate');
+    setPrompt('');
+    setUseContext(true);
+    setIncludePreviousImage(false);
+    resetEnhanceFiles();
+  };
+
   const handleGeneratePanel = async () => {
-    const refIds = Array.from(effectiveSelectedIds);
-    if (!prompt.trim() || refIds.length === 0 || !activeChapter || !selectedRefsHaveImages) return;
+    if (!prompt.trim() || !activeChapter) return;
     if (regeneratingPanelId) {
       await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
     }
     createPanelMutation.mutate({
       chapterId: activeChapter.id,
-      referenceIds: refIds,
       prompt: prompt.trim(),
       enhance: enhancePrompt,
+      useContext,
+      includePreviousImage,
       ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
+    });
+  };
+
+  const handleEnhancePanel = async () => {
+    if (!activeChapter || !enhanceSourceImage) return;
+    if (regeneratingPanelId) {
+      await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+    }
+    enhancePanelMutation.mutate({
+      chapterId: activeChapter.id,
+      sourceImageUrl: enhanceSourceImage.url,
+      sourceImageWidth: enhanceSourceImage.width,
+      sourceImageHeight: enhanceSourceImage.height,
+      prompt: prompt.trim() || undefined,
+      enhance: enhancePrompt,
+      useContext,
+      includePreviousImage,
+      ...(insertAtPosition != null ? { position: insertAtPosition } : {}),
+    });
+  };
+
+  const handleEnhanceImageDrop = async (files: File[]) => {
+    if (files.length === 0) return;
+    const file = files[0];
+    setEnhanceUploading(true);
+    try {
+      // Get image dimensions
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        img.onload = () => {
+          resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          URL.revokeObjectURL(objectUrl);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error('Failed to load image'));
+        };
+        img.src = objectUrl;
+      }).catch(() => ({ width: 512, height: 512 })); // fallback dimensions on error
+
+      const result = await uploadEnhanceToCF(file);
+      setEnhanceSourceImage({
+        url: result.id,
+        previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+        width: dims.width,
+        height: dims.height,
+      });
+    } finally {
+      setEnhanceUploading(false);
+    }
+  };
+
+  const handleOpenImageSelector = () => {
+    dialogStore.trigger({
+      component: ImageSelectModal,
+      props: {
+        title: 'Select from Generator',
+        selectSource: 'generation' as const,
+        videoAllowed: false,
+        importedUrls: [],
+        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
+          if (selected.length === 0) return;
+          const img = selected[0];
+          const width = (img.meta?.width as number) ?? 512;
+          const height = (img.meta?.height as number) ?? 512;
+
+          setEnhanceUploading(true);
+          // Generator images are ephemeral — fetch the blob and upload to CF
+          // so the image persists and can be ingested/scanned
+          try {
+            const edgeUrl = getEdgeUrl(img.url, { original: true }) ?? img.url;
+            const response = await fetch(edgeUrl);
+            const blob = await response.blob();
+            const file = new File([blob], `enhance_${Date.now()}.jpg`, { type: blob.type });
+            const result = await uploadEnhanceToCF(file);
+            setEnhanceSourceImage({
+              url: result.id,
+              previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+              width,
+              height,
+            });
+          } catch (err) {
+            console.error('Failed to upload generator image:', err);
+            // Fallback: use the URL directly (will still work but may expire)
+            setEnhanceSourceImage({
+              url: img.url,
+              previewUrl: img.url,
+              width,
+              height,
+            });
+          } finally {
+            setEnhanceUploading(false);
+          }
+        },
+      },
     });
   };
 
@@ -390,24 +529,19 @@ function ProjectWorkspace() {
     });
   };
 
-  const handleDeleteCharacter = (characterId: string, characterName: string) => {
+  const handleDeleteReference = (referenceId: string, referenceName: string) => {
     openConfirmModal({
-      title: 'Delete Character',
+      title: 'Delete Reference',
       children: (
         <Text size="sm">
-          Are you sure you want to delete &quot;{characterName}&quot;? Existing panels will be
+          Are you sure you want to delete &quot;{referenceName}&quot;? Existing panels will be
           preserved but unlinked.
         </Text>
       ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        deleteCharacterMutation.mutate({ referenceId: characterId });
-        setSelectedReferenceIds((prev) => {
-          const next = new Set(prev);
-          next.delete(characterId);
-          return next;
-        });
+        deleteReferenceMutation.mutate({ referenceId });
       },
     });
   };
@@ -439,7 +573,6 @@ function ProjectWorkspace() {
     setSmartStep('input');
     setSmartChapterName('New Chapter');
     setSmartStory('');
-    setSmartCharacterIds(new Set());
     setSmartPanels([]);
     setSmartEnhance(true);
   };
@@ -450,15 +583,10 @@ function ProjectWorkspace() {
   };
 
   const handleSmartCreate = () => {
-    const smartRefIds =
-      smartCharacterIds.size > 0
-        ? Array.from(smartCharacterIds)
-        : activeCharacters.map((c) => c.id);
-    if (smartRefIds.length === 0 || smartPanels.length === 0) return;
+    if (smartPanels.length === 0) return;
     smartCreateMutation.mutate({
       projectId,
       chapterName: smartChapterName.trim() || 'New Chapter',
-      referenceIds: smartRefIds,
       storyDescription: smartStory.trim(),
       panels: smartPanels.filter((p) => p.prompt.trim()),
       enhance: smartEnhance,
@@ -539,10 +667,10 @@ function ProjectWorkspace() {
 
           {/* ── Main layout ─────────────────────────── */}
           <div className={styles.workspaceGrid}>
-            {/* ── Sidebar: Characters ─────────────── */}
+            {/* ── Sidebar: References ─────────────── */}
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
-                <span>Characters</span>
+                <span>References</span>
                 <ActionIcon
                   variant="subtle"
                   size="sm"
@@ -555,87 +683,32 @@ function ProjectWorkspace() {
               </div>
 
               <Stack gap={8}>
-                {allCharacters.length === 0 ? (
+                {allReferences.length === 0 ? (
                   <div className="flex flex-col items-center py-8 text-center">
                     <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
                     <Text size="sm" c="dimmed" mb="md">
-                      No characters yet
+                      No references yet
                     </Text>
                     <button
                       className={styles.gradientBtn}
                       onClick={() => router.push(`/comics/project/${projectId}/character`)}
                     >
                       <IconPlus size={14} />
-                      Add Character
+                      Add Reference
                     </button>
                   </div>
                 ) : (
-                  <>
-                    {/* Project characters */}
-                    {(project.references ?? []).length > 0 && (
-                      <>
-                        <Text size="xs" c="dimmed" fw={600} mt={4} mb={-4} px={4}>
-                          Project
-                        </Text>
-                        {project.references.map((character) => (
-                          <CharacterSidebarItem
-                            key={character.id}
-                            character={character}
-                            projectId={projectId}
-                            isSelected={effectiveSelectedIds.has(character.id)}
-                            characterImageMap={characterImageMap}
-                            onToggle={(id) =>
-                              setSelectedReferenceIds((prev) => {
-                                // If nothing was explicitly selected, start from the auto-set
-                                const base =
-                                  prev.size === 0
-                                    ? new Set(activeCharacters.map((c) => c.id))
-                                    : new Set(prev);
-                                if (base.has(id)) base.delete(id);
-                                else base.add(id);
-                                return base;
-                              })
-                            }
-                            onDelete={handleDeleteCharacter}
-                            getStatusDotClass={getStatusDotClass}
-                            getStatusLabel={getStatusLabel}
-                          />
-                        ))}
-                      </>
-                    )}
-
-                    {/* Library characters */}
-                    {(project.libraryReferences ?? []).length > 0 && (
-                      <>
-                        <Text size="xs" c="dimmed" fw={600} mt={8} mb={-4} px={4}>
-                          My Library
-                        </Text>
-                        {project.libraryReferences!.map((character) => (
-                          <CharacterSidebarItem
-                            key={character.id}
-                            character={character}
-                            projectId={projectId}
-                            isSelected={effectiveSelectedIds.has(character.id)}
-                            characterImageMap={characterImageMap}
-                            onToggle={(id) =>
-                              setSelectedReferenceIds((prev) => {
-                                const base =
-                                  prev.size === 0
-                                    ? new Set(activeCharacters.map((c) => c.id))
-                                    : new Set(prev);
-                                if (base.has(id)) base.delete(id);
-                                else base.add(id);
-                                return base;
-                              })
-                            }
-                            onDelete={handleDeleteCharacter}
-                            getStatusDotClass={getStatusDotClass}
-                            getStatusLabel={getStatusLabel}
-                          />
-                        ))}
-                      </>
-                    )}
-                  </>
+                  allReferences.map((ref) => (
+                    <ReferenceSidebarItem
+                      key={ref.id}
+                      character={ref}
+                      projectId={projectId}
+                      referenceImageMap={referenceImageMap}
+                      onDelete={handleDeleteReference}
+                      getStatusDotClass={getStatusDotClass}
+                      getStatusLabel={getStatusLabel}
+                    />
+                  ))
                 )}
               </Stack>
             </div>
@@ -722,7 +795,7 @@ function ProjectWorkspace() {
                   Add Chapter
                 </button>
 
-                {activeCharacters.length > 0 && (
+                {activeReferences.length > 0 && (
                   <button
                     className={styles.gradientBtn}
                     style={{ padding: '8px 12px', fontSize: 13, width: '100%' }}
@@ -741,7 +814,7 @@ function ProjectWorkspace() {
             {/* ── Main: Panels ───────────────────── */}
             <div>
               {/* Status messages */}
-              {activeCharacters.length === 0 && allCharacters.length === 0 && (
+              {activeReferences.length === 0 && allReferences.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
                   <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
                   <Text c="dimmed" mb="md">
@@ -757,7 +830,7 @@ function ProjectWorkspace() {
                 </div>
               )}
 
-              {activeCharacters.length === 0 && allCharacters.length > 0 && (
+              {activeReferences.length === 0 && allReferences.length > 0 && (
                 <div className="py-8 text-center">
                   <Text c="dimmed" size="sm">
                     Wait for your references to finish processing before generating panels.
@@ -765,13 +838,13 @@ function ProjectWorkspace() {
                 </div>
               )}
 
-              {activeCharacters.length > 0 && !selectedRefsHaveImages && (
+              {activeReferences.length > 0 && !anyRefHasImages && (
                 <div
                   className="flex items-center justify-between py-4 px-4 rounded-lg"
                   style={{ background: '#2C2E33', border: '1px solid #373A40' }}
                 >
                   <Text c="dimmed" size="sm">
-                    Selected references need images before generating panels.
+                    References need images before generating panels.
                   </Text>
                   <button
                     className={styles.subtleBtn}
@@ -784,8 +857,8 @@ function ProjectWorkspace() {
 
               {activeChapter &&
                 activeChapter.panels.length === 0 &&
-                activeCharacters.length > 0 &&
-                selectedRefsHaveImages && (
+                activeReferences.length > 0 &&
+                anyRefHasImages && (
                   <div className="flex flex-col items-center py-12 text-center">
                     <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
                     <Text c="dimmed">No panels yet. Create your first panel!</Text>
@@ -818,7 +891,7 @@ function ProjectWorkspace() {
                           referenceNames={
                             (panel.references ?? [])
                               .map((r: { referenceId: string }) =>
-                                characterNameMap.get(r.referenceId)
+                                referenceNameMap.get(r.referenceId)
                               )
                               .filter(Boolean) as string[]
                           }
@@ -828,13 +901,24 @@ function ProjectWorkspace() {
                             openDebugModal();
                           }}
                           onRegenerate={() => {
+                            const meta = panel.metadata as Record<string, any> | null;
                             setRegeneratingPanelId(panel.id);
                             setPrompt(panel.prompt);
-                            const panelRefIds = (panel.references ?? []).map(
-                              (r: { referenceId: string }) => r.referenceId
-                            );
-                            if (panelRefIds.length > 0) {
-                              setSelectedReferenceIds(new Set(panelRefIds));
+                            setEnhancePrompt(meta?.enhanceEnabled ?? true);
+                            setUseContext(meta?.useContext ?? true);
+                            setIncludePreviousImage(meta?.includePreviousImage ?? false);
+                            if (meta?.sourceImageUrl) {
+                              setPanelMode('enhance');
+                              setEnhanceSourceImage({
+                                url: meta.sourceImageUrl,
+                                previewUrl:
+                                  getEdgeUrl(meta.sourceImageUrl, { width: 400 }) ??
+                                  meta.sourceImageUrl,
+                                width: meta.sourceImageWidth ?? 512,
+                                height: meta.sourceImageHeight ?? 512,
+                              });
+                            } else {
+                              setPanelMode('generate');
                             }
                             openPanelModal();
                           }}
@@ -848,7 +932,7 @@ function ProjectWorkspace() {
                     ))}
 
                     {/* Add panel button */}
-                    {activeCharacters.length > 0 && selectedRefsHaveImages && (
+                    {activeChapter && (
                       <button className={styles.addPanelBtn} onClick={openPanelModal}>
                         <IconPlus size={28} />
                       </button>
@@ -897,7 +981,7 @@ function ProjectWorkspace() {
                 )}
               </div>
 
-              {/* Status + Character row */}
+              {/* Status + Reference row */}
               <div className="flex items-center gap-3 flex-wrap">
                 <div className={styles.detailStatusBadge}>
                   <span
@@ -911,7 +995,7 @@ function ProjectWorkspace() {
                   {detailPanel.status === 'Pending' ? 'Queued' : detailPanel.status}
                 </div>
                 {(detailPanel.references ?? []).map((r: { referenceId: string }) => {
-                  const name = characterNameMap.get(r.referenceId);
+                  const name = referenceNameMap.get(r.referenceId);
                   return name ? (
                     <span key={r.referenceId} className={styles.detailCharacterPill}>
                       <IconUser size={14} />
@@ -962,20 +1046,78 @@ function ProjectWorkspace() {
                 </div>
               )}
 
+              {/* Source Image (for enhanced panels) */}
+              {(detailPanel.metadata as Record<string, any> | null)?.sourceImageUrl && (
+                <div>
+                  <div className={styles.detailSectionTitle}>Source Image</div>
+                  <div className={styles.enhanceImagePreview}>
+                    <img
+                      src={
+                        getEdgeUrl((detailPanel.metadata as Record<string, any>).sourceImageUrl, {
+                          width: 400,
+                        }) ?? (detailPanel.metadata as Record<string, any>).sourceImageUrl
+                      }
+                      alt="Source"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Generation settings */}
+              {(() => {
+                const meta = detailPanel.metadata as Record<string, any> | null;
+                if (!meta) return null;
+                return (
+                  <div>
+                    <div className={styles.detailSectionTitle}>Settings</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={styles.detailCharacterPill}>
+                        {meta.enhanceEnabled !== false ? 'Prompt enhanced' : 'Prompt not enhanced'}
+                      </span>
+                      {meta.enhanceEnabled !== false && (
+                        <span className={styles.detailCharacterPill}>
+                          {meta.useContext !== false
+                            ? 'Previous context used'
+                            : 'No previous context'}
+                        </span>
+                      )}
+                      {meta.includePreviousImage && (
+                        <span className={styles.detailCharacterPill}>
+                          Previous image referenced
+                        </span>
+                      )}
+                      {meta.sourceImageUrl && (
+                        <span className={styles.detailCharacterPill}>Enhanced from image</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Actions */}
               <div className={styles.detailActions}>
                 {(detailPanel.status === 'Ready' || detailPanel.status === 'Failed') && (
                   <button
                     className={styles.gradientBtn}
                     onClick={() => {
+                      const meta = detailPanel.metadata as Record<string, any> | null;
                       setDetailPanelId(null);
                       setRegeneratingPanelId(detailPanel.id);
                       setPrompt(detailPanel.prompt);
-                      const panelRefIds = (detailPanel.references ?? []).map(
-                        (r: { referenceId: string }) => r.referenceId
-                      );
-                      if (panelRefIds.length > 0) {
-                        setSelectedReferenceIds(new Set(panelRefIds));
+                      setEnhancePrompt(meta?.enhanceEnabled ?? true);
+                      setUseContext(meta?.useContext ?? true);
+                      setIncludePreviousImage(meta?.includePreviousImage ?? false);
+                      if (meta?.sourceImageUrl) {
+                        setPanelMode('enhance');
+                        setEnhanceSourceImage({
+                          url: meta.sourceImageUrl,
+                          previewUrl:
+                            getEdgeUrl(meta.sourceImageUrl, { width: 400 }) ?? meta.sourceImageUrl,
+                          width: meta.sourceImageWidth ?? 512,
+                          height: meta.sourceImageHeight ?? 512,
+                        });
+                      } else {
+                        setPanelMode('generate');
                       }
                       openPanelModal();
                     }}
@@ -984,7 +1126,7 @@ function ProjectWorkspace() {
                     Regenerate
                   </button>
                 )}
-                {detailPanelIndex >= 0 && activeCharacters.length > 0 && selectedRefsHaveImages && (
+                {detailPanelIndex >= 0 && (
                   <button
                     className={styles.subtleBtn}
                     onClick={() => {
@@ -1029,103 +1171,263 @@ function ProjectWorkspace() {
         )}
       </div>
 
-      {/* ── Generate Panel Modal ─────────────────── */}
+      {/* ── Generate / Enhance Panel Modal ─────────────────── */}
       <Modal
         opened={panelModalOpened}
-        onClose={() => {
-          closePanelModal();
-          setRegeneratingPanelId(null);
-          setInsertAtPosition(null);
-        }}
+        onClose={handlePanelModalClose}
         title={
           regeneratingPanelId
             ? 'Regenerate Panel'
             : insertAtPosition != null
             ? 'Insert Panel'
-            : 'Generate Panel'
+            : 'Create Panel'
         }
         size="lg"
       >
-        <Stack gap="md">
-          <div>
-            <Text size="sm" fw={500} mb={4}>
-              References ({effectiveSelectedIds.size} selected)
-            </Text>
-            <Group gap="xs">
-              {activeCharacters.map((c) => (
+        {/* Tab bar */}
+        {!regeneratingPanelId && (
+          <div className={styles.panelModeTabs}>
+            <button
+              className={clsx(
+                styles.panelModeTab,
+                panelMode === 'generate' && styles.panelModeTabActive
+              )}
+              onClick={() => setPanelMode('generate')}
+            >
+              <IconSparkles
+                size={14}
+                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
+              />
+              Generate
+            </button>
+            <button
+              className={clsx(
+                styles.panelModeTab,
+                panelMode === 'enhance' && styles.panelModeTabActive
+              )}
+              onClick={() => setPanelMode('enhance')}
+            >
+              <IconWand
+                size={14}
+                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
+              />
+              Enhance
+            </button>
+          </div>
+        )}
+
+        {panelMode === 'generate' ? (
+          <Stack gap="md">
+            <MentionTextarea
+              label="Describe the scene"
+              value={prompt}
+              onChange={setPrompt}
+              references={mentionRefs}
+              placeholder="Describe the scene... Use @Name to include references (e.g., @Maya on a rooftop)"
+              rows={4}
+            />
+
+            <Switch
+              label="Enhance prompt"
+              description="Use AI to add detail and composition to your prompt"
+              checked={enhancePrompt}
+              onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
+              color="yellow"
+            />
+            {activeChapter && activeChapter.panels.length > 0 && insertAtPosition !== 0 && (
+              <>
+                {enhancePrompt && (
+                  <Switch
+                    label="Use previous panel context"
+                    description="Pass the previous panel's prompt to the AI for visual continuity"
+                    checked={useContext}
+                    onChange={(e) => setUseContext(e.currentTarget.checked)}
+                    ml="md"
+                  />
+                )}
+                <Switch
+                  label="Reference previous panel image"
+                  description="Include the previous panel's image as a reference for generation"
+                  checked={includePreviousImage}
+                  onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
+                />
+              </>
+            )}
+
+            <Group justify="space-between">
+              <Text size="sm" c="dimmed">
+                Cost: {panelCost > 0 ? `${panelCost} Buzz` : 'Estimating...'}
+              </Text>
+              <Group>
+                <Button variant="default" onClick={handlePanelModalClose}>
+                  Cancel
+                </Button>
                 <button
-                  key={c.id}
-                  className={clsx(
-                    styles.detailCharacterPill,
-                    effectiveSelectedIds.has(c.id) && styles.characterPillSelected
-                  )}
-                  style={{
-                    padding: '3px 10px',
-                    fontSize: 12,
-                    cursor: 'pointer',
-                    opacity: effectiveSelectedIds.has(c.id) ? 1 : 0.5,
-                  }}
-                  onClick={() =>
-                    setSelectedReferenceIds((prev) => {
-                      const base =
-                        prev.size === 0
-                          ? new Set(activeCharacters.map((r) => r.id))
-                          : new Set(prev);
-                      if (base.has(c.id)) base.delete(c.id);
-                      else base.add(c.id);
-                      return base;
-                    })
+                  className={styles.gradientBtn}
+                  onClick={handleGeneratePanel}
+                  disabled={
+                    !prompt.trim() || deletePanelMutation.isPending || createPanelMutation.isPending
                   }
                 >
-                  <IconUser size={12} />
-                  {c.name}
+                  {createPanelMutation.isPending ? <Loader size={14} color="dark" /> : null}
+                  {insertAtPosition != null ? 'Insert' : 'Generate'}
                 </button>
-              ))}
+              </Group>
             </Group>
-          </div>
+          </Stack>
+        ) : (
+          <Stack gap="md">
+            {/* Source image selection */}
+            {!enhanceSourceImage ? (
+              <div>
+                <Text size="sm" fw={500} mb={8}>
+                  Source Image
+                </Text>
+                {enhanceUploading ? (
+                  <div
+                    className="flex flex-col items-center justify-center gap-2"
+                    style={{
+                      background: '#2C2E33',
+                      borderRadius: 8,
+                      padding: 24,
+                    }}
+                  >
+                    <Loader size="sm" />
+                    <Text size="xs" c="dimmed">
+                      Uploading image...
+                    </Text>
+                  </div>
+                ) : (
+                  <div className={styles.enhanceSourceOptions}>
+                    <Dropzone onDrop={handleEnhanceImageDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
+                      <Stack align="center" gap={4} py="sm" style={{ pointerEvents: 'none' }}>
+                        <Dropzone.Accept>
+                          <IconUpload size={24} className="text-blue-500" />
+                        </Dropzone.Accept>
+                        <Dropzone.Reject>
+                          <IconX size={24} className="text-red-500" />
+                        </Dropzone.Reject>
+                        <Dropzone.Idle>
+                          <IconPhotoUp size={24} style={{ color: '#909296' }} />
+                        </Dropzone.Idle>
+                        <Text size="xs" c="dimmed" ta="center">
+                          Upload Image
+                        </Text>
+                      </Stack>
+                    </Dropzone>
+                    <button
+                      className={styles.subtleBtn}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        padding: 16,
+                        height: 'auto',
+                      }}
+                      onClick={handleOpenImageSelector}
+                    >
+                      <IconWand size={24} style={{ marginBottom: 4 }} />
+                      <Text size="xs">From Generator</Text>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <Text size="sm" fw={500} mb={8}>
+                  Source Image
+                </Text>
+                <div className={styles.enhanceImagePreview}>
+                  <img
+                    src={
+                      enhanceSourceImage.previewUrl.startsWith('http')
+                        ? enhanceSourceImage.previewUrl
+                        : getEdgeUrl(enhanceSourceImage.previewUrl, { width: 400 }) ??
+                          enhanceSourceImage.previewUrl
+                    }
+                    alt="Source"
+                  />
+                  <ActionIcon
+                    className={styles.enhanceImageRemove}
+                    variant="filled"
+                    color="dark"
+                    size="sm"
+                    onClick={() => {
+                      setEnhanceSourceImage(null);
+                      resetEnhanceFiles();
+                    }}
+                  >
+                    <IconX size={14} />
+                  </ActionIcon>
+                </div>
+              </div>
+            )}
 
-          <Textarea
-            label="Describe the scene"
-            placeholder="Maya standing on a rooftop at sunset, wind blowing her hair, looking determined"
-            rows={4}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
+            {/* Optional enhancement prompt */}
+            <MentionTextarea
+              label="Enhancement prompt (optional)"
+              value={prompt}
+              onChange={setPrompt}
+              references={mentionRefs}
+              placeholder="Optionally describe changes... Use @Name to include references"
+              rows={3}
+            />
 
-          <Switch
-            label="Enhance prompt"
-            description="Use AI to add detail and composition to your prompt"
-            checked={enhancePrompt}
-            onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
-            color="yellow"
-          />
+            {prompt.trim() && (
+              <>
+                <Switch
+                  label="Enhance prompt"
+                  description="Use AI to add detail and composition to your prompt"
+                  checked={enhancePrompt}
+                  onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
+                  color="yellow"
+                />
+                {activeChapter &&
+                  activeChapter.panels.length > 0 &&
+                  insertAtPosition !== 0 &&
+                  enhancePrompt && (
+                    <Switch
+                      label="Use previous panel context"
+                      description="Pass the previous panel's prompt to the AI for visual continuity"
+                      checked={useContext}
+                      onChange={(e) => setUseContext(e.currentTarget.checked)}
+                      ml="md"
+                    />
+                  )}
+                {activeChapter && activeChapter.panels.length > 0 && insertAtPosition !== 0 && (
+                  <Switch
+                    label="Reference previous panel image"
+                    description="Include the previous panel's image as a reference for generation"
+                    checked={includePreviousImage}
+                    onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
+                  />
+                )}
+              </>
+            )}
 
-          <Group justify="space-between">
-            <Text size="sm" c="dimmed">
-              Cost: {panelCost > 0 ? `${panelCost} Buzz` : 'Estimating...'}
-            </Text>
-            <Group>
-              <Button
-                variant="default"
-                onClick={() => {
-                  closePanelModal();
-                  setRegeneratingPanelId(null);
-                }}
-              >
-                Cancel
-              </Button>
-              <button
-                className={styles.gradientBtn}
-                onClick={handleGeneratePanel}
-                disabled={
-                  !prompt.trim() || deletePanelMutation.isPending || createPanelMutation.isPending
-                }
-              >
-                {insertAtPosition != null ? 'Insert' : 'Generate'}
-              </button>
+            <Group justify="space-between">
+              <Text size="sm" c="dimmed">
+                {!prompt.trim()
+                  ? 'Free — panel from your image'
+                  : panelCost > 0
+                  ? `Cost: ${panelCost} Buzz`
+                  : 'Cost: Estimating...'}
+              </Text>
+              <Group>
+                <Button variant="default" onClick={handlePanelModalClose}>
+                  Cancel
+                </Button>
+                <button
+                  className={styles.gradientBtn}
+                  onClick={handleEnhancePanel}
+                  disabled={!enhanceSourceImage || enhancePanelMutation.isPending}
+                >
+                  {enhancePanelMutation.isPending ? <Loader size={14} color="dark" /> : null}
+                  {regeneratingPanelId ? 'Regenerate' : !prompt.trim() ? 'Add Panel' : 'Enhance'}
+                </button>
+              </Group>
             </Group>
-          </Group>
-        </Stack>
+          </Stack>
+        )}
       </Modal>
 
       {/* ── Smart Create Modal ────────────────────── */}
@@ -1148,58 +1450,13 @@ function ProjectWorkspace() {
               onChange={(e) => setSmartChapterName(e.target.value)}
             />
 
-            <div>
-              <Text size="sm" fw={500} mb={4}>
-                References
-              </Text>
-              <Group gap="xs">
-                {activeCharacters.map((c) => {
-                  const effectiveSmartIds =
-                    smartCharacterIds.size > 0
-                      ? smartCharacterIds
-                      : new Set(activeCharacters.map((r) => r.id));
-                  return (
-                    <button
-                      key={c.id}
-                      className={clsx(
-                        styles.detailCharacterPill,
-                        effectiveSmartIds.has(c.id) && styles.characterPillSelected
-                      )}
-                      style={{
-                        padding: '3px 10px',
-                        fontSize: 12,
-                        cursor: 'pointer',
-                        opacity: effectiveSmartIds.has(c.id) ? 1 : 0.5,
-                      }}
-                      onClick={() =>
-                        setSmartCharacterIds((prev) => {
-                          const base =
-                            prev.size === 0
-                              ? new Set(activeCharacters.map((r) => r.id))
-                              : new Set(prev);
-                          if (base.has(c.id)) base.delete(c.id);
-                          else base.add(c.id);
-                          return base;
-                        })
-                      }
-                    >
-                      <IconUser size={12} />
-                      {c.name}
-                    </button>
-                  );
-                })}
-              </Group>
-            </div>
-
-            <Textarea
+            <MentionTextarea
               label="Describe the story or scene"
-              placeholder="A warrior discovers an ancient temple in the jungle, encounters a guardian spirit, and must prove their worth through a test of courage..."
-              rows={6}
-              autosize
-              minRows={4}
-              maxRows={10}
               value={smartStory}
-              onChange={(e) => setSmartStory(e.target.value)}
+              onChange={setSmartStory}
+              references={mentionRefs}
+              placeholder="A warrior discovers an ancient temple... Use @Name to reference characters"
+              rows={6}
             />
 
             <Group justify="flex-end">
@@ -1245,18 +1502,19 @@ function ProjectWorkspace() {
                     <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
                       #{index + 1}
                     </Text>
-                    <Textarea
-                      className="flex-1"
-                      autosize
-                      minRows={2}
-                      maxRows={5}
-                      value={panel.prompt}
-                      onChange={(e) => {
-                        const updated = [...smartPanels];
-                        updated[index] = { prompt: e.target.value };
-                        setSmartPanels(updated);
-                      }}
-                    />
+                    <div className="flex-1">
+                      <MentionTextarea
+                        value={panel.prompt}
+                        onChange={(val) => {
+                          const updated = [...smartPanels];
+                          updated[index] = { prompt: val };
+                          setSmartPanels(updated);
+                        }}
+                        references={mentionRefs}
+                        placeholder="Panel prompt... Use @Name for references"
+                        rows={2}
+                      />
+                    </div>
                     <ActionIcon
                       variant="subtle"
                       color="red"
@@ -1418,40 +1676,30 @@ function ProjectWorkspace() {
   );
 }
 
-// ── Character sidebar item ─────────────────────────
-function CharacterSidebarItem({
-  character,
+// ── Reference sidebar item ─────────────────────────
+function ReferenceSidebarItem({
+  character: ref,
   projectId,
-  isSelected,
-  characterImageMap,
-  onToggle,
+  referenceImageMap,
   onDelete,
   getStatusDotClass,
   getStatusLabel,
 }: {
   character: { id: string; name: string; status: string; images?: any[] };
   projectId: string;
-  isSelected: boolean;
-  characterImageMap: Map<string, { url: string }>;
-  onToggle: (id: string) => void;
+  referenceImageMap: Map<string, { url: string }>;
   onDelete: (id: string, name: string) => void;
   getStatusDotClass: (status: string, hasRefs: boolean) => string;
   getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
 }) {
-  const coverImage = characterImageMap.get(character.id);
-  const charHasRefs = (character.images?.length ?? 0) > 0;
-  const isFailed = character.status === 'Failed';
-  const isReady = character.status === 'Ready';
+  const coverImage = referenceImageMap.get(ref.id);
+  const hasImages = (ref.images?.length ?? 0) > 0;
+  const isFailed = ref.status === 'Failed';
 
   return (
-    <div
-      className={clsx(styles.characterCard, isSelected && isReady && styles.characterCardSelected)}
-      onClick={() => {
-        if (isReady) onToggle(character.id);
-      }}
-    >
+    <div className={styles.characterCard}>
       <Link
-        href={`/comics/project/${projectId}/character?characterId=${character.id}`}
+        href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
         className={styles.characterAvatar}
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
@@ -1461,8 +1709,8 @@ function CharacterSidebarItem({
           <EdgeMedia2
             src={coverImage.url}
             type="image"
-            name={character.name}
-            alt={character.name}
+            name={ref.name}
+            alt={ref.name}
             width={80}
             style={{
               maxWidth: '100%',
@@ -1480,17 +1728,15 @@ function CharacterSidebarItem({
 
       <div className={styles.characterInfo}>
         <Link
-          href={`/comics/project/${projectId}/character?characterId=${character.id}`}
+          href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
           className={styles.characterName}
           onClick={(e: React.MouseEvent) => e.stopPropagation()}
         >
-          {character.name}
+          {ref.name}
         </Link>
         <p className={styles.characterStatus}>
-          <span
-            className={clsx(styles.statusDot, getStatusDotClass(character.status, charHasRefs))}
-          />
-          {getStatusLabel(character.status, charHasRefs, isFailed)}
+          <span className={clsx(styles.statusDot, getStatusDotClass(ref.status, hasImages))} />
+          {getStatusLabel(ref.status, hasImages, isFailed)}
         </p>
       </div>
 
@@ -1501,7 +1747,7 @@ function CharacterSidebarItem({
           size="sm"
           onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
-            onDelete(character.id, character.name);
+            onDelete(ref.id, ref.name);
           }}
         >
           <IconTrash size={14} />
@@ -1812,12 +2058,16 @@ function PanelDebugModal({
                       </Badge>
                     </Group>
                   ))}
-                  {meta?.allCharacterNames && (
+                  {(meta?.allReferenceNames ?? meta?.allCharacterNames) && (
                     <Group gap="xs">
                       <Text size="xs" c="dimmed">
                         All known:
                       </Text>
-                      <Text size="xs">{(meta.allCharacterNames as string[]).join(', ')}</Text>
+                      <Text size="xs">
+                        {((meta.allReferenceNames ?? meta.allCharacterNames) as string[]).join(
+                          ', '
+                        )}
+                      </Text>
                     </Group>
                   )}
                 </Stack>

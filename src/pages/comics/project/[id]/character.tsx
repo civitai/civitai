@@ -8,7 +8,6 @@ import {
   Image,
   Progress,
   Stack,
-  Switch,
   Text,
   TextInput,
   Title,
@@ -47,13 +46,12 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-function CharacterUpload() {
+function ReferenceUpload() {
   const router = useRouter();
   const { id } = router.query;
   const projectId = id as string;
 
-  const [characterName, setCharacterName] = useState('');
-  const [saveToLibrary, setSaveToLibrary] = useState(false);
+  const [referenceName, setReferenceName] = useState('');
 
   // Upload flow state
   const [images, setImages] = useState<
@@ -105,7 +103,7 @@ function CharacterUpload() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (images.length === 0 || !characterName.trim()) return;
+    if (images.length === 0 || !referenceName.trim()) return;
 
     setIsUploading(true);
     setUploadProgress(0);
@@ -127,8 +125,7 @@ function CharacterUpload() {
 
       // 2. Create reference
       const reference = await createReferenceMutation.mutateAsync({
-        ...(saveToLibrary ? {} : { projectId }),
-        name: characterName.trim(),
+        name: referenceName.trim(),
       });
 
       setUploadProgress(90);
@@ -144,14 +141,13 @@ function CharacterUpload() {
     }
   };
 
-  // Existing character view
+  // Existing reference view
   const characterId = router.query.characterId as string | undefined;
-  const existingCharacter = characterId
-    ? project?.references?.find((c) => c.id === characterId) ??
-      project?.libraryReferences?.find((c) => c.id === characterId)
+  const existingReference = characterId
+    ? project?.references?.find((c) => c.id === characterId)
     : undefined;
 
-  // Reference image management state for existing characters
+  // Reference image management state for existing references
   const [showUploadArea, setShowUploadArea] = useState(false);
   const { uploadToCF, files: uploadingFiles, resetFiles } = useCFImageUpload();
   const [uploadedImages, setUploadedImages] = useState<
@@ -197,32 +193,30 @@ function CharacterUpload() {
   };
 
   const handleSaveUploadedRefs = () => {
-    if (!existingCharacter || uploadedImages.length === 0) return;
+    if (!existingReference || uploadedImages.length === 0) return;
     addMoreImagesMutation.mutate({
-      referenceId: existingCharacter.id,
+      referenceId: existingReference.id,
       images: uploadedImages,
     });
   };
 
-  // If characterId is in URL but character not found, show not-found state
-  if (characterId && !existingCharacter && project) {
+  // If characterId is in URL but reference not found, show not-found state
+  if (characterId && !existingReference && project) {
     return (
       <>
-        <Meta title={`Character Not Found - ${project?.name} - Civitai Comics`} />
+        <Meta title={`Reference Not Found - ${project?.name} - Civitai Comics`} />
         <Container size="md" py="xl">
           <Stack gap="xl">
             <Group>
               <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
                 <IconArrowLeft size={20} />
               </ActionIcon>
-              <Title order={2}>Character Not Found</Title>
+              <Title order={2}>Reference Not Found</Title>
             </Group>
             <Card withBorder p="xl">
               <Stack align="center" gap="lg">
                 <IconAlertTriangle size={40} className="text-yellow-500" />
-                <Text c="dimmed">
-                  This character could not be found in the project or your library.
-                </Text>
+                <Text c="dimmed">This reference could not be found.</Text>
                 <Button component={Link} href={`/comics/project/${projectId}`}>
                   Back to Project
                 </Button>
@@ -234,15 +228,15 @@ function CharacterUpload() {
     );
   }
 
-  // If character already exists, show status + ref image management
-  if (existingCharacter) {
-    const isFailed = existingCharacter.status === 'Failed';
-    const refImages = existingCharacter.images ?? [];
+  // If reference already exists, show status + ref image management
+  if (existingReference) {
+    const isFailed = existingReference.status === 'Failed';
+    const refImages = existingReference.images ?? [];
     const hasRefs = refImages.length > 0;
 
     return (
       <>
-        <Meta title={`Character - ${project?.name} - Civitai Comics`} />
+        <Meta title={`Reference - ${project?.name} - Civitai Comics`} />
 
         <Container size="md" py="xl">
           <Stack gap="xl">
@@ -250,7 +244,7 @@ function CharacterUpload() {
               <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
                 <IconArrowLeft size={20} />
               </ActionIcon>
-              <Title order={2}>Character</Title>
+              <Title order={2}>Reference</Title>
             </Group>
 
             <Card withBorder p="xl">
@@ -262,8 +256,8 @@ function CharacterUpload() {
                     <EdgeMedia2
                       src={refImages[0].image.url}
                       type="image"
-                      name={existingCharacter.name}
-                      alt={existingCharacter.name}
+                      name={existingReference.name}
+                      alt={existingReference.name}
                       width={96}
                       style={{ width: 96, height: 96, objectFit: 'cover', display: 'block' }}
                     />
@@ -274,12 +268,12 @@ function CharacterUpload() {
 
                 <div className="text-center">
                   <Text fw={500} size="lg">
-                    {existingCharacter.name}
+                    {existingReference.name}
                   </Text>
                   <Text c={isFailed ? 'red' : 'dimmed'} size="sm">
                     {isFailed
                       ? 'Something went wrong'
-                      : existingCharacter.status === 'Ready'
+                      : existingReference.status === 'Ready'
                       ? hasRefs
                         ? 'Ready to use'
                         : 'Upload reference images to get started.'
@@ -287,8 +281,8 @@ function CharacterUpload() {
                   </Text>
                 </div>
 
-                {/* Error details for failed characters */}
-                {isFailed && existingCharacter.errorMessage && (
+                {/* Error details for failed references */}
+                {isFailed && existingReference.errorMessage && (
                   <Alert
                     color="red"
                     variant="light"
@@ -297,7 +291,7 @@ function CharacterUpload() {
                     w="100%"
                     maw={500}
                   >
-                    <Text size="sm">{existingCharacter.errorMessage}</Text>
+                    <Text size="sm">{existingReference.errorMessage}</Text>
                   </Alert>
                 )}
 
@@ -436,10 +430,10 @@ function CharacterUpload() {
     );
   }
 
-  // New character creation form — simple upload flow
+  // New reference creation form — simple upload flow
   return (
     <>
-      <Meta title={`Add Character - ${project?.name} - Civitai Comics`} />
+      <Meta title={`Add Reference - ${project?.name} - Civitai Comics`} />
 
       <Container size="md" py="xl">
         <Stack gap="xl">
@@ -447,7 +441,7 @@ function CharacterUpload() {
             <ActionIcon variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
               <IconArrowLeft size={20} />
             </ActionIcon>
-            <Title order={2}>Add Character</Title>
+            <Title order={2}>Add Reference</Title>
           </Group>
 
           <form onSubmit={handleSubmit}>
@@ -457,8 +451,7 @@ function CharacterUpload() {
                   <div>
                     <Text fw={500}>Upload Reference Images</Text>
                     <Text size="sm" c="dimmed">
-                      Upload 1-10 images of your character. These will be used as reference for
-                      panel generation.
+                      Upload 1-10 images. These will be used as reference for panel generation.
                     </Text>
                   </div>
 
@@ -527,8 +520,8 @@ function CharacterUpload() {
                 <Stack gap="md">
                   <Text fw={500}>Tips for Good References</Text>
                   <ul className="text-sm text-gray-400 list-disc ml-4 space-y-1">
-                    <li>Clear, front-facing view of the character</li>
-                    <li>Same character in all images</li>
+                    <li>Clear, front-facing view of the subject</li>
+                    <li>Same subject in all images</li>
                     <li>Different angles help (front, side, 3/4 view)</li>
                     <li>Consistent lighting across images</li>
                     <li>High resolution images work best</li>
@@ -537,10 +530,10 @@ function CharacterUpload() {
               </Card>
 
               <TextInput
-                label="Character name"
+                label="Reference name"
                 placeholder="Maya"
-                value={characterName}
-                onChange={(e) => setCharacterName(e.target.value)}
+                value={referenceName}
+                onChange={(e) => setReferenceName(e.target.value)}
                 disabled={isUploading}
               />
 
@@ -552,15 +545,6 @@ function CharacterUpload() {
                   </Text>
                 </Stack>
               )}
-
-              <Switch
-                label="Save to My Library"
-                description="Library characters can be used across all your projects"
-                checked={saveToLibrary}
-                onChange={(e) => setSaveToLibrary(e.currentTarget.checked)}
-                color="yellow"
-                disabled={isUploading}
-              />
 
               <Group justify="space-between">
                 <Text c="dimmed" size="sm">
@@ -577,14 +561,14 @@ function CharacterUpload() {
                   </Button>
                   <Button
                     type="submit"
-                    disabled={images.length < 1 || !characterName.trim()}
+                    disabled={images.length < 1 || !referenceName.trim()}
                     loading={
                       isUploading ||
                       createReferenceMutation.isPending ||
                       addImagesMutation.isPending
                     }
                   >
-                    {saveToLibrary ? 'Add to Library' : 'Add Character'}
+                    Add Reference
                   </Button>
                 </Group>
               </Group>
@@ -596,4 +580,4 @@ function CharacterUpload() {
   );
 }
 
-export default Page(CharacterUpload);
+export default Page(ReferenceUpload);

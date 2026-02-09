@@ -3731,7 +3731,6 @@ export interface ComicProject {
   publishedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  references?: ComicReference[];
   chapters?: ComicChapter[];
   engagements?: ComicProjectEngagement[];
 }
@@ -3754,8 +3753,6 @@ export interface ComicChapter {
 
 export interface ComicReference {
   id: string;
-  projectId: string | null;
-  project?: ComicProject | null;
   userId: number;
   user?: User;
   name: string;

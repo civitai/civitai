@@ -4840,7 +4840,6 @@ model ComicProject {
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
-  references  ComicReference[]
   chapters    ComicChapter[]
   engagements ComicProjectEngagement[]
 
@@ -4870,8 +4869,6 @@ model ComicChapter {
 
 model ComicReference {
   id         String                     @id @default(cuid())
-  projectId  String?
-  project    ComicProject?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
   userId     Int
   user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   name       String                     @db.VarChar(255)
@@ -4887,7 +4884,6 @@ model ComicReference {
   images          ComicReferenceImage[]
   panelReferences ComicPanelReference[]
 
-  @@index([projectId])
   @@index([userId])
   @@index([status])
 }

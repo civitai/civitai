@@ -98,7 +98,6 @@ ALTER TABLE "ComicChapter" ADD CONSTRAINT "ComicChapter_projectId_fkey"
 -- CreateTable
 CREATE TABLE "ComicReference" (
     "id" TEXT NOT NULL,
-    "projectId" TEXT,
     "userId" INTEGER NOT NULL,
     "name" VARCHAR(255) NOT NULL,
     "type" "ComicReferenceType" NOT NULL DEFAULT 'Character',
@@ -113,13 +112,10 @@ CREATE TABLE "ComicReference" (
 );
 
 -- CreateIndex
-CREATE INDEX "ComicReference_projectId_idx" ON "ComicReference"("projectId");
 CREATE INDEX "ComicReference_userId_idx" ON "ComicReference"("userId");
 CREATE INDEX "ComicReference_status_idx" ON "ComicReference"("status");
 
 -- AddForeignKey
-ALTER TABLE "ComicReference" ADD CONSTRAINT "ComicReference_projectId_fkey"
-  FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 ALTER TABLE "ComicReference" ADD CONSTRAINT "ComicReference_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
