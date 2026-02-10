@@ -160,6 +160,11 @@ const baseModelConfig = [
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
   { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' },
+  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B', ecosystem: 'flux2' },
+  
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 type BaseModelGroupConfigEntry = {
