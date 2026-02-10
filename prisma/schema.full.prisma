@@ -62,7 +62,6 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-
 model SessionInvalidation {
   userId        Int
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -210,7 +209,6 @@ model CashWithdrawal {
   @@index([userId])
 }
 
-
 model CryptoWallet {
   userId       Int     @id
   user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -228,7 +226,6 @@ enum CryptoTransactionStatus {
   SweepFailed // Sweep tx failed
   Complete // Sweep tx completed, Buzz paid
 }
-
 
 model CryptoTransaction {
   key         String                  @id @default(cuid())
@@ -250,35 +247,35 @@ enum RewardsEligibility {
 }
 
 model User {
-  id                      Int                   @id @default(autoincrement())
+  id                      Int                    @id @default(autoincrement())
   name                    String?
-  username                String?               @unique @db.Citext
-  email                   String?               @unique @db.Citext
+  username                String?                @unique @db.Citext
+  email                   String?                @unique @db.Citext
   emailVerified           DateTime?
   image                   String?
-  showNsfw                Boolean               @default(false)
-  blurNsfw                Boolean               @default(true)
-  browsingLevel           Int                   @default(1)
-  onboarding              Int                   @default(0)
-  isModerator             Boolean?              @default(false)
-  createdAt               DateTime              @default(now())
+  showNsfw                Boolean                @default(false)
+  blurNsfw                Boolean                @default(true)
+  browsingLevel           Int                    @default(1)
+  onboarding              Int                    @default(0)
+  isModerator             Boolean?               @default(false)
+  createdAt               DateTime               @default(now())
   deletedAt               DateTime?
   subscriptions           CustomerSubscription[]
   mutedAt                 DateTime? /// Updated via trigger
-  muted                   Boolean               @default(false)
+  muted                   Boolean                @default(false)
   muteConfirmedAt         DateTime?
   bannedAt                DateTime?
-  autoplayGifs            Boolean?              @default(true)
-  filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
-  meta                    Json?                 @default("{}")
+  autoplayGifs            Boolean?               @default(true)
+  filePreferences         Json                   @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  meta                    Json?                  @default("{}")
   leaderboardShowcase     String?
   referral                UserReferral?
-  excludeFromLeaderboards Boolean               @default(false)
-  rewardsEligibility      RewardsEligibility    @default(Eligible)
+  excludeFromLeaderboards Boolean                @default(false)
+  rewardsEligibility      RewardsEligibility     @default(Eligible)
   eligibilityChangedAt    DateTime?
   // Payment provider related
-  customerId              String?               @unique // Stripe
-  paddleCustomerId        String?               @unique
+  customerId              String?                @unique // Stripe
+  paddleCustomerId        String?                @unique
 
   profile              UserProfile?
   profilePictureId     Int?                      @unique
@@ -384,6 +381,9 @@ model User {
   CryptoWallet               CryptoWallet[]
   CryptoTransaction          CryptoTransaction[]
   userRestrictions            UserRestriction[]               @relation("userRestrictions")
+  challengesCreated          Challenge[]
+  challengeWins              ChallengeWinner[]
+  challengeJudges            ChallengeJudge[]
 
   // Comics
   comicProjects              ComicProject[]
@@ -483,7 +483,6 @@ model UserEngagement {
   @@id([userId, targetUserId])
   @@index([type, userId])
 }
-
 
 model UserMetric {
   user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -636,7 +635,6 @@ enum ModelModifier {
   TakenDown
 }
 
-
 enum ContentType {
   Image
   Character
@@ -735,14 +733,12 @@ model ModelFlag {
   @@index([status])
 }
 
-
 model License {
   id     Int     @id @default(autoincrement())
   name   String
   url    String
   models Model[]
 }
-
 
 model ModelInterest {
   userId    Int
@@ -778,7 +774,6 @@ enum ModelVersionSponsorshipSettingsType {
   Bidding
 }
 
-
 model ModelVersionSponsorshipSettings {
   id                         Int                                 @id @default(autoincrement())
   modelVersionMonetizationId Int                                 @unique
@@ -796,7 +791,6 @@ enum ModelVersionMonetizationType {
   MySubscribersOnly
   Sponsored
 }
-
 
 model ModelVersionMonetization {
   id                  Int                              @id @default(autoincrement())
@@ -975,47 +969,47 @@ enum MetricTimeframe {
 }
 
 model ModelMetric {
-  model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model             Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId           Int
-  downloadCount     Int             @default(0)
-  commentCount      Int             @default(0)
-  collectedCount    Int             @default(0)
-  imageCount        Int             @default(0)
-  tippedCount       Int             @default(0)
-  tippedAmountCount Int             @default(0)
-  generationCount   Int             @default(0)
-  thumbsUpCount     Int             @default(0)
-  thumbsDownCount   Int             @default(0)
-  earnedAmount      Int             @default(0)
-  updatedAt         DateTime        @default(now())
+  downloadCount     Int      @default(0)
+  commentCount      Int      @default(0)
+  collectedCount    Int      @default(0)
+  imageCount        Int      @default(0)
+  tippedCount       Int      @default(0)
+  tippedAmountCount Int      @default(0)
+  generationCount   Int      @default(0)
+  thumbsUpCount     Int      @default(0)
+  thumbsDownCount   Int      @default(0)
+  earnedAmount      Int      @default(0)
+  updatedAt         DateTime @default(now())
 
   // Model Metadata for quick access
-  poi Boolean          @default(false)
-  minor Boolean        @default(false)
-  nsfwLevel Int         @default(0)
-  userId   Int          @default(0)
+  poi           Boolean        @default(false)
+  minor         Boolean        @default(false)
+  nsfwLevel     Int            @default(0)
+  userId        Int            @default(0)
   lastVersionAt DateTime?
-  mode     ModelModifier?
-  status   ModelStatus  @default(Draft)
-  availability Availability @default(Public)
+  mode          ModelModifier?
+  status        ModelStatus    @default(Draft)
+  availability  Availability   @default(Public)
 
   @@id([modelId])
 }
 
 model ModelVersionMetric {
-  modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersion      ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId    Int
-  downloadCount     Int             @default(0)
-  commentCount      Int             @default(0)
-  collectedCount    Int             @default(0)
-  imageCount        Int             @default(0)
-  tippedCount       Int             @default(0)
-  tippedAmountCount Int             @default(0)
-  generationCount   Int             @default(0)
-  thumbsUpCount     Int             @default(0)
-  thumbsDownCount   Int             @default(0)
-  earnedAmount      Int             @default(0)
-  updatedAt         DateTime        @default(now())
+  downloadCount     Int          @default(0)
+  commentCount      Int          @default(0)
+  collectedCount    Int          @default(0)
+  imageCount        Int          @default(0)
+  tippedCount       Int          @default(0)
+  tippedAmountCount Int          @default(0)
+  generationCount   Int          @default(0)
+  thumbsUpCount     Int          @default(0)
+  thumbsDownCount   Int          @default(0)
+  earnedAmount      Int          @default(0)
+  updatedAt         DateTime     @default(now())
 
   @@id(modelVersionId)
 }
@@ -1075,7 +1069,6 @@ model ModelAssociations {
   @@index([toArticleId], type: Hash)
 }
 
-
 model DownloadHistory {
   userId         Int
   modelVersionId Int
@@ -1087,7 +1080,6 @@ model DownloadHistory {
   @@id([userId, modelVersionId])
   @@index([userId, downloadAt])
 }
-
 
 model ModActivity {
   id         Int      @id @default(autoincrement())
@@ -1147,7 +1139,6 @@ model Report {
   automated      ReportAutomated?
 }
 
-
 model ResourceReviewReport {
   resourceReviewId Int
   resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id], onDelete: Cascade)
@@ -1157,7 +1148,6 @@ model ResourceReviewReport {
   @@id([reportId, resourceReviewId])
   @@index([resourceReviewId], type: Hash)
 }
-
 
 model ModelReport {
   modelId  Int
@@ -1169,7 +1159,6 @@ model ModelReport {
   @@index([modelId], type: Hash)
 }
 
-
 model CommentReport {
   commentId Int
   comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
@@ -1179,7 +1168,6 @@ model CommentReport {
   @@id([reportId, commentId])
   @@index([commentId], type: Hash)
 }
-
 
 model CommentV2Report {
   commentV2Id Int
@@ -1191,7 +1179,6 @@ model CommentV2Report {
   @@index([commentV2Id], type: Hash)
 }
 
-
 model ImageReport {
   imageId  Int
   image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -1201,7 +1188,6 @@ model ImageReport {
   @@id([reportId, imageId])
   @@index([imageId], type: Hash)
 }
-
 
 model ArticleReport {
   articleId Int
@@ -1213,7 +1199,6 @@ model ArticleReport {
   @@index([articleId], type: Hash)
 }
 
-
 model PostReport {
   postId   Int
   post     Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -1223,7 +1208,6 @@ model PostReport {
   @@id([reportId, postId])
   @@index([postId], type: Hash)
 }
-
 
 model UserReport {
   userId   Int
@@ -1235,7 +1219,6 @@ model UserReport {
   @@index([userId], type: Hash)
 }
 
-
 model CollectionReport {
   collectionId Int
   collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
@@ -1245,7 +1228,6 @@ model CollectionReport {
   @@id([reportId, collectionId])
   @@index([collectionId], type: Hash)
 }
-
 
 model BountyReport {
   bountyId Int
@@ -1257,7 +1239,6 @@ model BountyReport {
   @@index([bountyId], type: Hash)
 }
 
-
 model BountyEntryReport {
   bountyEntryId Int
   bountyEntry   BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
@@ -1267,7 +1248,6 @@ model BountyEntryReport {
   @@id([reportId, bountyEntryId])
   @@index([bountyEntryId], type: Hash)
 }
-
 
 model ChatReport {
   chatId   Int
@@ -1364,7 +1344,6 @@ model Post {
   @@index([modelVersionId])
   @@index([publishedAt])
 }
-
 
 model PostMetric {
   postId         Int
@@ -1489,13 +1468,14 @@ model Image {
   comicPanels             ComicPanel[]
   comicReferenceImages    ComicReferenceImage[]
   comicProjectCover       ComicProject[]         @relation("comicProjectCover")
+  challengesCover     Challenge[]           @relation("ChallengeCoverImage")
+  challengeWins       ChallengeWinner[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
   @@index([sortAt])
 }
-
 
 model ImageTagForReview {
   imageId Int
@@ -1505,7 +1485,6 @@ model ImageTagForReview {
   @@id([imageId, tagId])
   @@index([tagId])
 }
-
 
 model ImageFlag {
   imageId       Int     @id
@@ -1519,7 +1498,6 @@ enum BlockImageReason {
   CSAM
   TOS
 }
-
 
 model BlockedImage {
   hash      BigInt           @id
@@ -1554,7 +1532,6 @@ model ImageEngagement {
   @@index([imageId])
 }
 
-
 model ImageResource {
   id             Int           @id @default(autoincrement())
   modelVersionId Int?
@@ -1583,7 +1560,6 @@ model ImageResourceNew {
   @@index([modelVersionId])
 }
 
-
 model ResourceOverride {
   hash           String
   modelVersionId Int
@@ -1592,7 +1568,6 @@ model ResourceOverride {
 
   @@id([hash])
 }
-
 
 model ImageMetric {
   image             Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -1627,7 +1602,6 @@ model ImageRatingRequest {
   @@id([imageId, userId])
 }
 
-
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
@@ -1639,7 +1613,6 @@ model CollectionMetric {
 
   @@id([collectionId, timeframe])
 }
-
 
 enum ImageOnModelType {
   Example
@@ -1747,7 +1720,6 @@ model TagsOnModelsVote {
   @@index([userId], type: Hash)
 }
 
-
 model TagsOnQuestions {
   question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   questionId Int
@@ -1771,7 +1743,6 @@ enum TagSource {
   SpineRating
 }
 
-
 model TagsOnImageNew {
   imageId    Int
   image      Image @relation(fields: [imageId], references: [id])
@@ -1781,7 +1752,6 @@ model TagsOnImageNew {
   @@id([imageId, tagId])
   @@index([tagId])
 }
-
 
 model ShadowTagsOnImage {
   imageId    Int
@@ -1822,7 +1792,6 @@ model TagsOnPost {
   @@index([postId], type: Hash)
 }
 
-
 model TagsOnArticle {
   articleId Int
   article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
@@ -1834,7 +1803,6 @@ model TagsOnArticle {
   @@index([articleId], type: Hash)
 }
 
-
 model TagsOnBounty {
   bountyId  Int
   bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
@@ -1845,7 +1813,6 @@ model TagsOnBounty {
   @@id([tagId, bountyId])
   @@index([bountyId], type: Hash)
 }
-
 
 model TagsOnPostVote {
   postId    Int
@@ -1862,7 +1829,6 @@ model TagsOnPostVote {
   @@index([userId], type: Hash)
 }
 
-
 model TagMetric {
   tag           Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagId         Int
@@ -1877,7 +1843,6 @@ model TagMetric {
 
   @@id([tagId, timeframe])
 }
-
 
 model SavedModel {
   model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
@@ -2048,7 +2013,6 @@ model Question {
   thread    Thread?
 }
 
-
 model QuestionMetric {
   questionId   Int
   question     Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
@@ -2089,7 +2053,6 @@ model AnswerVote {
   @@id([answerId, userId])
 }
 
-
 model AnswerMetric {
   answerId     Int
   answer       Answer          @relation(fields: [answerId], references: [id], onDelete: Cascade)
@@ -2103,21 +2066,21 @@ model AnswerMetric {
 }
 
 model CommentV2 {
-  id           Int       @id @default(autoincrement())
-  content      String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  nsfw         Boolean   @default(false)
-  tosViolation Boolean   @default(false)
-  userId       Int
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  threadId     Int
-  thread       Thread    @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
-  childThread  Thread?   @relation("childThread")
-  metadata     Json?
-  hidden       Boolean?  @default(false)
-  pinnedAt     DateTime?
-  reactionCount Int      @default(0)
+  id            Int       @id @default(autoincrement())
+  content       String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  nsfw          Boolean   @default(false)
+  tosViolation  Boolean   @default(false)
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId      Int
+  thread        Thread    @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
+  childThread   Thread?   @relation("childThread")
+  metadata      Json?
+  hidden        Boolean?  @default(false)
+  pinnedAt      DateTime?
+  reactionCount Int       @default(0)
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]
@@ -2160,8 +2123,8 @@ model Thread {
   comicChapterPosition Int?
   comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
 
-  metadata Json @default("{}") // unused
-  commentCount Int      @default(0)
+  metadata     Json @default("{}") // unused
+  commentCount Int  @default(0)
 
   comments       CommentV2[] @relation("thread")
   directChildren Thread[]    @relation("childThread")
@@ -2401,7 +2364,6 @@ model CosmeticShopSectionItem {
   @@id([shopItemId, shopSectionId])
 }
 
-
 model UserCosmeticShopPurchases {
   userId            Int
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2504,7 +2466,6 @@ model ArticleEngagement {
   @@index([articleId], type: Hash)
 }
 
-
 model ArticleMetric {
   article           Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
   articleId         Int
@@ -2565,7 +2526,6 @@ model ModelVersionExploration {
   @@id([modelVersionId, name])
 }
 
-
 enum GenerationSchedulers {
   EulerA
   Euler
@@ -2586,7 +2546,6 @@ enum GenerationSchedulers {
   DPMSDEKarras
   DDIM
 }
-
 
 model GenerationServiceProvider {
   name       String
@@ -2646,6 +2605,7 @@ model Collection {
   rank         CollectionRank?
   stats        CollectionStat?
   metrics      CollectionMetric[]
+  challenges   Challenge[]
 
   @@index([userId])
   @@index([type], type: Hash)
@@ -2910,7 +2870,6 @@ model BountyEngagement {
   @@index([userId], type: Hash)
 }
 
-
 model TipConnection {
   transactionId String // guid
   entityId      Int
@@ -2918,7 +2877,6 @@ model TipConnection {
 
   @@id([entityType, entityId, transactionId])
 }
-
 
 model BountyMetric {
   bounty          Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
@@ -2934,7 +2892,6 @@ model BountyMetric {
 
   @@id([bountyId, timeframe])
 }
-
 
 model BountyEntryMetric {
   bountyEntry       BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
@@ -2973,7 +2930,6 @@ model CsamReport {
   type             CsamReportType @default(Image)
   // modelVersionIds  Int[]     @default([])
 }
-
 
 model Link {
   id         Int      @id @default(autoincrement())
@@ -3025,12 +2981,10 @@ model EntityCollaborator {
   @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
-
 model EcosystemCheckpoints {
   id   Int    @id
   name String
 }
-
 
 model GenerationBaseModel {
   baseModel String @id
@@ -3186,7 +3140,6 @@ model ClubPostReaction {
   @@unique([clubPostId, userId, reaction])
 }
 
-
 model ClubPostMetric {
   clubPost     ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
   clubPostId   Int
@@ -3199,7 +3152,6 @@ model ClubPostMetric {
 
   @@id([clubPostId, timeframe])
 }
-
 
 model ClubMetric {
   club          Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
@@ -3767,9 +3719,142 @@ model ReportAutomated {
   createdAt DateTime @default(now())
 }
 
-
 model RestrictedBaseModels {
   baseModel String @id
+}
+
+// ============================================
+// Challenge System
+// ============================================
+// Entries are stored as CollectionItems in the linked Contest Collection.
+// This reuses existing collection infrastructure for submissions, scoring, and moderation.
+
+enum ChallengeSource {
+  System // Auto-generated by system job
+  Mod    // Created by moderator
+  User   // Created by regular user (future)
+}
+
+enum ChallengeStatus {
+  Scheduled // Funded and waiting for startsAt
+  Active    // Currently accepting submissions
+  Completed // Winners announced
+  Cancelled // Cancelled before completion
+}
+
+model Challenge {
+  id Int @id @default(autoincrement())
+
+  // Timing
+  startsAt  DateTime // When submissions open
+  endsAt    DateTime // When submissions close
+  visibleAt DateTime // When challenge appears in public feed
+
+  // Content
+  title        String
+  description  String? @db.Text
+  theme        String? // Short theme (e.g., "Neon Dreams")
+  invitation   String? // Tagline to invite participants
+  coverImageId Int?
+  coverImage   Image?  @relation("ChallengeCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
+  nsfwLevel    Int     @default(1)
+
+  // Required model versions (optional - empty means any allowed)
+  modelVersionIds Int[] @default([]) // Array of allowed model version IDs (OR logic)
+
+  // Entry requirements
+  allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)
+
+  // Judging Configuration
+  judgingPrompt    String? @db.Text // Custom AI judging prompt
+  reviewPercentage Int     @default(100) // % of entries to score
+  maxReviews       Int? // Hard cap on reviews (cost control)
+
+  // Entries - stored in a Contest Collection (auto-created if not provided)
+  collectionId      Int? // Optional - auto-created on challenge creation
+  collection        Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  maxEntriesPerUser Int         @default(20)
+
+  // Prizes & Costs
+  prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
+  entryPrize           Json? // {buzz: 200, points: 10} for participation
+  entryPrizeRequirement Int  @default(10) // Min entries to qualify for entry prize
+  prizePool       Int  @default(0) // Total buzz for prizes
+  operationBudget Int  @default(0) // Budget for AI review costs
+  operationSpent  Int  @default(0) // Actual spent (use atomic increment)
+
+  // Ownership & Source
+  createdById Int
+  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  source      ChallengeSource @default(System)
+
+  // Judge
+  judgeId Int?
+  judge   ChallengeJudge? @relation(fields: [judgeId], references: [id], onDelete: SetNull)
+
+  // Lifecycle
+  status ChallengeStatus @default(Scheduled)
+
+  // Metadata
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  winners ChallengeWinner[]
+
+  // Compound indexes for efficient feed queries
+  @@index([status, endsAt]) // "Ending Soon" feed
+  @@index([status, startsAt]) // "Just Started" feed
+  @@index([status, visibleAt]) // "Upcoming" feed
+  @@index([createdById, status]) // User's challenges by status
+  @@index([judgeId])
+}
+
+model ChallengeJudge {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name                  String  @db.VarChar(255)
+  bio                   String? @db.Text
+  sourceCollectionId    Int? // Collection to pick model resources from for this challenge type
+  systemPrompt          String? @db.Text
+  collectionPrompt      String? @db.Text
+  contentPrompt         String? @db.Text
+  reviewPrompt          String? @db.Text
+  winnerSelectionPrompt String? @db.Text
+  active                Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  challenges Challenge[]
+
+  @@index([userId])
+  @@index([active])
+}
+
+model ChallengeWinner {
+  id          Int       @id @default(autoincrement())
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  place         Int // 1, 2, 3, etc. (ties allowed - same place, different users)
+  buzzAwarded   Int
+  pointsAwarded Int
+  reason        String? @db.Text // AI explanation for placement
+
+  createdAt DateTime @default(now())
+
+  // Allow ties (multiple users can have same place), but user can only win once per challenge
+  @@unique([challengeId, userId])
+  @@index([challengeId])
+  @@index([userId])
 }
 
 /// @view
@@ -4025,8 +4110,8 @@ model ArticleRank {
 
 /// @view
 model UserStat {
-  user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                   Int   @id
+  user                     User @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                   Int  @id
   uploadCountAllTime       Int
   reviewCountAllTime       Int
   downloadCountAllTime     Int
@@ -4718,7 +4803,6 @@ model ClubRank {
   clubPostCountAllTimeRank Int  @default(0)
 }
 
-
 enum EntityMetric_EntityType_Type {
   Image
 }
@@ -4732,7 +4816,6 @@ enum EntityMetric_MetricType_Type {
   Collection
   Buzz
 }
-
 
 model EntityMetric {
   entityType  EntityMetric_EntityType_Type

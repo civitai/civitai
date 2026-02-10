@@ -125,6 +125,8 @@ export const modelFileCreateSchema = z.object({
   modelVersionId: z.number(),
   visibility: z.enum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
+  backend: z.string().optional(),
+  s3Path: z.string().optional(),
 });
 
 export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;

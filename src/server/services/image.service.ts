@@ -1626,7 +1626,7 @@ export const getAllImages = async (
       ...i,
       meta: imageMeta?.[i.id] ?? null,
       nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
-      modelVersionIds: [], // TODO doing this basically just for TS
+      modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
       modelVersionIdsManual: [],
       publishedAt: i.publishedAt ? i.sortAt : undefined,
       baseModel: imageResources

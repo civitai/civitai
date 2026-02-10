@@ -118,6 +118,7 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === 'shop' && !features.cosmeticShop,
         key === 'articles' && !features.articles,
         key === 'tools' && !features.toolSearch,
+        key === 'challenges' && !features.challengePlatform,
       ].some((b) => b)
   );
 }

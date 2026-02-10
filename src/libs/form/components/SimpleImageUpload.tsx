@@ -32,6 +32,7 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   dropzoneProps?: Omit<DropzoneProps, 'children' | 'onDrop'>;
   previewDisabled?: boolean;
   withNsfwLevel?: boolean;
+  disabled?: boolean;
 };
 
 export function SimpleImageUpload({
@@ -44,6 +45,7 @@ export function SimpleImageUpload({
   previewDisabled,
   dropzoneProps,
   withNsfwLevel = true,
+  disabled,
   ...props
 }: SimpleImageUploadProps) {
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
@@ -112,17 +114,19 @@ export function SimpleImageUpload({
         </Paper>
       ) : !previewDisabled && image ? (
         <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
-          <Tooltip label="Remove image">
-            <LegacyActionIcon
-              size="sm"
-              variant={aspectRatio ? 'filled' : 'light'}
-              color="red"
-              onClick={handleRemove}
-              className="absolute right-1 top-1 z-[1]"
-            >
-              <IconTrash />
-            </LegacyActionIcon>
-          </Tooltip>
+          {!disabled && (
+            <Tooltip label="Remove image">
+              <LegacyActionIcon
+                size="sm"
+                variant={aspectRatio ? 'filled' : 'light'}
+                color="red"
+                onClick={handleRemove}
+                className="absolute right-1 top-1 z-[1]"
+              >
+                <IconTrash />
+              </LegacyActionIcon>
+            </Tooltip>
+          )}
 
           <div
             style={
@@ -159,6 +163,7 @@ export function SimpleImageUpload({
           {...dropzoneProps}
           onDrop={handleDrop}
           maxFiles={1}
+          disabled={disabled}
           useFsAccessApi={!isAndroidDevice()}
           // maxSize={maxSize}
         >

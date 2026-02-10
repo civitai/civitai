@@ -287,6 +287,11 @@ function PromptAuditTestPage() {
     refetchOnWindowFocus: false,
   });
 
+  const { data: userCountsData, refetch: refetchUserCounts } =
+    trpc.userRestriction.getTodaysUserCounts.useQuery(undefined, {
+      refetchOnWindowFocus: false,
+    });
+
   // Flatten results to show one card per match
   const flattenedResults = useMemo(() => {
     const results: FlattenedResult[] = [];
@@ -317,17 +322,7 @@ function PromptAuditTestPage() {
     return map;
   }, [flattenedResults]);
 
-  // Count prohibited prompts per user, sorted descending
-  const userCounts = useMemo(() => {
-    if (!auditData?.results) return [];
-    const counts = new Map<number, number>();
-    for (const result of auditData.results) {
-      counts.set(result.userId, (counts.get(result.userId) ?? 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .map(([userId, count]) => ({ userId, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [auditData?.results]);
+  const userCounts = userCountsData?.userCounts ?? [];
 
   return (
     <>
@@ -347,7 +342,10 @@ function PromptAuditTestPage() {
                 <Button
                   leftSection={<IconRefresh size={16} />}
                   variant="light"
-                  onClick={() => refetch()}
+                  onClick={() => {
+                    refetch();
+                    refetchUserCounts();
+                  }}
                   loading={isRefetching}
                 >
                   Refresh

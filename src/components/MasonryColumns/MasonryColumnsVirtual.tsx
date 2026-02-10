@@ -120,9 +120,9 @@ function VirtualColumn<TData>({
       ref={ref}
       className={className}
       style={{
+        width: '100%',
         ...style,
         height: rowVirtualizer.getTotalSize(),
-        width: '100%',
         position: 'relative',
       }}
     >
@@ -135,6 +135,7 @@ function VirtualColumn<TData>({
             left: 0,
             width: '100%',
             height: items[item.index].height,
+            overflow: 'hidden',
             transform: `translateY(${item.start - rowVirtualizer.options.scrollMargin}px)`,
           }}
         >

@@ -31,6 +31,7 @@ import {
   modelVersionUpsertSchema2,
   publishVersionSchema,
   upsertExplorationPromptSchema,
+  getModelVersionsByIdsInput,
 } from '~/server/schema/model-version.schema';
 import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -41,6 +42,7 @@ import {
   getModelVersionsByModelType,
   getModelVersionsPopularity,
   getVersionById,
+  getVersionsByIds,
   upsertExplorationPrompt,
   bustMvCache,
 } from '~/server/services/model-version.service';
@@ -89,6 +91,9 @@ export const modelVersionRouter = router({
   getPopularities: publicProcedure
     .input(getModelVersionsPopularityInput)
     .query(({ input }) => getModelVersionsPopularity(input)),
+  getVersionsByIds: publicProcedure
+    .input(getModelVersionsByIdsInput)
+    .query(({ input }) => getVersionsByIds(input)),
   getExplorationPromptsById: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getExplorationPromptsById(input)),

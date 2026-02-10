@@ -216,6 +216,8 @@ export const serverSchema = z.object({
   // OpenAI
   OPENAI_API_KEY: z.string().optional(),
 
+  // OpenRouter (unified LLM API)
+  OPENROUTER_API_KEY: z.string().optional(),
   // Youtube related:
   YOUTUBE_APP_CLIENT_ID: z.string().optional(),
   YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
@@ -262,4 +264,15 @@ export const serverSchema = z.object({
 
   FLIPT_URL: z.string(),
   FLIPT_FETCHER_SECRET: z.string(),
+
+  // B2 Upload (gated by Flipt flag)
+  S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
+  S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
+  S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
+  S3_UPLOAD_B2_BUCKET: z.string().optional(),
+  S3_UPLOAD_B2_REGION: z.string().optional(),
+
+  // Storage resolver internal API (for registering B2 uploads)
+  STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
+  STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
 });
