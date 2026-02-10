@@ -430,7 +430,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                           period: 'AllTime',
                           sort: ImageSort.Newest,
                           hidden: undefined,
-                          types: undefined,
+                          types: ['image'],
                           withMeta: undefined,
                           followed: undefined,
                           fromPlatform: undefined,
