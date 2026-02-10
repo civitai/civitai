@@ -1,8 +1,10 @@
 -- Consolidated Comics Feature Migration
 -- Combines all comic migrations into a single idempotent migration
 
--- Drop Thread.comicChapterId column first (has FK dependency on ComicChapter)
+-- Drop Thread comic columns first (has FK dependency on ComicChapter)
 ALTER TABLE "Thread" DROP COLUMN IF EXISTS "comicChapterId";
+ALTER TABLE "Thread" DROP COLUMN IF EXISTS "comicProjectId";
+ALTER TABLE "Thread" DROP COLUMN IF EXISTS "comicChapterPosition";
 
 -- Drop existing tables/constraints if they exist (for clean re-apply)
 -- Drop both old snake_case names and new PascalCase names for idempotency
@@ -43,16 +45,16 @@ CREATE TYPE "ComicReferenceStatus" AS ENUM ('Pending', 'Ready', 'Failed');
 CREATE TYPE "ComicPanelStatus" AS ENUM ('Pending', 'Generating', 'Ready', 'Failed');
 CREATE TYPE "ComicChapterStatus" AS ENUM ('Draft', 'Published');
 CREATE TYPE "ComicReferenceType" AS ENUM ('Character', 'Location', 'Item');
-CREATE TYPE "ComicEngagementType" AS ENUM ('Notify', 'Hide');
+CREATE TYPE "ComicEngagementType" AS ENUM ('None', 'Notify', 'Hide');
 CREATE TYPE "ComicGenre" AS ENUM ('Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'SciFi', 'SliceOfLife', 'Thriller', 'Other');
 
--- CreateTable
+-- CreateTable: ComicProject (Integer ID, coverImage as Image FK)
 CREATE TABLE "ComicProject" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "userId" INTEGER NOT NULL,
     "name" VARCHAR(255) NOT NULL,
     "description" TEXT,
-    "coverImageUrl" VARCHAR(500),
+    "coverImageId" INTEGER,
     "status" "ComicProjectStatus" NOT NULL DEFAULT 'Active',
     "baseModel" VARCHAR(50),
     "genre" "ComicGenre",
@@ -64,18 +66,18 @@ CREATE TABLE "ComicProject" (
     CONSTRAINT "ComicProject_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
 CREATE INDEX "ComicProject_userId_idx" ON "ComicProject"("userId");
 CREATE INDEX "ComicProject_status_idx" ON "ComicProject"("status");
+CREATE INDEX "ComicProject_coverImageId_idx" ON "ComicProject"("coverImageId");
 
--- AddForeignKey
 ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_coverImageId_fkey"
+  FOREIGN KEY ("coverImageId") REFERENCES "Image"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
--- CreateTable
+-- CreateTable: ComicChapter (Composite PK: projectId + position, no separate id)
 CREATE TABLE "ComicChapter" (
-    "id" TEXT NOT NULL,
-    "projectId" TEXT NOT NULL,
+    "projectId" INTEGER NOT NULL,
     "name" VARCHAR(255) NOT NULL DEFAULT 'Chapter 1',
     "position" INTEGER NOT NULL DEFAULT 0,
     "status" "ComicChapterStatus" NOT NULL DEFAULT 'Draft',
@@ -84,20 +86,15 @@ CREATE TABLE "ComicChapter" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "ComicChapter_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ComicChapter_pkey" PRIMARY KEY ("projectId", "position")
 );
 
--- CreateIndex
-CREATE INDEX "ComicChapter_projectId_idx" ON "ComicChapter"("projectId");
-CREATE INDEX "ComicChapter_projectId_position_idx" ON "ComicChapter"("projectId", "position");
-
--- AddForeignKey
 ALTER TABLE "ComicChapter" ADD CONSTRAINT "ComicChapter_projectId_fkey"
   FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateTable
+-- CreateTable: ComicReference (Integer ID)
 CREATE TABLE "ComicReference" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "userId" INTEGER NOT NULL,
     "name" VARCHAR(255) NOT NULL,
     "type" "ComicReferenceType" NOT NULL DEFAULT 'Character',
@@ -111,17 +108,15 @@ CREATE TABLE "ComicReference" (
     CONSTRAINT "ComicReference_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
 CREATE INDEX "ComicReference_userId_idx" ON "ComicReference"("userId");
 CREATE INDEX "ComicReference_status_idx" ON "ComicReference"("status");
 
--- AddForeignKey
 ALTER TABLE "ComicReference" ADD CONSTRAINT "ComicReference_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateTable
+-- CreateTable: ComicReferenceImage (Integer referenceId FK)
 CREATE TABLE "ComicReferenceImage" (
-    "referenceId" TEXT NOT NULL,
+    "referenceId" INTEGER NOT NULL,
     "imageId" INTEGER NOT NULL,
     "position" INTEGER NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -129,25 +124,23 @@ CREATE TABLE "ComicReferenceImage" (
     CONSTRAINT "ComicReferenceImage_pkey" PRIMARY KEY ("referenceId","imageId")
 );
 
--- CreateIndex
 CREATE INDEX "ComicReferenceImage_imageId_idx" ON "ComicReferenceImage" USING HASH ("imageId");
 
--- AddForeignKey
 ALTER TABLE "ComicReferenceImage" ADD CONSTRAINT "ComicReferenceImage_referenceId_fkey"
   FOREIGN KEY ("referenceId") REFERENCES "ComicReference"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ComicReferenceImage" ADD CONSTRAINT "ComicReferenceImage_imageId_fkey"
   FOREIGN KEY ("imageId") REFERENCES "Image"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateTable
+-- CreateTable: ComicPanel (Integer ID, composite chapter FK, no buzzCost)
 CREATE TABLE "ComicPanel" (
-    "id" TEXT NOT NULL,
-    "chapterId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "projectId" INTEGER NOT NULL,
+    "chapterPosition" INTEGER NOT NULL,
     "imageId" INTEGER,
     "prompt" TEXT NOT NULL,
     "enhancedPrompt" TEXT,
     "imageUrl" VARCHAR(500),
     "position" INTEGER NOT NULL DEFAULT 0,
-    "buzzCost" INTEGER NOT NULL DEFAULT 25,
     "status" "ComicPanelStatus" NOT NULL DEFAULT 'Pending',
     "workflowId" TEXT,
     "civitaiJobId" VARCHAR(100),
@@ -159,73 +152,51 @@ CREATE TABLE "ComicPanel" (
     CONSTRAINT "ComicPanel_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE INDEX "ComicPanel_chapterId_position_idx" ON "ComicPanel"("chapterId", "position");
+CREATE INDEX "ComicPanel_projectId_chapterPosition_position_idx" ON "ComicPanel"("projectId", "chapterPosition", "position");
 CREATE INDEX "ComicPanel_imageId_idx" ON "ComicPanel"("imageId");
 CREATE INDEX "ComicPanel_status_idx" ON "ComicPanel"("status");
 
--- AddForeignKey
-ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_chapterId_fkey"
-  FOREIGN KEY ("chapterId") REFERENCES "ComicChapter"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_chapter_fkey"
+  FOREIGN KEY ("projectId", "chapterPosition") REFERENCES "ComicChapter"("projectId", "position") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ComicPanel" ADD CONSTRAINT "ComicPanel_imageId_fkey"
   FOREIGN KEY ("imageId") REFERENCES "Image"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
--- CreateTable
+-- CreateTable: ComicProjectEngagement (Integer projectId, readChapters array, default type None)
 CREATE TABLE "ComicProjectEngagement" (
     "userId" INTEGER NOT NULL,
-    "projectId" TEXT NOT NULL,
-    "type" "ComicEngagementType" NOT NULL,
+    "projectId" INTEGER NOT NULL,
+    "type" "ComicEngagementType" NOT NULL DEFAULT 'None',
+    "readChapters" INTEGER[] NOT NULL DEFAULT '{}',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ComicProjectEngagement_pkey" PRIMARY KEY ("userId","projectId")
 );
 
--- CreateIndex
 CREATE INDEX "ComicProjectEngagement_projectId_idx" ON "ComicProjectEngagement" USING HASH ("projectId");
 
--- AddForeignKey
 ALTER TABLE "ComicProjectEngagement" ADD CONSTRAINT "ComicProjectEngagement_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ComicProjectEngagement" ADD CONSTRAINT "ComicProjectEngagement_projectId_fkey"
   FOREIGN KEY ("projectId") REFERENCES "ComicProject"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateTable
-CREATE TABLE "ComicChapterRead" (
-    "userId" INTEGER NOT NULL,
-    "chapterId" TEXT NOT NULL,
-    "readAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "ComicChapterRead_pkey" PRIMARY KEY ("userId","chapterId")
-);
-
--- CreateIndex
-CREATE INDEX "ComicChapterRead_chapterId_idx" ON "ComicChapterRead" USING HASH ("chapterId");
-
--- AddForeignKey
-ALTER TABLE "ComicChapterRead" ADD CONSTRAINT "ComicChapterRead_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "ComicChapterRead" ADD CONSTRAINT "ComicChapterRead_chapterId_fkey"
-  FOREIGN KEY ("chapterId") REFERENCES "ComicChapter"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- CreateTable
+-- CreateTable: ComicPanelReference (Integer FKs)
 CREATE TABLE "ComicPanelReference" (
-    "panelId" TEXT NOT NULL,
-    "referenceId" TEXT NOT NULL,
+    "panelId" INTEGER NOT NULL,
+    "referenceId" INTEGER NOT NULL,
 
     CONSTRAINT "ComicPanelReference_pkey" PRIMARY KEY ("panelId","referenceId")
 );
 
--- CreateIndex
 CREATE INDEX "ComicPanelReference_referenceId_idx" ON "ComicPanelReference" USING HASH ("referenceId");
 
--- AddForeignKey
 ALTER TABLE "ComicPanelReference" ADD CONSTRAINT "ComicPanelReference_panelId_fkey"
   FOREIGN KEY ("panelId") REFERENCES "ComicPanel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ComicPanelReference" ADD CONSTRAINT "ComicPanelReference_referenceId_fkey"
   FOREIGN KEY ("referenceId") REFERENCES "ComicReference"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Add comicChapterId to Thread table
-ALTER TABLE "Thread" ADD COLUMN "comicChapterId" TEXT;
-CREATE UNIQUE INDEX "Thread_comicChapterId_key" ON "Thread"("comicChapterId");
-ALTER TABLE "Thread" ADD CONSTRAINT "Thread_comicChapterId_fkey"
-  FOREIGN KEY ("comicChapterId") REFERENCES "ComicChapter"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- Add comic chapter composite FK to Thread table
+ALTER TABLE "Thread" ADD COLUMN "comicProjectId" INTEGER;
+ALTER TABLE "Thread" ADD COLUMN "comicChapterPosition" INTEGER;
+CREATE UNIQUE INDEX "Thread_comicProjectId_comicChapterPosition_key" ON "Thread"("comicProjectId", "comicChapterPosition");
+ALTER TABLE "Thread" ADD CONSTRAINT "Thread_comicChapter_fkey"
+  FOREIGN KEY ("comicProjectId", "comicChapterPosition") REFERENCES "ComicChapter"("projectId", "position") ON DELETE SET NULL ON UPDATE CASCADE;

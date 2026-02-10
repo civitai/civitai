@@ -5,12 +5,12 @@
  */
 export function resolveReferenceMentions(input: {
   prompt: string;
-  references: { id: string; name: string }[];
-}): { mentionedIds: string[]; resolvedPrompt: string } {
+  references: { id: number; name: string }[];
+}): { mentionedIds: number[]; resolvedPrompt: string } {
   const { prompt, references } = input;
   if (references.length === 0) return { mentionedIds: [], resolvedPrompt: prompt };
 
-  const mentionedIds = new Set<string>();
+  const mentionedIds = new Set<number>();
   let resolvedPrompt = prompt;
 
   // Sort by name length descending so longer names match first (e.g., @MayaWarrior before @Maya)

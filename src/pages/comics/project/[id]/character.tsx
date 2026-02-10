@@ -49,7 +49,7 @@ export const getServerSideProps = createServerSideProps({
 function ReferenceUpload() {
   const router = useRouter();
   const { id } = router.query;
-  const projectId = id as string;
+  const projectId = Number(id);
 
   const [referenceName, setReferenceName] = useState('');
 
@@ -63,7 +63,7 @@ function ReferenceUpload() {
 
   const { data: project, refetch: refetchProject } = trpc.comics.getProject.useQuery(
     { id: projectId },
-    { enabled: !!projectId }
+    { enabled: projectId > 0 }
   );
 
   const createReferenceMutation = trpc.comics.createReference.useMutation();
@@ -142,10 +142,12 @@ function ReferenceUpload() {
   };
 
   // Existing reference view
-  const characterId = router.query.characterId as string | undefined;
-  const existingReference = characterId
-    ? project?.references?.find((c) => c.id === characterId)
-    : undefined;
+  const characterIdParam = router.query.characterId as string | undefined;
+  const characterId = characterIdParam ? Number(characterIdParam) : undefined;
+  const existingReference =
+    characterId != null && !isNaN(characterId)
+      ? project?.references?.find((c) => c.id === characterId)
+      : undefined;
 
   // Reference image management state for existing references
   const [showUploadArea, setShowUploadArea] = useState(false);

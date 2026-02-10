@@ -5,13 +5,14 @@ import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { RouterOutput } from '~/types/router';
+import { slugit } from '~/utils/string-helpers';
 
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
 
 export function ComicCard({ comic }: { comic: ComicItem }) {
   return (
     <Link
-      href={`/comics/read/${comic.id}`}
+      href={`/comics/${comic.id}/${slugit(comic.name)}`}
       className="group block overflow-hidden rounded-lg border border-gray-700 bg-gray-800 transition-colors hover:border-gray-500"
     >
       {/* Cover Image */}
@@ -55,7 +56,7 @@ export function ComicCard({ comic }: { comic: ComicItem }) {
         {comic.latestChapters && comic.latestChapters.length > 0 && (
           <div className="mt-2 flex flex-col gap-0.5">
             {comic.latestChapters.map((ch, i) => (
-              <span key={ch.id} className="text-xs text-gray-400">
+              <span key={`${ch.projectId}-${ch.position}`} className="text-xs text-gray-400">
                 Ch. {comic.chapterCount - i}
                 {ch.publishedAt && <> &middot; {formatRelativeDate(ch.publishedAt)}</>}
               </span>

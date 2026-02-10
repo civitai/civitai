@@ -39,7 +39,7 @@ const PANEL_HEIGHT = 2304;
 const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
 
-  const { projectId } = input as { projectId?: string };
+  const { projectId } = input as { projectId?: number };
   if (projectId) {
     const project = await dbRead.comicProject.findUnique({
       where: { id: projectId },
@@ -57,10 +57,13 @@ const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
 const isChapterOwner = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
 
-  const { chapterId } = input as { chapterId?: string };
-  if (chapterId) {
+  const { projectId, chapterPosition } = input as {
+    projectId?: number;
+    chapterPosition?: number;
+  };
+  if (projectId != null && chapterPosition != null) {
     const chapter = await dbRead.comicChapter.findUnique({
-      where: { id: chapterId },
+      where: { projectId_position: { projectId, position: chapterPosition } },
       include: { project: { select: { userId: true } } },
     });
     if (!chapter || chapter.project.userId !== ctx.user.id) {
@@ -77,7 +80,7 @@ const createProjectSchema = z.object({
 });
 
 const getProjectSchema = z.object({
-  id: z.string(),
+  id: z.number().int(),
 });
 
 // Reference (character/location/item) creation — always global per user
@@ -88,7 +91,7 @@ const createReferenceSchema = z.object({
 });
 
 const addReferenceImagesSchema = z.object({
-  referenceId: z.string(),
+  referenceId: z.number().int(),
   images: z
     .array(
       z.object({
@@ -102,8 +105,9 @@ const addReferenceImagesSchema = z.object({
 });
 
 const createPanelSchema = z.object({
-  chapterId: z.string(),
-  referenceIds: z.array(z.string()).optional(),
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
+  referenceIds: z.array(z.number().int()).optional(),
   prompt: z.string().min(1).max(2000),
   enhance: z.boolean().default(true),
   useContext: z.boolean().default(true),
@@ -112,7 +116,7 @@ const createPanelSchema = z.object({
 });
 
 const updatePanelSchema = z.object({
-  panelId: z.string(),
+  panelId: z.number().int(),
   status: z.nativeEnum(ComicPanelStatus).optional(),
   imageUrl: z.string().url().optional(),
   civitaiJobId: z.string().optional(),
@@ -120,43 +124,46 @@ const updatePanelSchema = z.object({
 });
 
 const deletePanelSchema = z.object({
-  panelId: z.string(),
+  panelId: z.number().int(),
 });
 
 const reorderPanelsSchema = z.object({
-  chapterId: z.string(),
-  panelIds: z.array(z.string()),
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
+  panelIds: z.array(z.number().int()),
 });
 
 // Chapter schemas
 const createChapterSchema = z.object({
-  projectId: z.string(),
+  projectId: z.number().int(),
   name: z.string().min(1).max(255).default('New Chapter'),
 });
 
 const updateChapterSchema = z.object({
-  chapterId: z.string(),
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
   name: z.string().min(1).max(255),
 });
 
 const deleteChapterSchema = z.object({
-  chapterId: z.string(),
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
 });
 
 const reorderChaptersSchema = z.object({
-  projectId: z.string(),
-  chapterIds: z.array(z.string()),
+  projectId: z.number().int(),
+  order: z.array(z.number().int()),
 });
 
 const planChapterPanelsSchema = z.object({
-  projectId: z.string(),
+  projectId: z.number().int(),
   storyDescription: z.string().min(1).max(5000),
 });
 
 const smartCreateChapterSchema = z.object({
-  projectId: z.string(),
+  projectId: z.number().int(),
   chapterName: z.string().min(1).max(255).default('New Chapter'),
-  referenceIds: z.array(z.string()).optional(),
+  referenceIds: z.array(z.number().int()).optional(),
   storyDescription: z.string().max(5000).default(''),
   panels: z
     .array(
@@ -170,7 +177,8 @@ const smartCreateChapterSchema = z.object({
 });
 
 const enhancePanelSchema = z.object({
-  chapterId: z.string(),
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
   sourceImageUrl: z.string().min(1),
   sourceImageWidth: z.number().int().positive(),
   sourceImageHeight: z.number().int().positive(),
@@ -182,18 +190,18 @@ const enhancePanelSchema = z.object({
 });
 
 const updateProjectSchema = z.object({
-  id: z.string(),
+  id: z.number().int(),
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(5000).nullish(),
-  coverImageUrl: z.string().max(500).nullish(),
+  coverImageId: z.number().int().nullish(),
 });
 
 const deleteReferenceSchema = z.object({
-  referenceId: z.string(),
+  referenceId: z.number().int(),
 });
 
 // Shared helper: resolve a reference's images for generation
-async function getReferenceImages(referenceId: string) {
+async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
     where: { id: referenceId },
     select: {
@@ -219,13 +227,14 @@ async function getReferenceImages(referenceId: string) {
 
 // Shared helper: create a single panel record and submit generation
 async function createSinglePanel(args: {
-  chapterId: string;
-  referenceIds: string[];
+  projectId: number;
+  chapterPosition: number;
+  referenceIds: number[];
   prompt: string;
   enhance: boolean;
   position: number;
   contextPanel: {
-    id: string;
+    id: number;
     prompt: string;
     enhancedPrompt: string | null;
     imageUrl: string | null;
@@ -241,7 +250,8 @@ async function createSinglePanel(args: {
   };
 }) {
   const {
-    chapterId,
+    projectId,
+    chapterPosition,
     referenceIds,
     prompt,
     enhance,
@@ -290,7 +300,8 @@ async function createSinglePanel(args: {
 
   const panel = await dbWrite.comicPanel.create({
     data: {
-      chapterId,
+      projectId,
+      chapterPosition,
       prompt,
       enhancedPrompt: enhance ? fullPrompt : null,
       position,
@@ -379,6 +390,7 @@ export const comicsRouter = router({
         status: ComicProjectStatus.Active,
       },
       include: {
+        coverImage: { select: { id: true, url: true, nsfwLevel: true } },
         chapters: {
           include: {
             _count: { select: { panels: true } },
@@ -402,7 +414,7 @@ export const comicsRouter = router({
         id: p.id,
         name: p.name,
         description: p.description,
-        coverImageUrl: p.coverImageUrl,
+        coverImage: p.coverImage,
         panelCount,
         thumbnailUrl,
         createdAt: p.createdAt,
@@ -415,6 +427,7 @@ export const comicsRouter = router({
     const project = await dbRead.comicProject.findUnique({
       where: { id: input.id },
       include: {
+        coverImage: { select: { id: true, url: true, nsfwLevel: true } },
         chapters: {
           orderBy: { position: 'asc' },
           include: {
@@ -463,7 +476,7 @@ export const comicsRouter = router({
         chapters: {
           orderBy: { position: 'asc' },
           select: {
-            id: true,
+            projectId: true,
             name: true,
             position: true,
             panels: {
@@ -500,7 +513,7 @@ export const comicsRouter = router({
     .input(
       z.object({
         limit: z.number().int().min(1).max(50).default(20),
-        cursor: z.string().optional(),
+        cursor: z.number().int().optional(),
         genre: z.nativeEnum(ComicGenre).optional(),
         period: z.enum(['Day', 'Week', 'Month', 'Year', 'AllTime']).optional(),
         sort: z.enum(['Newest', 'MostFollowed', 'MostChapters']).default('Newest'),
@@ -568,7 +581,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           description: true,
-          coverImageUrl: true,
+          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
           genre: true,
           nsfwLevel: true,
           updatedAt: true,
@@ -581,7 +594,8 @@ export const comicsRouter = router({
           chapters: {
             where: { status: ComicChapterStatus.Published },
             select: {
-              id: true,
+              projectId: true,
+              position: true,
               name: true,
               publishedAt: true,
               _count: {
@@ -609,7 +623,7 @@ export const comicsRouter = router({
         },
       });
 
-      let nextCursor: string | undefined;
+      let nextCursor: number | undefined;
       if (projects.length > limit) {
         const nextItem = projects.pop()!;
         nextCursor = nextItem.id;
@@ -619,13 +633,14 @@ export const comicsRouter = router({
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
         const chapterCount = p.chapters.length;
         const thumbnailUrl =
-          p.coverImageUrl ??
+          p.coverImage?.url ??
           p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
           null;
 
         // Latest 3 published chapters
         const latestChapters = p.chapters.slice(0, 3).map((ch) => ({
-          id: ch.id,
+          projectId: ch.projectId,
+          position: ch.position,
           name: ch.name,
           publishedAt: ch.publishedAt,
         }));
@@ -635,6 +650,7 @@ export const comicsRouter = router({
           name: p.name,
           description: p.description,
           thumbnailUrl,
+          coverImage: p.coverImage,
           genre: p.genre,
           nsfwLevel: p.nsfwLevel,
           readyPanelCount,
@@ -650,7 +666,7 @@ export const comicsRouter = router({
     }),
 
   getPublicProjectForReader: publicProcedure
-    .input(z.object({ id: z.string() }))
+    .input(z.object({ id: z.number().int() }))
     .query(async ({ input }) => {
       const project = await dbRead.comicProject.findUnique({
         where: { id: input.id },
@@ -658,7 +674,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           description: true,
-          coverImageUrl: true,
+          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
           genre: true,
           nsfwLevel: true,
           status: true,
@@ -669,9 +685,9 @@ export const comicsRouter = router({
             where: { status: ComicChapterStatus.Published },
             orderBy: { position: 'asc' },
             select: {
-              id: true,
-              name: true,
+              projectId: true,
               position: true,
+              name: true,
               publishedAt: true,
               panels: {
                 where: {
@@ -706,7 +722,7 @@ export const comicsRouter = router({
         id: project.id,
         name: project.name,
         description: project.description,
-        coverImageUrl: project.coverImageUrl,
+        coverImage: project.coverImage,
         user: project.user,
         chapters,
       };
@@ -810,12 +826,19 @@ export const comicsRouter = router({
     const data: Record<string, any> = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.description !== undefined) data.description = input.description;
-    if (input.coverImageUrl !== undefined) data.coverImageUrl = input.coverImageUrl;
+    if (input.coverImageId !== undefined) data.coverImageId = input.coverImageId;
 
     const updated = await dbWrite.comicProject.update({
       where: { id: input.id },
       data,
     });
+
+    // Trigger ingestion for new cover image
+    if (input.coverImageId) {
+      ingestImageById({ id: input.coverImageId }).catch((e) =>
+        console.error(`Failed to ingest cover image ${input.coverImageId}:`, e)
+      );
+    }
 
     return updated;
   }),
@@ -846,7 +869,9 @@ export const comicsRouter = router({
 
   updateChapter: protectedProcedure.input(updateChapterSchema).mutation(async ({ ctx, input }) => {
     const chapter = await dbRead.comicChapter.findUnique({
-      where: { id: input.chapterId },
+      where: {
+        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+      },
       include: { project: { select: { userId: true } } },
     });
     if (!chapter || chapter.project.userId !== ctx.user.id) {
@@ -854,7 +879,9 @@ export const comicsRouter = router({
     }
 
     const updated = await dbWrite.comicChapter.update({
-      where: { id: input.chapterId },
+      where: {
+        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+      },
       data: { name: input.name },
     });
 
@@ -863,7 +890,9 @@ export const comicsRouter = router({
 
   deleteChapter: protectedProcedure.input(deleteChapterSchema).mutation(async ({ ctx, input }) => {
     const chapter = await dbRead.comicChapter.findUnique({
-      where: { id: input.chapterId },
+      where: {
+        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+      },
       include: { project: { select: { userId: true } } },
     });
     if (!chapter || chapter.project.userId !== ctx.user.id) {
@@ -871,7 +900,9 @@ export const comicsRouter = router({
     }
 
     await dbWrite.comicChapter.delete({
-      where: { id: input.chapterId },
+      where: {
+        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+      },
     });
 
     return { success: true };
@@ -881,25 +912,30 @@ export const comicsRouter = router({
     .input(reorderChaptersSchema)
     .use(isProjectOwner)
     .mutation(async ({ input }) => {
-      const chapters = await dbRead.comicChapter.findMany({
-        where: { projectId: input.projectId },
-        select: { id: true },
-      });
-      const projectChapterIds = new Set(chapters.map((c) => c.id));
-      for (const id of input.chapterIds) {
-        if (!projectChapterIds.has(id)) {
-          throw throwBadRequestError('Chapter does not belong to this project');
-        }
-      }
+      const { projectId, order } = input;
+      const TEMP_OFFSET = 1000;
 
-      await dbWrite.$transaction(
-        input.chapterIds.map((id, index) =>
-          dbWrite.comicChapter.update({
-            where: { id },
-            data: { position: index },
-          })
-        )
-      );
+      await dbWrite.$transaction(async (tx) => {
+        // Phase 1: Move chapters to temp positions (avoids PK conflicts)
+        for (let i = 0; i < order.length; i++) {
+          await tx.comicChapter.update({
+            where: { projectId_position: { projectId, position: order[i] } },
+            data: { position: TEMP_OFFSET + i },
+          });
+        }
+        // Phase 2: Move from temp to final positions
+        for (let i = 0; i < order.length; i++) {
+          await tx.comicChapter.update({
+            where: { projectId_position: { projectId, position: TEMP_OFFSET + i } },
+            data: { position: i },
+          });
+        }
+        // Phase 3: Clear all readChapters for this project (positions are now stale)
+        await tx.comicProjectEngagement.updateMany({
+          where: { projectId, readChapters: { isEmpty: false } },
+          data: { readChapters: [] },
+        });
+      });
 
       return { success: true };
     }),
@@ -987,7 +1023,7 @@ export const comicsRouter = router({
 
   // Poll reference status — just return current status + images
   pollReferenceStatus: protectedProcedure
-    .input(z.object({ referenceId: z.string() }))
+    .input(z.object({ referenceId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const reference = await dbRead.comicReference.findUnique({
         where: { id: input.referenceId },
@@ -1021,7 +1057,9 @@ export const comicsRouter = router({
     .mutation(async ({ ctx, input }) => {
       // Verify chapter ownership
       const chapter = await dbRead.comicChapter.findUnique({
-        where: { id: input.chapterId },
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
         include: {
           project: {
             select: { id: true, userId: true },
@@ -1041,7 +1079,7 @@ export const comicsRouter = router({
 
       // Resolve which references the user explicitly mentioned (for panel association)
       const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
-      let mentionedReferenceIds: string[];
+      let mentionedReferenceIds: number[];
       if (input.referenceIds && input.referenceIds.length > 0) {
         // Validate all provided IDs belong to the current user
         if (input.referenceIds.some((id) => !allowedRefIds.has(id))) {
@@ -1067,7 +1105,7 @@ export const comicsRouter = router({
       // panel just before the insertion point for context. Otherwise use the last panel.
       let nextPosition: number;
       let contextPanel: {
-        id: string;
+        id: number;
         position: number;
         prompt: string;
         enhancedPrompt: string | null;
@@ -1077,21 +1115,29 @@ export const comicsRouter = router({
       if (input.position != null) {
         // Get the panel just before the insertion point (position < input.position)
         contextPanel = await dbRead.comicPanel.findFirst({
-          where: { chapterId: input.chapterId, position: { lt: input.position } },
+          where: {
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
+            position: { lt: input.position },
+          },
           orderBy: { position: 'desc' },
           select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
         });
 
         // Shift panels at or after the insertion point
         await dbWrite.comicPanel.updateMany({
-          where: { chapterId: input.chapterId, position: { gte: input.position } },
+          where: {
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
+            position: { gte: input.position },
+          },
           data: { position: { increment: 1 } },
         });
         nextPosition = input.position;
       } else {
         // Appending: use the last panel for context (use dbWrite to reduce race window)
         contextPanel = await dbWrite.comicPanel.findFirst({
-          where: { chapterId: input.chapterId },
+          where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
           orderBy: { position: 'desc' },
           select: { id: true, position: true, prompt: true, enhancedPrompt: true, imageUrl: true },
         });
@@ -1162,7 +1208,8 @@ export const comicsRouter = router({
       // Create panel record as Pending (not yet submitted to orchestrator)
       const panel = await dbWrite.comicPanel.create({
         data: {
-          chapterId: input.chapterId,
+          projectId: input.projectId,
+          chapterPosition: input.chapterPosition,
           prompt: input.prompt,
           enhancedPrompt: input.enhance ? fullPrompt : null,
           position: nextPosition,
@@ -1297,7 +1344,7 @@ export const comicsRouter = router({
     .mutation(async ({ input }) => {
       // Verify all panels belong to this chapter
       const panels = await dbRead.comicPanel.findMany({
-        where: { chapterId: input.chapterId },
+        where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
         select: { id: true },
       });
       const chapterPanelIds = new Set(panels.map((p) => p.id));
@@ -1322,7 +1369,7 @@ export const comicsRouter = router({
 
   // Debug info for a panel's generation workflow
   getPanelDebugInfo: protectedProcedure
-    .input(z.object({ panelId: z.string() }))
+    .input(z.object({ panelId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
         where: { id: input.panelId },
@@ -1429,7 +1476,7 @@ export const comicsRouter = router({
 
   // Poll panel generation status
   pollPanelStatus: protectedProcedure
-    .input(z.object({ panelId: z.string() }))
+    .input(z.object({ panelId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
         where: { id: input.panelId },
@@ -1614,7 +1661,7 @@ export const comicsRouter = router({
       const createdPanels: any[] = [];
       const previousPanelPrompts: string[] = [];
       let contextPanel: {
-        id: string;
+        id: number;
         prompt: string;
         enhancedPrompt: string | null;
         imageUrl: string | null;
@@ -1630,7 +1677,8 @@ export const comicsRouter = router({
         });
 
         const panel = await createSinglePanel({
-          chapterId: chapter.id,
+          projectId: input.projectId,
+          chapterPosition: chapter.position,
           referenceIds: mentionedIds,
           prompt: panelInput.prompt,
           enhance: input.enhance,
@@ -1668,11 +1716,13 @@ export const comicsRouter = router({
   // ──── Phase 3: Publish/Unpublish ────
 
   publishChapter: protectedProcedure
-    .input(z.object({ chapterId: z.string() }))
+    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       const chapter = await dbRead.comicChapter.findUnique({
-        where: { id: input.chapterId },
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
         include: {
           project: {
             select: {
@@ -1696,7 +1746,9 @@ export const comicsRouter = router({
 
       const isFirstPublish = !chapter.publishedAt;
       const updated = await dbWrite.comicChapter.update({
-        where: { id: input.chapterId },
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
         data: {
           status: ComicChapterStatus.Published,
           ...(isFirstPublish ? { publishedAt: new Date() } : {}),
@@ -1717,7 +1769,7 @@ export const comicsRouter = router({
         if (followerIds.length > 0) {
           await createNotification({
             type: 'new-comic-chapter',
-            key: `new-comic-chapter:${input.chapterId}`,
+            key: `new-comic-chapter:${input.projectId}:${input.chapterPosition}`,
             category: NotificationCategory.Update,
             userIds: followerIds,
             details: {
@@ -1734,11 +1786,13 @@ export const comicsRouter = router({
     }),
 
   unpublishChapter: protectedProcedure
-    .input(z.object({ chapterId: z.string() }))
+    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       const chapter = await dbRead.comicChapter.findUnique({
-        where: { id: input.chapterId },
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
         include: { project: { select: { userId: true } } },
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
@@ -1746,7 +1800,9 @@ export const comicsRouter = router({
       }
 
       const updated = await dbWrite.comicChapter.update({
-        where: { id: input.chapterId },
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
         data: { status: ComicChapterStatus.Draft },
       });
 
@@ -1758,7 +1814,7 @@ export const comicsRouter = router({
   toggleComicEngagement: protectedProcedure
     .input(
       z.object({
-        projectId: z.string(),
+        projectId: z.number().int(),
         type: z.nativeEnum(ComicEngagementType),
       })
     )
@@ -1769,10 +1825,17 @@ export const comicsRouter = router({
 
       if (engagement) {
         if (engagement.type === input.type) {
-          // Same type — toggle off
-          await dbWrite.comicProjectEngagement.delete({
-            where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
-          });
+          // Same type — toggle off. Set to None instead of deleting if there are readChapters.
+          if (engagement.readChapters.length > 0) {
+            await dbWrite.comicProjectEngagement.update({
+              where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+              data: { type: ComicEngagementType.None },
+            });
+          } else {
+            await dbWrite.comicProjectEngagement.delete({
+              where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+            });
+          }
           return false;
         } else {
           // Different type — switch
@@ -1795,37 +1858,55 @@ export const comicsRouter = router({
     }),
 
   getComicEngagement: protectedProcedure
-    .input(z.object({ projectId: z.string() }))
+    .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const engagement = await dbRead.comicProjectEngagement.findUnique({
         where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
       });
-      return engagement?.type ?? null;
+      if (!engagement || engagement.type === ComicEngagementType.None) return null;
+      return engagement.type;
     }),
 
-  // ──── Phase 3: Chapter Read Tracking ────
+  // ──── Phase 3: Chapter Read Tracking (via engagement readChapters) ────
 
   markChapterRead: protectedProcedure
-    .input(z.object({ chapterId: z.string() }))
+    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .mutation(async ({ ctx, input }) => {
-      await dbWrite.comicChapterRead.upsert({
-        where: { userId_chapterId: { userId: ctx.user.id, chapterId: input.chapterId } },
-        create: { userId: ctx.user.id, chapterId: input.chapterId },
-        update: { readAt: new Date() },
-      });
+      const { projectId, chapterPosition } = input;
+      const userId = ctx.user.id;
+      await dbWrite.$executeRaw`
+        INSERT INTO "ComicProjectEngagement" ("userId", "projectId", "type", "readChapters", "createdAt")
+        VALUES (${userId}, ${projectId}, 'None', ARRAY[${chapterPosition}]::integer[], NOW())
+        ON CONFLICT ("userId", "projectId")
+        DO UPDATE SET "readChapters" = array_append(
+          array_remove("ComicProjectEngagement"."readChapters", ${chapterPosition}),
+          ${chapterPosition}
+        )
+      `;
       return { success: true };
     }),
 
   getChapterReadStatus: protectedProcedure
-    .input(z.object({ chapterIds: z.array(z.string()) }))
+    .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      const reads = await dbRead.comicChapterRead.findMany({
-        where: { userId: ctx.user.id, chapterId: { in: input.chapterIds } },
-        select: { chapterId: true, readAt: true },
+      const engagement = await dbRead.comicProjectEngagement.findUnique({
+        where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+        select: { readChapters: true },
       });
-      const readMap: Record<string, Date> = {};
-      for (const r of reads) readMap[r.chapterId] = r.readAt;
-      return readMap;
+      return engagement?.readChapters ?? [];
+    }),
+
+  markChapterUnread: protectedProcedure
+    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
+    .mutation(async ({ ctx, input }) => {
+      const { projectId, chapterPosition } = input;
+      const userId = ctx.user.id;
+      await dbWrite.$executeRaw`
+        UPDATE "ComicProjectEngagement"
+        SET "readChapters" = array_remove("readChapters", ${chapterPosition})
+        WHERE "userId" = ${userId} AND "projectId" = ${projectId}
+      `;
+      return { success: true };
     }),
 
   // ──── Enhance Panel: create from existing image, optionally with img2img ────
@@ -1835,7 +1916,9 @@ export const comicsRouter = router({
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       const chapter = await dbRead.comicChapter.findUnique({
-        where: { id: input.chapterId },
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
         include: { project: { select: { id: true, userId: true } } },
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
@@ -1846,13 +1929,17 @@ export const comicsRouter = router({
       let nextPosition: number;
       if (input.position != null) {
         await dbWrite.comicPanel.updateMany({
-          where: { chapterId: input.chapterId, position: { gte: input.position } },
+          where: {
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
+            position: { gte: input.position },
+          },
           data: { position: { increment: 1 } },
         });
         nextPosition = input.position;
       } else {
         const lastPanel = await dbWrite.comicPanel.findFirst({
-          where: { chapterId: input.chapterId },
+          where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
           orderBy: { position: 'desc' },
           select: { position: true },
         });
@@ -1873,7 +1960,8 @@ export const comicsRouter = router({
 
         const panel = await dbWrite.comicPanel.create({
           data: {
-            chapterId: input.chapterId,
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
             imageId: image.id,
             imageUrl: input.sourceImageUrl,
             prompt: '',
@@ -1900,20 +1988,24 @@ export const comicsRouter = router({
       // With prompt → img2img generation
       // Fetch previous panel for context if requested
       let contextPanel: {
-        id: string;
+        id: number;
         prompt: string;
         enhancedPrompt: string | null;
         imageUrl: string | null;
       } | null = null;
       if (input.position != null) {
         contextPanel = await dbRead.comicPanel.findFirst({
-          where: { chapterId: input.chapterId, position: { lt: input.position } },
+          where: {
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
+            position: { lt: input.position },
+          },
           orderBy: { position: 'desc' },
           select: { id: true, prompt: true, enhancedPrompt: true, imageUrl: true },
         });
       } else {
         contextPanel = await dbRead.comicPanel.findFirst({
-          where: { chapterId: input.chapterId },
+          where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
           orderBy: { position: 'desc' },
           select: { id: true, prompt: true, enhancedPrompt: true, imageUrl: true },
         });
@@ -1991,7 +2083,8 @@ export const comicsRouter = router({
 
       const panel = await dbWrite.comicPanel.create({
         data: {
-          chapterId: input.chapterId,
+          projectId: input.projectId,
+          chapterPosition: input.chapterPosition,
           prompt: input.prompt,
           enhancedPrompt: input.enhance ? fullPrompt : null,
           position: nextPosition,
@@ -2075,7 +2168,8 @@ export const comicsRouter = router({
   createPanelFromImage: protectedProcedure
     .input(
       z.object({
-        chapterId: z.string(),
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
         imageId: z.number().int().positive(),
         prompt: z.string().min(1).max(2000).default(''),
         position: z.number().int().min(0).optional(),
@@ -2096,13 +2190,17 @@ export const comicsRouter = router({
       let nextPosition: number;
       if (input.position != null) {
         await dbWrite.comicPanel.updateMany({
-          where: { chapterId: input.chapterId, position: { gte: input.position } },
+          where: {
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
+            position: { gte: input.position },
+          },
           data: { position: { increment: 1 } },
         });
         nextPosition = input.position;
       } else {
         const lastPanel = await dbWrite.comicPanel.findFirst({
-          where: { chapterId: input.chapterId },
+          where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
           orderBy: { position: 'desc' },
           select: { position: true },
         });
@@ -2111,7 +2209,8 @@ export const comicsRouter = router({
 
       const panel = await dbWrite.comicPanel.create({
         data: {
-          chapterId: input.chapterId,
+          projectId: input.projectId,
+          chapterPosition: input.chapterPosition,
           imageId: input.imageId,
           imageUrl: image.url,
           prompt: input.prompt,
@@ -2131,7 +2230,7 @@ export const comicsRouter = router({
   // ──── Phase 4: Reference aliases ────
 
   getReference: protectedProcedure
-    .input(z.object({ referenceId: z.string() }))
+    .input(z.object({ referenceId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const reference = await dbRead.comicReference.findUnique({
         where: { id: input.referenceId },
@@ -2191,10 +2290,15 @@ export const comicsRouter = router({
   // ──── Phase 7: Chapter Comments ────
 
   getChapterThread: publicProcedure
-    .input(z.object({ chapterId: z.string() }))
+    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .query(async ({ input }) => {
       const thread = await dbRead.thread.findUnique({
-        where: { comicChapterId: input.chapterId },
+        where: {
+          comicProjectId_comicChapterPosition: {
+            comicProjectId: input.projectId,
+            comicChapterPosition: input.chapterPosition,
+          },
+        },
         select: {
           id: true,
           locked: true,
@@ -2217,15 +2321,24 @@ export const comicsRouter = router({
   createChapterComment: protectedProcedure
     .input(
       z.object({
-        chapterId: z.string(),
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
         content: z.string().min(1).max(10000),
       })
     )
     .mutation(async ({ ctx, input }) => {
       // Find or create thread for this chapter (upsert avoids race condition)
       const thread = await dbWrite.thread.upsert({
-        where: { comicChapterId: input.chapterId },
-        create: { comicChapterId: input.chapterId },
+        where: {
+          comicProjectId_comicChapterPosition: {
+            comicProjectId: input.projectId,
+            comicChapterPosition: input.chapterPosition,
+          },
+        },
+        create: {
+          comicProjectId: input.projectId,
+          comicChapterPosition: input.chapterPosition,
+        },
         update: {},
         select: { id: true, locked: true },
       });

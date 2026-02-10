@@ -20,22 +20,32 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ComicEngagementType } from '~/shared/utils/prisma/enums';
+import { slugit } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import styles from '../Comics.module.scss';
 
 function PublicComicReader() {
   const router = useRouter();
-  const { id, chapter } = router.query;
-  const projectId = id as string;
-  const parsedChapter = chapter != null ? Number(chapter) : null;
-  const chapterIdx = parsedChapter != null && Number.isFinite(parsedChapter) ? parsedChapter : null;
+  const { id, slug } = router.query as { id: string; slug?: string[] };
+  const projectId = Number(id);
+
+  // /comics/42              → overview
+  // /comics/42/my-comic     → overview (slug = ["my-comic"])
+  // /comics/42/my-comic/2/… → chapter reader (slug[1] = "2", 1-indexed)
+  const isChapterView = slug && slug.length >= 2;
+  const chapterUrlPos = isChapterView ? Number(slug[1]) : null; // 1-indexed
+  const chapterDbPos =
+    chapterUrlPos != null && Number.isFinite(chapterUrlPos) ? chapterUrlPos - 1 : null; // 0-indexed
 
   const {
     data: project,
     isLoading,
     isError,
-  } = trpc.comics.getPublicProjectForReader.useQuery({ id: projectId }, { enabled: !!projectId });
+  } = trpc.comics.getPublicProjectForReader.useQuery(
+    { id: projectId },
+    { enabled: !isNaN(projectId) && projectId > 0 }
+  );
 
   if (isLoading) {
     return (
@@ -58,11 +68,11 @@ function PublicComicReader() {
     );
   }
 
-  if (chapterIdx == null) {
+  if (chapterDbPos == null) {
     return <ComicOverview project={project} />;
   }
 
-  return <ChapterReader project={project} chapterIdx={chapterIdx} />;
+  return <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -75,15 +85,14 @@ function ComicOverview({ project }: { project: Project }) {
   const currentUser = useCurrentUser();
   const totalPanels = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
   const coverUrl =
-    project.coverImageUrl ??
+    project.coverImage?.url ??
     project.chapters.flatMap((ch) => ch.panels).find((p) => p.imageUrl)?.imageUrl ??
     null;
 
   // Read status for chapters
-  const chapterIds = project.chapters.map((ch) => ch.id);
-  const { data: readMap } = trpc.comics.getChapterReadStatus.useQuery(
-    { chapterIds },
-    { enabled: !!currentUser && chapterIds.length > 0 }
+  const { data: readPositions } = trpc.comics.getChapterReadStatus.useQuery(
+    { projectId: project.id },
+    { enabled: !!currentUser }
   );
 
   // Engagement (follow)
@@ -98,6 +107,8 @@ function ComicOverview({ project }: { project: Project }) {
     },
   });
   const isFollowing = engagement === ComicEngagementType.Notify;
+
+  const projectSlug = slugit(project.name);
 
   return (
     <>
@@ -176,10 +187,9 @@ function ComicOverview({ project }: { project: Project }) {
           {/* CTA */}
           {project.chapters.length > 0 && (
             <Link
-              href={`/comics/read/${project.id}?chapter=${Math.max(
-                0,
-                project.chapters.findIndex((ch) => ch.panels.length > 0)
-              )}`}
+              href={`/comics/${project.id}/${projectSlug}/${
+                (project.chapters.findIndex((ch) => ch.panels.length > 0) ?? 0) + 1
+              }/${slugit(project.chapters.find((ch) => ch.panels.length > 0)?.name ?? 'chapter')}`}
               className={styles.ctaBtn}
             >
               <IconBook size={20} />
@@ -191,18 +201,20 @@ function ComicOverview({ project }: { project: Project }) {
           <div className={styles.chapterSection}>
             <p className={styles.chapterSectionTitle}>Chapters</p>
             <div className="flex flex-col gap-2">
-              {project.chapters.map((ch, i) => {
+              {project.chapters.map((ch) => {
                 const thumbUrl = ch.panels[0]?.imageUrl ?? null;
-                const isRead = readMap ? !!readMap[ch.id] : false;
+                const isRead = readPositions ? readPositions.includes(ch.position) : false;
 
                 return (
                   <Link
-                    key={ch.id}
-                    href={`/comics/read/${project.id}?chapter=${i}`}
+                    key={`${ch.projectId}-${ch.position}`}
+                    href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(
+                      ch.name
+                    )}`}
                     className={styles.chapterListItem}
                     style={{ fontWeight: isRead ? 'normal' : 'bold' }}
                   >
-                    <span className={styles.chapterNumber}>{i + 1}</span>
+                    <span className={styles.chapterNumber}>{ch.position + 1}</span>
                     <div className={styles.chapterThumb}>
                       {thumbUrl ? (
                         <img src={getEdgeUrl(thumbUrl, { width: 120 })} alt={ch.name} />
@@ -239,22 +251,25 @@ function ComicOverview({ project }: { project: Project }) {
 
 // ─── Chapter Reader ──────────────────────────────────────────────────────────
 
-function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: number }) {
+function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const chapters = project.chapters;
-  const safeIdx = Math.max(0, Math.min(chapterIdx, chapters.length - 1));
+  const chapterIdx = chapters.findIndex((ch) => ch.position === chapterDbPos);
+  const safeIdx = chapterIdx >= 0 ? chapterIdx : 0;
   const activeChapter = chapters[safeIdx];
   const panels = activeChapter?.panels ?? [];
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const lastScrollTop = useRef(0);
 
+  const projectSlug = slugit(project.name);
+
   const chapterOptions = useMemo(
     () =>
       chapters.map((ch, i) => ({
         value: String(i),
-        label: `Ch. ${i + 1}: ${ch.name}`,
+        label: `Ch. ${ch.position + 1}: ${ch.name}`,
       })),
     [chapters]
   );
@@ -263,20 +278,24 @@ function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: 
   const hasNext = safeIdx < chapters.length - 1;
 
   const goToChapter = (idx: number) => {
+    const ch = chapters[idx];
+    if (!ch) return;
     scrollRef.current?.scrollTo({ top: 0 });
-    void router.replace(`/comics/read/${project.id}?chapter=${idx}`, undefined, {
-      shallow: true,
-    });
+    void router.replace(
+      `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`,
+      undefined,
+      { shallow: true }
+    );
   };
 
   // Auto-mark chapter as read
   const markRead = trpc.comics.markChapterRead.useMutation();
   useEffect(() => {
     if (currentUser && activeChapter) {
-      markRead.mutate({ chapterId: activeChapter.id });
+      markRead.mutate({ projectId: project.id, chapterPosition: activeChapter.position });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChapter?.id, currentUser?.id]);
+  }, [activeChapter?.position, currentUser?.id]);
 
   // Hide header on scroll down, show on scroll up
   const handleScroll = useCallback(() => {
@@ -333,7 +352,11 @@ function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: 
           <Container size="sm">
             <div className={styles.readerHeaderInner}>
               <div className={styles.readerHeaderLeft}>
-                <ActionIcon variant="subtle" component={Link} href={`/comics/read/${project.id}`}>
+                <ActionIcon
+                  variant="subtle"
+                  component={Link}
+                  href={`/comics/${project.id}/${projectSlug}`}
+                >
                   <IconArrowLeft size={20} />
                 </ActionIcon>
                 <div className={styles.readerTitleGroup}>
@@ -390,7 +413,7 @@ function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: 
             <div className={styles.readerEmpty}>
               <IconPhotoOff size={48} />
               <p>No panels in this chapter</p>
-              <Link href={`/comics/read/${project.id}`} className={styles.notFoundLink}>
+              <Link href={`/comics/${project.id}/${projectSlug}`} className={styles.notFoundLink}>
                 <IconArrowLeft size={16} />
                 Back to overview
               </Link>
@@ -422,7 +445,7 @@ function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: 
         {/* Comments section */}
         {activeChapter && (
           <Container size="sm" py="xl">
-            <ChapterComments chapterId={activeChapter.id} />
+            <ChapterComments projectId={project.id} chapterPosition={activeChapter.position} />
           </Container>
         )}
       </div>
@@ -432,26 +455,32 @@ function ChapterReader({ project, chapterIdx }: { project: Project; chapterIdx: 
 
 // ─── Comments ────────────────────────────────────────────────────────────────
 
-function ChapterComments({ chapterId }: { chapterId: string }) {
+function ChapterComments({
+  projectId,
+  chapterPosition,
+}: {
+  projectId: number;
+  chapterPosition: number;
+}) {
   const currentUser = useCurrentUser();
   const [comment, setComment] = useState('');
 
   const { data: thread, isLoading } = trpc.comics.getChapterThread.useQuery(
-    { chapterId },
-    { enabled: !!chapterId }
+    { projectId, chapterPosition },
+    { enabled: projectId > 0 }
   );
 
   const utils = trpc.useUtils();
   const createComment = trpc.comics.createChapterComment.useMutation({
     onSuccess: () => {
       setComment('');
-      utils.comics.getChapterThread.invalidate({ chapterId });
+      utils.comics.getChapterThread.invalidate({ projectId, chapterPosition });
     },
   });
 
   const handleSubmit = () => {
     if (!comment.trim()) return;
-    createComment.mutate({ chapterId, content: comment.trim() });
+    createComment.mutate({ projectId, chapterPosition, content: comment.trim() });
   };
 
   return (

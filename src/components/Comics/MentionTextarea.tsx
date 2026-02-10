@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, useId } from 'react'
 interface MentionTextareaProps {
   value: string;
   onChange: (value: string) => void;
-  references: { id: string; name: string }[];
+  references: { id: number; name: string }[];
   placeholder?: string;
   rows?: number;
   label?: string;

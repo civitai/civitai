@@ -45,7 +45,7 @@ export async function enhanceComicPrompt(input: {
       : [];
   const { resolvedPrompt } = resolveReferenceMentions({
     prompt: userPrompt,
-    references: names.map((name) => ({ id: name, name })),
+    references: names.map((name, i) => ({ id: i, name })),
   });
 
   // Fallback: just return the resolved prompt (no trained words for NanoBanana path)

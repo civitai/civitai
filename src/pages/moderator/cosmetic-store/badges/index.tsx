@@ -142,9 +142,7 @@ function BadgeHistoryRow({ productId, productName }: { productId: string; produc
                         ? new Date(badge.availableStart).toLocaleDateString()
                         : '?'}{' '}
                       -{' '}
-                      {badge.availableEnd
-                        ? new Date(badge.availableEnd).toLocaleDateString()
-                        : '?'}
+                      {badge.availableEnd ? new Date(badge.availableEnd).toLocaleDateString() : '?'}
                     </Text>
                     <Badge size="xs" color="gray" variant="light">
                       ID: {badge.id}
@@ -306,9 +304,7 @@ function BadgeForm({
         <Stack gap="md">
           <Group gap="xs">
             <IconRosette size={24} />
-            <Title order={3}>
-              {mode === 'edit' ? 'Edit Existing Badge' : 'Create New Badge'}
-            </Title>
+            <Title order={3}>{mode === 'edit' ? 'Edit Existing Badge' : 'Create New Badge'}</Title>
           </Group>
 
           {/* Show selected product context */}
@@ -376,10 +372,7 @@ function BadgeForm({
               Badge Image <span style={{ color: 'var(--mantine-color-red-6)' }}>*</span>
             </Text>
             {showLoading ? (
-              <Paper
-                style={{ position: 'relative', width: '100%', height: 150 }}
-                withBorder
-              >
+              <Paper style={{ position: 'relative', width: '100%', height: 150 }} withBorder>
                 <LoadingOverlay visible />
               </Paper>
             ) : previewUrl ? (
@@ -412,11 +405,7 @@ function BadgeForm({
               >
                 <Dropzone.Accept>
                   <Group justify="center" gap="xs">
-                    <IconUpload
-                      size={32}
-                      stroke={1.5}
-                      className="text-blue-6 dark:text-blue-4"
-                    />
+                    <IconUpload size={32} stroke={1.5} className="text-blue-6 dark:text-blue-4" />
                     <Text c="dimmed">Drop badge image here</Text>
                   </Group>
                 </Dropzone.Accept>

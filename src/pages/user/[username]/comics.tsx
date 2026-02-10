@@ -145,7 +145,7 @@ function UserPublicComics({ username }: { username: string }) {
 type ProjectItem = RouterOutput['comics']['getMyProjects'][number];
 
 function ProjectCard({ project }: { project: ProjectItem }) {
-  const imageUrl = project.coverImageUrl ?? project.thumbnailUrl;
+  const imageUrl = project.coverImage?.url ?? project.thumbnailUrl;
 
   return (
     <Link

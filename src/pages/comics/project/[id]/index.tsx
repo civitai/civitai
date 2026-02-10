@@ -43,6 +43,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { slugit } from '~/utils/string-helpers';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -81,18 +82,18 @@ export const getServerSideProps = createServerSideProps({
 function ProjectWorkspace() {
   const router = useRouter();
   const { id } = router.query;
-  const projectId = id as string;
+  const projectId = Number(id);
 
   const [panelModalOpened, { open: openPanelModal, close: closePanelModal }] = useDisclosure(false);
   const [debugModalOpened, { open: openDebugModal, close: closeDebugModal }] = useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
-  const [debugPanelId, setDebugPanelId] = useState<string | null>(null);
+  const [debugPanelId, setDebugPanelId] = useState<number | null>(null);
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [useContext, setUseContext] = useState(true);
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
-  const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
-  const [regeneratingPanelId, setRegeneratingPanelId] = useState<string | null>(null);
+  const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
+  const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
 
   // Panel mode: Generate (prompt from scratch) vs Enhance (start from image)
   const [panelMode, setPanelMode] = useState<'generate' | 'enhance'>('generate');
@@ -111,7 +112,7 @@ function ProjectWorkspace() {
   } = useCFImageUpload();
 
   // Chapter rename state
-  const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
+  const [editingChapterPosition, setEditingChapterPosition] = useState<number | null>(null);
   const [editChapterName, setEditChapterName] = useState('');
   const chapterInputRef = useRef<HTMLInputElement>(null);
 
@@ -122,7 +123,7 @@ function ProjectWorkspace() {
   const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
 
   // Panel detail drawer state
-  const [detailPanelId, setDetailPanelId] = useState<string | null>(null);
+  const [detailPanelId, setDetailPanelId] = useState<number | null>(null);
   // Insert-at-position state for adding panels between existing ones
   const [insertAtPosition, setInsertAtPosition] = useState<number | null>(null);
 
@@ -142,7 +143,7 @@ function ProjectWorkspace() {
     data: project,
     isLoading,
     refetch,
-  } = trpc.comics.getProject.useQuery({ id: projectId }, { enabled: !!projectId });
+  } = trpc.comics.getProject.useQuery({ id: projectId }, { enabled: projectId > 0 });
 
   // Dynamic cost estimate from orchestrator
   const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(undefined, {
@@ -152,17 +153,17 @@ function ProjectWorkspace() {
 
   // Set active chapter to first chapter on load
   useEffect(() => {
-    if (project?.chapters?.length && !activeChapterId) {
-      setActiveChapterId(project.chapters[0].id);
+    if (project?.chapters?.length && activeChapterPosition == null) {
+      setActiveChapterPosition(project.chapters[0].position);
     }
-  }, [project?.chapters, activeChapterId]);
+  }, [project?.chapters, activeChapterPosition]);
 
   // All user references (global — not project-specific)
   const allReferences = useMemo(() => project?.references ?? [], [project?.references]);
 
   // Build reference image map
   const referenceImageMap = useMemo(() => {
-    const map = new Map<string, { url: string }>();
+    const map = new Map<number, { url: string }>();
     for (const c of allReferences) {
       const firstImage = (c as any).images?.[0]?.image;
       if (firstImage?.url) {
@@ -217,7 +218,7 @@ function ProjectWorkspace() {
 
   const createChapterMutation = trpc.comics.createChapter.useMutation({
     onSuccess: (data) => {
-      setActiveChapterId(data.id);
+      setActiveChapterPosition(data.position);
       refetch();
     },
     onError: handleMutationError,
@@ -257,7 +258,7 @@ function ProjectWorkspace() {
   const smartCreateMutation = trpc.comics.smartCreateChapter.useMutation({
     onSuccess: (data) => {
       closeSmartModal();
-      setActiveChapterId(data.id);
+      setActiveChapterPosition(data.position);
       resetSmartState();
       refetch();
     },
@@ -268,8 +269,10 @@ function ProjectWorkspace() {
 
   // Get active chapter's panels
   const activeChapter = useMemo(
-    () => project?.chapters?.find((ch) => ch.id === activeChapterId) ?? project?.chapters?.[0],
-    [project?.chapters, activeChapterId]
+    () =>
+      project?.chapters?.find((ch) => ch.position === activeChapterPosition) ??
+      project?.chapters?.[0],
+    [project?.chapters, activeChapterPosition]
   );
 
   // Poll for panels actively generating
@@ -320,15 +323,15 @@ function ProjectWorkspace() {
 
   // Focus chapter rename input
   useEffect(() => {
-    if (editingChapterId && chapterInputRef.current) {
+    if (editingChapterPosition != null && chapterInputRef.current) {
       chapterInputRef.current.focus();
       chapterInputRef.current.select();
     }
-  }, [editingChapterId]);
+  }, [editingChapterPosition]);
 
   // Build reference name map for panel cards
   const referenceNameMap = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<number, string>();
     for (const c of allReferences) {
       map.set(c.id, c.name);
     }
@@ -386,7 +389,8 @@ function ProjectWorkspace() {
     if (oldIndex === -1 || newIndex === -1) return;
     const reordered = arrayMove(panels, oldIndex, newIndex);
     reorderPanelsMutation.mutate({
-      chapterId: activeChapter.id,
+      projectId,
+      chapterPosition: activeChapter.position,
       panelIds: reordered.map((p) => p.id),
     });
   };
@@ -412,7 +416,8 @@ function ProjectWorkspace() {
         await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
       }
       createPanelMutation.mutate({
-        chapterId: activeChapter.id,
+        projectId,
+        chapterPosition: activeChapter.position,
         prompt: prompt.trim(),
         enhance: enhancePrompt,
         useContext,
@@ -432,7 +437,8 @@ function ProjectWorkspace() {
         await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
       }
       enhancePanelMutation.mutate({
-        chapterId: activeChapter.id,
+        projectId,
+        chapterPosition: activeChapter.position,
         sourceImageUrl: enhanceSourceImage.url,
         sourceImageWidth: enhanceSourceImage.width,
         sourceImageHeight: enhanceSourceImage.height,
@@ -526,17 +532,17 @@ function ProjectWorkspace() {
   };
 
   const handleSaveChapterName = () => {
-    if (!editingChapterId || !editChapterName.trim()) {
-      setEditingChapterId(null);
+    if (editingChapterPosition == null || !editChapterName.trim()) {
+      setEditingChapterPosition(null);
       return;
     }
     updateChapterMutation.mutate(
-      { chapterId: editingChapterId, name: editChapterName.trim() },
-      { onSettled: () => setEditingChapterId(null) }
+      { projectId, chapterPosition: editingChapterPosition, name: editChapterName.trim() },
+      { onSettled: () => setEditingChapterPosition(null) }
     );
   };
 
-  const handleDeleteChapter = (chapterId: string, chapterName: string) => {
+  const handleDeleteChapter = (chapterPosition: number, chapterName: string) => {
     if (project.chapters.length <= 1) return;
     openConfirmModal({
       title: 'Delete Chapter',
@@ -549,16 +555,16 @@ function ProjectWorkspace() {
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        deleteChapterMutation.mutate({ chapterId });
-        if (activeChapterId === chapterId) {
-          const remaining = project.chapters.filter((ch) => ch.id !== chapterId);
-          setActiveChapterId(remaining[0]?.id ?? null);
+        deleteChapterMutation.mutate({ projectId, chapterPosition });
+        if (activeChapterPosition === chapterPosition) {
+          const remaining = project.chapters.filter((ch) => ch.position !== chapterPosition);
+          setActiveChapterPosition(remaining[0]?.position ?? null);
         }
       },
     });
   };
 
-  const handleDeleteReference = (referenceId: string, referenceName: string) => {
+  const handleDeleteReference = (referenceId: number, referenceName: string) => {
     openConfirmModal({
       title: 'Delete Reference',
       children: (
@@ -578,7 +584,7 @@ function ProjectWorkspace() {
   const handleOpenSettings = () => {
     setEditName(project.name);
     setEditDescription(project.description ?? '');
-    setEditCoverUrl(project.coverImageUrl ?? null);
+    setEditCoverUrl(project.coverImage?.url ?? null);
     resetCoverFiles();
     openSettings();
   };
@@ -588,7 +594,6 @@ function ProjectWorkspace() {
       id: projectId,
       name: editName.trim() || undefined,
       description: editDescription.trim() || null,
-      coverImageUrl: editCoverUrl,
     });
   };
 
@@ -644,8 +649,8 @@ function ProjectWorkspace() {
           {/* ── Header card ─────────────────────────── */}
           <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
             <div className={styles.headerImage} onClick={handleOpenSettings}>
-              {project.coverImageUrl ? (
-                <img src={getEdgeUrl(project.coverImageUrl, { width: 160 })} alt={project.name} />
+              {project.coverImage?.url ? (
+                <img src={getEdgeUrl(project.coverImage.url, { width: 160 })} alt={project.name} />
               ) : (
                 <IconPhoto size={24} style={{ color: '#909296' }} />
               )}
@@ -685,7 +690,7 @@ function ProjectWorkspace() {
               </ActionIcon>
               <button
                 className={styles.gradientBtn}
-                onClick={() => router.push(`/comics/project/${projectId}/read`)}
+                onClick={() => router.push(`/comics/${projectId}/${slugit(project.name)}`)}
                 disabled={!hasReadyPanelsWithImages}
               >
                 <IconBook size={16} />
@@ -750,20 +755,22 @@ function ProjectWorkspace() {
 
               <div className={styles.chapterSidebar}>
                 {project.chapters.map((chapter, idx) => {
-                  const isActive = (activeChapterId ?? project.chapters[0]?.id) === chapter.id;
+                  const isActive =
+                    (activeChapterPosition ?? project.chapters[0]?.position) === chapter.position;
                   const panelCount = chapter.panels.length;
 
                   return (
                     <div
-                      key={chapter.id}
+                      key={`${chapter.projectId}-${chapter.position}`}
                       className={clsx(styles.chapterItem, isActive && styles.chapterItemActive)}
                       onClick={() => {
-                        if (editingChapterId !== chapter.id) setActiveChapterId(chapter.id);
+                        if (editingChapterPosition !== chapter.position)
+                          setActiveChapterPosition(chapter.position);
                       }}
                     >
                       <span className={styles.chapterItemNumber}>{idx + 1}</span>
                       <div className={styles.chapterItemInfo}>
-                        {editingChapterId === chapter.id ? (
+                        {editingChapterPosition === chapter.position ? (
                           <input
                             ref={chapterInputRef}
                             className={styles.chapterItemInput}
@@ -772,7 +779,7 @@ function ProjectWorkspace() {
                             onBlur={handleSaveChapterName}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') handleSaveChapterName();
-                              if (e.key === 'Escape') setEditingChapterId(null);
+                              if (e.key === 'Escape') setEditingChapterPosition(null);
                             }}
                             onClick={(e) => e.stopPropagation()}
                           />
@@ -792,7 +799,7 @@ function ProjectWorkspace() {
                           c="dimmed"
                           onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
-                            setEditingChapterId(chapter.id);
+                            setEditingChapterPosition(chapter.position);
                             setEditChapterName(chapter.name);
                           }}
                         >
@@ -805,7 +812,7 @@ function ProjectWorkspace() {
                             color="red"
                             onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
-                              handleDeleteChapter(chapter.id, chapter.name);
+                              handleDeleteChapter(chapter.position, chapter.name);
                             }}
                           >
                             <IconX size={12} />
@@ -919,7 +926,7 @@ function ProjectWorkspace() {
                           position={index + 1}
                           referenceNames={
                             (panel.references ?? [])
-                              .map((r: { referenceId: string }) =>
+                              .map((r: { referenceId: number }) =>
                                 referenceNameMap.get(r.referenceId)
                               )
                               .filter(Boolean) as string[]
@@ -1023,7 +1030,7 @@ function ProjectWorkspace() {
                   />
                   {detailPanel.status === 'Pending' ? 'Queued' : detailPanel.status}
                 </div>
-                {(detailPanel.references ?? []).map((r: { referenceId: string }) => {
+                {(detailPanel.references ?? []).map((r: { referenceId: number }) => {
                   const name = referenceNameMap.get(r.referenceId);
                   return name ? (
                     <span key={r.referenceId} className={styles.detailCharacterPill}>
@@ -1712,10 +1719,10 @@ function ReferenceSidebarItem({
   getStatusDotClass,
   getStatusLabel,
 }: {
-  character: { id: string; name: string; status: string; images?: any[] };
-  projectId: string;
-  referenceImageMap: Map<string, { url: string }>;
-  onDelete: (id: string, name: string) => void;
+  character: { id: number; name: string; status: string; images?: any[] };
+  projectId: number;
+  referenceImageMap: Map<number, { url: string }>;
+  onDelete: (id: number, name: string) => void;
   getStatusDotClass: (status: string, hasRefs: boolean) => string;
   getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
 }) {
@@ -1785,7 +1792,7 @@ function ReferenceSidebarItem({
 }
 
 // ── Sortable panel wrapper ─────────────────────────
-function SortablePanel({ id, children }: { id: string; children: React.ReactNode }) {
+function SortablePanel({ id, children }: { id: number; children: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   });
@@ -1810,7 +1817,7 @@ function SortablePanel({ id, children }: { id: string; children: React.ReactNode
 // ── Panel card ─────────────────────────────────────
 interface PanelCardProps {
   panel: {
-    id: string;
+    id: number;
     imageUrl: string | null;
     prompt: string;
     status: string;
@@ -1959,13 +1966,13 @@ function PanelDebugModal({
   opened,
   onClose,
 }: {
-  panelId: string | null;
+  panelId: number | null;
   opened: boolean;
   onClose: () => void;
 }) {
   const { data, isLoading } = trpc.comics.getPanelDebugInfo.useQuery(
-    { panelId: panelId ?? '' },
-    { enabled: opened && !!panelId }
+    { panelId: panelId ?? 0 },
+    { enabled: opened && panelId != null && panelId > 0 }
   );
 
   const meta = data?.panel.metadata as Record<string, any> | null | undefined;

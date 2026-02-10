@@ -31,11 +31,11 @@ export const getServerSideProps = createServerSideProps({
 function ComicReader() {
   const router = useRouter();
   const { id } = router.query;
-  const projectId = id as string;
+  const projectId = Number(id);
 
   const { data: project, isLoading } = trpc.comics.getProjectForReader.useQuery(
     { id: projectId },
-    { enabled: !!projectId }
+    { enabled: projectId > 0 }
   );
 
   const chapters = useMemo(() => project?.chapters ?? [], [project?.chapters]);

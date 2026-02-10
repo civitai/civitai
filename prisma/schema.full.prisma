@@ -389,7 +389,6 @@ model User {
   comicProjects              ComicProject[]
   comicReferences            ComicReference[]
   comicProjectEngagements    ComicProjectEngagement[]
-  comicChapterReads          ComicChapterRead[]
 
   @@index([deletedAt])
 }
@@ -1489,6 +1488,7 @@ model Image {
   imageTagsForReview  ImageTagForReview[]
   comicPanels             ComicPanel[]
   comicReferenceImages    ComicReferenceImage[]
+  comicProjectCover       ComicProject[]         @relation("comicProjectCover")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2156,8 +2156,9 @@ model Thread {
   bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
   clubPostId    Int?            @unique
   clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
-  comicChapterId String?        @unique
-  comicChapter   ComicChapter?  @relation(fields: [comicChapterId], references: [id], onDelete: SetNull)
+  comicProjectId       Int?
+  comicChapterPosition Int?
+  comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
 
   metadata Json @default("{}") // unused
   commentCount Int      @default(0)
@@ -2166,6 +2167,7 @@ model Thread {
   directChildren Thread[]    @relation("childThread")
   children       Thread[]    @relation("root")
 
+  @@unique([comicProjectId, comicChapterPosition])
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
   @@index([questionId], type: Hash)
@@ -4806,6 +4808,7 @@ enum ComicReferenceType {
 }
 
 enum ComicEngagementType {
+  None
   Notify
   Hide
 }
@@ -4826,60 +4829,58 @@ enum ComicGenre {
 }
 
 model ComicProject {
-  id        String             @id @default(cuid())
-  userId    Int
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            Int                @id @default(autoincrement())
+  userId        Int
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   name          String             @db.VarChar(255)
   description   String?            @db.Text
-  coverImageUrl String?            @db.VarChar(500)
+  coverImageId  Int?
+  coverImage    Image?             @relation("comicProjectCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   status        ComicProjectStatus @default(Active)
   baseModel     String?            @db.VarChar(50)
   genre         ComicGenre?
   nsfwLevel     Int                @default(0)
   publishedAt   DateTime?
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
 
   chapters    ComicChapter[]
   engagements ComicProjectEngagement[]
 
   @@index([userId])
   @@index([status])
+  @@index([coverImageId])
 }
 
 model ComicChapter {
-  id        String             @id @default(cuid())
-  projectId String
-  project   ComicProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String             @db.VarChar(255) @default("Chapter 1")
-  position  Int                @default(0)
-  status    ComicChapterStatus @default(Draft)
+  projectId   Int
+  project     ComicProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String             @db.VarChar(255) @default("Chapter 1")
+  position    Int                @default(0)
+  status      ComicChapterStatus @default(Draft)
   publishedAt DateTime?
-  nsfwLevel   Int              @default(0)
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
+  nsfwLevel   Int                @default(0)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 
-  panels      ComicPanel[]
-  readHistory ComicChapterRead[]
-  thread      Thread?
+  panels ComicPanel[]
+  thread Thread?
 
-  @@index([projectId])
-  @@index([projectId, position])
+  @@id([projectId, position])
 }
 
 model ComicReference {
-  id         String                     @id @default(cuid())
-  userId     Int
-  user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name       String                     @db.VarChar(255)
-  type       ComicReferenceType         @default(Character)
-  description String?                   @db.Text
-  status     ComicReferenceStatus       @default(Pending)
-
-  errorMessage String?  @db.Text
-  buzzCost     Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id           Int                        @id @default(autoincrement())
+  userId       Int
+  user         User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String                     @db.VarChar(255)
+  type         ComicReferenceType         @default(Character)
+  description  String?                    @db.Text
+  status       ComicReferenceStatus       @default(Pending)
+  errorMessage String?                    @db.Text
+  buzzCost     Int                        @default(0)
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
 
   images          ComicReferenceImage[]
   panelReferences ComicPanelReference[]
@@ -4889,7 +4890,7 @@ model ComicReference {
 }
 
 model ComicReferenceImage {
-  referenceId String
+  referenceId Int
   reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
   imageId     Int
   image       Image          @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -4901,58 +4902,48 @@ model ComicReferenceImage {
 }
 
 model ComicPanel {
-  id           String           @id @default(cuid())
-  chapterId    String
-  chapter      ComicChapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  imageId      Int?
-  image        Image?           @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  id              Int              @id @default(autoincrement())
+  projectId       Int
+  chapterPosition Int
+  chapter         ComicChapter     @relation(fields: [projectId, chapterPosition], references: [projectId, position], onDelete: Cascade, onUpdate: Cascade)
+  imageId         Int?
+  image           Image?           @relation(fields: [imageId], references: [id], onDelete: SetNull)
   prompt          String           @db.Text
   enhancedPrompt  String?          @db.Text
   imageUrl        String?          @db.VarChar(500)
-  position     Int              @default(0)
-  buzzCost     Int              @default(25)
-  status       ComicPanelStatus @default(Pending)
-  workflowId   String?
-  civitaiJobId String?          @db.VarChar(100)
-  errorMessage String?          @db.Text
-  metadata     Json?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  position        Int              @default(0)
+  status          ComicPanelStatus @default(Pending)
+  workflowId      String?
+  civitaiJobId    String?          @db.VarChar(100)
+  errorMessage    String?          @db.Text
+  metadata        Json?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   references ComicPanelReference[]
 
-  @@index([chapterId, position])
+  @@index([projectId, chapterPosition, position])
   @@index([imageId])
   @@index([status])
 }
 
 model ComicProjectEngagement {
-  userId    Int
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  projectId String
-  project   ComicProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type      ComicEngagementType
-  createdAt DateTime            @default(now())
+  userId       Int
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId    Int
+  project      ComicProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type         ComicEngagementType @default(None)
+  readChapters Int[]               @default([])
+  createdAt    DateTime            @default(now())
 
   @@id([userId, projectId])
   @@index([projectId], type: Hash)
 }
 
-model ComicChapterRead {
-  userId    Int
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  chapterId String
-  chapter   ComicChapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  readAt    DateTime     @default(now())
-
-  @@id([userId, chapterId])
-  @@index([chapterId], type: Hash)
-}
-
 model ComicPanelReference {
-  panelId     String
+  panelId     Int
   panel       ComicPanel     @relation(fields: [panelId], references: [id], onDelete: Cascade)
-  referenceId String
+  referenceId Int
   reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
 
   @@id([panelId, referenceId])

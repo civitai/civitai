@@ -3,17 +3,18 @@ import { dbWrite, dbRead } from '~/server/db/client';
 /**
  * Recompute chapter nsfwLevel as bitwise OR of all panel image nsfwLevels.
  */
-export async function updateChapterNsfwLevel(chapterId: string) {
+export async function updateChapterNsfwLevel(projectId: number, chapterPosition: number) {
   const result = await dbRead.$queryRawUnsafe<{ level: number }[]>(
     `SELECT COALESCE(bit_or(i."nsfwLevel"), 0) AS level
-     FROM "comic_panels" p
+     FROM "ComicPanel" p
      JOIN "Image" i ON i.id = p."imageId"
-     WHERE p."chapterId" = $1`,
-    chapterId
+     WHERE p."projectId" = $1 AND p."chapterPosition" = $2`,
+    projectId,
+    chapterPosition
   );
   const level = result[0]?.level ?? 0;
   await dbWrite.comicChapter.update({
-    where: { id: chapterId },
+    where: { projectId_position: { projectId, position: chapterPosition } },
     data: { nsfwLevel: level },
   });
   return level;
@@ -22,10 +23,10 @@ export async function updateChapterNsfwLevel(chapterId: string) {
 /**
  * Recompute project nsfwLevel as bitwise OR of all chapter nsfwLevels.
  */
-export async function updateProjectNsfwLevel(projectId: string) {
+export async function updateProjectNsfwLevel(projectId: number) {
   const result = await dbRead.$queryRawUnsafe<{ level: number }[]>(
     `SELECT COALESCE(bit_or("nsfwLevel"), 0) AS level
-     FROM "comic_chapters"
+     FROM "ComicChapter"
      WHERE "projectId" = $1`,
     projectId
   );
@@ -40,13 +41,13 @@ export async function updateProjectNsfwLevel(projectId: string) {
 /**
  * Full rollup: given a panel, update the chapter then the project.
  */
-export async function rollupNsfwFromPanel(panelId: string) {
+export async function rollupNsfwFromPanel(panelId: number) {
   const panel = await dbRead.comicPanel.findUnique({
     where: { id: panelId },
-    select: { chapter: { select: { id: true, projectId: true } } },
+    select: { projectId: true, chapterPosition: true },
   });
   if (!panel) return;
 
-  await updateChapterNsfwLevel(panel.chapter.id);
-  await updateProjectNsfwLevel(panel.chapter.projectId);
+  await updateChapterNsfwLevel(panel.projectId, panel.chapterPosition);
+  await updateProjectNsfwLevel(panel.projectId);
 }
