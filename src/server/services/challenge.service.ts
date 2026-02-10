@@ -69,43 +69,60 @@ async function getJudgingConfigForChallenge(
   return getJudgingConfig(judgeId, judgingPromptOverride);
 }
 
-// Helper to parse composite cursor (format: "sortValue:id")
+// Helper to parse composite cursor (format: "status:sortValue:id")
 function parseChallengeCursor(
   cursor: string | undefined,
   sort: ChallengeSort
-): { sortValue: string | number | Date; id: number } | null {
+): { status: ChallengeStatus; sortValue: string | number | Date; id: number } | null {
   if (!cursor) return null;
-  const [sortValueStr, idStr] = cursor.split(':');
+  // Split into at most 3 parts: status, sortValue (may contain colons for ISO dates), id
+  const firstColon = cursor.indexOf(':');
+  if (firstColon === -1) return null;
+  const status = cursor.slice(0, firstColon) as ChallengeStatus;
+
+  const rest = cursor.slice(firstColon + 1);
+  const lastColon = rest.lastIndexOf(':');
+  if (lastColon === -1) return null;
+  const sortValueStr = rest.slice(0, lastColon);
+  const idStr = rest.slice(lastColon + 1);
+
   const id = parseInt(idStr, 10);
   if (isNaN(id)) return null;
 
   switch (sort) {
     case ChallengeSort.EndingSoon:
     case ChallengeSort.Newest:
-      return { sortValue: new Date(sortValueStr), id };
+      return { status, sortValue: new Date(sortValueStr), id };
     case ChallengeSort.MostEntries:
     case ChallengeSort.HighestPrize:
-      return { sortValue: parseInt(sortValueStr, 10), id };
+      return { status, sortValue: parseInt(sortValueStr, 10), id };
     default:
-      return { sortValue: sortValueStr, id };
+      return { status, sortValue: sortValueStr, id };
   }
 }
 
-// Helper to build composite cursor
+// Helper to build composite cursor (format: "status:sortValue:id")
 function buildChallengeCursor(
-  item: { id: number; startsAt: Date; endsAt: Date; prizePool: number; entryCount: number },
+  item: {
+    id: number;
+    status: ChallengeStatus;
+    startsAt: Date;
+    endsAt: Date;
+    prizePool: number;
+    entryCount: number;
+  },
   sort: ChallengeSort
 ): string {
   switch (sort) {
     case ChallengeSort.EndingSoon:
-      return `${item.endsAt.toISOString()}:${item.id}`;
+      return `${item.status}:${item.endsAt.toISOString()}:${item.id}`;
     case ChallengeSort.MostEntries:
-      return `${item.entryCount}:${item.id}`;
+      return `${item.status}:${item.entryCount}:${item.id}`;
     case ChallengeSort.HighestPrize:
-      return `${item.prizePool}:${item.id}`;
+      return `${item.status}:${item.prizePool}:${item.id}`;
     case ChallengeSort.Newest:
     default:
-      return `${item.startsAt.toISOString()}:${item.id}`;
+      return `${item.status}:${item.startsAt.toISOString()}:${item.id}`;
   }
 }
 
@@ -153,76 +170,71 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   }
 
   // Composite cursor for stable keyset pagination across all sort types
+  // The primary sort dimension is status priority (Active=0 < Scheduled=1 < others=2),
+  // so cursor conditions must account for status group transitions.
   const parsedCursor = parseChallengeCursor(cursor, sort);
   if (parsedCursor) {
-    const { sortValue, id } = parsedCursor;
-    // Keyset pagination: (sortValue > cursor) OR (sortValue = cursor AND id < cursorId)
-    // This ensures stable pagination even when sort values change
+    const { status: cursorStatus, sortValue, id } = parsedCursor;
+
+    // Status priority CASE fragments for keyset comparison
+    const statusPriority = Prisma.sql`CASE c.status WHEN 'Active' THEN 0 WHEN 'Scheduled' THEN 1 ELSE 2 END`;
+    const cursorStatusPriority = Prisma.sql`CASE ${cursorStatus}::"ChallengeStatus" WHEN 'Active' THEN 0 WHEN 'Scheduled' THEN 1 ELSE 2 END`;
+
+    let sortKeysetCondition: Prisma.Sql;
     switch (sort) {
       case ChallengeSort.EndingSoon:
-        // ORDER BY endsAt ASC, id DESC - so we want endsAt > cursor OR (endsAt = cursor AND id < cursorId)
-        conditions.push(
-          Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${
-            sortValue as Date
-          } AND c.id < ${id}))`
-        );
+        sortKeysetCondition = Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${sortValue as Date} AND c.id < ${id}))`;
         break;
       case ChallengeSort.MostEntries:
-        // ORDER BY entryCount DESC, id DESC - entryCount < cursor OR (entryCount = cursor AND id < cursorId)
-        // Note: entryCount is a subquery, so we need to use a CTE or HAVING clause
-        // For simplicity, we'll filter by id only for ties and use a subquery for the count comparison
-        conditions.push(
-          Prisma.sql`(
-            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${
-              sortValue as number
-            }
-            OR (
-              (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${
-                sortValue as number
-              }
-              AND c.id < ${id}
-            )
-          )`
-        );
+        sortKeysetCondition = Prisma.sql`(
+          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${sortValue as number}
+          OR (
+            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${sortValue as number}
+            AND c.id < ${id}
+          )
+        )`;
         break;
       case ChallengeSort.HighestPrize:
-        // ORDER BY prizePool DESC, id DESC
-        conditions.push(
-          Prisma.sql`(c."prizePool" < ${sortValue as number} OR (c."prizePool" = ${
-            sortValue as number
-          } AND c.id < ${id}))`
-        );
+        sortKeysetCondition = Prisma.sql`(c."prizePool" < ${sortValue as number} OR (c."prizePool" = ${sortValue as number} AND c.id < ${id}))`;
         break;
       case ChallengeSort.Newest:
       default:
-        // ORDER BY startsAt DESC, id DESC
-        conditions.push(
-          Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${
-            sortValue as Date
-          } AND c.id < ${id}))`
-        );
+        sortKeysetCondition = Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
         break;
     }
+
+    // Combined keyset: status priority changed OR (same status group AND existing sort logic)
+    conditions.push(
+      Prisma.sql`(
+        ${statusPriority} > ${cursorStatusPriority}
+        OR (
+          c.status = ${cursorStatus}::"ChallengeStatus"
+          AND ${sortKeysetCondition}
+        )
+      )`
+    );
   }
 
   const whereClause =
     conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
   // Build ORDER BY (safe - not user input)
+  // Primary sort: status priority (Active before Scheduled before others)
+  const statusOrderPrefix = Prisma.sql`CASE c.status WHEN 'Active' THEN 0 WHEN 'Scheduled' THEN 1 ELSE 2 END ASC`;
   let orderByClause: Prisma.Sql;
   switch (sort) {
     case ChallengeSort.EndingSoon:
-      orderByClause = Prisma.sql`c."endsAt" ASC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, c."endsAt" ASC, c.id DESC`;
       break;
     case ChallengeSort.MostEntries:
-      orderByClause = Prisma.sql`"entryCount" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, "entryCount" DESC, c.id DESC`;
       break;
     case ChallengeSort.HighestPrize:
-      orderByClause = Prisma.sql`c."prizePool" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, c."prizePool" DESC, c.id DESC`;
       break;
     case ChallengeSort.Newest:
     default:
-      orderByClause = Prisma.sql`c."startsAt" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, c."startsAt" DESC, c.id DESC`;
       break;
   }
 
