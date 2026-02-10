@@ -21,7 +21,6 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
@@ -195,7 +194,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const handleSuccess = async () => {
     handleClose();
     showSuccessNotification({
-      message: 'Your entries have been submitted to the challenge.',
+      message: 'Your images have been submitted for review.',
     });
     await queryUtils.image.getInfinite.invalidate();
     await queryUtils.collection.getById.invalidate({ id: collectionId });
@@ -746,13 +745,6 @@ function GeneratorImageCard({
           anim
         />
       </AspectRatio>
-      {numericNsfwLevel !== null && (
-        <BrowsingLevelBadge
-          browsingLevel={numericNsfwLevel}
-          size="xs"
-          className="absolute left-1.5 top-1.5"
-        />
-      )}
       {eligibility.eligible ? (
         <Checkbox checked={isSelected} readOnly size="lg" className="absolute right-1.5 top-1.5" />
       ) : (
