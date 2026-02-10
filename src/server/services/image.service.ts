@@ -6289,17 +6289,16 @@ export async function getReportViolationDetailsForImages(
   const reports = await dbRead.$queryRaw<
     { imageId: number; reason: string; details: Prisma.JsonValue }[]
   >`
-    SELECT ir."imageId", r.reason, r.details
+    SELECT DISTINCT ON (ir."imageId") ir."imageId", r.reason, r.details
     FROM "Report" r
     JOIN "ImageReport" ir ON ir."reportId" = r.id
     WHERE ir."imageId" IN (${Prisma.join(imageIds)})
       AND r.reason = 'TOSViolation'
-    ORDER BY r."createdAt" DESC
+    ORDER BY ir."imageId", r."createdAt" DESC
   `;
 
   const result: Record<number, { violation?: string; comment?: string; reason?: string }> = {};
   for (const report of reports) {
-    if (result[report.imageId]) continue;
     const details = report.details as Record<string, string> | null;
     result[report.imageId] = {
       violation: details?.violation,

@@ -3,104 +3,85 @@ import { ViolationType } from './enums';
 export const TOS_REASONS = [
   {
     label: 'Depicting Real People',
-    value: 'Depicting real people is not allowed.',
-    violationType: ViolationType.RealPerson,
+    value: ViolationType.RealPerson,
   },
   {
-    label: 'Depicting Real People in mature context',
-    value: 'Depicting real people in mature context is not allowed.',
-    violationType: ViolationType.RealPersonNsfw,
+    label: 'Depicting Real People in Mature Context',
+    value: ViolationType.RealPersonNsfw,
   },
   {
-    label: 'Realistic minor',
-    value: 'Realistic images of minors is not allowed.',
-    violationType: ViolationType.RealisticMinor,
+    label: 'Realistic Minor',
+    value: ViolationType.RealisticMinor,
   },
   {
-    label: 'Realistic Minor displayed in mature context',
-    value: 'Realistic Minors displayed in mature context is not allowed.',
-    violationType: ViolationType.RealisticMinorNsfw,
+    label: 'Realistic Minor in Mature Context',
+    value: ViolationType.RealisticMinorNsfw,
   },
   {
-    label: 'Animated Minor displayed in mature context',
-    value: 'Animated Minors displayed in mature context is not allowed.',
-    violationType: ViolationType.AnimatedMinorNsfw,
+    label: 'Animated Minor in Mature Context',
+    value: ViolationType.AnimatedMinorNsfw,
   },
   {
-    label: 'NSFW potential minor in a school environment',
-    value: 'NSFW potential minors in a school environment is not allowed',
-    violationType: ViolationType.SchoolNsfw,
+    label: 'NSFW Minor in School Environment',
+    value: ViolationType.SchoolNsfw,
   },
   {
     label: 'Bestiality',
-    value: 'Bestiality is not allowed.',
-    violationType: ViolationType.Bestiality,
+    value: ViolationType.Bestiality,
   },
   {
     label: 'Rape/Forced Sex',
-    value: 'Depicting rape and domestic abuse is not allowed.',
-    violationType: ViolationType.SexualViolence,
+    value: ViolationType.SexualViolence,
   },
   {
-    label: 'Mind altered NSFW',
-    value: 'Mind altered NSFW is not allowed',
-    violationType: ViolationType.MindAlteredNsfw,
+    label: 'Mind-Altered NSFW',
+    value: ViolationType.MindAlteredNsfw,
   },
   {
-    label: 'Scat/Fecal matter',
-    value: 'Fecal matter, gaseous emission, object or lifeform being ejected from an anus is not allowed',
-    violationType: ViolationType.FecalMatter,
+    label: 'Scat/Fecal Matter',
+    value: ViolationType.FecalMatter,
   },
   {
     label: 'Graphic Violence/Gore',
-    value: 'Graphic Violence and/or gore is not allowed',
-    violationType: ViolationType.Gore,
+    value: ViolationType.Gore,
   },
   {
     label: 'Diapers',
-    value: 'Diapers are not allowed',
-    violationType: ViolationType.Diaper,
+    value: ViolationType.Diaper,
   },
   {
     label: 'Anorexia',
-    value: 'Anorexia is not allowed',
-    violationType: ViolationType.Anorexia,
+    value: ViolationType.Anorexia,
   },
   {
-    label: 'Prohibited bodily fluids',
-    value: 'Certain bodily fluids are not allowed',
-    violationType: ViolationType.BodilyFluids,
+    label: 'Prohibited Bodily Fluids',
+    value: ViolationType.BodilyFluids,
   },
   {
     label: 'Incest',
-    value: 'Incest is not allowed',
-    violationType: ViolationType.Incest,
+    value: ViolationType.Incest,
   },
   {
-    label: 'Hate Speech/Extreme political',
-    value: 'Hate Speech/Extreme political content is not allowed',
-    violationType: ViolationType.Hate,
+    label: 'Hate Speech/Extreme Political',
+    value: ViolationType.Hate,
   },
   {
-    label: 'Non AI content',
-    value: 'CivitAI is for posting AI-generated images or videos',
-    violationType: ViolationType.NonAi,
+    label: 'Non-AI Content',
+    value: ViolationType.NonAi,
   },
   {
     label: 'Spam',
-    value: 'Spam',
-    violationType: ViolationType.Spam,
+    value: ViolationType.Spam,
   },
   {
     label: 'Other',
-    value: '',
-    violationType: ViolationType.Other,
+    value: ViolationType.Other,
   },
 ] as const;
 
 export type TosReason = (typeof TOS_REASONS)[number];
 
-const needsReviewToViolationType: Record<string, string> = {
+const needsReviewToViolationType: Record<string, ViolationType> = {
   minor: ViolationType.RealisticMinor,
   poi: ViolationType.RealPerson,
   csam: ViolationType.RealisticMinorNsfw,
@@ -111,7 +92,7 @@ const needsReviewToViolationType: Record<string, string> = {
   bestiality: ViolationType.Bestiality,
 };
 
-const reportViolationToType: Record<string, string> = {
+const reportViolationToType: Record<string, ViolationType> = {
   'Depiction of real-person likeness': ViolationType.RealPerson,
   'Graphic violence': ViolationType.Gore,
   'False impersonation': ViolationType.Other,
@@ -125,7 +106,7 @@ const reportViolationToType: Record<string, string> = {
 export function mapToViolationType(
   needsReview: string | null | undefined,
   reportDetails?: { violation?: string; comment?: string; reason?: string }
-): string {
+): ViolationType {
   if (reportDetails?.violation && reportViolationToType[reportDetails.violation]) {
     return reportViolationToType[reportDetails.violation];
   }

@@ -17,8 +17,7 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { zc } from '~/utils/schema-helpers';
-import { ImageSort, NsfwLevel } from './../common/enums';
+import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
@@ -510,7 +509,7 @@ export const updateImageAcceptableMinorSchema = z.object({
 export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
 export const setTosViolationSchema = z.object({
   id: z.number(),
-  violationType: z.string().optional(),
+  violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().optional(),
 });
 

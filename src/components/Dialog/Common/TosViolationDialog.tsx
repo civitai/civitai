@@ -1,7 +1,9 @@
 import { Button, Group, Modal, Select, Stack, Text, Textarea } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import type { ViolationType } from '~/server/common/enums';
 import { TOS_REASONS } from '~/server/common/tos-reasons';
+import { showErrorNotification } from '~/utils/notifications';
 
 export default function TosViolationDialog({
   title,
@@ -10,7 +12,10 @@ export default function TosViolationDialog({
 }: {
   title?: React.ReactNode;
   message?: React.ReactNode;
-  onConfirm?: (violationType: string, violationDetails?: string) => Promise<unknown> | unknown;
+  onConfirm?: (
+    violationType: ViolationType,
+    violationDetails?: string
+  ) => Promise<unknown> | unknown;
 }) {
   const dialog = useDialogContext();
   const [loading, setLoading] = useState(false);
@@ -23,13 +28,18 @@ export default function TosViolationDialog({
 
   const handleConfirm = async () => {
     if (!violationType) return;
-    const result = onConfirm?.(violationType, violationDetails || undefined);
-    if (result instanceof Promise) {
+    try {
       setLoading(true);
-      await Promise.resolve(result);
+      await onConfirm?.(violationType as ViolationType, violationDetails || undefined);
+      dialog.onClose();
+    } catch (error) {
+      showErrorNotification({
+        error: error instanceof Error ? error : new Error('Failed to confirm TOS violation'),
+        title: 'Failed to remove image',
+      });
+    } finally {
       setLoading(false);
     }
-    dialog.onClose();
   };
 
   return (
@@ -45,11 +55,12 @@ export default function TosViolationDialog({
         <Select
           label="Violation Type"
           placeholder="Select violation type..."
-          data={TOS_REASONS.map((r) => ({ value: r.violationType, label: r.label }))}
+          data={TOS_REASONS}
           value={violationType}
           onChange={setViolationType}
           searchable
           required
+          allowDeselect={false}
         />
         <Textarea
           label="Additional Details (optional)"
@@ -61,12 +72,7 @@ export default function TosViolationDialog({
           <Button variant="default" onClick={handleCancel}>
             Cancel
           </Button>
-          <Button
-            onClick={handleConfirm}
-            loading={loading}
-            color="red"
-            disabled={!violationType}
-          >
+          <Button onClick={handleConfirm} loading={loading} color="red" disabled={!violationType}>
             Remove as TOS Violation
           </Button>
         </Group>

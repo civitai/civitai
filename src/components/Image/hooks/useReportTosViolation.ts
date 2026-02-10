@@ -20,7 +20,7 @@ export function useReportTosViolation() {
       props: {
         title: 'Remove as TOS Violation',
         message: 'The uploader will be notified that their image was removed.',
-        onConfirm: async (violationType: string, violationDetails?: string) => {
+        onConfirm: async (violationType, violationDetails) => {
           await mutateAsync({ id: imageId, violationType, violationDetails });
           imageStore.setImage(imageId, { tosViolation: true });
         },

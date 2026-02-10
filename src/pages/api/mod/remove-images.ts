@@ -6,20 +6,23 @@ import { handleBlockImages } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { ViolationType } from '~/server/common/enums';
 
 const schema = z.object({
   imageIds: z.array(z.number()).optional(),
   userId: z.number().optional(),
   moderatorId: z.number().optional(),
   reason: z.string().optional(),
-  violationType: z.string().optional(),
-  violationDetails: z.string().optional(),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().trim().min(1).optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds, userId, reason, moderatorId, violationType, violationDetails } = schema.parse(req.body);
+    const { imageIds, userId, reason, moderatorId, violationType, violationDetails } = schema.parse(
+      req.body
+    );
 
     const tracker = new Tracker(req, res);
     const images = await handleBlockImages({ ids: imageIds, userId, moderatorId });
