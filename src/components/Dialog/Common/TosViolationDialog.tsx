@@ -48,6 +48,7 @@ export default function TosViolationDialog({
       title={<Text className="font-semibold">{title}</Text>}
       onClose={handleCancel}
       centered
+      styles={{ content: { overflow: 'visible' } }}
     >
       <Stack>
         {message && <Text>{message}</Text>}
@@ -58,9 +59,15 @@ export default function TosViolationDialog({
           data={TOS_REASONS}
           value={violationType}
           onChange={setViolationType}
+          comboboxProps={{
+            withinPortal: false,
+            zIndex: 1000,
+            position: 'bottom',
+            middlewares: { flip: false, shift: false },
+          }}
+          allowDeselect={false}
           searchable
           required
-          allowDeselect={false}
         />
         <Textarea
           label="Additional Details (optional)"

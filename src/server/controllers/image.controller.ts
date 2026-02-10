@@ -108,8 +108,9 @@ export const moderateImageHandler = async ({
             tags: imageTags[id] ?? [],
             resources: imageResources[id] ?? [],
             tosReason: needsReview ?? 'other',
-            violationType: mapToViolationType(needsReview, reportDetails[id]),
-            violationDetails: reportDetails[id]?.comment ?? '',
+            violationType:
+              input.violationType ?? mapToViolationType(needsReview, reportDetails[id]),
+            violationDetails: input.violationDetails ?? reportDetails[id]?.comment ?? '',
             ownerId: userId,
             userId: ctx.user.id,
           }))

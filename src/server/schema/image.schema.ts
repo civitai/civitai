@@ -247,6 +247,8 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
   reviewAction: z.enum(['unblock', 'block']),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
