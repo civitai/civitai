@@ -211,6 +211,11 @@ export default function ModeratorChallengesPage() {
     },
   });
 
+  const isActioning =
+    endAndPickWinnersMutation.isLoading ||
+    voidChallengeMutation.isLoading ||
+    deleteMutation.isLoading;
+
   const challenges = data?.pages.flatMap((page) => page.items) ?? [];
 
   const handleClearFilters = () => {
@@ -236,7 +241,7 @@ export default function ModeratorChallengesPage() {
           </Stack>
         ),
         labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
-        onConfirm: () => endAndPickWinnersMutation.mutate({ id: challengeId }),
+        onConfirm: () => endAndPickWinnersMutation.mutateAsync({ id: challengeId }),
       },
     });
   };
@@ -259,7 +264,7 @@ export default function ModeratorChallengesPage() {
         ),
         labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
         confirmProps: { color: 'red' },
-        onConfirm: () => voidChallengeMutation.mutate({ id: challengeId }),
+        onConfirm: () => voidChallengeMutation.mutateAsync({ id: challengeId }),
       },
     });
   };
@@ -272,7 +277,7 @@ export default function ModeratorChallengesPage() {
         message: <Text>Are you sure you want to delete this challenge?</Text>,
         labels: { cancel: 'Cancel', confirm: 'Delete' },
         confirmProps: { color: 'red' },
-        onConfirm: () => deleteMutation.mutate({ id: challengeId }),
+        onConfirm: () => deleteMutation.mutateAsync({ id: challengeId }),
       },
     });
   };
@@ -437,6 +442,7 @@ export default function ModeratorChallengesPage() {
                                   <Menu.Label>Quick Actions</Menu.Label>
                                   <Menu.Item
                                     leftSection={<IconTrophy size={14} />}
+                                    disabled={isActioning}
                                     onClick={() =>
                                       handleEndAndPickWinners(challenge.id, challenge.title)
                                     }
@@ -446,6 +452,7 @@ export default function ModeratorChallengesPage() {
                                   <Menu.Item
                                     leftSection={<IconX size={14} />}
                                     color="red"
+                                    disabled={isActioning}
                                     onClick={() =>
                                       handleVoidChallenge(challenge.id, challenge.title)
                                     }
@@ -462,6 +469,7 @@ export default function ModeratorChallengesPage() {
                                   <Menu.Item
                                     leftSection={<IconX size={14} />}
                                     color="red"
+                                    disabled={isActioning}
                                     onClick={() =>
                                       handleVoidChallenge(challenge.id, challenge.title)
                                     }
@@ -475,6 +483,7 @@ export default function ModeratorChallengesPage() {
                               <Menu.Item
                                 leftSection={<IconTrash size={14} />}
                                 color="red"
+                                disabled={isActioning}
                                 onClick={() => handleDelete(challenge.id)}
                               >
                                 Delete
