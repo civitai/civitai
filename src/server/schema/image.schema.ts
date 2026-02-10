@@ -507,6 +507,13 @@ export const updateImageAcceptableMinorSchema = z.object({
   acceptableMinor: z.boolean(),
 });
 
+export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
+export const setTosViolationSchema = z.object({
+  id: z.number(),
+  violationType: z.string().optional(),
+  violationDetails: z.string().optional(),
+});
+
 export type ToggleImageFlagInput = z.infer<typeof toggleImageFlagSchema>;
 export const toggleImageFlagSchema = z.object({
   id: z.number(),
