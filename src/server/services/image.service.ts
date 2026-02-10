@@ -70,6 +70,7 @@ import type {
   ImageModerationUnblockSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
+  IngestionErrorReviewInput,
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
@@ -5338,6 +5339,111 @@ export async function getImageRatingRequests({
     nextCursor,
     items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
   };
+}
+
+export async function getIngestionErrorImages({
+  cursor,
+  limit,
+}: IngestionErrorReviewInput) {
+  const query = Prisma.sql`
+    SELECT
+      i.id,
+      i.url,
+      i.name,
+      i."nsfwLevel",
+      i."aiNsfwLevel",
+      i."needsReview",
+      i.width,
+      i.height,
+      i.type,
+      i."createdAt",
+      i.poi
+    FROM "Image" i
+    WHERE i."createdAt" > now() - INTERVAL '2 days'
+      AND i."createdAt" < now() - INTERVAL '1 hour'
+      AND i.ingestion = 'Error'::"ImageIngestionStatus"
+      AND i."nsfwLevel" = 0
+      ${cursor ? Prisma.sql`AND i.id < ${cursor}` : Prisma.empty}
+    ORDER BY i."createdAt" DESC
+    LIMIT ${limit + 1}
+  `;
+
+  const results = await dbRead.$queryRaw<
+    {
+      id: number;
+      url: string;
+      name: string | null;
+      nsfwLevel: number;
+      aiNsfwLevel: number | null;
+      needsReview: string | null;
+      width: number | null;
+      height: number | null;
+      type: string;
+      createdAt: Date;
+      poi: boolean;
+    }[]
+  >`${query}`;
+
+  let nextCursor: number | undefined;
+  if (results.length > limit) {
+    const nextItem = results.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: results,
+  };
+}
+
+export async function resolveIngestionError({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      ingestion: true,
+      postId: true,
+      userId: true,
+      metadata: true,
+    },
+  });
+  if (!image) throw new Error('Image not found');
+
+  const metadata = (image.metadata as ImageMetadata) ?? {};
+
+  await dbWrite.image.update({
+    where: { id },
+    data: {
+      nsfwLevel,
+      nsfwLevelLocked: true,
+      ingestion: ImageIngestionStatus.Scanned,
+      scannedAt: new Date(),
+      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
+    },
+  });
+
+  // Post-scan actions matching what image-scan-result does on successful scan
+  await tagIdsForImagesCache.refresh(id);
+
+  if (image.postId) await updatePostNsfwLevel(image.postId);
+
+  await queueImageSearchIndexUpdate({
+    ids: [id],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
+  await trackModActivity(userId, {
+    entityType: 'image',
+    entityId: id,
+    activity: 'setNsfwLevel',
+  });
 }
 
 type DownleveledImageRecord = {

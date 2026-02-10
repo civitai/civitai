@@ -19,6 +19,8 @@ import {
   getImageGenerationData,
   getImageRatingRequests,
   getImagesByUserIdForModeration,
+  getIngestionErrorImages,
+  resolveIngestionError,
   getImagesForModelVersionCache,
   getImagesPendingIngestion,
   getModeratorPOITags,
@@ -65,6 +67,8 @@ import {
   imageModerationSchema,
   imageRatingReviewInput,
   imageReviewQueueInputSchema,
+  ingestionErrorReviewInput,
+  resolveIngestionErrorInput,
   removeImageResourceSchema,
   reportCsamImagesSchema,
   setVideoThumbnailSchema,
@@ -154,6 +158,12 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+  getIngestionErrorImages: moderatorProcedure
+    .input(ingestionErrorReviewInput)
+    .query(({ input }) => getIngestionErrorImages(input)),
+  resolveIngestionError: moderatorProcedure
+    .input(resolveIngestionErrorInput)
+    .mutation(({ input, ctx }) => resolveIngestionError({ ...input, userId: ctx.user.id })),
   getDownleveledImages: moderatorProcedure
     .input(downleveledReviewInput)
     .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),

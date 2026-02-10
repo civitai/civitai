@@ -457,6 +457,18 @@ export const downleveledReviewInput = z.object({
   originalLevel: z.nativeEnum(NsfwLevel).optional(),
 });
 
+export type IngestionErrorReviewInput = z.infer<typeof ingestionErrorReviewInput>;
+export const ingestionErrorReviewInput = z.object({
+  limit: z.number(),
+  cursor: z.number().optional(),
+});
+
+export type ResolveIngestionErrorInput = z.infer<typeof resolveIngestionErrorInput>;
+export const resolveIngestionErrorInput = z.object({
+  id: z.number(),
+  nsfwLevel: z.enum(NsfwLevel),
+});
+
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;
 export const reportCsamImagesSchema = z.object({
   imageIds: z.array(z.number()).min(1),
