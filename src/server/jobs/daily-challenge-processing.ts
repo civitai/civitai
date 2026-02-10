@@ -636,6 +636,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci.status = 'REJECTED'
     GROUP BY 1;
   `;
+  const totalRejected = rejectedUsers.reduce((sum, r) => sum + r.count, 0);
+  log('Rejected entries:', { users: rejectedUsers.length, items: totalRejected });
+
   const processingDateStr = dayjs().utc().startOf('hour').format('HH');
   const notificationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
   const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
