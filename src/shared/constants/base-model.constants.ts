@@ -79,10 +79,10 @@ const baseModelConfig = [
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
-  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B' },
-  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base' },
-  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B' },
-  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base' },
+  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base', ecosystem: 'flux2' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
@@ -159,11 +159,7 @@ const baseModelConfig = [
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
-  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' },
-  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base', ecosystem: 'flux2' },
-  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B', ecosystem: 'flux2' },
-  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base', ecosystem: 'flux2' },
-  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B', ecosystem: 'flux2' },
+  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' }, 
   
 ] as const satisfies BaseModelConfigToSatisfy[];
 
