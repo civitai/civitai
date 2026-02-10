@@ -30,7 +30,7 @@ export const TOS_REASONS = [
     value: ViolationType.Bestiality,
   },
   {
-    label: 'Rape/Forced Sex',
+    label: 'Sex Violence',
     value: ViolationType.SexualViolence,
   },
   {
