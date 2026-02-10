@@ -51,7 +51,7 @@ const InputNumberWrapper = withController(NumberInputWrapper);
 const schema = upsertChallengeBaseSchema
   .omit({ prizes: true, entryPrize: true, judgeId: true })
   .extend({
-    judgeId: z.string().nullable().optional(),
+    judgeId: z.string().nullish().default('1'),
     coverImage: z
       .object({ id: z.number().optional(), url: z.string() })
       .refine((val) => !!val.url, { error: 'Cover image is required' }),
@@ -123,7 +123,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? sfwBrowsingLevelsFlag,
-      judgeId: challenge?.judgeId ? String(challenge.judgeId) : null,
+      judgeId: challenge?.judgeId ? String(challenge.judgeId) : '1',
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
       maxEntriesPerUser: challenge?.maxEntriesPerUser ?? 20,
@@ -443,7 +443,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 }
               }}
               allowDeselect={false}
-              clearable
               disabled={isActive || isTerminal}
             />
             <InputTextArea

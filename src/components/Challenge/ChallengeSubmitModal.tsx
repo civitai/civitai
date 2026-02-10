@@ -194,7 +194,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const handleSuccess = async () => {
     handleClose();
     showSuccessNotification({
-      message: 'Your images have been submitted for review.',
+      message: 'Your images have been submitted to the challenge for review.',
     });
     await queryUtils.image.getInfinite.invalidate();
     await queryUtils.collection.getById.invalidate({ id: collectionId });
