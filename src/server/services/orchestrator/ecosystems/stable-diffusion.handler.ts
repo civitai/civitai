@@ -4,8 +4,8 @@
  * Handles Stable Diffusion family workflows:
  * - SD1, SD2, SDXL, Pony, Illustrious, NoobAI
  *
- * Uses textToImage step type for txt2img workflows,
- * comfy step type for img2img, face-fix, and hires-fix workflows.
+ * Uses textToImage step type for txt2img (text only) and txt2img:draft,
+ * comfy step type when images are present, or for face-fix/hires-fix workflows.
  */
 
 import type {
@@ -48,23 +48,45 @@ const SDXL_DRAFT_LORA = {
   strength: 1,
 } as const;
 
-/** Workflows that use comfy instead of textToImage */
-const COMFY_WORKFLOWS = [
-  'img2img',
+/** Workflows that always use comfy (regardless of images) */
+const COMFY_ALWAYS = [
   'txt2img:face-fix',
-  'txt2img:hires-fix',
   'img2img:face-fix',
+  'txt2img:hires-fix',
   'img2img:hires-fix',
 ] as const;
 
-/** Map generation-graph workflow keys to comfy workflow keys */
-const COMFY_WORKFLOW_KEY_MAP: Record<string, string> = {
-  img2img: 'img2img',
-  'txt2img:face-fix': 'txt2img-facefix',
-  'txt2img:hires-fix': 'txt2img-hires',
-  'img2img:face-fix': 'img2img-facefix',
-  'img2img:hires-fix': 'img2img-hires',
-};
+/**
+ * Get the external comfy workflow key from the internal workflow key + images presence.
+ * Returns undefined if this workflow/images combination should NOT use comfy.
+ */
+function getComfyKey(workflow: string, hasImages: boolean): string | undefined {
+  if (hasImages) {
+    switch (workflow) {
+      case 'txt2img':
+      case 'img2img':
+        return 'img2img';
+      case 'txt2img:face-fix':
+      case 'img2img:face-fix':
+        return 'img2img-facefix';
+      case 'txt2img:hires-fix':
+      case 'img2img:hires-fix':
+        return 'img2img-hires';
+      default:
+        return undefined;
+    }
+  }
+  switch (workflow) {
+    case 'txt2img:face-fix':
+    case 'img2img:face-fix':
+      return 'txt2img-facefix';
+    case 'txt2img:hires-fix':
+    case 'img2img:hires-fix':
+      return 'txt2img-hires';
+    default:
+      return undefined;
+  }
+}
 
 // =============================================================================
 // Step Input Creators
@@ -132,9 +154,9 @@ function createTextToImageInput(
 /**
  * Creates step input for SD family workflows.
  *
- * Routes to textToImage or comfy based on workflow type:
- * - txt2img, txt2img:draft → textToImage
- * - img2img, *:face-fix, *:hires-fix → comfy
+ * Routes to textToImage or comfy based on workflow + images:
+ * - txt2img (text only), txt2img:draft → textToImage
+ * - img2img, face-fix, hires-fix → comfy
  */
 export const createStableDiffusionInput = defineHandler<
   SDFamilyCtx,
@@ -146,7 +168,10 @@ export const createStableDiffusionInput = defineHandler<
 
   const isDraft = data.workflow === 'txt2img:draft';
   const isSD1 = data.ecosystem === 'SD1';
-  const useComfy = COMFY_WORKFLOWS.includes(data.workflow as (typeof COMFY_WORKFLOWS)[number]);
+  const hasImages = Array.isArray(data.images) && data.images.length > 0;
+  const comfyKey = getComfyKey(data.workflow, hasImages);
+  const useComfy =
+    comfyKey !== undefined || COMFY_ALWAYS.includes(data.workflow as (typeof COMFY_ALWAYS)[number]);
 
   // User resources (not modified - draft LoRA handled separately)
   const userResources = data.resources ?? [];
@@ -179,11 +204,9 @@ export const createStableDiffusionInput = defineHandler<
 
   const scheduler = samplersToSchedulers[sampler as keyof typeof samplersToSchedulers] as Scheduler;
 
-  // Use comfy for img2img, face-fix, and hires-fix workflows
-  if (useComfy) {
-    const comfyKey = COMFY_WORKFLOW_KEY_MAP[data.workflow] ?? data.workflow;
+  // Use comfy for face-fix, hires-fix, or when images are present (img2img mode)
+  if (useComfy && comfyKey) {
     const isHires = data.workflow.includes('hires');
-    const isImg2Img = data.workflow.startsWith('img2img');
 
     const workflowData: Record<string, unknown> = {
       prompt: data.prompt,
@@ -195,10 +218,10 @@ export const createStableDiffusionInput = defineHandler<
       outputFormat: data.outputFormat ?? 'jpeg',
     };
 
-    if (isImg2Img) {
-      const sourceImage = data.images?.[0];
+    if (hasImages) {
+      const sourceImage = data.images![0] as { url?: string; width?: number; height?: number };
       if (!sourceImage?.url) {
-        throw new Error('Source image is required for img2img workflows');
+        throw new Error('Source image is required when images are provided');
       }
       workflowData.image = sourceImage.url;
       workflowData.denoise = data.denoise;

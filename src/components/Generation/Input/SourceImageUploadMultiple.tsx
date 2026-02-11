@@ -602,9 +602,6 @@ export function SourceImageUploadMultiple({
 
     return (
       <div key={slotIndex} className="flex flex-1 flex-col gap-1">
-        <Text size="sm" c="dimmed" ta="center">
-          {slot.label}
-        </Text>
         {imageAtSlot ? (
           // Show image preview
           <Card withBorder padding={0} className="relative overflow-hidden">
@@ -614,6 +611,9 @@ export function SourceImageUploadMultiple({
               alt={slot.label}
               className="max-h-[200px] w-full object-contain"
             />
+            <Text size="xs" c="dimmed" ta="center" className="py-1">
+              {slot.label}
+            </Text>
             <SourceImageUploadMultiple.Dimensions
               width={imageAtSlot.width}
               height={imageAtSlot.height}
@@ -625,8 +625,11 @@ export function SourceImageUploadMultiple({
           </Card>
         ) : isUploading ? (
           // Show loading state
-          <div className="flex min-h-[150px] items-center justify-center rounded border border-dashed border-gray-4 dark:border-dark-4">
+          <div className="flex min-h-[150px] flex-col items-center justify-center rounded border border-dashed border-gray-4 dark:border-dark-4">
             <Loader size="md" />
+            <Text size="xs" c="dimmed" ta="center" mt={8}>
+              {slot.label}
+            </Text>
           </div>
         ) : (
           // Show dropzone
@@ -663,7 +666,7 @@ export function SourceImageUploadMultiple({
                 <IconPhoto size={32} stroke={1.5} />
               </Dropzone.Idle>
               <Text size="xs" c="dimmed" ta="center">
-                Drop image here
+                {slot.label}
               </Text>
             </div>
           </Dropzone>

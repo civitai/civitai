@@ -2,20 +2,25 @@
  * Vidu Graph
  *
  * Controls for Vidu Q1 video generation ecosystem.
- * Supports txt2vid, img2vid (with first/last frame), and ref2vid workflows.
+ *
+ * Workflows:
+ * - txt2vid: Text to video generation (no images)
+ * - img2vid: Image to video with first/last frame inputs
+ * - img2vid:ref2vid: Reference-guided video generation with multiple images
  *
  * Nodes:
+ * - images: Workflow-dependent image input (hidden for text-to-video)
  * - seed: Optional seed for reproducibility
  * - enablePromptEnhancer: Toggle for prompt enhancement
- * - style: Video style (General/Anime) - only for txt2vid
- * - aspectRatio: Output aspect ratio - only for txt2vid and ref2vid
+ * - style: Video style (General/Anime) - only visible for txt2vid
+ * - aspectRatio: Output aspect ratio - visible for txt2vid and img2vid:ref2vid
  * - movementAmplitude: Movement intensity control
  */
 
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, enumNode, createCheckpointGraph } from './common';
+import { seedNode, aspectRatioNode, enumNode, imagesNode, createCheckpointGraph } from './common';
 
 // =============================================================================
 // Constants
@@ -47,17 +52,46 @@ const viduMovementAmplitudes = [
 // =============================================================================
 
 /** Context shape for vidu graph */
-type ViduCtx = { ecosystem: string; workflow: string };
+type ViduCtx = {
+  ecosystem: string;
+  workflow: string;
+};
 
 /**
  * Vidu video generation controls.
  *
  * Workflow-specific behavior:
  * - txt2vid: Shows style selector and aspect ratio
- * - img2vid / img2vid:first-last-frame: No style or aspect ratio (derived from source)
- * - img2vid:ref2vid: Shows aspect ratio but no style
+ * - img2vid: First/last frame mode, no style or aspect ratio
+ * - img2vid:ref2vid: Reference mode, shows aspect ratio but no style
  */
 export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
+  // Images node - workflow-dependent config
+  .node(
+    'images',
+    (ctx) => {
+      const baseNode = imagesNode({ max: 1, min: 0 }); // Default for hidden state
+
+      if (ctx.workflow === 'img2vid') {
+        return {
+          ...imagesNode({
+            slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame' }],
+          }),
+          when: true,
+        };
+      }
+      if (ctx.workflow === 'img2vid:ref2vid') {
+        return {
+          ...imagesNode({ max: 7, min: 1 }),
+          when: true,
+        };
+      }
+      // txt2vid — hide images node entirely
+      return { ...baseNode, when: false };
+    },
+    ['workflow']
+  )
+
   // Merge checkpoint graph (model node with locked model from ecosystem settings)
   .merge(createCheckpointGraph())
 
@@ -71,7 +105,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
     defaultValue: true,
   })
 
-  // Style node - only for txt2vid workflow
+  // Style node - only for txt2vid
   .node(
     'style',
     (ctx) => ({
@@ -84,16 +118,13 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
     ['workflow']
   )
 
-  // Aspect ratio node - only for txt2vid and ref2vid workflows
+  // Aspect ratio node - for txt2vid and img2vid:ref2vid
   .node(
     'aspectRatio',
-    (ctx) => {
-      const showAspectRatio = ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid';
-      return {
-        ...aspectRatioNode({ options: viduAspectRatios, defaultValue: '1:1' }),
-        when: showAspectRatio,
-      };
-    },
+    (ctx) => ({
+      ...aspectRatioNode({ options: viduAspectRatios, defaultValue: '1:1' }),
+      when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
+    }),
     ['workflow']
   )
 

@@ -231,7 +231,7 @@ export const fluxGraph = new DataGraph<
   )
   // Effect 2: When model changes, sync workflow to match
   // - If model changed to draft and workflow is not draft → set workflow to draft
-  // - If model changed away from draft and workflow is draft → set workflow to txt2img
+  // - If model changed away from draft and workflow is draft → set workflow to image:create
   //
   // Note: This effect only handles user-initiated model changes.
   // When workflow changes trigger Effect 1 to set model, we don't want Effect 2
@@ -248,7 +248,7 @@ export const fluxGraph = new DataGraph<
 
       // Only sync if there's an actual mismatch that needs fixing
       // This prevents loops: if Effect 1 set model to standard because workflow
-      // changed to txt2img, isDraftWorkflow is already false, so no action needed
+      // changed from draft, isDraftWorkflow is already false, so no action needed
       if (isDraftModel && !isDraftWorkflow) {
         set('workflow', 'txt2img:draft');
       } else if (!isDraftModel && isDraftWorkflow) {

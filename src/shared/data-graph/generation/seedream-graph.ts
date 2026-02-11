@@ -13,7 +13,13 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { aspectRatioNode, cfgScaleNode, createCheckpointGraph, seedNode } from './common';
+import {
+  aspectRatioNode,
+  cfgScaleNode,
+  createCheckpointGraph,
+  imagesNode,
+  seedNode,
+} from './common';
 
 // =============================================================================
 // Seedream Version Constants
@@ -69,6 +75,15 @@ const seedreamSizes4K = [
  * Note: Seedream doesn't use negative prompts, samplers, steps, or CLIP skip.
  */
 export const seedreamGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
+  // Images node - shown for img2img variants, hidden for txt2img
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 7, min: ctx.workflow === 'img2img:edit' ? 1 : 0 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
   // Merge checkpoint graph with version options
   .merge(
     () =>

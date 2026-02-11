@@ -2,27 +2,22 @@
  * Workflow Configurations
  *
  * Unified workflow definitions with metadata and node configurations.
- * Workflow keys follow the format: {input}2{output} or {input}2{output}:{variant}
+ * Workflow keys follow the format: {input}2{output}:{variant}
  *
  * Examples:
- *   txt2img        → input: text, output: image
- *   img2img:edit   → input: image, output: image, variant: edit
- *   img2vid:animate → input: image, output: video, variant: animate
- *
- * Node configs support layered overrides:
- * 1. Workflow base config (nodes)
- * 2. Ecosystem overrides (ecosystemOverrides)
- * 3. Model version overrides (versionOverrides)
- *
- * Priority: version > ecosystem > workflow
+ *   txt2img           - text to image creation
+ *   img2img           - image to image (SD family)
+ *   img2img:edit      - image editing (Qwen, Flux Kontext, etc.)
+ *   txt2vid           - text to video
+ *   img2vid           - image to video
  */
 
 import { ECO, ecosystemByKey, ecosystemById } from '~/shared/constants/basemodel.constants';
 import {
-  parseWorkflowKey,
   type WorkflowCategory,
   type WorkflowConfig,
   type WorkflowConfigs,
+  type WorkflowGroup,
 } from './types';
 
 // Re-export types for convenience
@@ -38,7 +33,21 @@ const SD_FAMILY_IDS = [ECO.SD1, ECO.SDXL, ECO.Pony, ECO.Illustrious, ECO.NoobAI]
 /** Ecosystem IDs that support draft mode (SD family + Flux1) */
 const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 
-/** Image ecosystems that support txt2img */
+/** Image ecosystems that support image:edit (accept optional/required images for editing) */
+const EDIT_IMG_IDS = [
+  ECO.Qwen,
+  ECO.Seedream,
+  ECO.NanoBanana,
+  ECO.OpenAI,
+  ECO.Flux2,
+  ECO.Flux2Klein_9B,
+  ECO.Flux2Klein_9B_base,
+  ECO.Flux2Klein_4B,
+  ECO.Flux2Klein_4B_base,
+  ECO.Flux1Kontext,
+];
+
+/** Image ecosystems that support image:create */
 const TXT2IMG_IDS = [
   // SD family
   ECO.SD1,
@@ -68,7 +77,7 @@ const TXT2IMG_IDS = [
   ECO.ZImageBase,
 ];
 
-/** Video ecosystems that support txt2vid */
+/** Video ecosystems that support video:create */
 const TXT2VID_IDS = [
   ECO.HyV1,
   ECO.LTXV2,
@@ -87,23 +96,22 @@ const TXT2VID_IDS = [
   ECO.Lightricks,
 ];
 
-/** Video ecosystems that support img2vid */
-const IMG2VID_IDS = [
-  ECO.HyV1,
-  ECO.LTXV2,
-  ECO.WanVideo,
+/** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
+const I2V_ONLY_IDS = [
   ECO.WanVideo14B_I2V_480p,
   ECO.WanVideo14B_I2V_720p,
-  ECO.WanVideo22_TI2V_5B,
   ECO.WanVideo22_I2V_A14B,
   ECO.WanVideo25_I2V,
-  ECO.Veo3,
-  ECO.Sora2,
-  ECO.Vidu,
-  ECO.MiniMax,
-  ECO.Kling,
-  ECO.Haiper,
-  ECO.Lightricks,
+];
+
+/** All Wan ecosystem IDs (T2V + I2V) — used for workflow group overrides */
+const WAN_ALL_IDS = [
+  ECO.WanVideo,
+  ECO.WanVideo14B_T2V,
+  ECO.WanVideo22_TI2V_5B,
+  ECO.WanVideo22_T2V_A14B,
+  ECO.WanVideo25_T2V,
+  ...I2V_ONLY_IDS,
 ];
 
 // =============================================================================
@@ -112,98 +120,68 @@ const IMG2VID_IDS = [
 
 export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
-  // Text to Image Workflows
+  // Image Creation Workflows
   // ===========================================================================
 
   txt2img: {
     label: 'Create Image',
-    description: 'Generate an image from a text prompt',
-    category: 'text-to-image',
+    modeLabel: 'Text to Image',
+    description: 'Generate an AI image from text',
+    category: 'image',
     ecosystemIds: TXT2IMG_IDS,
+  },
+
+  img2img: {
+    label: 'Image to Image',
+    description: 'Generate an image from an existing image',
+    category: 'image',
+    ecosystemIds: SD_FAMILY_IDS,
+  },
+
+  'img2img:edit': {
+    label: 'Edit Image',
+    description: 'Edit an image with AI',
+    category: 'image',
+    ecosystemIds: EDIT_IMG_IDS,
   },
 
   'txt2img:draft': {
     label: 'Draft',
     description: 'Fast generation for quick iterations',
-    category: 'text-to-image',
+    category: 'image',
     ecosystemIds: DRAFT_IDS,
   },
 
   'txt2img:face-fix': {
-    label: 'Create + Face Fix',
+    label: 'Face Fix',
+    modeLabel: 'Text',
     description: 'Generate with automatic face correction',
-    category: 'text-to-image',
+    category: 'image',
+    ecosystemIds: SD_FAMILY_IDS,
+  },
+
+  'img2img:face-fix': {
+    label: 'Face Fix (Image)',
+    modeLabel: 'Image',
+    description: 'Fix faces in an existing image',
+    category: 'image',
     ecosystemIds: SD_FAMILY_IDS,
   },
 
   'txt2img:hires-fix': {
-    label: 'Create + Hires Fix',
+    label: 'Hires Fix',
+    modeLabel: 'Text',
     description: 'Generate with upscaling for higher detail',
-    category: 'text-to-image',
+    category: 'image',
     ecosystemIds: SD_FAMILY_IDS,
-  },
-
-  // ===========================================================================
-  // Image to Image Workflows
-  // ===========================================================================
-
-  img2img: {
-    label: 'Image Variations',
-    description: 'Create variations of an existing image',
-    category: 'image-to-image',
-    ecosystemIds: SD_FAMILY_IDS,
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
-  },
-
-  'img2img:face-fix': {
-    label: 'Image Face Fix',
-    description: 'Fix and enhance faces in an image',
-    category: 'image-to-image',
-    ecosystemIds: SD_FAMILY_IDS,
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
   },
 
   'img2img:hires-fix': {
-    label: 'Image Hires Fix',
-    description: 'Upscale and add detail to an image',
-    category: 'image-to-image',
+    label: 'Hires Fix (Image)',
+    modeLabel: 'Image',
+    description: 'Hires fix from an existing image',
+    category: 'image',
     ecosystemIds: SD_FAMILY_IDS,
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
-  },
-
-  'img2img:edit': {
-    label: 'Image Edit',
-    description: 'Edit specific parts of an image with prompts',
-    category: 'image-to-image',
-    ecosystemIds: [
-      ECO.Qwen,
-      ECO.Seedream,
-      ECO.NanoBanana,
-      ECO.OpenAI,
-      ECO.Flux2,
-      ECO.Flux2Klein_9B,
-      ECO.Flux2Klein_9B_base,
-      ECO.Flux2Klein_4B,
-      ECO.Flux2Klein_4B_base,
-      ECO.Flux1Kontext,
-    ],
-    nodes: {
-      images: { max: 7, min: 1 },
-    },
-    ecosystemOverrides: {
-      Qwen: {
-        images: { max: 1 },
-      },
-      Flux1Kontext: {
-        images: { max: 1 },
-      },
-    },
   },
 
   // ===========================================================================
@@ -213,22 +191,18 @@ export const workflowConfigs: WorkflowConfigs = {
   'img2img:upscale': {
     label: 'Upscale',
     description: 'Increase image resolution',
-    category: 'image-enhancements',
+    category: 'image',
+    enhancement: true,
     ecosystemIds: [],
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
   },
 
   'img2img:remove-background': {
     label: 'Remove Background',
     description: 'Remove the background from an image',
-    category: 'image-enhancements',
+    category: 'image',
+    enhancement: true,
     ecosystemIds: [],
     memberOnly: true,
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
   },
 
   // ===========================================================================
@@ -237,41 +211,31 @@ export const workflowConfigs: WorkflowConfigs = {
 
   txt2vid: {
     label: 'Create Video',
-    description: 'Generate a video from a text prompt',
-    category: 'text-to-video',
+    modeLabel: 'Text to Video',
+    description: 'Generate an AI video from text',
+    category: 'video',
     ecosystemIds: TXT2VID_IDS,
   },
 
   img2vid: {
-    label: 'Animate Image',
-    description: 'Animate a still image into a video',
-    category: 'image-to-video',
-    ecosystemIds: IMG2VID_IDS,
-    nodes: {
-      images: { max: 1, min: 1 },
-    },
-  },
-
-  'img2vid:first-last-frame': {
-    label: 'First/Last Frame',
-    description: 'Create video from start and end images',
-    category: 'image-to-video',
-    ecosystemIds: [ECO.Vidu],
-    nodes: {
-      images: {
-        slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame' }],
+    label: 'Image to Video',
+    description: 'Generate a video from an image',
+    category: 'video',
+    ecosystemIds: [...TXT2VID_IDS, ...I2V_ONLY_IDS],
+    aliases: [
+      {
+        label: 'First/Last Frame',
+        description: 'Create video from start and end images',
+        ecosystemIds: [ECO.Vidu],
       },
-    },
+    ],
   },
 
   'img2vid:ref2vid': {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
-    category: 'image-to-video',
+    category: 'video',
     ecosystemIds: [ECO.Vidu],
-    nodes: {
-      images: { max: 7, min: 1 },
-    },
   },
 
   // ===========================================================================
@@ -281,14 +245,16 @@ export const workflowConfigs: WorkflowConfigs = {
   'vid2vid:upscale': {
     label: 'Upscale',
     description: 'Increase video resolution',
-    category: 'video-enhancements',
+    category: 'video',
+    enhancement: true,
     ecosystemIds: [],
   },
 
   'vid2vid:interpolate': {
     label: 'Interpolate',
     description: 'Smooth video by adding frames',
-    category: 'video-enhancements',
+    category: 'video',
+    enhancement: true,
     ecosystemIds: [],
   },
 };
@@ -305,56 +271,75 @@ export const workflowConfigsArray = Object.entries(workflowConfigs)
     ...config,
   }));
 
-/** Lookup map for workflows by key */
-export const workflowConfigByKey = new Map(workflowConfigsArray.map((w) => [w.key, w]));
+/** Lookup map for workflows by key (aggregates alias ecosystemIds into parent) */
+export const workflowConfigByKey = new Map(
+  workflowConfigsArray.map((w) => {
+    if (!w.aliases?.length) return [w.key, w];
+    const allEcoIds = [...w.ecosystemIds, ...w.aliases.flatMap((a) => a.ecosystemIds)];
+    return [w.key, { ...w, ecosystemIds: [...new Set(allEcoIds)] }];
+  })
+);
 
 // =============================================================================
 // Workflow Option Type (for UI consumption)
 // =============================================================================
 
 export type WorkflowOption = {
-  /** Workflow key */
+  /** Unique ID for this option (key for primary, key#alias-index for aliases) */
   id: string;
+  /** The graph discriminator value (always matches a real config key) */
+  graphKey: string;
   /** Display label */
   label: string;
   /** Brief description of what this workflow does */
   description?: string;
+  /** Per-entry ecosystem IDs (NOT aggregated) */
+  ecosystemIds: number[];
   /** Category for grouping in UI */
   category: WorkflowCategory;
   /** Input type required */
   inputType: 'text' | 'image' | 'video';
   /** If true, this workflow is ecosystem-specific */
   ecosystemSpecific?: boolean;
+  /** Whether this is an enhancement workflow */
+  enhancement?: boolean;
   /** If true, this workflow requires membership */
   memberOnly?: boolean;
 };
 
 /**
- * Convert a workflow config to a workflow option.
- * Input type is derived from the workflow key.
- */
-function toWorkflowOption(
-  key: string,
-  config: (typeof workflowConfigsArray)[number]
-): WorkflowOption {
-  const parsed = parseWorkflowKey(key);
-  return {
-    id: key,
-    label: config.label,
-    description: config.description,
-    category: config.category,
-    inputType: parsed.input,
-    ecosystemSpecific: config.ecosystemIds.length === 1,
-    memberOnly: config.memberOnly,
-  };
-}
-
-/**
  * All workflow options derived from workflow configs.
+ * Aliases are expanded into separate entries with unique IDs (key#index).
  */
-export const workflowOptions: WorkflowOption[] = workflowConfigsArray.map((w) =>
-  toWorkflowOption(w.key, w)
-);
+export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w) => {
+  const primary: WorkflowOption = {
+    id: w.key,
+    graphKey: w.key,
+    label: w.label,
+    description: w.description,
+    ecosystemIds: w.ecosystemIds,
+    category: w.category,
+    inputType: getInputTypeForWorkflow(w.key),
+    ecosystemSpecific: w.ecosystemIds.length === 1,
+    enhancement: w.enhancement,
+    memberOnly: w.memberOnly,
+  };
+
+  const aliases: WorkflowOption[] = (w.aliases ?? []).map((alias, i) => ({
+    id: `${w.key}#${i}`,
+    graphKey: w.key,
+    label: alias.label,
+    description: alias.description,
+    ecosystemIds: alias.ecosystemIds,
+    category: w.category,
+    inputType: getInputTypeForWorkflow(w.key),
+    ecosystemSpecific: alias.ecosystemIds.length === 1,
+    enhancement: w.enhancement,
+    memberOnly: w.memberOnly,
+  }));
+
+  return [primary, ...aliases];
+});
 
 /** Lookup map for workflows by ID (workflow key) */
 export const workflowOptionById = new Map(workflowOptions.map((w) => [w.id, w]));
@@ -376,10 +361,20 @@ export function isWorkflowAvailable(workflowId: string, ecosystemId: number): bo
 
 /**
  * Get workflows available for a specific ecosystem.
+ * Uses per-entry ecosystemIds (not aggregated) so aliases filter correctly.
  */
 export function getWorkflowsForEcosystem(ecosystemId: number): WorkflowOption[] {
-  return workflowOptions.filter((w) => isWorkflowAvailable(w.id, ecosystemId));
+  return workflowOptions.filter((w) => {
+    if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
+    return w.ecosystemIds.includes(ecosystemId);
+  });
 }
+
+/** Workflow categories with labels */
+export const workflowCategories: { category: WorkflowCategory; label: string }[] = [
+  { category: 'image', label: 'Image' },
+  { category: 'video', label: 'Video' },
+];
 
 /**
  * Get all workflows grouped by category with compatibility info for an ecosystem.
@@ -389,43 +384,28 @@ export function getWorkflowsWithCompatibility(ecosystemId: number): {
   label: string;
   workflows: (WorkflowOption & { compatible: boolean })[];
 }[] {
-  const categories: { category: WorkflowCategory; label: string }[] = [
-    { category: 'text-to-image', label: 'Text to Image' },
-    { category: 'image-to-image', label: 'Image to Image' },
-    { category: 'image-enhancements', label: 'Enhancements' },
-    { category: 'text-to-video', label: 'Text to Video' },
-    { category: 'image-to-video', label: 'Image to Video' },
-    { category: 'video-enhancements', label: 'Enhancements' },
-  ];
-
-  return categories.map(({ category, label }) => ({
+  return workflowCategories.map(({ category, label }) => ({
     category,
     label,
     workflows: workflowOptions
       .filter((w) => w.category === category)
-      .map((w) => ({ ...w, compatible: isWorkflowAvailable(w.id, ecosystemId) })),
+      .map((w) => ({
+        ...w,
+        compatible:
+          w.ecosystemIds.length === 0 || w.ecosystemIds.includes(ecosystemId),
+      })),
   }));
 }
 
 /**
  * Get all workflows grouped by category (without compatibility info).
- * Used when all workflows should be shown regardless of ecosystem.
  */
 export function getAllWorkflowsGrouped(): {
   category: WorkflowCategory;
   label: string;
   workflows: (WorkflowOption & { compatible: boolean })[];
 }[] {
-  const categories: { category: WorkflowCategory; label: string }[] = [
-    { category: 'text-to-image', label: 'Text to Image' },
-    { category: 'image-to-image', label: 'Image to Image' },
-    { category: 'image-enhancements', label: 'Enhancements' },
-    { category: 'text-to-video', label: 'Text to Video' },
-    { category: 'image-to-video', label: 'Image to Video' },
-    { category: 'video-enhancements', label: 'Enhancements' },
-  ];
-
-  return categories.map(({ category, label }) => ({
+  return workflowCategories.map(({ category, label }) => ({
     category,
     label,
     workflows: workflowOptions
@@ -454,36 +434,95 @@ export function getEcosystemsForWorkflow(workflowId: string): number[] {
 }
 
 /**
- * Derive input type from workflow key.
+ * Get the input type for a workflow, derived from the key prefix.
+ * Workflow keys follow {input}2{output}:{variant} — e.g. txt2img, img2vid:ref2vid, vid2vid:upscale.
  */
 export function getInputTypeForWorkflow(workflowId: string): 'text' | 'image' | 'video' {
-  try {
-    return parseWorkflowKey(workflowId).input;
-  } catch {
-    return 'text'; // fallback
-  }
+  if (workflowId.startsWith('img2')) return 'image';
+  if (workflowId.startsWith('vid2')) return 'video';
+  return 'text';
 }
 
 /**
- * Derive output type from workflow key.
+ * Get the output type from a workflow key.
  */
 export function getOutputTypeForWorkflow(workflowId: string): 'image' | 'video' {
-  try {
-    const output = parseWorkflowKey(workflowId).output;
-    return output === 'text' ? 'image' : output; // text output defaults to image
-  } catch {
-    return 'image'; // fallback
-  }
+  const config = workflowConfigByKey.get(workflowId);
+  return config?.category ?? 'image';
 }
 
 /**
- * Get all workflows that accept a given media type as input.
- * Used to determine available actions for a generated output:
- * - Image output → workflows with image input (img2img*, img2vid*)
- * - Video output → workflows with video input (vid2vid*)
+ * Check if a workflow is an enhancement workflow (e.g. upscale, remove-background).
  */
-export function getWorkflowsForOutputType(outputType: 'image' | 'video'): WorkflowOption[] {
-  return workflowOptions.filter((w) => w.inputType === outputType);
+export function isEnhancementWorkflow(workflowId: string): boolean {
+  return workflowConfigByKey.get(workflowId)?.enhancement === true;
+}
+
+/**
+ * Get the display label for a workflow on a specific ecosystem (alias-aware).
+ * Returns the alias label when the ecosystem matches an alias entry,
+ * otherwise returns the primary config label.
+ */
+export function getWorkflowLabelForEcosystem(
+  graphKey: string,
+  ecosystemId?: number
+): string {
+  if (ecosystemId !== undefined) {
+    const match = workflowOptions.find(
+      (o) => o.graphKey === graphKey && o.ecosystemIds.includes(ecosystemId)
+    );
+    if (match) return match.label;
+  }
+  return workflowConfigByKey.get(graphKey)?.label ?? graphKey;
+}
+
+// =============================================================================
+// Workflow Groups (Mode Switching)
+// =============================================================================
+
+/**
+ * Workflow groups — workflows that can be toggled between via a segmented control.
+ * The UI filters each group to only show workflows supported by the current ecosystem.
+ * Overrides allow specific ecosystems to show a different subset of workflows.
+ */
+export const workflowGroups: WorkflowGroup[] = [
+  { workflows: ['txt2img', 'img2img', 'img2img:edit'] },
+  { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
+  { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
+  {
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
+    overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
+  },
+];
+
+/**
+ * Get workflow mode options for the segmented control.
+ * Finds the group containing this workflow, checks for ecosystem-specific overrides,
+ * then filters to ecosystem-compatible entries.
+ * Returns empty array if < 2 compatible modes (no selector needed).
+ */
+export function getWorkflowModes(
+  workflowId: string,
+  ecosystemKey: string
+): { label: string; value: string }[] {
+  const group = workflowGroups.find((g) => g.workflows.includes(workflowId));
+  if (!group) return [];
+
+  const ecosystem = ecosystemByKey.get(ecosystemKey);
+  if (!ecosystem) return [];
+
+  // Check for ecosystem-specific override first
+  const override = group.overrides?.find((o) => o.ecosystemIds.includes(ecosystem.id));
+  const availableWorkflows = override
+    ? override.workflows
+    : group.workflows.filter((wfId) => isWorkflowAvailable(wfId, ecosystem.id));
+
+  const modes = availableWorkflows.map((wfId) => {
+    const config = workflowConfigByKey.get(wfId);
+    return { label: config?.modeLabel ?? config?.label ?? wfId, value: wfId };
+  });
+
+  return modes.length > 1 ? modes : [];
 }
 
 /**

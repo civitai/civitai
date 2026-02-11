@@ -16,12 +16,12 @@ type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 
 /**
  * Creates videoGen input for Vidu ecosystem.
- * Supports txt2vid, img2vid, img2vid:first-last-frame, and img2vid:ref2vid workflows.
+ * Supports txt2vid, img2vid (first/last frame), and img2vid:ref2vid workflows.
  */
 export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, ctx) => {
   const images = data.images;
   const isRef2Vid = data.workflow === 'img2vid:ref2vid';
-  const isFirstLastFrame = data.workflow === 'img2vid:first-last-frame';
+  const isFirstLastFrame = data.workflow === 'img2vid';
 
   // For ref2vid: generate placeholder prompt if user didn't provide one
   const prompt =
@@ -30,8 +30,8 @@ export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, 
       : data.prompt;
 
   // Map images to the correct API properties based on workflow:
-  // - img2vid: first image → sourceImage
-  // - img2vid:first-last-frame: first → sourceImage, second → endSourceImage
+  // - txt2vid (with images): first image → sourceImage (after normalization)
+  // - img2vid: first → sourceImage, second → endSourceImage
   // - img2vid:ref2vid: all images → images array
   const sourceImage = !isRef2Vid && images?.length ? images[0]?.url : undefined;
   const endSourceImage =

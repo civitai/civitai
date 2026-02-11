@@ -11,10 +11,12 @@ import { ecosystemByKey, ecosystemById } from '~/shared/constants/basemodel.cons
 import {
   isWorkflowAvailable,
   workflowOptions,
+  workflowOptionById,
   getOutputTypeForWorkflow,
   getEcosystemsForWorkflow,
   getValidEcosystemForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
+import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 // =============================================================================
 // Types
@@ -85,25 +87,24 @@ export function useCompatibilityInfo({
     const currentWorkflowHasNoEcosystemSupport = workflow && workflowEcosystemKeys.length === 0;
     const compatibleEcosystemKeys = new Set<string>(workflowEcosystemKeys);
 
-    // Build workflow compatibility map
+    // Build workflow compatibility map (per-option, not per-graphKey)
     // Workflows with no ecosystem support (ecosystemIds: []) are always compatible
     // Workflows that change output type (image ↔ video) are always allowed without warning
     const workflowCompatibility = new Map<string, boolean>();
     for (const wf of workflowOptions) {
       // Check if this workflow has any ecosystem support at all
-      const workflowEcosystems = getEcosystemsForWorkflow(wf.id);
-      const hasNoEcosystemSupport = workflowEcosystems.length === 0;
+      const hasNoEcosystemSupport = wf.ecosystemIds.length === 0;
 
       // Check if this workflow changes output type (image ↔ video)
-      const targetOutputType = getOutputTypeForWorkflow(wf.id);
+      const targetOutputType = getOutputTypeForWorkflow(wf.graphKey);
       const changesOutputType = currentOutputType && targetOutputType !== currentOutputType;
 
       workflowCompatibility.set(
-        wf.id,
+        wf.id, // unique option id (e.g., 'img2vid' or 'img2vid#0')
         hasNoEcosystemSupport ||
           changesOutputType || // Output type changes are always allowed
           currentEcosystemId === undefined ||
-          isWorkflowAvailable(wf.id, currentEcosystemId)
+          wf.ecosystemIds.includes(currentEcosystemId) // per-entry check
       );
     }
 
@@ -119,10 +120,31 @@ export function useCompatibilityInfo({
       return compatibleEcosystemKeys.has(ecosystemKey);
     };
 
-    const getTargetEcosystemForWorkflow = (workflowId: string) => {
-      // Use the same logic as ecosystem-graph: check if current ecosystem supports the workflow,
-      // otherwise fall back to the default ecosystem for that workflow
-      return getValidEcosystemForWorkflow(workflowId, currentEcosystemKey);
+    const getTargetEcosystemForWorkflow = (optionId: string) => {
+      // Resolve graphKey from option (handles alias ids like 'img2vid#0')
+      const option = workflowOptionById.get(optionId);
+      const graphKey = option?.graphKey ?? optionId;
+
+      // 1. Check if current ecosystem supports the workflow
+      const fromCurrent = getValidEcosystemForWorkflow(graphKey, currentEcosystemKey);
+      if (fromCurrent && fromCurrent.key === currentEcosystemKey) return fromCurrent;
+
+      // 2. Check if the user's last-used ecosystem for this workflow is still valid
+      const preferred = workflowPreferences.getPreferredEcosystem(graphKey);
+      if (preferred) {
+        const fromPreferred = getValidEcosystemForWorkflow(graphKey, preferred);
+        if (fromPreferred && fromPreferred.key === preferred) return fromPreferred;
+      }
+
+      // 3. If this option has specific ecosystemIds, prefer the first one
+      if (option?.ecosystemIds.length) {
+        const targetId = option.ecosystemIds[0];
+        const eco = ecosystemById.get(targetId);
+        if (eco) return { id: eco.id, key: eco.key, displayName: eco.displayName };
+      }
+
+      // 4. Fall back to config default
+      return fromCurrent ?? getValidEcosystemForWorkflow(graphKey);
     };
 
     const getTargetWorkflowForEcosystem = (targetEcosystemKey: string) => {

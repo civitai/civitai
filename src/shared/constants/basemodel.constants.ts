@@ -2835,6 +2835,249 @@ export function getCompatibleBaseModels(
 }
 
 // =============================================================================
+// Ecosystem Groups
+// =============================================================================
+
+/**
+ * Ecosystem group for UI presentation.
+ * Groups related ecosystem variants under a single selectable item in BaseModelInput.
+ */
+export type EcosystemGroup = {
+  /** Unique identifier for the group (used as storage key) */
+  id: string;
+  /** Display name shown in UI */
+  displayName: string;
+  /** Ecosystem IDs that belong to this group */
+  ecosystemIds: number[];
+  /** Default ecosystem to use when group is selected */
+  defaultEcosystemId: number;
+  /** Sort order for display (lower = higher priority) */
+  sortOrder: number;
+};
+
+/**
+ * Ecosystem groups for UI presentation.
+ * These group related ecosystem variants (e.g., WanVideo 2.1, 2.2, 2.5) under a single
+ * selectable item in the generation form's BaseModelInput.
+ */
+export const ecosystemGroups: EcosystemGroup[] = [
+  {
+    id: 'WanVideo',
+    displayName: 'Wan Video',
+    ecosystemIds: [
+      ECO.WanVideo,
+      ECO.WanVideo1_3B_T2V,
+      ECO.WanVideo14B_T2V,
+      ECO.WanVideo14B_I2V_480p,
+      ECO.WanVideo14B_I2V_720p,
+      ECO.WanVideo22_TI2V_5B,
+      ECO.WanVideo22_I2V_A14B,
+      ECO.WanVideo22_T2V_A14B,
+      ECO.WanVideo25_T2V,
+      ECO.WanVideo25_I2V,
+    ],
+    defaultEcosystemId: ECO.WanVideo25_T2V,
+    sortOrder: 50,
+  },
+  {
+    id: 'Flux2Klein',
+    displayName: 'Flux.2 Klein',
+    ecosystemIds: [
+      ECO.Flux2Klein_9B,
+      ECO.Flux2Klein_9B_base,
+      ECO.Flux2Klein_4B,
+      ECO.Flux2Klein_4B_base,
+    ],
+    defaultEcosystemId: ECO.Flux2Klein_9B,
+    sortOrder: 22,
+  },
+  {
+    id: 'ZImage',
+    displayName: 'ZImage',
+    ecosystemIds: [ECO.ZImageTurbo, ECO.ZImageBase],
+    defaultEcosystemId: ECO.ZImageTurbo,
+    sortOrder: 100,
+  },
+];
+
+/**
+ * Get the ecosystem group for a given ecosystem ID.
+ * Returns undefined if the ecosystem is not part of any group.
+ */
+export function getEcosystemGroup(ecosystemId: number): EcosystemGroup | undefined {
+  return ecosystemGroups.find((g) => g.ecosystemIds.includes(ecosystemId));
+}
+
+/**
+ * Get the ecosystem group for a given ecosystem key.
+ * Returns undefined if the ecosystem is not part of any group.
+ */
+export function getEcosystemGroupByKey(ecosystemKey: string): EcosystemGroup | undefined {
+  const eco = ecosystemByKey.get(ecosystemKey);
+  if (!eco) return undefined;
+  return getEcosystemGroup(eco.id);
+}
+
+/**
+ * Get ecosystems that are not part of any group.
+ * These are "standalone" ecosystems that should be displayed individually.
+ */
+export function getStandaloneEcosystems(): EcosystemRecord[] {
+  const groupedEcosystemIds = new Set(ecosystemGroups.flatMap((g) => g.ecosystemIds));
+  return ecosystems.filter((e) => !groupedEcosystemIds.has(e.id));
+}
+
+/**
+ * Get storage key for an ecosystem.
+ * If the ecosystem is part of a group, returns the group ID.
+ * Otherwise, returns the ecosystem key.
+ */
+export function getEcosystemStorageKey(ecosystem: string): string {
+  const eco = ecosystemByKey.get(ecosystem);
+  if (!eco) return ecosystem;
+
+  const group = getEcosystemGroup(eco.id);
+  return group ? group.id : ecosystem;
+}
+
+// =============================================================================
+// Display Items (for UI components)
+// =============================================================================
+
+/**
+ * Display item for UI - represents either an ecosystem group or standalone ecosystem
+ */
+export type EcosystemDisplayItem = {
+  key: string; // Group ID or ecosystem key
+  name: string;
+  description?: string;
+  familyId?: number;
+  compatible: boolean;
+  type: 'group' | 'ecosystem';
+  ecosystemIds?: number[]; // For groups only
+  defaultEcosystemId?: number; // For groups only
+};
+
+export interface GetEcosystemDisplayItemsOptions {
+  /** Ecosystem keys that are compatible (for prioritization) */
+  compatibleEcosystems?: string[];
+  /** Function to check if an ecosystem is compatible */
+  isCompatible?: (ecosystemKey: string) => boolean;
+  /** Filter by output type (image/video) */
+  outputType?: 'image' | 'video';
+}
+
+/**
+ * Get display items for UI - combines ecosystem groups and standalone ecosystems
+ * Handles filtering by output type, compatibility checking, and sorting
+ */
+export function getEcosystemDisplayItems(
+  options: GetEcosystemDisplayItemsOptions = {}
+): EcosystemDisplayItem[] {
+  const { compatibleEcosystems, isCompatible, outputType } = options;
+
+  // Build set of supported ecosystems
+  const supportedEcosystems = compatibleEcosystems ? new Set(compatibleEcosystems) : null;
+
+  // Get ecosystems valid for the current output type
+  const outputTypeEcosystems = outputType
+    ? new Set(getGenerationEcosystemsForMediaType(outputType))
+    : null;
+
+  const groupedEcosystemIds = new Set(ecosystemGroups.flatMap((g) => g.ecosystemIds));
+  const result: EcosystemDisplayItem[] = [];
+
+  // Add ecosystem groups
+  for (const group of ecosystemGroups) {
+    // Check if any ecosystem in group matches output type
+    const hasMatchingOutputType = group.ecosystemIds.some((id) => {
+      const eco = ecosystemById.get(id);
+      if (!eco) return false;
+      if (outputTypeEcosystems && !outputTypeEcosystems.has(eco.key)) return false;
+      return true;
+    });
+
+    if (!hasMatchingOutputType) continue;
+
+    // Get default ecosystem for this group
+    const defaultEco = ecosystemById.get(group.defaultEcosystemId);
+    if (!defaultEco) continue;
+
+    // Get family from default ecosystem
+    const family = defaultEco.familyId ? ecosystemFamilyById.get(defaultEco.familyId) : undefined;
+
+    // Check compatibility - use isCompatible prop if provided, otherwise fall back to supportedEcosystems
+    const compatible = isCompatible
+      ? isCompatible(defaultEco.key)
+      : !supportedEcosystems || supportedEcosystems.has(defaultEco.key);
+
+    result.push({
+      type: 'group',
+      key: group.id,
+      name: group.displayName,
+      description: defaultEco.description ?? family?.description,
+      familyId: defaultEco.familyId,
+      ecosystemIds: group.ecosystemIds,
+      defaultEcosystemId: group.defaultEcosystemId,
+      compatible,
+    });
+  }
+
+  // Add standalone ecosystems (not in any group)
+  for (const eco of ecosystems) {
+    // Skip if in a group
+    if (groupedEcosystemIds.has(eco.id)) continue;
+
+    // Filter by output type if specified
+    if (outputTypeEcosystems && !outputTypeEcosystems.has(eco.key)) continue;
+
+    // Get description from ecosystem's family
+    const family = eco.familyId ? ecosystemFamilyById.get(eco.familyId) : undefined;
+
+    // Check compatibility
+    const compatible = isCompatible
+      ? isCompatible(eco.key)
+      : !supportedEcosystems || supportedEcosystems.has(eco.key);
+
+    result.push({
+      type: 'ecosystem',
+      key: eco.key,
+      name: eco.displayName,
+      description: eco.description ?? family?.description,
+      familyId: eco.familyId,
+      compatible,
+    });
+  }
+
+  // Sort: compatible first, then by sortOrder
+  return result.sort((a, b) => {
+    if (a.compatible !== b.compatible) return a.compatible ? -1 : 1;
+
+    // Get sortOrder from group or ecosystem
+    let sortA = 999;
+    let sortB = 999;
+
+    if (a.type === 'group') {
+      const group = ecosystemGroups.find((g) => g.id === a.key);
+      sortA = group?.sortOrder ?? 999;
+    } else {
+      const eco = ecosystemByKey.get(a.key);
+      sortA = eco?.sortOrder ?? 999;
+    }
+
+    if (b.type === 'group') {
+      const group = ecosystemGroups.find((g) => g.id === b.key);
+      sortB = group?.sortOrder ?? 999;
+    } else {
+      const eco = ecosystemByKey.get(b.key);
+      sortB = eco?.sortOrder ?? 999;
+    }
+
+    return sortA - sortB;
+  });
+}
+
+// =============================================================================
 // Generation Compatibility Check
 // =============================================================================
 

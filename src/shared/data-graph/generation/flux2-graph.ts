@@ -20,6 +20,7 @@ import {
   cfgScaleNode,
   createCheckpointGraph,
   enhancedCompatibilityNode,
+  imagesNode,
   resourcesNode,
   seedNode,
   stepsNode,
@@ -145,6 +146,15 @@ export const flux2Graph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData },
   GenerationCtx
 >()
+  // Images node - shown for img2img variants, hidden for txt2img
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 7, min: ctx.workflow === 'img2img:edit' ? 1 : 0 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
   // Merge checkpoint graph with version options
   .merge(
     () =>

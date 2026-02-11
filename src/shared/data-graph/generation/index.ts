@@ -24,9 +24,9 @@ export {
 } from './kling-graph';
 export {
   wanGraph,
-  wanVersions,
   wanVersionDefs,
-  versionIdToWanVersion,
+  wanVersionOptions,
+  ecosystemToVersionDef,
   wanAspectRatios,
   wan21AspectRatios,
   wan21Resolutions,

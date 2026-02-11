@@ -6,7 +6,7 @@
  * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Badge, Button, Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconChevronDown,
@@ -23,12 +23,10 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   getAllWorkflowsGrouped,
-  getWorkflowsForEcosystem,
   workflowOptionById,
-  type WorkflowOption as ConfigWorkflowOption,
+  getWorkflowLabelForEcosystem,
 } from '~/shared/data-graph/generation/config/workflows';
 
 // =============================================================================
@@ -50,14 +48,18 @@ export interface WorkflowCategoryGroup {
 }
 
 export interface WorkflowInputProps {
+  /** Graph workflow key (e.g., 'img2vid') */
   value?: string;
-  onChange?: (value: string) => void;
+  /** Called with (graphKey, ecosystemIds) when user selects a workflow */
+  onChange?: (graphKey: string, ecosystemIds: number[]) => void;
+  /** Current ecosystem ID — used to highlight the correct alias entry */
+  ecosystemId?: number;
   /** Whether the control is disabled */
   disabled?: boolean;
   /** Additional class name for the container */
   className?: string;
-  /** Check if a workflow is compatible with the current ecosystem */
-  isCompatible?: (workflowId: string) => boolean;
+  /** Check if a workflow option is compatible with the current ecosystem */
+  isCompatible?: (optionId: string) => boolean;
   /** Whether the current user is a member */
   isMember?: boolean;
 }
@@ -66,15 +68,39 @@ export interface WorkflowInputProps {
 // Helper Functions
 // =============================================================================
 
+/**
+ * Resolve which option to highlight based on the graph key and current ecosystem.
+ * For aliases (multiple options with same graphKey), picks the one matching the ecosystem.
+ */
 function getSelectedWorkflow(
   options: WorkflowCategoryGroup[],
-  value?: string
+  graphKey?: string,
+  ecosystemId?: number
 ): { workflow: WorkflowOption; category: WorkflowCategoryGroup } | undefined {
+  if (!graphKey) return undefined;
+
+  // Collect all candidates matching this graphKey
+  const candidates: { workflow: WorkflowOption; category: WorkflowCategoryGroup }[] = [];
   for (const category of options) {
-    const workflow = category.workflows.find((w) => w.id === value);
-    if (workflow) return { workflow, category };
+    for (const workflow of category.workflows) {
+      const optionGraphKey = workflowOptionById.get(workflow.id)?.graphKey ?? workflow.id;
+      if (optionGraphKey === graphKey) {
+        candidates.push({ workflow, category });
+      }
+    }
   }
-  return undefined;
+
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+
+  // Multiple candidates — pick the one whose ecosystemIds include the current ecosystem
+  if (ecosystemId !== undefined) {
+    for (const c of candidates) {
+      const opt = workflowOptionById.get(c.workflow.id);
+      if (opt?.ecosystemIds.includes(ecosystemId)) return c;
+    }
+  }
+  return candidates[0];
 }
 
 // =============================================================================
@@ -102,22 +128,22 @@ function WorkflowMenuItem({
 
   if (disabled) {
     return (
-        <RequireMembership>
-          <SupportButtonPolymorphic
-            icon={IconDiamond}
-            position="right"
-            className="w-full !px-3 !py-2.5 !h-auto !min-h-[44px]"
-          >
-            <div className="flex flex-col items-start gap-0.5 py-0.5">
-              <span className="text-sm leading-tight">{workflow.label}</span>
-              {workflow.description && (
-                <span className="text-xs text-dimmed opacity-70 leading-tight">
-                  {workflow.description}
-                </span>
-              )}
-            </div>
-          </SupportButtonPolymorphic>
-        </RequireMembership>
+      <RequireMembership>
+        <SupportButtonPolymorphic
+          icon={IconDiamond}
+          position="right"
+          className="!h-auto !min-h-[44px] w-full !px-3 !py-2.5"
+        >
+          <div className="flex flex-col items-start gap-0.5 py-0.5">
+            <span className="text-sm leading-tight">{workflow.label}</span>
+            {workflow.description && (
+              <span className="text-dimmed text-xs leading-tight opacity-70">
+                {workflow.description}
+              </span>
+            )}
+          </div>
+        </SupportButtonPolymorphic>
+      </RequireMembership>
     );
   }
 
@@ -204,8 +230,8 @@ WorkflowTypeButton.displayName = 'WorkflowTypeButton';
 interface WorkflowListContentProps {
   categories: WorkflowCategoryGroup[];
   selectedValue?: string;
-  onSelect: (workflowId: string) => void;
-  isCompatible?: (workflowId: string) => boolean;
+  onSelect: (graphKey: string, ecosystemIds: number[]) => void;
+  isCompatible?: (optionId: string) => boolean;
   isMember?: boolean;
 }
 
@@ -237,7 +263,10 @@ function WorkflowListContent({
           key={workflow.id}
           workflow={workflow}
           isSelected={workflow.id === selectedValue}
-          onSelect={() => onSelect(workflow.id)}
+          onSelect={() => {
+            const opt = workflowOptionById.get(workflow.id);
+            onSelect(opt?.graphKey ?? workflow.id, opt?.ecosystemIds ?? []);
+          }}
           isCompatible={compatible}
           isMember={isMember}
         />
@@ -254,8 +283,8 @@ interface WorkflowSelectModalProps {
   title: string;
   categories: WorkflowCategoryGroup[];
   selectedValue?: string;
-  onSelect: (workflowId: string) => void;
-  isCompatible?: (workflowId: string) => boolean;
+  onSelect: (graphKey: string, ecosystemIds: number[]) => void;
+  isCompatible?: (optionId: string) => boolean;
   isMember?: boolean;
 }
 
@@ -269,8 +298,8 @@ function WorkflowSelectModal({
 }: WorkflowSelectModalProps) {
   const dialog = useDialogContext();
 
-  const handleSelect = (workflowId: string) => {
-    onSelect(workflowId);
+  const handleSelect = (graphKey: string, ecosystemIds: number[]) => {
+    onSelect(graphKey, ecosystemIds);
     dialog.onClose();
   };
 
@@ -304,90 +333,27 @@ function WorkflowSelectModal({
 // =============================================================================
 
 export interface SelectedWorkflowDisplayProps {
-  /** The workflow ID to display */
+  /** The workflow graph key to display */
   workflowId?: string;
-  /** The current ecosystem key (used to determine available workflows) */
-  ecosystemKey?: string;
-  /** Called when the user selects a different workflow */
-  onChange?: (workflowId: string) => void;
+  /** Current ecosystem ID — used to show alias-aware label */
+  ecosystemId?: number;
   /** Additional class name */
   className?: string;
 }
 
-const INPUT_TYPE_LABELS: Record<string, string> = {
-  text: 'From text',
-  image: 'From image',
-  video: 'From video',
-};
-
 /**
- * Displays the currently selected workflow with input type buttons and workflow badges.
- * - When multiple input types are available, shows buttons to switch between them.
- * - Always shows the selected workflow as a badge (with sibling badges when multiple exist).
- * - Falls back to a simple label when only one workflow total is available.
+ * Displays the currently selected workflow label and description.
+ * Uses ecosystem-aware label so Vidu shows "First/Last Frame" instead of "Image to Video".
  */
 export function SelectedWorkflowDisplay({
   workflowId,
-  ecosystemKey,
-  onChange,
+  ecosystemId,
   className,
 }: SelectedWorkflowDisplayProps) {
   const workflow = workflowId ? workflowOptionById.get(workflowId) : undefined;
-
-  // Get available workflows for the current ecosystem, excluding enhancements,
-  // grouped by input type (text, image, video)
-  const workflowsByInputType = useMemo(() => {
-    if (!ecosystemKey) return new Map<string, ConfigWorkflowOption[]>();
-    const ecosystem = ecosystemByKey.get(ecosystemKey);
-    if (!ecosystem) return new Map<string, ConfigWorkflowOption[]>();
-
-    const available = getWorkflowsForEcosystem(ecosystem.id).filter(
-      (w) => !w.category.endsWith('enhancements')
-    );
-
-    const groups = new Map<string, ConfigWorkflowOption[]>();
-    for (const w of available) {
-      const existing = groups.get(w.inputType) ?? [];
-      existing.push(w);
-      groups.set(w.inputType, existing);
-    }
-    return groups;
-  }, [ecosystemKey]);
-
   if (!workflow) return null;
 
-  const currentInputType = workflow.inputType;
-  const inputTypes = Array.from(workflowsByInputType.keys());
-  const hasMultipleInputTypes = inputTypes.length > 1;
-  const currentTypeWorkflows = workflowsByInputType.get(currentInputType) ?? [];
-
-  // Nothing interesting to show — single workflow, single input type
-  if (!hasMultipleInputTypes && currentTypeWorkflows.length <= 1) {
-    return (
-      <div
-        className={clsx(
-          'rounded-lg border border-gray-2 bg-gray-0 px-3 py-2.5 dark:border-dark-4 dark:bg-dark-6',
-          className
-        )}
-      >
-        <Text size="md" fw={600} className="leading-tight">
-          {workflow.label}
-        </Text>
-        {workflow.description && (
-          <Text size="sm" c="dimmed" className="mt-0.5">
-            {workflow.description}
-          </Text>
-        )}
-      </div>
-    );
-  }
-
-  const handleInputTypeChange = (newInputType: string) => {
-    const workflows = workflowsByInputType.get(newInputType);
-    if (workflows?.length) {
-      onChange?.(workflows[0].id);
-    }
-  };
+  const label = getWorkflowLabelForEcosystem(workflowId!, ecosystemId);
 
   return (
     <div
@@ -396,35 +362,11 @@ export function SelectedWorkflowDisplay({
         className
       )}
     >
-      {hasMultipleInputTypes && (
-        <Group gap={6} wrap="nowrap">
-          {inputTypes.map((type) => (
-            <Button
-              key={type}
-              size="compact-xs"
-              variant={type === currentInputType ? 'filled' : 'default'}
-              onClick={() => handleInputTypeChange(type)}
-            >
-              {INPUT_TYPE_LABELS[type] ?? type}
-            </Button>
-          ))}
-        </Group>
-      )}
-      <Group gap={6} wrap="wrap" className={hasMultipleInputTypes ? 'mt-2' : ''}>
-        {currentTypeWorkflows.map((w) => (
-          <Badge
-            key={w.id}
-            variant={w.id === workflowId ? 'filled' : 'light'}
-            color={w.id === workflowId ? 'blue' : 'gray'}
-            className="cursor-pointer"
-            onClick={() => onChange?.(w.id)}
-          >
-            {w.label}
-          </Badge>
-        ))}
-      </Group>
+      <Text size="md" fw={600} className="leading-tight">
+        {label}
+      </Text>
       {workflow.description && (
-        <Text size="sm" c="dimmed" className="mt-1.5">
+        <Text size="sm" c="dimmed" className="mt-0.5">
           {workflow.description}
         </Text>
       )}
@@ -439,6 +381,7 @@ export function SelectedWorkflowDisplay({
 export function WorkflowInput({
   value,
   onChange,
+  ecosystemId,
   disabled,
   className,
   isCompatible,
@@ -450,41 +393,23 @@ export function WorkflowInput({
 
   // Get all workflows grouped by category (static - no ecosystem filtering)
   const options = useMemo(() => getAllWorkflowsGrouped(), []);
-  const selected = getSelectedWorkflow(options, value);
+  const selected = getSelectedWorkflow(options, value, ecosystemId);
 
   // Separate image and video categories
-  const imageCategories = options.filter(
-    (cat) =>
-      cat.category === 'text-to-image' ||
-      cat.category === 'image-to-image' ||
-      cat.category === 'image-enhancements'
-  );
-  const videoCategories = options.filter(
-    (cat) =>
-      cat.category === 'text-to-video' ||
-      cat.category === 'image-to-video' ||
-      cat.category === 'video-enhancements'
-  );
+  const imageCategories = options.filter((cat) => cat.category === 'image');
+  const videoCategories = options.filter((cat) => cat.category === 'video');
 
   // Check if current selection is image or video
-  const isImageWorkflow =
-    selected &&
-    (selected.category.category === 'text-to-image' ||
-      selected.category.category === 'image-to-image' ||
-      selected.category.category === 'image-enhancements');
-  const isVideoWorkflow =
-    selected &&
-    (selected.category.category === 'text-to-video' ||
-      selected.category.category === 'image-to-video' ||
-      selected.category.category === 'video-enhancements');
+  const isImageWorkflow = selected && selected.category.category === 'image';
+  const isVideoWorkflow = selected && selected.category.category === 'video';
 
-  const handleImageSelect = (workflowId: string) => {
-    onChange?.(workflowId);
+  const handleImageSelect = (graphKey: string, ecosystemIds: number[]) => {
+    onChange?.(graphKey, ecosystemIds);
     closeImage();
   };
 
-  const handleVideoSelect = (workflowId: string) => {
-    onChange?.(workflowId);
+  const handleVideoSelect = (graphKey: string, ecosystemIds: number[]) => {
+    onChange?.(graphKey, ecosystemIds);
     closeVideo();
   };
 
@@ -495,8 +420,8 @@ export function WorkflowInput({
       props: {
         title: 'Select Image Workflow',
         categories: imageCategories,
-        selectedValue: value,
-        onSelect: (workflowId: string) => onChange?.(workflowId),
+        selectedValue: selected?.workflow.id,
+        onSelect: (graphKey: string, ecosystemIds: number[]) => onChange?.(graphKey, ecosystemIds),
         isCompatible,
         isMember,
       },
@@ -510,8 +435,8 @@ export function WorkflowInput({
       props: {
         title: 'Select Video Workflow',
         categories: videoCategories,
-        selectedValue: value,
-        onSelect: (workflowId: string) => onChange?.(workflowId),
+        selectedValue: selected?.workflow.id,
+        onSelect: (graphKey: string, ecosystemIds: number[]) => onChange?.(graphKey, ecosystemIds),
         isCompatible,
         isMember,
       },
@@ -592,7 +517,7 @@ export function WorkflowInput({
         >
           <WorkflowListContent
             categories={imageCategories}
-            selectedValue={value}
+            selectedValue={selected?.workflow.id}
             onSelect={handleImageSelect}
             isCompatible={isCompatible}
             isMember={isMember}
@@ -629,7 +554,7 @@ export function WorkflowInput({
           >
             <WorkflowListContent
               categories={videoCategories}
-              selectedValue={value}
+              selectedValue={selected?.workflow.id}
               onSelect={handleVideoSelect}
               isCompatible={isCompatible}
               isMember={isMember}

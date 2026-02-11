@@ -35,8 +35,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 // =============================================================================
 
 /**
- * Maps old comfy workflow keys to new generation-graph workflow keys.
- * Old comfy keys use hyphens, new keys use colons as variant separators.
+ * Maps old comfy workflow keys to generation-graph workflow keys.
+ * Old comfy keys use hyphens, graph keys use colons as variant separators.
  */
 const COMFY_KEY_TO_WORKFLOW: Record<string, string> = {
   txt2img: 'txt2img',
@@ -123,16 +123,12 @@ function ecosystemSupportsWorkflow(baseModel: string, workflowKey: string): bool
 
 /**
  * Refines an img2img process into the correct workflow variant.
- * Derives supported ecosystems from workflowConfigs rather than hardcoded sets.
  *
- * - Ecosystems in `img2img:edit` config → `img2img:edit`
- * - Ecosystems in `img2img` config → `img2img` (standard comfy-based)
+ * - With baseModel → `img2img` (images trigger edit mode in handlers)
  * - No inferable baseModel → `img2img:upscale` (likely standalone upscale)
- * - Other → `img2img`
  */
 function resolveImg2ImgWorkflow(baseModel: string | undefined): string {
   if (!baseModel) return 'img2img:upscale';
-  if (ecosystemSupportsWorkflow(baseModel, 'img2img:edit')) return 'img2img:edit';
   return 'img2img';
 }
 
@@ -141,16 +137,12 @@ function resolveImg2ImgWorkflow(baseModel: string | undefined): string {
  * Derives supported ecosystems from workflowConfigs rather than hardcoded sets.
  *
  * - Ecosystem in `img2vid:ref2vid` config + 3+ images → `img2vid:ref2vid`
- * - Ecosystem in `img2vid:first-last-frame` config + 2 images → `img2vid:first-last-frame`
  * - Other → `img2vid`
  */
 function resolveImg2VidWorkflow(baseModel: string | undefined, imageCount: number): string {
   if (baseModel) {
     if (imageCount >= 3 && ecosystemSupportsWorkflow(baseModel, 'img2vid:ref2vid')) {
       return 'img2vid:ref2vid';
-    }
-    if (imageCount === 2 && ecosystemSupportsWorkflow(baseModel, 'img2vid:first-last-frame')) {
-      return 'img2vid:first-last-frame';
     }
   }
   return 'img2vid';
@@ -186,9 +178,24 @@ export function resolveWorkflow(
     return 'txt2img:draft';
   }
 
-  // 3. If workflow already has a variant separator, use it directly
-  if (params.workflow?.includes(':')) {
-    return params.workflow;
+  // 3. If workflow already uses new format (image:*/video:*), migrate to old format
+  if (params.workflow?.startsWith('image:') || params.workflow?.startsWith('video:')) {
+    const NEW_TO_OLD: Record<string, string> = {
+      'image:create': 'txt2img',
+      'image:edit': 'img2img:edit',
+      'image:draft': 'txt2img:draft',
+      'image:face-fix': 'txt2img:face-fix',
+      'image:hires-fix': 'txt2img:hires-fix',
+      'image:upscale': 'img2img:upscale',
+      'image:remove-background': 'img2img:remove-background',
+      'video:create': 'txt2vid',
+      'video:animate': 'txt2vid',
+      'video:first-last-frame': 'img2vid',
+      'video:ref2vid': 'img2vid:ref2vid',
+      'video:upscale': 'vid2vid:upscale',
+      'video:interpolate': 'vid2vid:interpolate',
+    };
+    return NEW_TO_OLD[params.workflow] ?? 'txt2img';
   }
 
   // 4. Determine base process and refine with ecosystem context
@@ -200,8 +207,9 @@ export function resolveWorkflow(
       case 'img2vid':
         return resolveImg2VidWorkflow(baseModel, imageCount);
       case 'txt2img':
+        return 'txt2img';
       case 'txt2vid':
-        return process;
+        return 'txt2vid';
       default:
         return process;
     }

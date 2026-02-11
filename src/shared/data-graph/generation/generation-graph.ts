@@ -12,7 +12,7 @@
  * - Recent ecosystems are tracked in localStorage (limit 3)
  *
  * Ecosystem Support Discriminator:
- * - Some workflows (like vid2vid:upscale) have no ecosystem support
+ * - Some workflows (like vid2vid:upscale, img2img:upscale) have no ecosystem support
  * - For these workflows, ecosystem/model nodes are not rendered
  * - The `hasEcosystemSupport` computed node acts as a discriminator
  */
@@ -25,7 +25,12 @@ import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
 import { ecosystemGraph } from './ecosystem-graph';
-import { getInputTypeForWorkflow, getOutputTypeForWorkflow } from './config/workflows';
+import {
+  getInputTypeForWorkflow,
+  getOutputTypeForWorkflow,
+  workflowOptions,
+  type WorkflowOption,
+} from './config/workflows';
 
 // =============================================================================
 // Priority & Output Format Types
@@ -60,7 +65,7 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
  * - `output` and `input` are computed from the selected workflow
  * - `hasEcosystemSupport` determines if ecosystem/model nodes should be shown
  * - `ecosystem` picker shows ecosystems compatible with the workflow, plus recent selections
- * - When ecosystem changes, workflow compatibility is checked and may switch to 'txt2img'
+ * - When ecosystem changes, workflow compatibility is checked and may switch
  *
  * @example
  * ```tsx
@@ -77,13 +82,38 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
  * />
  * ```
  */
+/** Maps new-format workflow keys back to old format for migration */
+const NEW_TO_OLD: Record<string, string> = {
+  'image:create': 'txt2img',
+  'image:edit': 'img2img:edit',
+  'image:draft': 'txt2img:draft',
+  'image:face-fix': 'txt2img:face-fix',
+  'image:hires-fix': 'txt2img:hires-fix',
+  'image:upscale': 'img2img:upscale',
+  'image:remove-background': 'img2img:remove-background',
+  'video:create': 'txt2vid',
+  'video:animate': 'txt2vid',
+  'video:first-last-frame': 'img2vid',
+  'video:ref2vid': 'img2vid:ref2vid',
+  'video:upscale': 'vid2vid:upscale',
+  'video:interpolate': 'vid2vid:interpolate',
+};
+
+/** Migrate stored workflow key to current format */
+function migrateWorkflowKey(key: string | undefined): string | undefined {
+  if (!key) return key;
+  // Migrate old first-last-frame key to img2vid (now an alias on Vidu)
+  if (key === 'img2vid:first-last-frame') return 'img2vid';
+  return NEW_TO_OLD[key] ?? key;
+}
+
 export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   // Workflow is the primary selector - determines input type, output type, and available ecosystems
-  // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'img2img:face-fix')
+  // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'txt2vid')
   .node(
     'workflow',
     () => ({
-      input: z.string().optional(),
+      input: z.string().optional().transform(migrateWorkflowKey),
       output: z.string(),
       defaultValue: 'txt2img',
       meta: {
@@ -114,26 +144,28 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     (ctx, ext) => {
       const isImageOutput = ctx.output === 'image';
       const isMember = ext.user?.isMember ?? false;
-      const defaultValue: Priority = isMember ? 'normal' : 'low';
 
-      const options: PriorityOption[] = [
-        { label: 'Standard', value: 'low', offset: 0, disabled: isMember },
-        { label: 'High', value: 'normal', offset: 10 },
-        { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
-      ];
+      const options: PriorityOption[] = isMember
+        ? [
+            { label: 'High', value: 'low', offset: 10 },
+            { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
+          ]
+        : [
+            { label: 'Standard', value: 'low', offset: 0, disabled: isMember },
+            { label: 'High', value: 'normal', offset: 10 },
+            { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
+          ];
 
       return {
         input: z
           .enum(priorityOptions)
           .optional()
           .transform((val) => {
-            // Auto-upgrade 'low' to 'normal' for members
-            if (isMember && val === 'low') return 'normal';
             if (!isMember && val === 'high') return 'low';
             return val;
           }),
         output: z.enum(priorityOptions),
-        defaultValue,
+        defaultValue: 'low' as const,
         meta: { options, isMember },
         when: isImageOutput,
       };
@@ -176,20 +208,18 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     // Ecosystem workflows - all share ecosystemGraph (ONE type branch)
     {
       values: [
-        // Text to image workflows
+        // Image creation workflows
         'txt2img',
+        'img2img',
+        'img2img:edit',
         'txt2img:draft',
         'txt2img:face-fix',
-        'txt2img:hires-fix',
-        // Image to image workflows
-        'img2img',
         'img2img:face-fix',
+        'txt2img:hires-fix',
         'img2img:hires-fix',
-        'img2img:edit',
         // Video workflows with ecosystem support
         'txt2vid',
         'img2vid',
-        'img2vid:first-last-frame',
         'img2vid:ref2vid',
       ] as const,
       graph: ecosystemGraph,
@@ -201,6 +231,49 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     { values: ['img2img:upscale'] as const, graph: imageUpscaleGraph },
     { values: ['img2img:remove-background'] as const, graph: imageRemoveBackgroundGraph },
   ]);
+
+// =============================================================================
+// Graph-Derived Workflow Node Detection
+// =============================================================================
+
+/** Cache for workflowHasNode results, keyed by `workflow:nodeKey` */
+const _hasNodeCache = new Map<string, boolean>();
+
+/**
+ * Check if a workflow's sub-graph contains a specific node key.
+ * Uses DataGraph's findKeyInBranches with context to evaluate the graph's
+ * default path for the workflow. Unpinned discriminators (e.g., ecosystem)
+ * are resolved to their default value via node factory evaluation.
+ *
+ * @example
+ * ```ts
+ * workflowHasNode('txt2img', 'images') // true - default ecosystem has images
+ * workflowHasNode('vid2vid:upscale', 'video')  // true - video upscale graph has video
+ * workflowHasNode('vid2vid:upscale', 'images') // false - video upscale has no images
+ * workflowHasNode('txt2img:draft', 'images')   // false - images has when:false in default ecosystem
+ * ```
+ */
+export function workflowHasNode(workflow: string, nodeKey: string): boolean {
+  const cacheKey = `${workflow}:${nodeKey}`;
+  let result = _hasNodeCache.get(cacheKey);
+  if (result === undefined) {
+    result =
+      generationGraph.findKeyInBranches(['workflow', 'ecosystem'], nodeKey, { workflow }).length >
+      0;
+    _hasNodeCache.set(cacheKey, result);
+  }
+  return result;
+}
+
+/**
+ * Get all workflows that can accept a given media type, derived from graph structure.
+ * Checks whether each workflow's sub-graph contains an 'images' or 'video' node
+ * by evaluating the graph's default path for each workflow.
+ */
+export function getWorkflowsForMediaType(mediaType: 'image' | 'video'): WorkflowOption[] {
+  const nodeKey = mediaType === 'image' ? 'images' : 'video';
+  return workflowOptions.filter((w) => workflowHasNode(w.graphKey, nodeKey));
+}
 
 /** Type helper for the generation graph context */
 export type GenerationGraphCtx = ReturnType<typeof generationGraph.init>;
@@ -234,8 +307,9 @@ if ('test'.length > 5) {
     console.log(data.workflow);
     console.log(data.input);
 
-    if (data.workflow === 'img2img') {
-      if (data.input === 'image') {
+    if (data.workflow === 'txt2img') {
+      console.log(data.ecosystem);
+      if (data.ecosystem === 'SDXL') {
         console.log(data.images);
       }
     }

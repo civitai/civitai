@@ -504,7 +504,7 @@ export type CheckpointVersionOption = {
  * ```ts
  * const workflowVersions: WorkflowVersionConfig = {
  *   txt2vid: { versions: txt2vidVersions, defaultModelId: 123 },
- *   img2vid: { versions: img2vidVersions, defaultModelId: 456 },
+ *   txt2img: { versions: img2imgVersions, defaultModelId: 456 },
  * };
  * ```
  */
@@ -518,7 +518,7 @@ export type WorkflowVersionConfig = Record<
 
 /**
  * Find the workflow config for a given workflow key using prefix matching.
- * E.g., 'img2vid:first-last-frame' will match the 'img2vid' config.
+ * E.g., 'img2vid:ref2vid' will match the 'img2vid' config if using prefix matching.
  * First tries exact match, then prefix match (workflow starts with config key).
  */
 function findWorkflowConfig(
@@ -532,7 +532,7 @@ function findWorkflowConfig(
     return workflowVersions[workflow];
   }
 
-  // Try prefix match (e.g., 'img2vid:first-last-frame' matches 'img2vid')
+  // Try prefix match (e.g., 'video:first-last-frame' matches 'video:' config key)
   for (const key of Object.keys(workflowVersions)) {
     if (workflow.startsWith(key)) {
       return workflowVersions[key];
@@ -599,7 +599,7 @@ function getWorkflowKey(
  *     (ctx) => createCheckpointGraph({
  *       workflowVersions: {
  *         txt2vid: { versions: txt2vidVersions, defaultModelId: 123 },
- *         img2vid: { versions: img2vidVersions, defaultModelId: 456 },
+ *         txt2img: { versions: img2imgVersions, defaultModelId: 456 },
  *       },
  *       currentWorkflow: ctx.workflow,
  *     }),
@@ -624,7 +624,7 @@ export function createCheckpointGraph(options?: {
   currentWorkflow?: string;
 }) {
   // Get versions and defaultModelId from workflowVersions if provided
-  // Use prefix matching: 'img2vid:first-last-frame' matches 'img2vid' config
+  // Use prefix matching: 'img2vid:ref2vid' matches 'img2vid' config
   const workflowConfig = findWorkflowConfig(options?.workflowVersions, options?.currentWorkflow);
   const versions = workflowConfig?.versions ?? options?.versions;
   const defaultModelId = workflowConfig?.defaultModelId ?? options?.defaultModelId;
@@ -650,7 +650,7 @@ export function createCheckpointGraph(options?: {
 
       // Cast to access workflow (only present when parent graph has workflow in context)
       const rawWorkflow = ctx.workflow ?? '';
-      // Normalize workflow to match config keys (e.g., 'img2vid:first-last-frame' -> 'img2vid')
+      // Normalize workflow to match config keys (e.g., 'img2vid:ref2vid' -> 'img2vid')
       const workflow = getWorkflowKey(options.workflowVersions, rawWorkflow);
 
       // Skip if current model isn't a known version (user selected custom checkpoint)
@@ -688,6 +688,8 @@ export function createCheckpointGraph(options?: {
         const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
 
+        const validVersionIds = versions ? new Set(versions.map((v) => v.value)) : undefined;
+
         const checkpointInputSchema = z
           .union([
             z.number().transform((id) => ({ id })),
@@ -696,11 +698,16 @@ export function createCheckpointGraph(options?: {
           .optional()
           .transform((val) => {
             if (!val) return undefined;
-            // Note: We intentionally do NOT reject models from different ecosystems here.
-            // The ecosystem-switching effect will handle updating baseModel when needed.
-            // This allows version selectors to switch between versions that may have
-            // different base models (e.g., Wan 2.1 → Wan 2.2).
-            //
+
+            // When model is locked, force ecosystem default.
+            // Stale stored values (from localStorage after ecosystem switches) are rejected.
+            // Valid version options are allowed through for ecosystems with version selectors.
+            if (modelLocked && modelVersionId && val.id !== modelVersionId) {
+              if (!validVersionIds?.has(val.id)) {
+                return { id: modelVersionId, model: { type: 'Checkpoint' } };
+              }
+            }
+
             // Ensure model.type is present for output schema conformance
             if (!('model' in val) || !val.model) {
               return { ...val, model: { type: 'Checkpoint' } };
@@ -890,6 +897,11 @@ export interface ImagesNodeConfig {
    * When provided, renders side-by-side dropzones with labels.
    */
   slots?: ImageSlotConfig[];
+  /**
+   * Selectable modes that change how images input behaves.
+   * Each mode maps to a workflow key — selecting a mode switches the workflow.
+   */
+  modes?: { label: string; value: string; workflow: string }[];
 }
 
 /**
@@ -911,7 +923,7 @@ export interface ImagesNodeConfig {
  *   ]
  * }), [])
  */
-export function imagesNode({ min = 1, max = 1, slots }: ImagesNodeConfig) {
+export function imagesNode({ min = 1, max = 1, slots, modes }: ImagesNodeConfig) {
   // When slots are provided, max is derived from slots length
   const effectiveMax = slots?.length ?? max;
   const effectiveMin = slots ? slots.filter((s) => s.required).length : min;
@@ -948,6 +960,7 @@ export function imagesNode({ min = 1, max = 1, slots }: ImagesNodeConfig) {
       min: effectiveMin,
       max: effectiveMax,
       slots,
+      modes,
     },
   };
 }
