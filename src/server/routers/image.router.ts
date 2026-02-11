@@ -19,6 +19,8 @@ import {
   getImageGenerationData,
   getImageRatingRequests,
   getImagesByUserIdForModeration,
+  getIngestionErrorImages,
+  resolveIngestionError,
   getImagesForModelVersionCache,
   getImagesPendingIngestion,
   getModeratorPOITags,
@@ -65,8 +67,11 @@ import {
   imageModerationSchema,
   imageRatingReviewInput,
   imageReviewQueueInputSchema,
+  ingestionErrorReviewInput,
+  resolveIngestionErrorInput,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
   updateImageAcceptableMinorSchema,
@@ -109,7 +114,7 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
-  setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
+  setTosViolation: moderatorProcedure.input(setTosViolationSchema).mutation(setTosViolationHandler),
   getDetail: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImageDetail({ ...input })),
@@ -154,6 +159,12 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+  getIngestionErrorImages: moderatorProcedure
+    .input(ingestionErrorReviewInput)
+    .query(({ input }) => getIngestionErrorImages(input)),
+  resolveIngestionError: moderatorProcedure
+    .input(resolveIngestionErrorInput)
+    .mutation(({ input, ctx }) => resolveIngestionError({ ...input, userId: ctx.user.id })),
   getDownleveledImages: moderatorProcedure
     .input(downleveledReviewInput)
     .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),

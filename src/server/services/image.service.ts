@@ -70,6 +70,7 @@ import type {
   ImageModerationUnblockSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
+  IngestionErrorReviewInput,
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
@@ -5340,6 +5341,111 @@ export async function getImageRatingRequests({
   };
 }
 
+export async function getIngestionErrorImages({
+  cursor,
+  limit,
+}: IngestionErrorReviewInput) {
+  const query = Prisma.sql`
+    SELECT
+      i.id,
+      i.url,
+      i.name,
+      i."nsfwLevel",
+      i."aiNsfwLevel",
+      i."needsReview",
+      i.width,
+      i.height,
+      i.type,
+      i."createdAt",
+      i.poi
+    FROM "Image" i
+    WHERE i."createdAt" > now() - INTERVAL '2 days'
+      AND i."createdAt" < now() - INTERVAL '1 hour'
+      AND i.ingestion = 'Error'::"ImageIngestionStatus"
+      AND i."nsfwLevel" = 0
+      ${cursor ? Prisma.sql`AND i.id < ${cursor}` : Prisma.empty}
+    ORDER BY i."createdAt" DESC
+    LIMIT ${limit + 1}
+  `;
+
+  const results = await dbRead.$queryRaw<
+    {
+      id: number;
+      url: string;
+      name: string | null;
+      nsfwLevel: number;
+      aiNsfwLevel: number | null;
+      needsReview: string | null;
+      width: number | null;
+      height: number | null;
+      type: string;
+      createdAt: Date;
+      poi: boolean;
+    }[]
+  >`${query}`;
+
+  let nextCursor: number | undefined;
+  if (results.length > limit) {
+    const nextItem = results.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: results,
+  };
+}
+
+export async function resolveIngestionError({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      ingestion: true,
+      postId: true,
+      userId: true,
+      metadata: true,
+    },
+  });
+  if (!image) throw new Error('Image not found');
+
+  const metadata = (image.metadata as ImageMetadata) ?? {};
+
+  await dbWrite.image.update({
+    where: { id },
+    data: {
+      nsfwLevel,
+      nsfwLevelLocked: true,
+      ingestion: ImageIngestionStatus.Scanned,
+      scannedAt: new Date(),
+      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
+    },
+  });
+
+  // Post-scan actions matching what image-scan-result does on successful scan
+  await tagIdsForImagesCache.refresh(id);
+
+  if (image.postId) await updatePostNsfwLevel(image.postId);
+
+  await queueImageSearchIndexUpdate({
+    ids: [id],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
+  await trackModActivity(userId, {
+    entityType: 'image',
+    entityId: id,
+    activity: 'setNsfwLevel',
+  });
+}
+
 type DownleveledImageRecord = {
   imageId: number;
   originalLevel: number;
@@ -6279,4 +6385,32 @@ export async function getSeenImageIds(): Promise<number[]> {
   const key = REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES;
   const ids = await sysRedis.zRange(key, 0, -1, { REV: true });
   return ids.map((id) => parseInt(id, 10));
+}
+
+export async function getReportViolationDetailsForImages(
+  imageIds: number[]
+): Promise<Record<number, { violation?: string; comment?: string; reason?: string }>> {
+  if (!imageIds.length) return {};
+
+  const reports = await dbRead.$queryRaw<
+    { imageId: number; reason: string; details: Prisma.JsonValue }[]
+  >`
+    SELECT DISTINCT ON (ir."imageId") ir."imageId", r.reason, r.details
+    FROM "Report" r
+    JOIN "ImageReport" ir ON ir."reportId" = r.id
+    WHERE ir."imageId" IN (${Prisma.join(imageIds)})
+      AND r.reason = 'TOSViolation'
+    ORDER BY ir."imageId", r."createdAt" DESC
+  `;
+
+  const result: Record<number, { violation?: string; comment?: string; reason?: string }> = {};
+  for (const report of reports) {
+    const details = report.details as Record<string, string> | null;
+    result[report.imageId] = {
+      violation: details?.violation,
+      comment: details?.comment,
+      reason: report.reason,
+    };
+  }
+  return result;
 }
