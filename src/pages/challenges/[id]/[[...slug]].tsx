@@ -167,7 +167,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
           </Stack>
         ),
         labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
-        onConfirm: () => endAndPickWinnersMutation.mutate({ id }),
+        onConfirm: () => endAndPickWinnersMutation.mutateAsync({ id }),
       },
     });
   };
@@ -191,7 +191,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         ),
         labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
         confirmProps: { color: 'red' },
-        onConfirm: () => voidChallengeMutation.mutate({ id }),
+        onConfirm: () => voidChallengeMutation.mutateAsync({ id }),
       },
     });
   };
@@ -204,7 +204,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         message: <Text>Are you sure you want to delete this challenge?</Text>,
         labels: { cancel: 'Cancel', confirm: 'Delete' },
         confirmProps: { color: 'red' },
-        onConfirm: () => deleteMutation.mutate({ id }),
+        onConfirm: () => deleteMutation.mutateAsync({ id }),
       },
     });
   };

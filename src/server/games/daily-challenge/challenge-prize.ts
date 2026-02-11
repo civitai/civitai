@@ -78,6 +78,7 @@ export async function checkAndAwardEntryPrize({
         challengeId: challenge.id,
         entryCount: userEntryCount,
       },
+      toAccountType: 'blue',
     });
 
     log(
