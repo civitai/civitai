@@ -493,7 +493,10 @@ export async function getResourceData(
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
 
-  function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
+  function transformGenerationData(
+    { settings, ...item }: GenerationResourceDataModel,
+    epochNumber?: number
+  ) {
     const isUnavailable = unavailableResources.includes(item.id);
 
     const isOwnedByUser = !!user.id && user.id === item.model.userId;
@@ -515,7 +518,6 @@ export async function getResourceData(
     // canGenerate is the definitive "can this user use this resource" flag
     // Requires: covered by orchestrator AND valid status AND (not private OR user owns it)
     const canGenerate = covered && hasValidStatus && (!isPrivate || isOwnedByUser);
-    const epochNumber = args.find((x) => x.id === item.id)?.epoch;
 
     if (!canGenerate) {
       // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
@@ -564,7 +566,7 @@ export async function getResourceData(
 
     return await resourceDataCache
       .fetch(substituteIds)
-      .then((data) => data.map(transformGenerationData));
+      .then((data) => data.map((item) => transformGenerationData(item)));
   }
 
   async function getEntityAccess(resources: ReturnType<typeof transformGenerationData>[]) {
@@ -602,8 +604,7 @@ export async function getResourceData(
     if (resource.status !== 'Published') {
       const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
       if (trainingFile) {
-        const epoch = args.find((x) => x.id === resource.id)?.epoch;
-        const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
+        const details = getTrainingFileEpochNumberDetails(trainingFile, resource.epochNumber);
         if (!details?.isExpired) {
           return details;
         }
@@ -670,9 +671,22 @@ export async function getResourceData(
     }
   }
 
+  // Expand cache results to produce one entry per unique (id, epoch) pair.
+  // The cache deduplicates by model version ID, but different epochs of the same
+  // model version need separate entries with their own epochDetails.
+  const uniqueIds = [...new Set(args.map((x) => x.id))];
   const resources = await resourceDataCache
-    .fetch(args.map((x) => x.id))
-    .then((resources) => resources.map(transformGenerationData))
+    .fetch(uniqueIds)
+    .then((cachedResources) => {
+      const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
+      return args
+        .map((arg) => {
+          const cached = resourceById.get(arg.id);
+          if (!cached) return null;
+          return transformGenerationData(cached, arg.epoch);
+        })
+        .filter(isDefined);
+    })
     .then(async (resources) => {
       const substitutes = await getResourceDataSubstitutes(resources);
       const entityAccess = await getEntityAccess([...resources, ...substitutes]);

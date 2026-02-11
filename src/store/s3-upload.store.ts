@@ -16,6 +16,7 @@ type UploadResult = {
   size: number;
   uuid: string;
   meta?: Record<string, unknown>;
+  backend?: string;
 };
 
 type RequestOptions = {
@@ -42,6 +43,7 @@ type ApiUploadResponse =
       bucket: string;
       key: string;
       uploadId?: string;
+      backend?: string;
     }
   | { error: string };
 
@@ -86,10 +88,12 @@ export const useS3UploadStore = create<StoreProps>()(
         url,
         bucket,
         key,
+        backend,
       }: {
         url: string;
         bucket: string;
         key: string;
+        backend?: string;
       }
     ): UploadResult {
       const items = get().items;
@@ -104,6 +108,7 @@ export const useS3UploadStore = create<StoreProps>()(
         size: item.size,
         meta: item.meta,
         uuid: item.uuid,
+        backend,
       };
     }
 
@@ -190,7 +195,7 @@ export const useS3UploadStore = create<StoreProps>()(
           console.error(data.error);
           throw data.error;
         } else {
-          const { bucket, key, uploadId, urls } = data;
+          const { bucket, key, uploadId, urls, backend } = data;
           const uuid = uuidv4();
 
           // let currentXhr: XMLHttpRequest;
@@ -254,6 +259,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 key,
                 type,
                 uploadId,
+                backend,
               }),
             });
 
@@ -267,6 +273,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 parts,
+                backend,
               }),
             });
 
@@ -364,7 +371,7 @@ export const useS3UploadStore = create<StoreProps>()(
           updateFile(pendingItem.uuid, { status: 'success' });
 
           const url = urls[0].url.split('?')[0];
-          const payload = preparePayload(pendingItem.uuid, { url, bucket, key });
+          const payload = preparePayload(pendingItem.uuid, { url, bucket, key, backend });
 
           cb?.(payload);
           return payload;
