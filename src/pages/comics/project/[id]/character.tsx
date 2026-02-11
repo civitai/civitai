@@ -66,9 +66,11 @@ function ReferenceUpload() {
     { enabled: projectId > 0 }
   );
 
+  const utils = trpc.useUtils();
   const createReferenceMutation = trpc.comics.createReference.useMutation();
   const addImagesMutation = trpc.comics.addReferenceImages.useMutation({
     onSuccess: () => {
+      utils.comics.getProject.invalidate({ id: projectId });
       router.push(`/comics/project/${projectId}`);
     },
   });

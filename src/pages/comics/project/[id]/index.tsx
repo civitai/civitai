@@ -51,6 +51,7 @@ import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { PanelCard, SortablePanel } from '~/components/Comics/PanelCard';
 import { PanelDebugModal } from '~/components/Comics/PanelDebugModal';
 import { ReferenceSidebarItem } from '~/components/Comics/ReferenceSidebarItem';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -761,8 +762,9 @@ function ProjectWorkspace() {
                 {allReferences.length === 0 ? (
                   <div className="flex flex-col items-center py-8 text-center">
                     <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
-                    <Text size="sm" c="dimmed" mb="md">
-                      No references yet
+                    <Text size="xs" c="dimmed" mb="md">
+                      References help maintain character consistency across panels. Optional — you
+                      can generate panels without them.
                     </Text>
                     <button
                       className={styles.gradientBtn}
@@ -890,63 +892,25 @@ function ProjectWorkspace() {
 
             {/* ── Main: Panels ───────────────────── */}
             <div>
-              {/* Status messages */}
-              {activeReferences.length === 0 && allReferences.length === 0 && (
-                <div className="flex flex-col items-center py-12 text-center">
-                  <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                  <Text c="dimmed" mb="md">
-                    Add a reference first to start generating panels
-                  </Text>
-                  <button
-                    className={styles.gradientBtn}
-                    onClick={() => router.push(`/comics/project/${projectId}/character`)}
-                  >
-                    <IconPlus size={14} />
-                    Add Reference
-                  </button>
-                </div>
-              )}
-
-              {activeReferences.length === 0 && allReferences.length > 0 && (
-                <div className="py-8 text-center">
-                  <Text c="dimmed" size="sm">
-                    Wait for your references to finish processing before generating panels.
-                  </Text>
-                </div>
-              )}
-
-              {activeReferences.length > 0 && !anyRefHasImages && (
-                <div
-                  className="flex items-center justify-between py-4 px-4 rounded-lg"
-                  style={{ background: '#2C2E33', border: '1px solid #373A40' }}
-                >
-                  <Text c="dimmed" size="sm">
-                    References need images before generating panels.
-                  </Text>
-                  <button
-                    className={styles.subtleBtn}
-                    onClick={() => router.push(`/comics/project/${projectId}/character`)}
-                  >
-                    Add References
-                  </button>
-                </div>
-              )}
-
-              {activeChapter &&
-                activeChapter.panels.length === 0 &&
-                activeReferences.length > 0 &&
-                anyRefHasImages && (
-                  <div className="flex flex-col items-center py-12 text-center">
-                    <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                    <Text c="dimmed">No panels yet. Create your first panel!</Text>
-                  </div>
-                )}
-
               {/* Active chapter title */}
               {activeChapter && (
                 <Title order={4} mb="md" style={{ fontWeight: 700 }}>
                   {activeChapter.name}
                 </Title>
+              )}
+
+              {activeChapter && activeChapter.panels.length === 0 && (
+                <div className="flex flex-col items-center py-12 text-center">
+                  <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
+                  <Text c="dimmed" mb="md">
+                    No panels yet. Create your first panel!
+                  </Text>
+                  <Text c="dimmed" size="xs" maw={360}>
+                    Use <b>Generate</b> to create panels from a text prompt, or <b>Enhance</b> to
+                    transform an existing image into a comic panel. Add <b>References</b> to
+                    maintain character consistency across panels.
+                  </Text>
+                </div>
               )}
 
               {/* Panel grid */}
@@ -1293,6 +1257,11 @@ function ProjectWorkspace() {
           </div>
         )}
 
+        <Text size="xs" c="dimmed">
+          Generated panels use NanoBanana and are SFW only. Uploaded or imported images can be NSFW
+          but will be scanned.
+        </Text>
+
         {panelMode === 'generate' ? (
           <Stack gap="md">
             <MentionTextarea
@@ -1331,23 +1300,18 @@ function ProjectWorkspace() {
               </>
             )}
 
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                Cost: {panelCost > 0 ? `${panelCost} Buzz` : 'Estimating...'}
-              </Text>
-              <Group>
-                <Button variant="default" onClick={handlePanelModalClose}>
-                  Cancel
-                </Button>
-                <button
-                  className={styles.gradientBtn}
-                  onClick={handleGeneratePanel}
-                  disabled={!prompt.trim() || isSubmitting || createPanelMutation.isPending}
-                >
-                  {createPanelMutation.isPending ? <Loader size={14} color="dark" /> : null}
-                  {insertAtPosition != null ? 'Insert' : 'Generate'}
-                </button>
-              </Group>
+            <Group justify="flex-end">
+              <Button variant="default" onClick={handlePanelModalClose}>
+                Cancel
+              </Button>
+              <BuzzTransactionButton
+                buzzAmount={panelCost}
+                label={insertAtPosition != null ? 'Insert' : 'Generate'}
+                loading={isSubmitting || createPanelMutation.isPending}
+                disabled={!prompt.trim()}
+                onPerformTransaction={handleGeneratePanel}
+                showPurchaseModal
+              />
             </Group>
           </Stack>
         ) : (
@@ -1479,27 +1443,28 @@ function ProjectWorkspace() {
               </>
             )}
 
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                {!prompt.trim()
-                  ? 'Free — panel from your image'
-                  : panelCost > 0
-                  ? `Cost: ${panelCost} Buzz`
-                  : 'Cost: Estimating...'}
-              </Text>
-              <Group>
-                <Button variant="default" onClick={handlePanelModalClose}>
-                  Cancel
-                </Button>
-                <button
-                  className={styles.gradientBtn}
+            <Group justify="flex-end">
+              <Button variant="default" onClick={handlePanelModalClose}>
+                Cancel
+              </Button>
+              {!prompt.trim() ? (
+                <Button
                   onClick={handleEnhancePanel}
-                  disabled={!enhanceSourceImage || isSubmitting || enhancePanelMutation.isPending}
+                  loading={isSubmitting || enhancePanelMutation.isPending}
+                  disabled={!enhanceSourceImage}
                 >
-                  {enhancePanelMutation.isPending ? <Loader size={14} color="dark" /> : null}
-                  {regeneratingPanelId ? 'Regenerate' : !prompt.trim() ? 'Add Panel' : 'Enhance'}
-                </button>
-              </Group>
+                  {regeneratingPanelId ? 'Regenerate' : 'Add Panel'}
+                </Button>
+              ) : (
+                <BuzzTransactionButton
+                  buzzAmount={panelCost}
+                  label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
+                  loading={isSubmitting || enhancePanelMutation.isPending}
+                  disabled={!enhanceSourceImage}
+                  onPerformTransaction={handleEnhancePanel}
+                  showPurchaseModal
+                />
+              )}
             </Group>
           </Stack>
         )}
