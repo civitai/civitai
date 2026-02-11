@@ -71,6 +71,7 @@ import {
   resolveIngestionErrorInput,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
   updateImageAcceptableMinorSchema,
@@ -113,7 +114,7 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
-  setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
+  setTosViolation: moderatorProcedure.input(setTosViolationSchema).mutation(setTosViolationHandler),
   getDetail: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImageDetail({ ...input })),

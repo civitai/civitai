@@ -17,8 +17,7 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { zc } from '~/utils/schema-helpers';
-import { ImageSort, NsfwLevel } from './../common/enums';
+import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
@@ -248,6 +247,8 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
   reviewAction: z.enum(['unblock', 'block']),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
@@ -517,6 +518,13 @@ export const updateImageAcceptableMinorSchema = z.object({
   id: z.number(),
   collectionId: z.number(),
   acceptableMinor: z.boolean(),
+});
+
+export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
+export const setTosViolationSchema = z.object({
+  id: z.number(),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().optional(),
 });
 
 export type ToggleImageFlagInput = z.infer<typeof toggleImageFlagSchema>;

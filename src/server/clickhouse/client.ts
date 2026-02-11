@@ -512,6 +512,8 @@ export class Tracker {
       tags: string[];
       ownerId: number;
       tosReason?: string;
+      violationType?: string;
+      violationDetails?: string;
       resources?: number[];
       userId?: number;
     }[]
