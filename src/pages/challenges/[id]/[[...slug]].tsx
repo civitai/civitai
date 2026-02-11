@@ -1060,17 +1060,13 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
               }
             />
           ) : (
-            <MasonryProvider
-              columnWidth={appConstants.cardSizes.image}
-              maxColumnCount={4}
-              maxSingleColumnWidth={450}
-            >
+            <MasonryProvider columnWidth={appConstants.cardSizes.image} maxSingleColumnWidth={450}>
               <MasonryContainer m={0} p={0} px={0}>
                 <ImagesInfinite
                   filters={{
                     collectionId: challenge.collectionId ?? undefined,
                     period: 'AllTime',
-                    sort: ImageSort.Newest,
+                    sort: ImageSort.Random,
                   }}
                   disableStoreFilters
                 />
