@@ -93,7 +93,7 @@ const NEW_TO_OLD: Record<string, string> = {
   'image:remove-background': 'img2img:remove-background',
   'video:create': 'txt2vid',
   'video:animate': 'txt2vid',
-  'video:first-last-frame': 'img2vid:first-last-frame',
+  'video:first-last-frame': 'img2vid',
   'video:ref2vid': 'img2vid:ref2vid',
   'video:upscale': 'vid2vid:upscale',
   'video:interpolate': 'vid2vid:interpolate',
@@ -102,6 +102,8 @@ const NEW_TO_OLD: Record<string, string> = {
 /** Migrate stored workflow key to current format */
 function migrateWorkflowKey(key: string | undefined): string | undefined {
   if (!key) return key;
+  // Migrate old first-last-frame key to img2vid (now an alias on Vidu)
+  if (key === 'img2vid:first-last-frame') return 'img2vid';
   return NEW_TO_OLD[key] ?? key;
 }
 
@@ -218,7 +220,6 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         // Video workflows with ecosystem support
         'txt2vid',
         'img2vid',
-        'img2vid:first-last-frame',
         'img2vid:ref2vid',
       ] as const,
       graph: ecosystemGraph,
@@ -271,7 +272,7 @@ export function workflowHasNode(workflow: string, nodeKey: string): boolean {
  */
 export function getWorkflowsForMediaType(mediaType: 'image' | 'video'): WorkflowOption[] {
   const nodeKey = mediaType === 'image' ? 'images' : 'video';
-  return workflowOptions.filter((w) => workflowHasNode(w.id, nodeKey));
+  return workflowOptions.filter((w) => workflowHasNode(w.graphKey, nodeKey));
 }
 
 /** Type helper for the generation graph context */

@@ -221,14 +221,14 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Image to Video',
     description: 'Generate a video from an image',
     category: 'video',
-    ecosystemIds: [...TXT2VID_IDS.filter((id) => id !== ECO.Vidu), ...I2V_ONLY_IDS],
-  },
-
-  'img2vid:first-last-frame': {
-    label: 'First/Last Frame',
-    description: 'Create video from start and end images',
-    category: 'video',
-    ecosystemIds: [ECO.Vidu],
+    ecosystemIds: [...TXT2VID_IDS, ...I2V_ONLY_IDS],
+    aliases: [
+      {
+        label: 'First/Last Frame',
+        description: 'Create video from start and end images',
+        ecosystemIds: [ECO.Vidu],
+      },
+    ],
   },
 
   'img2vid:ref2vid': {
@@ -271,20 +271,30 @@ export const workflowConfigsArray = Object.entries(workflowConfigs)
     ...config,
   }));
 
-/** Lookup map for workflows by key */
-export const workflowConfigByKey = new Map(workflowConfigsArray.map((w) => [w.key, w]));
+/** Lookup map for workflows by key (aggregates alias ecosystemIds into parent) */
+export const workflowConfigByKey = new Map(
+  workflowConfigsArray.map((w) => {
+    if (!w.aliases?.length) return [w.key, w];
+    const allEcoIds = [...w.ecosystemIds, ...w.aliases.flatMap((a) => a.ecosystemIds)];
+    return [w.key, { ...w, ecosystemIds: [...new Set(allEcoIds)] }];
+  })
+);
 
 // =============================================================================
 // Workflow Option Type (for UI consumption)
 // =============================================================================
 
 export type WorkflowOption = {
-  /** Workflow key */
+  /** Unique ID for this option (key for primary, key#alias-index for aliases) */
   id: string;
+  /** The graph discriminator value (always matches a real config key) */
+  graphKey: string;
   /** Display label */
   label: string;
   /** Brief description of what this workflow does */
   description?: string;
+  /** Per-entry ecosystem IDs (NOT aggregated) */
+  ecosystemIds: number[];
   /** Category for grouping in UI */
   category: WorkflowCategory;
   /** Input type required */
@@ -298,31 +308,38 @@ export type WorkflowOption = {
 };
 
 /**
- * Convert a workflow config to a workflow option.
- * Input type is derived from the workflow key prefix.
- */
-function toWorkflowOption(
-  key: string,
-  config: (typeof workflowConfigsArray)[number]
-): WorkflowOption {
-  return {
-    id: key,
-    label: config.label,
-    description: config.description,
-    category: config.category,
-    inputType: getInputTypeForWorkflow(key),
-    ecosystemSpecific: config.ecosystemIds.length === 1,
-    enhancement: config.enhancement,
-    memberOnly: config.memberOnly,
-  };
-}
-
-/**
  * All workflow options derived from workflow configs.
+ * Aliases are expanded into separate entries with unique IDs (key#index).
  */
-export const workflowOptions: WorkflowOption[] = workflowConfigsArray.map((w) =>
-  toWorkflowOption(w.key, w)
-);
+export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w) => {
+  const primary: WorkflowOption = {
+    id: w.key,
+    graphKey: w.key,
+    label: w.label,
+    description: w.description,
+    ecosystemIds: w.ecosystemIds,
+    category: w.category,
+    inputType: getInputTypeForWorkflow(w.key),
+    ecosystemSpecific: w.ecosystemIds.length === 1,
+    enhancement: w.enhancement,
+    memberOnly: w.memberOnly,
+  };
+
+  const aliases: WorkflowOption[] = (w.aliases ?? []).map((alias, i) => ({
+    id: `${w.key}#${i}`,
+    graphKey: w.key,
+    label: alias.label,
+    description: alias.description,
+    ecosystemIds: alias.ecosystemIds,
+    category: w.category,
+    inputType: getInputTypeForWorkflow(w.key),
+    ecosystemSpecific: alias.ecosystemIds.length === 1,
+    enhancement: w.enhancement,
+    memberOnly: w.memberOnly,
+  }));
+
+  return [primary, ...aliases];
+});
 
 /** Lookup map for workflows by ID (workflow key) */
 export const workflowOptionById = new Map(workflowOptions.map((w) => [w.id, w]));
@@ -344,9 +361,13 @@ export function isWorkflowAvailable(workflowId: string, ecosystemId: number): bo
 
 /**
  * Get workflows available for a specific ecosystem.
+ * Uses per-entry ecosystemIds (not aggregated) so aliases filter correctly.
  */
 export function getWorkflowsForEcosystem(ecosystemId: number): WorkflowOption[] {
-  return workflowOptions.filter((w) => isWorkflowAvailable(w.id, ecosystemId));
+  return workflowOptions.filter((w) => {
+    if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
+    return w.ecosystemIds.includes(ecosystemId);
+  });
 }
 
 /** Workflow categories with labels */
@@ -368,7 +389,11 @@ export function getWorkflowsWithCompatibility(ecosystemId: number): {
     label,
     workflows: workflowOptions
       .filter((w) => w.category === category)
-      .map((w) => ({ ...w, compatible: isWorkflowAvailable(w.id, ecosystemId) })),
+      .map((w) => ({
+        ...w,
+        compatible:
+          w.ecosystemIds.length === 0 || w.ecosystemIds.includes(ecosystemId),
+      })),
   }));
 }
 
@@ -433,6 +458,24 @@ export function isEnhancementWorkflow(workflowId: string): boolean {
   return workflowConfigByKey.get(workflowId)?.enhancement === true;
 }
 
+/**
+ * Get the display label for a workflow on a specific ecosystem (alias-aware).
+ * Returns the alias label when the ecosystem matches an alias entry,
+ * otherwise returns the primary config label.
+ */
+export function getWorkflowLabelForEcosystem(
+  graphKey: string,
+  ecosystemId?: number
+): string {
+  if (ecosystemId !== undefined) {
+    const match = workflowOptions.find(
+      (o) => o.graphKey === graphKey && o.ecosystemIds.includes(ecosystemId)
+    );
+    if (match) return match.label;
+  }
+  return workflowConfigByKey.get(graphKey)?.label ?? graphKey;
+}
+
 // =============================================================================
 // Workflow Groups (Mode Switching)
 // =============================================================================
@@ -447,7 +490,7 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:first-last-frame', 'img2vid:ref2vid'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
 ];

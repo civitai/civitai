@@ -137,16 +137,12 @@ function resolveImg2ImgWorkflow(baseModel: string | undefined): string {
  * Derives supported ecosystems from workflowConfigs rather than hardcoded sets.
  *
  * - Ecosystem in `img2vid:ref2vid` config + 3+ images → `img2vid:ref2vid`
- * - Ecosystem in `img2vid:first-last-frame` config + 2 images → `img2vid:first-last-frame`
  * - Other → `img2vid`
  */
 function resolveImg2VidWorkflow(baseModel: string | undefined, imageCount: number): string {
   if (baseModel) {
     if (imageCount >= 3 && ecosystemSupportsWorkflow(baseModel, 'img2vid:ref2vid')) {
       return 'img2vid:ref2vid';
-    }
-    if (imageCount === 2 && ecosystemSupportsWorkflow(baseModel, 'img2vid:first-last-frame')) {
-      return 'img2vid:first-last-frame';
     }
   }
   return 'img2vid';
@@ -194,7 +190,7 @@ export function resolveWorkflow(
       'image:remove-background': 'img2img:remove-background',
       'video:create': 'txt2vid',
       'video:animate': 'txt2vid',
-      'video:first-last-frame': 'img2vid:first-last-frame',
+      'video:first-last-frame': 'img2vid',
       'video:ref2vid': 'img2vid:ref2vid',
       'video:upscale': 'vid2vid:upscale',
       'video:interpolate': 'vid2vid:interpolate',

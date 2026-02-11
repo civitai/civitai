@@ -55,6 +55,13 @@ export interface WorkflowConfig {
 
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
+
+  /** UI-only aliases — appear as additional entries in the workflow dropdown, all map to this key */
+  aliases?: {
+    label: string;
+    description?: string;
+    ecosystemIds: number[];
+  }[];
 }
 
 // =============================================================================

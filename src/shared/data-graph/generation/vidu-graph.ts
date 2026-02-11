@@ -5,7 +5,7 @@
  *
  * Workflows:
  * - txt2vid: Text to video generation (no images)
- * - img2vid:first-last-frame: Image to video with first/last frame inputs
+ * - img2vid: Image to video with first/last frame inputs
  * - img2vid:ref2vid: Reference-guided video generation with multiple images
  *
  * Nodes:
@@ -62,7 +62,7 @@ type ViduCtx = {
  *
  * Workflow-specific behavior:
  * - txt2vid: Shows style selector and aspect ratio
- * - img2vid:first-last-frame: First/last frame mode, no style or aspect ratio
+ * - img2vid: First/last frame mode, no style or aspect ratio
  * - img2vid:ref2vid: Reference mode, shows aspect ratio but no style
  */
 export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
@@ -72,7 +72,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
     (ctx) => {
       const baseNode = imagesNode({ max: 1, min: 0 }); // Default for hidden state
 
-      if (ctx.workflow === 'img2vid:first-last-frame') {
+      if (ctx.workflow === 'img2vid') {
         return {
           ...imagesNode({
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame' }],

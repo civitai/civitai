@@ -147,7 +147,7 @@ export const ecosystemGraph = new DataGraph<
         (w) => !w.enhancement
       );
       if (compatibleWorkflows.length > 0) {
-        set('workflow', compatibleWorkflows[0].id);
+        set('workflow', compatibleWorkflows[0].graphKey);
       } else {
         set('workflow', 'txt2img');
       }

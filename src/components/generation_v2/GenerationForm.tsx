@@ -32,6 +32,7 @@ import {
   wanVersionDefs,
 } from '~/shared/data-graph/generation';
 import { getWorkflowModes } from '~/shared/data-graph/generation/config';
+import { ecosystemById } from '~/shared/constants/basemodel.constants';
 
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
@@ -91,28 +92,30 @@ export function GenerationForm() {
   graphRef.current = graph;
 
   // Handle workflow selection with compatibility check
+  // Receives (graphKey, ecosystemIds) from WorkflowInput — ecosystemIds are per-entry (not aggregated)
   const handleWorkflowChange = useCallback(
-    (newWorkflow: string) => {
-      if (!compatibility.isWorkflowCompatible(newWorkflow)) {
-        const target = compatibility.getTargetEcosystemForWorkflow(newWorkflow);
-        if (target && compatibility.currentEcosystemKey) {
-          const currentEcoName =
-            graph
-              .getNodeMeta('ecosystem')
-              ?.compatibleEcosystems?.find(
-                (key: string) => key === compatibility.currentEcosystemKey
-              ) ?? compatibility.currentEcosystemKey;
+    (graphKey: string, ecosystemIds: number[]) => {
+      // Check if the selected entry is compatible with the current ecosystem
+      const isEntryCompatible =
+        ecosystemIds.length === 0 ||
+        (compatibility.currentEcosystemId !== undefined &&
+          ecosystemIds.includes(compatibility.currentEcosystemId));
 
+      if (!isEntryCompatible) {
+        // Find target ecosystem from the entry's ecosystemIds
+        const targetEcoId = ecosystemIds[0];
+        const target = targetEcoId !== undefined ? ecosystemById.get(targetEcoId) : undefined;
+        if (target && compatibility.currentEcosystemKey) {
           openCompatibilityConfirmModal({
             pendingChange: {
               type: 'workflow',
-              value: newWorkflow,
-              currentEcosystem: currentEcoName,
+              value: graphKey,
+              currentEcosystem: compatibility.currentEcosystemKey,
               targetEcosystem: target.displayName,
             },
             onConfirm: () => {
               graphRef.current.set({
-                workflow: newWorkflow,
+                workflow: graphKey,
                 ecosystem: target.key,
               } as Parameters<typeof graph.set>[0]);
             },
@@ -120,7 +123,7 @@ export function GenerationForm() {
           return;
         }
       }
-      graph.set({ workflow: newWorkflow } as Parameters<typeof graph.set>[0]);
+      graph.set({ workflow: graphKey } as Parameters<typeof graph.set>[0]);
     },
     [compatibility, graph]
   );
@@ -165,9 +168,8 @@ export function GenerationForm() {
               render={({ value }) => (
                 <WorkflowInput
                   value={value}
-                  onChange={(newValue) => {
-                    handleWorkflowChange(newValue);
-                  }}
+                  ecosystemId={compatibility.currentEcosystemId}
+                  onChange={handleWorkflowChange}
                   isCompatible={compatibility.isWorkflowCompatible}
                   isMember={isMember}
                 />
@@ -214,7 +216,12 @@ export function GenerationForm() {
                   />
                 );
               }
-              return <SelectedWorkflowDisplay workflowId={value as string} />;
+              return (
+                <SelectedWorkflowDisplay
+                  workflowId={value as string}
+                  ecosystemId={compatibility.currentEcosystemId}
+                />
+              );
             }}
           />
 

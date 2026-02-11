@@ -518,7 +518,7 @@ export type WorkflowVersionConfig = Record<
 
 /**
  * Find the workflow config for a given workflow key using prefix matching.
- * E.g., 'img2vid:first-last-frame' will match the 'img2vid' config if using prefix matching.
+ * E.g., 'img2vid:ref2vid' will match the 'img2vid' config if using prefix matching.
  * First tries exact match, then prefix match (workflow starts with config key).
  */
 function findWorkflowConfig(
@@ -624,7 +624,7 @@ export function createCheckpointGraph(options?: {
   currentWorkflow?: string;
 }) {
   // Get versions and defaultModelId from workflowVersions if provided
-  // Use prefix matching: 'img2vid:first-last-frame' matches 'img2vid' config
+  // Use prefix matching: 'img2vid:ref2vid' matches 'img2vid' config
   const workflowConfig = findWorkflowConfig(options?.workflowVersions, options?.currentWorkflow);
   const versions = workflowConfig?.versions ?? options?.versions;
   const defaultModelId = workflowConfig?.defaultModelId ?? options?.defaultModelId;
@@ -650,7 +650,7 @@ export function createCheckpointGraph(options?: {
 
       // Cast to access workflow (only present when parent graph has workflow in context)
       const rawWorkflow = ctx.workflow ?? '';
-      // Normalize workflow to match config keys (e.g., 'img2vid:first-last-frame' -> 'img2vid')
+      // Normalize workflow to match config keys (e.g., 'img2vid:ref2vid' -> 'img2vid')
       const workflow = getWorkflowKey(options.workflowVersions, rawWorkflow);
 
       // Skip if current model isn't a known version (user selected custom checkpoint)

@@ -350,7 +350,7 @@ function normalizeImageWorkflow(input: Record<string, unknown>): Record<string, 
 
 /**
  * Normalizes video workflows without images back to txt2vid.
- * Handles the case where a user submits img2vid:first-last-frame or img2vid:ref2vid
+ * Handles the case where a user submits img2vid or img2vid:ref2vid
  * without images (e.g., after removing images from the form).
  */
 function normalizeVideoWorkflow(input: Record<string, unknown>): Record<string, unknown> {
@@ -359,9 +359,7 @@ function normalizeVideoWorkflow(input: Record<string, unknown>): Record<string, 
   const hasImages = Array.isArray(images) && images.length > 0;
 
   // img2vid workflows without images → txt2vid
-  if ((workflow === 'img2vid:first-last-frame' || workflow === 'img2vid:ref2vid') && !hasImages) {
-    workflow = 'txt2vid';
-  } else if (images && workflow === 'img2vid:first-last-frame' && images.length === 1) {
+  if ((workflow === 'img2vid' || workflow === 'img2vid:ref2vid') && !hasImages) {
     workflow = 'txt2vid';
   }
 
