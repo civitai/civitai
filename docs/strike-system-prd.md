@@ -414,7 +414,7 @@ Step 8: Typecheck + lint
 3. **internalNotes protected** — `getStrikesForUser` uses `select` with `includeInternalNotes` param
 4. **voidStrike validates state** — atomic `updateMany` with status guard prevents race conditions
 5. **Notification text handles indefinite** — conditional message for indefinite vs timed mute
-6. **Notifications wrapped in try-catch** — delivery failures don't crash `createStrike`
+6. **Notification errors handled internally** — `createNotification` catches and logs to Axiom; strike service doesn't need its own try-catch around notification calls
 7. **strikeFlaggedForReview cleared** — on de-escalation and when points drop from 3+ to 2
 8. **expireStrikes re-evaluates** — calls `evaluateStrikeEscalation` per affected user after expiring
 9. **User existence validated** — `createStrike` checks user exists before any work

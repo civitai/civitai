@@ -68,6 +68,10 @@ vi.mock('~/server/email/templates', () => ({
   strikeIssuedEmail: { send: mockStrikeIssuedEmailSend },
 }));
 
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: vi.fn(),
+}));
+
 vi.mock('~/server/utils/pagination-helpers', () => ({
   getPagination: (limit: number, page: number | undefined) => {
     const take = limit > 0 ? limit : undefined;
@@ -636,14 +640,6 @@ describe('strike.service', () => {
       );
     });
 
-    it('does not throw if notification fails', async () => {
-      mockCreateNotification.mockRejectedValueOnce(new Error('Notification failed'));
-
-      const result = await createStrike(baseInput);
-
-      expect(result).toEqual(mockCreatedStrike);
-    });
-
     it('does not throw if email fails', async () => {
       mockStrikeIssuedEmailSend.mockRejectedValueOnce(new Error('Email failed'));
 
@@ -841,29 +837,6 @@ describe('strike.service', () => {
       );
     });
 
-    it('does not crash if notification fails for one user', async () => {
-      mockDbRead.userStrike.findMany.mockResolvedValue([
-        { id: 1, userId: 100 },
-        { id: 2, userId: 200 },
-      ]);
-      mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 2 });
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
-        muted: false,
-        muteExpiresAt: null,
-        meta: {},
-      });
-
-      // First notification fails
-      mockCreateNotification
-        .mockRejectedValueOnce(new Error('Notification failed'))
-        .mockResolvedValueOnce(undefined);
-
-      const result = await expireStrikes();
-
-      // Should still complete and process the second user
-      expect(result).toEqual({ expiredCount: 2 });
-    });
   });
 
   // ==========================================================================

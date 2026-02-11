@@ -13,6 +13,7 @@ import type {
 } from '~/server/schema/strike.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
+import { logToAxiom } from '~/server/logging/client';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 // ============================================================================
@@ -50,6 +51,31 @@ export async function getActiveStrikePoints(userId: number): Promise<number> {
       AND "expiresAt" > NOW()
   `;
   return Number(result.sum ?? 0);
+}
+
+/**
+ * Get a lightweight summary of active strikes for a user.
+ * Single query returning only the 3 scalar values the summary endpoint needs.
+ */
+export async function getStrikeSummary(userId: number) {
+  const [result] = await dbRead.$queryRaw<
+    [{ count: bigint; sum: bigint | null; next_expiry: Date | null }]
+  >`
+    SELECT
+      COUNT(*) as count,
+      SUM(points) as sum,
+      MIN("expiresAt") as next_expiry
+    FROM "UserStrike"
+    WHERE "userId" = ${userId}
+      AND "status" = ${StrikeStatus.Active}::"StrikeStatus"
+      AND "expiresAt" > NOW()
+  `;
+
+  return {
+    activeStrikes: Number(result.count),
+    totalActivePoints: Number(result.sum ?? 0),
+    nextExpiry: result.next_expiry,
+  };
 }
 
 /**
@@ -354,21 +380,17 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
   // Get updated active points for notification/email
   const activePoints = await getActiveStrikePoints(userId);
 
-  // Send notifications — don't let notification failures crash strike creation
-  try {
-    await createNotification({
-      type: 'strike-issued',
-      category: NotificationCategory.System,
-      key: `strike-issued:${userId}:${strike.id}`,
-      userId,
-      details: {
-        description,
-        points,
-      },
-    });
-  } catch (error) {
-    console.error(`Failed to send strike notification for user ${userId}:`, error);
-  }
+  // Send notification — createNotification handles its own error logging
+  await createNotification({
+    type: 'strike-issued',
+    category: NotificationCategory.System,
+    key: `strike-issued:${userId}:${strike.id}`,
+    userId,
+    details: {
+      description,
+      points,
+    },
+  });
 
   try {
     const user = await dbRead.user.findUnique({
@@ -388,7 +410,15 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
       });
     }
   } catch (error) {
-    console.error(`Failed to send strike email for user ${userId}:`, error);
+    const err = error as Error;
+    logToAxiom({
+      type: 'error',
+      name: 'strike-email-failed',
+      message: err.message,
+      stack: err.stack,
+      userId,
+      strikeId: strike.id,
+    });
   }
 
   return strike;
@@ -432,7 +462,7 @@ export async function voidStrike(input: VoidStrikeInput & { voidedBy: number }) 
     where: { id: strikeId },
   });
 
-  // Send notification to user
+  // Send notification — createNotification handles its own error logging
   await createNotification({
     type: 'strike-voided',
     category: NotificationCategory.System,
@@ -444,7 +474,19 @@ export async function voidStrike(input: VoidStrikeInput & { voidedBy: number }) 
   });
 
   // Re-evaluate escalation (may de-escalate)
-  await evaluateStrikeEscalation(strike.userId);
+  try {
+    await evaluateStrikeEscalation(strike.userId);
+  } catch (error) {
+    const err = error as Error;
+    logToAxiom({
+      type: 'error',
+      name: 'strike-void-escalation-failed',
+      message: err.message,
+      stack: err.stack,
+      userId: strike.userId,
+      strikeId: strike.id,
+    });
+  }
 
   return strike;
 }
@@ -484,20 +526,28 @@ export async function expireStrikes(): Promise<{ expiredCount: number }> {
   // Send notifications and re-evaluate escalation for affected users
   const uniqueUserIds = [...new Set(strikesToExpire.map((s) => s.userId))];
   for (const userId of uniqueUserIds) {
-    try {
-      await createNotification({
-        type: 'strike-expired',
-        category: NotificationCategory.System,
-        key: `strike-expired:${userId}:${Date.now()}`,
-        userId,
-        details: {},
-      });
-    } catch (error) {
-      console.error(`Failed to send strike-expired notification for user ${userId}:`, error);
-    }
+    // createNotification handles its own error logging
+    await createNotification({
+      type: 'strike-expired',
+      category: NotificationCategory.System,
+      key: `strike-expired:${userId}:${Date.now()}`,
+      userId,
+      details: {},
+    });
 
     // Re-evaluate escalation — may de-escalate (unmute) if points dropped below threshold
-    await evaluateStrikeEscalation(userId);
+    try {
+      await evaluateStrikeEscalation(userId);
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'strike-expired-escalation-failed',
+        message: err.message,
+        stack: err.stack,
+        userId,
+      });
+    }
   }
 
   return { expiredCount: strikesToExpire.length };
@@ -527,26 +577,37 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
   // If they still have >= 2 active strike points, they should stay muted.
   let unmutedCount = 0;
   for (const { id } of usersToUnmute) {
-    const { action } = await evaluateStrikeEscalation(id);
+    try {
+      const { action } = await evaluateStrikeEscalation(id);
 
-    // evaluateStrikeEscalation handles re-muting if points are still high.
-    // Only manually unmute if escalation returned 'none' (points < 2) or 'unmuted'.
-    if (action === 'none') {
-      await updateUserById({
-        id,
-        data: {
-          muted: false,
-          muteExpiresAt: null,
-        },
-        updateSource: 'timed-unmute',
+      // evaluateStrikeEscalation handles re-muting if points are still high.
+      // Only manually unmute if escalation returned 'none' (points < 2) or 'unmuted'.
+      if (action === 'none') {
+        await updateUserById({
+          id,
+          data: {
+            muted: false,
+            muteExpiresAt: null,
+          },
+          updateSource: 'timed-unmute',
+        });
+        await refreshSession(id);
+        unmutedCount++;
+      } else if (action === 'unmuted') {
+        // evaluateStrikeEscalation already unmuted them
+        unmutedCount++;
+      }
+      // If action is 'muted' or 'muted-and-flagged', escalation re-applied the mute
+    } catch (error) {
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'strike-timed-unmute-failed',
+        message: err.message,
+        stack: err.stack,
+        userId: id,
       });
-      await refreshSession(id);
-      unmutedCount++;
-    } else if (action === 'unmuted') {
-      // evaluateStrikeEscalation already unmuted them
-      unmutedCount++;
     }
-    // If action is 'muted' or 'muted-and-flagged', escalation re-applied the mute
   }
 
   return { unmutedCount };

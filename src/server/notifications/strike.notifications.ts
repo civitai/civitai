@@ -9,9 +9,9 @@ export const strikeNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => ({
       message:
         details.points > 1
-          ? `You have received a strike: ${details.description}. View your account standing for details. This counts as ${details.points} strike points.`
-          : `You have received a strike: ${details.description}. View your account standing for details.`,
-      url: '/user/account#strikes',
+          ? `You have received a strike: ${details.description}. This counts as ${details.points} strike points.`
+          : `You have received a strike: ${details.description}.`,
+      // TODO: add url once /user/account#strikes UI exists
     }),
   },
   'strike-voided': {
@@ -20,7 +20,7 @@ export const strikeNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `A strike on your account has been removed: ${details.voidReason}`,
-      url: '/user/account#strikes',
+      // TODO: add url once /user/account#strikes UI exists
     }),
   },
   'strike-escalation-muted': {
@@ -32,7 +32,7 @@ export const strikeNotifications = createNotificationProcessor({
         details.muteDays === 'indefinite'
           ? 'Your account has been muted due to accumulated strikes and is pending review. Please review our Terms of Service.'
           : `Your account has been temporarily muted for ${details.muteDays} days due to accumulated strikes. Please review our Terms of Service.`,
-      url: '/user/account#strikes',
+      // TODO: add url once /user/account#strikes UI exists
     }),
   },
   'strike-expired': {
@@ -41,7 +41,7 @@ export const strikeNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: 'A strike on your account has expired. Your account standing has improved.',
-      url: '/user/account#strikes',
+      // TODO: add url once /user/account#strikes UI exists
     }),
   },
   'strike-de-escalation-unmuted': {
@@ -51,7 +51,7 @@ export const strikeNotifications = createNotificationProcessor({
     prepareMessage: () => ({
       message:
         'Your account mute has been lifted as your strike points have decreased. Please continue to follow our Terms of Service.',
-      url: '/user/account#strikes',
+      // TODO: add url once /user/account#strikes UI exists
     }),
   },
 });

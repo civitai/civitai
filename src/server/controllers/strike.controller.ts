@@ -10,6 +10,7 @@ import {
   createStrike,
   getStrikesForMod,
   getStrikesForUser,
+  getStrikeSummary,
   voidStrike,
 } from '~/server/services/strike.service';
 import { throwDbError } from '~/server/utils/errorHandling';
@@ -85,14 +86,7 @@ export const getMyStrikesHandler = async ({
 
 export const getMyStrikeSummaryHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const { strikes, totalActivePoints, nextExpiry } = await getStrikesForUser(ctx.user.id, {
-      includeInternalNotes: false,
-    });
-    return {
-      activeStrikes: strikes.filter((s) => s.status === 'Active').length,
-      totalActivePoints,
-      nextExpiry,
-    };
+    return await getStrikeSummary(ctx.user.id);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

@@ -17,6 +17,10 @@ vi.mock('~/utils/logging', () => ({
   createLogger: () => vi.fn(),
 }));
 
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: vi.fn(),
+}));
+
 // Mock createJob to return a testable object
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_name: string, _cron: string, fn: any) => ({
