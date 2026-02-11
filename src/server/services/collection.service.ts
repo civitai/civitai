@@ -2018,7 +2018,9 @@ export const validateContestCollectionEntry = async ({
     });
 
     // filter images that are above the forced browsing level
-    const invalidImages = images.filter((image) => !allowedLevels.includes(image.nsfwLevel));
+    const invalidImages = images.filter(
+      (image) => image.nsfwLevel !== 0 && !allowedLevels.includes(image.nsfwLevel)
+    );
     if (invalidImages.length > 0) {
       throw throwBadRequestError(
         `Some images have a higher rating than the allowed for the contest. Please ensure all images have a rating of ${allowedLevels
@@ -2254,6 +2256,18 @@ export const bulkSaveItems = async ({
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
+
+  // Check for challenge entry prize eligibility (Contest mode collections only)
+  if (collection.mode === CollectionMode.Contest && count > 0) {
+    // Import dynamically to avoid circular dependencies
+    const { checkAndAwardEntryPrize } = await import(
+      '~/server/games/daily-challenge/challenge-prize'
+    );
+    // Fire and forget - don't block the response
+    checkAndAwardEntryPrize({ userId, collectionId }).catch(() => {
+      // Silently ignore errors - prize distribution is not critical path
+    });
+  }
 
   // return imageIds for use in controller updateEntityMetrics
   return {

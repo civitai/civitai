@@ -9,6 +9,7 @@ import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { creatorProgramRouter } from '~/server/routers/creator-program.router';
 import { csamRouter } from '~/server/routers/csam.router';
+import { challengeRouter } from '~/server/routers/challenge.router';
 import { dailyChallengeRouter } from '~/server/routers/daily-challenge.router';
 import { donationGoalRouter } from '~/server/routers/donation-goal.router';
 import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
@@ -153,6 +154,7 @@ export const appRouter = router({
   games: gamesRouter,
   paddle: paddleRouter,
   blocklist: blocklistRouter,
+  challenge: challengeRouter,
   dailyChallenge: dailyChallengeRouter,
   vimeo: vimeoRouter,
   creatorProgram: creatorProgramRouter,

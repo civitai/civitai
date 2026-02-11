@@ -37,7 +37,7 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
                 name="date"
                 label="Publish Date"
                 placeholder="Select a date and time"
-                valueFormat="MMM D, YYYY hh:mm A"
+                valueFormat="lll"
                 minDate={minDate}
                 maxDate={maxDate}
                 popoverProps={{ withinPortal: true }}

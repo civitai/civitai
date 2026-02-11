@@ -1,6 +1,7 @@
 import type { MantineColorScheme } from '@mantine/core';
 import { ColorSchemeScript, createTheme, MantineProvider, Modal, colorsTuple } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
+import { DateLocaleProvider } from '~/providers/DateLocaleProvider';
 
 const theme = createTheme({
   components: {
@@ -244,7 +245,7 @@ export function ThemeProvider({
       <ColorSchemeScript defaultColorScheme={cookieColorScheme} />
       <MantineProvider theme={theme} defaultColorScheme={cookieColorScheme ?? 'dark'}>
         <Notifications />
-        {children}
+        <DateLocaleProvider>{children}</DateLocaleProvider>
       </MantineProvider>
     </>
   );

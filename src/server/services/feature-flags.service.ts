@@ -48,7 +48,7 @@ const featureFlags = createFeatureFlags({
   flux2Training: ['public'],
   zimageturboTraining: ['mod'],
   zimagebaseTraining: ['mod'],
-  flux2kleinTraining: ['mod'],
+  fluxTwoKleinTraining: ['mod'],
   ltx2Training: ['mod'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
@@ -146,6 +146,7 @@ const featureFlags = createFeatureFlags({
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
+  challengePlatform: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

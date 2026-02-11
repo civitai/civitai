@@ -1,4 +1,4 @@
-import { Anchor, Avatar, Button, CloseButton, Modal, Paper, Text } from '@mantine/core';
+import { Anchor, Button, CloseButton, Modal, Paper, Text } from '@mantine/core';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { ChallengeDetails } from '~/components/Challenges/challenge.utils';
@@ -6,15 +6,15 @@ import { useGetActiveChallenges } from '~/components/Challenges/challenge.utils'
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { formatDate, isFutureDate, startOfDay } from '~/utils/date-helpers';
-import { LogoBadge } from '~/components/Logo/LogoBadge';
 
 export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
   const dialog = useDialogContext();
 
-  const { challenges, loading } = useGetActiveChallenges();
+  const { challenges, loading, hasMore } = useGetActiveChallenges();
 
   const handleClose = () => {
     dialog.onClose();
@@ -43,8 +43,24 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
       ) : !!challenges.length ? (
         <div className="flex flex-col gap-5">
           {challenges.map((challenge) => (
-            <ChallengeInvitation2 key={challenge.articleId} {...challenge} onClose={handleClose} />
+            <ChallengeInvitation2
+              key={challenge.challengeId}
+              {...challenge}
+              onClose={handleClose}
+            />
           ))}
+          {hasMore && (
+            <div className="px-5 pb-5 text-center">
+              <Button
+                component={NextLink}
+                href="/challenges"
+                variant="subtle"
+                onClick={handleClose}
+              >
+                View all challenges →
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -59,17 +75,19 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
 
 function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClose: () => void }) {
   function handleAccept() {
-    const modelVersionId = props.resources?.[0].id;
-    if (modelVersionId)
+    if (props.resources.length) {
       generationGraphPanel.open({
-        type: 'modelVersion',
-        id: modelVersionId,
+        type: 'modelVersions',
+        ids: props.resources,
       });
     else generationGraphPanel.open();
 
     onClose();
   }
   const date = startOfDay(props.date);
+
+  // Use challengeId for navigation to challenge detail page
+  const detailUrl = `/challenges/${props.challengeId}`;
 
   return (
     <div className="flex flex-col">
@@ -94,31 +112,47 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
             {isFutureDate(date) ? 'Ends on ' : ''}
             {formatDate(props?.date)}
           </Text>
+          <Text size="sm" c="dimmed">
+            by{' '}
+            <Link
+              href={
+                props.createdBy.username
+                  ? `/user/${props.createdBy.username}`
+                  : `/user?id=${props.createdBy.id}`
+              }
+              passHref
+              legacyBehavior
+            >
+              <Anchor c="white" onClick={onClose}>
+                {props.createdBy.deletedAt ? '[deleted]' : props.createdBy.username}
+              </Anchor>
+            </Link>
+          </Text>
         </div>
       </div>
       <div className="flex flex-col gap-8 p-5">
         <div className="flex gap-2">
-          {props.judge === 'team' ? (
-            <LogoBadge className="size-16" />
-          ) : (
-            <Avatar
-              src="/images/civbot-judge.png"
-              alt="Robot floating head"
-              className="size-16 shrink-0 grow-0 rounded-full bg-gray-1 p-2 md:size-20 dark:bg-dark-5"
+          <div className="shrink-0">
+            <UserAvatar
+              user={{ ...props.createdBy, cosmetics: props.createdBy.cosmetics ?? [] }}
+              size="lg"
+              linkToProfile
             />
-          )}
+          </div>
           <Paper className="w-full rounded-tl-none dark:bg-dark-5" p="xs" radius="md" shadow="sm">
-            <Text size="lg">{props.invitation}</Text>
+            <Text size="lg">
+              {props.invitation || 'Join this challenge and showcase your creativity!'}
+            </Text>
           </Paper>
         </div>
 
         <div className="-mt-6 ml-auto">
           <Text size="sm">
             Click{' '}
-            <Link href={`/articles/${props.articleId}`} passHref legacyBehavior>
+            <Link href={detailUrl} passHref legacyBehavior>
               <Anchor onClick={onClose}>here</Anchor>
             </Link>{' '}
-            to read the full article for rules and prizes.
+            to see the full details, rules and prizes.
           </Text>
         </div>
 

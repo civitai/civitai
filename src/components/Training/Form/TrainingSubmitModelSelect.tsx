@@ -479,7 +479,7 @@ export const ModelSelect = ({
                       ]}
                     />
                   )}
-                  {features.flux2kleinTraining && (
+                  {features.fluxTwoKleinTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="pink"
