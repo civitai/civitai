@@ -11,6 +11,7 @@ import { IconArrowRight } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { workflowOptionById } from '~/shared/data-graph/generation/config/workflows';
+import { getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
 
 // =============================================================================
 // Types
@@ -61,6 +62,28 @@ function CompatibilityConfirmModalContent({
     ? workflowOptionById.get(pendingChange.targetWorkflowId)?.label ?? pendingChange.targetWorkflowId
     : undefined;
 
+  // Resolve ecosystem labels - use group names when available
+  const currentEcoLabel = isWorkflowChange
+    ? (() => {
+        const group = getEcosystemGroupByKey(pendingChange.currentEcosystem);
+        return group?.displayName ?? pendingChange.currentEcosystem;
+      })()
+    : undefined;
+
+  const targetEcoLabel = isWorkflowChange
+    ? (() => {
+        const group = getEcosystemGroupByKey(pendingChange.targetEcosystem);
+        return group?.displayName ?? pendingChange.targetEcosystem;
+      })()
+    : undefined;
+
+  const ecosystemLabel = !isWorkflowChange
+    ? (() => {
+        const group = getEcosystemGroupByKey(pendingChange.value);
+        return group?.displayName ?? pendingChange.ecosystemLabel;
+      })()
+    : undefined;
+
   const handleConfirm = () => {
     onConfirm();
     dialog.onClose();
@@ -79,11 +102,11 @@ function CompatibilityConfirmModalContent({
           {isWorkflowChange ? (
             <>
               <strong>{workflowLabel}</strong> is not available for{' '}
-              <strong>{pendingChange.currentEcosystem}</strong>.
+              <strong>{currentEcoLabel}</strong>.
             </>
           ) : (
             <>
-              <strong>{pendingChange.ecosystemLabel}</strong> doesn&apos;t support{' '}
+              <strong>{ecosystemLabel}</strong> doesn&apos;t support{' '}
               <strong>{currentWorkflowLabel}</strong>.
             </>
           )}
@@ -95,11 +118,11 @@ function CompatibilityConfirmModalContent({
               {isWorkflowChange ? 'Ecosystem' : 'Workflow'}
             </Text>
             <Text size="sm" fw={500} className="line-through opacity-60">
-              {isWorkflowChange ? pendingChange.currentEcosystem : currentWorkflowLabel}
+              {isWorkflowChange ? currentEcoLabel : currentWorkflowLabel}
             </Text>
             <IconArrowRight size={14} className="text-gray-5" />
             <Text size="sm" fw={600} c="blue">
-              {isWorkflowChange ? pendingChange.targetEcosystem : targetWorkflowLabel}
+              {isWorkflowChange ? targetEcoLabel : targetWorkflowLabel}
             </Text>
           </Group>
         </Card>

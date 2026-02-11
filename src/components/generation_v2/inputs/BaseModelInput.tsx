@@ -11,17 +11,19 @@ import { Group, Modal, Popover, Stack, Text, Tooltip, UnstyledButton } from '@ma
 import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { IconCheck, IconChevronDown, IconArrowRight } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { forwardRef, useCallback, useMemo } from 'react';
+import { forwardRef, useCallback, useEffect, useMemo } from 'react';
 
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
-  ecosystems,
   ecosystemByKey,
+  ecosystemById,
   ecosystemFamilies,
-  ecosystemFamilyById,
-  getGenerationEcosystemsForMediaType,
+  getEcosystemGroup,
+  getEcosystemDisplayItems,
+  type EcosystemDisplayItem,
 } from '~/shared/constants/basemodel.constants';
+import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
 
 // =============================================================================
 // Types
@@ -44,18 +46,10 @@ export interface BaseModelInputProps {
   outputType?: 'image' | 'video';
 }
 
-type EcosystemItem = {
-  key: string;
-  name: string;
-  description?: string;
-  familyId?: number;
-  compatible: boolean;
-};
-
 type FamilyGroup = {
   familyId: number | null;
   familyName: string | null;
-  items: EcosystemItem[];
+  items: EcosystemDisplayItem[]; // Changed from EcosystemItem
 };
 
 // =============================================================================
@@ -118,7 +112,7 @@ TriggerButton.displayName = 'TriggerButton';
 
 interface BaseModelListContentProps {
   value?: string;
-  recentItems: EcosystemItem[];
+  recentItems: EcosystemDisplayItem[];
   groupedByFamily: FamilyGroup[];
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
@@ -323,7 +317,7 @@ function BaseModelListContent({
 
 interface BaseModelSelectModalProps {
   value?: string;
-  recentItems: EcosystemItem[];
+  recentItems: EcosystemDisplayItem[];
   groupedByFamily: FamilyGroup[];
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
@@ -405,6 +399,14 @@ export function BaseModelInput({
     defaultValue: 'compatible',
   });
 
+  // Get/set last used ecosystem for groups
+  const getLastUsedEcosystem = useEcosystemGroupPreferencesStore(
+    (state) => state.getLastUsedEcosystem
+  );
+  const setLastUsedEcosystem = useEcosystemGroupPreferencesStore(
+    (state) => state.setLastUsedEcosystem
+  );
+
   // Track selection in recent ecosystems (keeps all unique selections, most recent first)
   const trackRecentSelection = useCallback(
     (ecosystem: string) => {
@@ -416,68 +418,49 @@ export function BaseModelInput({
     [setRecentEcosystems]
   );
 
-  // Build set of supported ecosystems from compatibleEcosystems prop
-  // Used to prioritize compatible ecosystems in sorting
-  const supportedEcosystems = useMemo(() => {
-    if (compatibleEcosystems && compatibleEcosystems.length > 0) {
-      return new Set(compatibleEcosystems);
-    }
-    return null; // No filtering
-  }, [compatibleEcosystems]);
-
-  // Get ecosystems valid for the current output type (image/video)
-  const outputTypeEcosystems = useMemo(() => {
-    if (!outputType) return null; // No filtering if no output type specified
-    const keys = getGenerationEcosystemsForMediaType(outputType);
-    return new Set(keys);
-  }, [outputType]);
-
-  // Get ecosystem items filtered by output type, with compatibility marking
-  const items = useMemo((): EcosystemItem[] => {
-    return ecosystems
-      .filter((eco) => {
-        // Filter by output type if specified
-        if (outputTypeEcosystems && !outputTypeEcosystems.has(eco.key)) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        // Sort compatible items first, then by sortOrder
-        const aCompatible = !supportedEcosystems || supportedEcosystems.has(a.key);
-        const bCompatible = !supportedEcosystems || supportedEcosystems.has(b.key);
-        if (aCompatible !== bCompatible) return aCompatible ? -1 : 1;
-        return (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
-      })
-      .map((eco) => {
-        // Get description from ecosystem's family
-        const family = eco.familyId ? ecosystemFamilyById.get(eco.familyId) : undefined;
-        // Use isCompatible prop if provided, otherwise fall back to supportedEcosystems
-        const compatible = isCompatible
-          ? isCompatible(eco.key)
-          : !supportedEcosystems || supportedEcosystems.has(eco.key);
-        return {
-          key: eco.key,
-          name: eco.displayName,
-          description: eco.description ?? family?.description,
-          familyId: eco.familyId,
-          compatible,
-        };
-      });
-  }, [supportedEcosystems, isCompatible, outputTypeEcosystems]);
+  // Get display items: groups and standalone ecosystems
+  const items = useMemo((): EcosystemDisplayItem[] => {
+    return getEcosystemDisplayItems({
+      compatibleEcosystems,
+      isCompatible,
+      outputType,
+    });
+  }, [compatibleEcosystems, isCompatible, outputType]);
 
   // Check if there are any incompatible items (to show the toggle)
   const hasIncompatibleItems = useMemo(() => {
     return items.some((item) => !item.compatible);
   }, [items]);
 
+  // Track when value changes - update last used ecosystem for groups
+  useEffect(() => {
+    if (!value) return;
+
+    const eco = ecosystemByKey.get(value);
+    if (!eco) return;
+
+    const group = getEcosystemGroup(eco.id);
+    if (group) {
+      // This ecosystem is part of a group - track it
+      setLastUsedEcosystem(group.id, value);
+    }
+  }, [value, setLastUsedEcosystem]);
+
   // Get readable name for current value
   const readableName = useMemo(() => {
-    const eco = value ? ecosystemByKey.get(value) : undefined;
-    return eco?.displayName ?? value ?? 'Select';
+    if (!value) return 'Select';
+
+    const eco = ecosystemByKey.get(value);
+    if (!eco) return value;
+
+    // Check if this ecosystem is in a group
+    const group = getEcosystemGroup(eco.id);
+    return group ? group.displayName : eco.displayName;
   }, [value]);
 
   // Group items by family
   const groupedByFamily = useMemo(() => {
-    const familyMap = new Map<number | null, EcosystemItem[]>();
+    const familyMap = new Map<number | null, EcosystemDisplayItem[]>();
 
     for (const item of items) {
       const familyId = item.familyId ?? null;
@@ -519,16 +502,41 @@ export function BaseModelInput({
   }, [items]);
 
   const handleSelect = (key: string) => {
-    onChange?.(key);
+    // Check if this is a group or ecosystem
+    const item = items.find((i) => i.key === key);
+
+    if (item?.type === 'group') {
+      // User selected a group - check for last used ecosystem
+      const lastUsed = getLastUsedEcosystem(item.key);
+
+      if (lastUsed) {
+        // Use the last used ecosystem if it's still in the group
+        const lastUsedEco = ecosystemByKey.get(lastUsed);
+        if (lastUsedEco && item.ecosystemIds?.includes(lastUsedEco.id)) {
+          onChange?.(lastUsed);
+          trackRecentSelection(key);
+          closePopover();
+          return;
+        }
+      }
+
+      // No last used ecosystem or it's no longer in the group - use default
+      const defaultEco = ecosystemById.get(item.defaultEcosystemId!);
+      onChange?.(defaultEco!.key);
+    } else {
+      // User selected standalone ecosystem
+      onChange?.(key);
+    }
+
     trackRecentSelection(key);
     closePopover();
   };
 
-  // Get recent items - all recent items that exist in items list
+  // Get recent items - resolve recent keys to current display items
   const recentItems = useMemo(() => {
     return recentEcosystems
-      .map((eco) => items.find((item) => item.key === eco))
-      .filter((item): item is EcosystemItem => item !== undefined);
+      .map((key) => items.find((item) => item.key === key))
+      .filter((item): item is EcosystemDisplayItem => item !== undefined);
   }, [recentEcosystems, items]);
 
   // Show recent tab only if there are recent items that don't match the current selection

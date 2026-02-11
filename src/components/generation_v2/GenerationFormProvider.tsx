@@ -12,7 +12,12 @@ import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { ecosystemByKey, getGenerationSupport } from '~/shared/constants/basemodel.constants';
+import {
+  ecosystemByKey,
+  getGenerationSupport,
+  ecosystemGroups,
+  getEcosystemGroup,
+} from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
@@ -57,7 +62,21 @@ const storageAdapter = createLocalStorageAdapter({
       condition: (ctx) => ctx.workflow === 'txt2img:draft',
     },
     { name: 'workflow', keys: ['images', 'video'], scope: 'workflow' },
-    // Model-family specific settings scoped to ecosystem
+    // Ecosystem groups - settings scoped by group ID for grouped ecosystems
+    // This allows settings to persist when switching between variants (e.g., Wan 2.5 <-> Wan 2.2)
+    ...ecosystemGroups.map((group) => ({
+      name: 'ecosystem',
+      keys: '*' as const,
+      scope: group.id,
+      condition: (ctx: Record<string, unknown>) => {
+        const ecoKey = ctx.ecosystem as string | undefined;
+        if (!ecoKey) return false;
+        const eco = ecosystemByKey.get(ecoKey);
+        if (!eco) return false;
+        return group.ecosystemIds.includes(eco.id);
+      },
+    })),
+    // Model-family specific settings scoped to individual ecosystem (for standalone ecosystems)
     // Values for inactive nodes are automatically retained in storage
     // (e.g., cfgScale/steps when switching to Ultra mode which doesn't have them)
     { name: 'ecosystem', keys: '*', scope: 'ecosystem' },
