@@ -448,6 +448,7 @@ export interface User {
   challengesCreated?: Challenge[];
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
+  challengeEventsCreated?: ChallengeEvent[];
 }
 
 export interface CustomerSubscription {
@@ -2834,6 +2835,8 @@ export interface Challenge {
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
+  eventId: number | null;
+  event?: ChallengeEvent | null;
 }
 
 export interface ChallengeJudge {
@@ -2867,6 +2870,21 @@ export interface ChallengeWinner {
   pointsAwarded: number;
   reason: string | null;
   createdAt: Date;
+}
+
+export interface ChallengeEvent {
+  id: number;
+  title: string;
+  description: string | null;
+  titleColor: string | null;
+  startDate: Date;
+  endDate: Date;
+  active: boolean;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  updatedAt: Date;
+  challenges?: Challenge[];
 }
 
 export interface QuestionRank {

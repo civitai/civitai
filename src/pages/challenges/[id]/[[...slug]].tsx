@@ -1070,7 +1070,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                   filters={{
                     collectionId: challenge.collectionId ?? undefined,
                     period: 'AllTime',
-                    sort: ImageSort.Newest,
+                    sort: ImageSort.Random,
                   }}
                   disableStoreFilters
                 />

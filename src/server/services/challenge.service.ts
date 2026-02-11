@@ -13,12 +13,15 @@ import {
   ChallengeSort,
   type ChallengeCompletionSummary,
   type ChallengeDetail,
+  type ChallengeEventListItem,
   type ChallengeListItem,
   type GetInfiniteChallengesInput,
   type GetModeratorChallengesInput,
+  type GetChallengeEventsInput,
   type ImageEligibilityResult,
   type UpcomingTheme,
   type UpsertChallengeInput,
+  type UpsertChallengeEventInput,
   type UpdateChallengeConfigInput,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
@@ -128,8 +131,18 @@ function buildChallengeCursor(
 
 // Service functions
 export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
-  const { query, status, source, sort, userId, modelVersionId, includeEnded, limit, cursor } =
-    input;
+  const {
+    query,
+    status,
+    source,
+    sort,
+    userId,
+    modelVersionId,
+    includeEnded,
+    excludeEventChallenges,
+    limit,
+    cursor,
+  } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
   const conditions: Prisma.Sql[] = [];
@@ -169,6 +182,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     conditions.push(Prisma.sql`${modelVersionId} = ANY(c."modelVersionIds")`);
   }
 
+  // Exclude challenges that belong to an event (shown in featured section instead)
+  if (excludeEventChallenges) {
+    conditions.push(Prisma.sql`c."eventId" IS NULL`);
+  }
+
   // Composite cursor for stable keyset pagination across all sort types
   // The primary sort dimension is status priority (Active=0 < Scheduled=1 < others=2),
   // so cursor conditions must account for status group transitions.
@@ -183,23 +201,33 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     let sortKeysetCondition: Prisma.Sql;
     switch (sort) {
       case ChallengeSort.EndingSoon:
-        sortKeysetCondition = Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        sortKeysetCondition = Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${
+          sortValue as Date
+        } AND c.id < ${id}))`;
         break;
       case ChallengeSort.MostEntries:
         sortKeysetCondition = Prisma.sql`(
-          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${sortValue as number}
+          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${
+            sortValue as number
+          }
           OR (
-            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${sortValue as number}
+            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${
+              sortValue as number
+            }
             AND c.id < ${id}
           )
         )`;
         break;
       case ChallengeSort.HighestPrize:
-        sortKeysetCondition = Prisma.sql`(c."prizePool" < ${sortValue as number} OR (c."prizePool" = ${sortValue as number} AND c.id < ${id}))`;
+        sortKeysetCondition = Prisma.sql`(c."prizePool" < ${
+          sortValue as number
+        } OR (c."prizePool" = ${sortValue as number} AND c.id < ${id}))`;
         break;
       case ChallengeSort.Newest:
       default:
-        sortKeysetCondition = Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        sortKeysetCondition = Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${
+          sortValue as Date
+        } AND c.id < ${id}))`;
         break;
     }
 
@@ -378,6 +406,13 @@ export async function getChallengeDetail(
 ): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
+
+  // Fetch eventId (not in the shared getChallengeById helper)
+  const challengeEventData = await dbRead.challenge.findUnique({
+    where: { id },
+    select: { eventId: true },
+  });
+  const eventId = challengeEventData?.eventId ?? null;
 
   // Visibility check: only show challenges that are visible to the public
   // unless bypassVisibility is true (for moderators)
@@ -562,6 +597,7 @@ export async function getChallengeDetail(
     visibleAt: challenge.visibleAt,
     status: challenge.status,
     source: challenge.source,
+    eventId,
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
     modelVersionIds: challenge.modelVersionIds,
@@ -706,7 +742,7 @@ export async function upsertChallenge({
   userId,
   ...input
 }: UpsertChallengeInput & { userId: number }) {
-  const { id, coverImage, judgeId, ...data } = input;
+  const { id, coverImage, judgeId, eventId, ...data } = input;
 
   // Defense-in-depth: validate endsAt > startsAt (also validated by Zod schema)
   if (data.endsAt <= data.startsAt) {
@@ -784,6 +820,7 @@ export async function upsertChallenge({
           ...data,
           coverImageId,
           judgeId: judgeId ?? null,
+          eventId: eventId ?? null,
           modelVersionIds: data.modelVersionIds ?? [],
           prizes: data.prizes,
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
@@ -851,6 +888,7 @@ export async function upsertChallenge({
           status,
           coverImageId,
           judgeId: judgeId ?? null,
+          eventId: eventId ?? null,
           collectionId: collection.id,
           createdById: userId,
           modelVersionIds: data.modelVersionIds ?? [],
@@ -1319,4 +1357,232 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 
   await setChallengeConfig({ defaultJudgeId: input.defaultJudgeId });
   return getChallengeSystemConfig();
+}
+
+// --- Challenge Events ---
+
+/**
+ * Get active challenge events with their challenges.
+ * Returns events where active=true and endDate >= now, ordered by startDate.
+ */
+export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
+  const events = await dbRead.challengeEvent.findMany({
+    where: {
+      active: true,
+      endDate: { gte: new Date() },
+    },
+    orderBy: { startDate: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      titleColor: true,
+      startDate: true,
+      endDate: true,
+      challenges: {
+        where: {
+          visibleAt: { lte: new Date() },
+          status: { not: ChallengeStatus.Cancelled },
+        },
+        orderBy: { startsAt: 'asc' },
+        select: {
+          id: true,
+          title: true,
+          theme: true,
+          invitation: true,
+          coverImageId: true,
+          startsAt: true,
+          endsAt: true,
+          status: true,
+          source: true,
+          prizePool: true,
+          modelVersionIds: true,
+          collectionId: true,
+          createdById: true,
+          judgeId: true,
+        },
+      },
+    },
+  });
+
+  // Batch-enrich all challenges across all events
+  const allChallenges = events.flatMap((e) => e.challenges);
+  if (allChallenges.length === 0) {
+    return events.map((e) => ({ ...e, challenges: [] }));
+  }
+
+  // Get judge user IDs for challenges that have judges
+  const judgeIds = [...new Set(allChallenges.map((c) => c.judgeId).filter(isDefined))];
+  const judgeUserMap = new Map<number, number>();
+  if (judgeIds.length > 0) {
+    const judges = await dbRead.challengeJudge.findMany({
+      where: { id: { in: judgeIds } },
+      select: { id: true, userId: true },
+    });
+    for (const j of judges) judgeUserMap.set(j.id, j.userId);
+  }
+
+  // Collect all display user IDs (judge user or creator)
+  const displayUserIds = [
+    ...new Set(
+      allChallenges.map((c) => (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById)
+    ),
+  ];
+
+  // Batch-fetch users, profile pictures, cosmetics, cover images, entry counts
+  const [users, profilePictures, cosmetics] = await Promise.all([
+    dbRead.user
+      .findMany({
+        where: { id: { in: displayUserIds } },
+        select: { id: true, username: true, image: true, deletedAt: true },
+      })
+      .then((u) => new Map(u.map((x) => [x.id, x]))),
+    getProfilePicturesForUsers(displayUserIds),
+    getCosmeticsForUsers(displayUserIds),
+  ]);
+
+  const coverImageIds = allChallenges.map((c) => c.coverImageId).filter(isDefined);
+  const coverImages =
+    coverImageIds.length > 0
+      ? await dbRead.image
+          .findMany({ where: { id: { in: coverImageIds } }, select: imageSelect })
+          .then((imgs) => new Map(imgs.map((img) => [img.id, img])))
+      : new Map();
+
+  // Get entry counts for all challenges
+  const collectionIds = allChallenges.map((c) => c.collectionId).filter(isDefined);
+  const entryCounts = new Map<number, number>();
+  if (collectionIds.length > 0) {
+    const counts = await dbRead.$queryRaw<
+      Array<{ collectionId: number; count: bigint }>
+    >`SELECT "collectionId", COUNT(*) as count FROM "CollectionItem" WHERE "collectionId" IN (${Prisma.join(
+      collectionIds
+    )}) AND status = 'ACCEPTED' GROUP BY "collectionId"`;
+    for (const row of counts) entryCounts.set(row.collectionId, Number(row.count));
+  }
+
+  return events.map((event) => ({
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    titleColor: event.titleColor,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    challenges: event.challenges.map((c) => {
+      const displayUserId = (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById;
+      const user = users.get(displayUserId);
+      const coverImage = c.coverImageId ? coverImages.get(c.coverImageId) : null;
+
+      return {
+        id: c.id,
+        title: c.title,
+        theme: c.theme,
+        invitation: c.invitation,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        status: c.status,
+        source: c.source,
+        prizePool: c.prizePool,
+        collectionId: c.collectionId,
+        entryCount: c.collectionId ? entryCounts.get(c.collectionId) ?? 0 : 0,
+        coverImage: coverImage
+          ? {
+              id: coverImage.id,
+              url: coverImage.url,
+              nsfwLevel: coverImage.nsfwLevel,
+              hash: coverImage.hash,
+              width: coverImage.width,
+              height: coverImage.height,
+              type: coverImage.type,
+            }
+          : null,
+        modelVersionIds: c.modelVersionIds ?? [],
+        createdBy: {
+          id: displayUserId,
+          username: user?.username ?? null,
+          image: user?.image ?? null,
+          profilePicture: profilePictures[displayUserId] ?? null,
+          cosmetics: cosmetics[displayUserId] ?? null,
+          deletedAt: user?.deletedAt ?? null,
+        },
+      };
+    }),
+  }));
+}
+
+/**
+ * Get all challenge events (for moderator management).
+ */
+export async function getChallengeEvents(input: GetChallengeEventsInput) {
+  const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
+  return dbRead.challengeEvent.findMany({
+    where,
+    orderBy: { startDate: 'desc' },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      titleColor: true,
+      startDate: true,
+      endDate: true,
+      active: true,
+      createdAt: true,
+      _count: { select: { challenges: true } },
+    },
+  });
+}
+
+/**
+ * Create or update a challenge event.
+ */
+export async function upsertChallengeEvent({
+  userId,
+  ...input
+}: UpsertChallengeEventInput & { userId: number }) {
+  const { id, ...data } = input;
+
+  if (data.endDate <= data.startDate) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'End date must be after start date',
+    });
+  }
+
+  // Auto-deactivate other events when setting this one as active
+  if (data.active) {
+    await dbWrite.challengeEvent.updateMany({
+      where: {
+        active: true,
+        ...(id ? { id: { not: id } } : {}),
+      },
+      data: { active: false },
+    });
+  }
+
+  if (id) {
+    return dbWrite.challengeEvent.update({
+      where: { id },
+      data,
+    });
+  }
+
+  return dbWrite.challengeEvent.create({
+    data: {
+      ...data,
+      createdById: userId,
+    },
+  });
+}
+
+/**
+ * Delete a challenge event (unlinks challenges, does not delete them).
+ */
+export async function deleteChallengeEvent(id: number) {
+  // Unlink all challenges first
+  await dbWrite.challenge.updateMany({
+    where: { eventId: id },
+    data: { eventId: null },
+  });
+  await dbWrite.challengeEvent.delete({ where: { id } });
+  return { success: true };
 }

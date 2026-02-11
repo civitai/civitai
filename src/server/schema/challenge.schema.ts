@@ -87,6 +87,7 @@ export type ChallengeDetail = {
   visibleAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  eventId: number | null;
   nsfwLevel: number;
   allowedNsfwLevel: number;
   modelVersionIds: number[];
@@ -186,6 +187,7 @@ export const getInfiniteChallengesSchema = z.object({
   userId: z.number().optional(),
   modelVersionId: z.number().optional(),
   includeEnded: z.boolean().default(false),
+  excludeEventChallenges: z.boolean().default(false),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
 
@@ -242,6 +244,7 @@ export const upsertChallengeBaseSchema = z.object({
   visibleAt: z.date(),
   status: z.enum(ChallengeStatus).default(ChallengeStatus.Scheduled),
   source: z.enum(ChallengeSource).default(ChallengeSource.System),
+  eventId: z.number().optional().nullable(),
 });
 
 // Refined schema with cross-field validation (used by tRPC router)
@@ -286,3 +289,33 @@ export const updateChallengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
 });
 export type UpdateChallengeConfigInput = z.infer<typeof updateChallengeConfigSchema>;
+
+// --- Challenge Events ---
+
+export type ChallengeEventListItem = {
+  id: number;
+  title: string;
+  description: string | null;
+  titleColor: string | null;
+  startDate: Date;
+  endDate: Date;
+  challenges: ChallengeListItem[];
+};
+
+// Moderator: Create/Update challenge event
+export const upsertChallengeEventSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().min(3).max(200),
+  description: z.string().optional().nullable(),
+  titleColor: z.string().optional().nullable(),
+  startDate: z.date(),
+  endDate: z.date(),
+  active: z.boolean().default(true),
+});
+export type UpsertChallengeEventInput = z.infer<typeof upsertChallengeEventSchema>;
+
+// Moderator: Get events list
+export type GetChallengeEventsInput = z.infer<typeof getChallengeEventsSchema>;
+export const getChallengeEventsSchema = z.object({
+  activeOnly: z.boolean().default(false),
+});

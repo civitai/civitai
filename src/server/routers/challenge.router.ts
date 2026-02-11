@@ -2,12 +2,14 @@ import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
   deleteChallengeSchema,
+  getChallengeEventsSchema,
   getChallengeWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   upsertChallengeSchema,
+  upsertChallengeEventSchema,
   updateChallengeConfigSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -21,14 +23,18 @@ import {
 import {
   checkImageEligibility,
   deleteChallenge,
+  deleteChallengeEvent,
   endChallengeAndPickWinners,
+  getActiveEvents,
   getChallengeDetail,
+  getChallengeEvents,
   getChallengeWinners,
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
   getUserEntryCount,
   upsertChallenge,
+  upsertChallengeEvent,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
@@ -118,4 +124,27 @@ export const challengeRouter = router({
     .input(deleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => deleteChallenge(input.id)),
+
+  // Public: Get active challenge events for featured section
+  getActiveEvents: publicProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getActiveEvents()),
+
+  // Moderator: Get all challenge events
+  getEvents: moderatorProcedure
+    .input(getChallengeEventsSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getChallengeEvents(input)),
+
+  // Moderator: Create or update a challenge event
+  upsertEvent: moderatorProcedure
+    .input(upsertChallengeEventSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => upsertChallengeEvent({ ...input, userId: ctx.user.id })),
+
+  // Moderator: Delete a challenge event
+  deleteEvent: moderatorProcedure
+    .input(deleteChallengeSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => deleteChallengeEvent(input.id)),
 });
