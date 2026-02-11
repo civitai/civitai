@@ -69,7 +69,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
-import { generationFormStore, generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
+import { generationFormStore } from '~/store/generation-form.store';
 import { trpc } from '~/utils/trpc';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -85,9 +86,9 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 /** Open the generation panel for a challenge's model versions. */
 function openChallengeGenerator(modelVersionIds: number[]) {
   if (modelVersionIds.length) {
-    generationPanel.open({ type: 'modelVersions', ids: modelVersionIds.slice(0, 1) });
+    generationGraphPanel.open({ type: 'modelVersions', ids: modelVersionIds.slice(0, 1) });
   } else {
-    generationPanel.open();
+    generationGraphPanel.open();
   }
   generationFormStore.setType('image');
 }
@@ -679,7 +680,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                         color="blue"
                         size="md"
                         onClick={() => {
-                          generationPanel.open({ type: 'modelVersion', id: m.versionId });
+                          generationGraphPanel.open({ type: 'modelVersion', id: m.versionId });
                           generationFormStore.setType('image');
                         }}
                         aria-label={`Generate with ${m.name}`}

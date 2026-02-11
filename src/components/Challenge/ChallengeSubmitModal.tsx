@@ -609,7 +609,7 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
             ...asset,
             params: {
               ...step.params,
-              seed: asset.seed,
+              seed: asset.seed ?? undefined,
               completed: step.completedAt ? new Date(step.completedAt) : undefined,
               stepName: step.name,
             },

@@ -25,6 +25,7 @@ import { GenerationFormLegacy } from '~/components/ImageGeneration/GenerationFor
 import { GeneratorToggleBanner } from '~/components/ImageGeneration/GeneratorToggle';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
@@ -34,6 +35,7 @@ type GenerationPanelView = 'queue' | 'generate' | 'feed';
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const useLegacy = useLegacyGeneratorStore((state) => state.useLegacy);
   const hasExplicitPreference = useLegacyGeneratorStore((state) => state.hasExplicitPreference);
   const toggleGenerator = useLegacyGeneratorStore((state) => state.toggle);
