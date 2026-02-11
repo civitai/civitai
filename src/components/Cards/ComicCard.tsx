@@ -3,6 +3,7 @@ import { IconPhoto } from '@tabler/icons-react';
 import Link from 'next/link';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { RouterOutput } from '~/types/router';
 import { formatRelativeDate, formatGenreLabel } from '~/utils/comic-helpers';
@@ -11,6 +12,8 @@ import { slugit } from '~/utils/string-helpers';
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
 
 export function ComicCard({ comic }: { comic: ComicItem }) {
+  const guardImage = comic.coverImage ?? { id: comic.id, nsfwLevel: comic.nsfwLevel };
+
   return (
     <Link
       href={`/comics/${comic.id}/${slugit(comic.name)}`}
@@ -18,24 +21,34 @@ export function ComicCard({ comic }: { comic: ComicItem }) {
     >
       {/* Cover Image */}
       <div className="relative aspect-[3/4] overflow-hidden bg-gray-900">
-        {comic.thumbnailUrl ? (
-          <img
-            src={getEdgeUrl(comic.thumbnailUrl, { width: 450 })}
-            alt={comic.name}
-            className="h-full w-full object-cover transition-transform group-hover:scale-105"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center">
-            <IconPhoto size={36} className="text-gray-600" />
-          </div>
-        )}
-
-        {/* NSFW badge */}
-        {comic.nsfwLevel > 1 && (
-          <Badge size="xs" color="red" variant="filled" className="absolute left-2 top-2">
-            NSFW
-          </Badge>
-        )}
+        <ImageGuard2 image={guardImage}>
+          {(safe) => (
+            <>
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+              {comic.thumbnailUrl ? (
+                safe ? (
+                  <img
+                    src={getEdgeUrl(comic.thumbnailUrl, { width: 450 })}
+                    alt={comic.name}
+                    className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                  />
+                ) : (
+                  <div className="relative h-full w-full overflow-hidden">
+                    <img
+                      src={getEdgeUrl(comic.thumbnailUrl, { width: 450 })}
+                      alt={comic.name}
+                      className="h-full w-full scale-110 object-cover blur-xl"
+                    />
+                  </div>
+                )
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <IconPhoto size={36} className="text-gray-600" />
+                </div>
+              )}
+            </>
+          )}
+        </ImageGuard2>
 
         {/* Genre badge */}
         {comic.genre && (

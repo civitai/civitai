@@ -22,7 +22,10 @@ import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/work
 import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
-import { rollupNsfwFromPanel } from '~/server/services/comics/nsfw-rollup';
+import {
+  updateComicChapterNsfwLevels,
+  updateComicProjectNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import { ingestImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
@@ -706,6 +709,7 @@ export const comicsRouter = router({
               projectId: true,
               position: true,
               name: true,
+              nsfwLevel: true,
               publishedAt: true,
               panels: {
                 where: {
@@ -718,6 +722,9 @@ export const comicsRouter = router({
                   imageUrl: true,
                   prompt: true,
                   position: true,
+                  image: {
+                    select: { id: true, nsfwLevel: true, hash: true, width: true, height: true },
+                  },
                 },
               },
             },
@@ -740,6 +747,7 @@ export const comicsRouter = router({
         id: project.id,
         name: project.name,
         description: project.description,
+        nsfwLevel: project.nsfwLevel,
         coverImage: project.coverImage,
         heroImage: project.heroImage,
         heroImagePosition: project.heroImagePosition,
@@ -1013,6 +1021,11 @@ export const comicsRouter = router({
         projectId_position: { projectId: input.projectId, position: input.chapterPosition },
       },
     });
+
+    // Recalculate project NSFW level after chapter removal
+    updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
+      console.error(`Failed to update project NSFW after chapter delete:`, e)
+    );
 
     return { success: true };
   }),
@@ -1444,6 +1457,14 @@ export const comicsRouter = router({
       where: { id: input.panelId },
     });
 
+    // Recalculate NSFW levels after panel removal
+    updateComicChapterNsfwLevels([panel.projectId]).catch((e) =>
+      console.error(`Failed to update chapter NSFW after panel delete:`, e)
+    );
+    updateComicProjectNsfwLevels([panel.projectId]).catch((e) =>
+      console.error(`Failed to update project NSFW after panel delete:`, e)
+    );
+
     return { success: true };
   }),
 
@@ -1655,12 +1676,9 @@ export const comicsRouter = router({
             },
           });
 
-          // Trigger image ingestion + NSFW rollup asynchronously
+          // Trigger image ingestion — scan callback handles NSFW level rollup
           ingestImageById({ id: image.id }).catch((e) =>
             console.error(`Failed to ingest comic panel image ${image.id}:`, e)
-          );
-          rollupNsfwFromPanel(panel.id).catch((e) =>
-            console.error(`Failed to rollup NSFW for panel ${panel.id}:`, e)
           );
 
           return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
@@ -2084,11 +2102,9 @@ export const comicsRouter = router({
           },
         });
 
+        // Trigger image ingestion — scan callback handles NSFW level rollup
         ingestImageById({ id: image.id }).catch((e) =>
           console.error(`Failed to ingest enhanced panel image ${image.id}:`, e)
-        );
-        rollupNsfwFromPanel(panel.id).catch((e) =>
-          console.error(`Failed to rollup NSFW for panel ${panel.id}:`, e)
         );
 
         return panel;
@@ -2328,9 +2344,12 @@ export const comicsRouter = router({
         },
       });
 
-      // Trigger NSFW rollup
-      rollupNsfwFromPanel(panel.id).catch((e) =>
-        console.error(`Failed to rollup NSFW for panel ${panel.id}:`, e)
+      // Update NSFW levels — image is already scanned so update directly
+      updateComicChapterNsfwLevels([input.projectId]).catch((e) =>
+        console.error(`Failed to update chapter NSFW for project ${input.projectId}:`, e)
+      );
+      updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
+        console.error(`Failed to update project NSFW for project ${input.projectId}:`, e)
       );
 
       return panel;

@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { ChapterComments } from '~/components/Comics/ChapterComments';
 import { Page } from '~/components/AppLayout/Page';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -86,9 +87,9 @@ function ComicOverview({ project }: { project: Project }) {
   const currentUser = useCurrentUser();
   const totalPanels = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
   // Hero image for the wide banner, fallback to cover, then first panel
+  const heroImage = project.heroImage ?? project.coverImage;
   const heroUrl =
-    project.heroImage?.url ??
-    project.coverImage?.url ??
+    heroImage?.url ??
     project.chapters.flatMap((ch) => ch.panels).find((p) => p.imageUrl)?.imageUrl ??
     null;
 
@@ -113,6 +114,9 @@ function ComicOverview({ project }: { project: Project }) {
 
   const projectSlug = slugit(project.name);
 
+  // Guard image for hero — use heroImage/coverImage if available, otherwise project-level
+  const heroGuardImage = heroImage ?? { id: project.id, nsfwLevel: project.nsfwLevel };
+
   return (
     <>
       <Meta title={`${project.name} - Civitai Comics`} />
@@ -121,15 +125,33 @@ function ComicOverview({ project }: { project: Project }) {
         {/* Hero image */}
         <div className={styles.overviewHero}>
           {heroUrl ? (
-            <>
-              <img
-                src={getEdgeUrl(heroUrl, { width: 1200 })}
-                alt={project.name}
-                className={styles.overviewHeroImage}
-                style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
-              />
-              <div className={styles.overviewHeroGradient} />
-            </>
+            <ImageGuard2 image={heroGuardImage}>
+              {(safe) =>
+                safe ? (
+                  <>
+                    <img
+                      src={getEdgeUrl(heroUrl, { width: 1200 })}
+                      alt={project.name}
+                      className={styles.overviewHeroImage}
+                      style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
+                    />
+                    <div className={styles.overviewHeroGradient} />
+                  </>
+                ) : (
+                  <>
+                    <div className="relative h-full w-full overflow-hidden">
+                      <img
+                        src={getEdgeUrl(heroUrl, { width: 1200 })}
+                        alt={project.name}
+                        className={`${styles.overviewHeroImage} blur-xl scale-110`}
+                        style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
+                      />
+                    </div>
+                    <div className={styles.overviewHeroGradient} />
+                  </>
+                )
+              }
+            </ImageGuard2>
           ) : (
             <div className={styles.overviewHeroEmpty}>
               <IconPhoto size={64} />
@@ -208,6 +230,10 @@ function ComicOverview({ project }: { project: Project }) {
               {project.chapters.map((ch) => {
                 const thumbUrl = ch.panels[0]?.imageUrl ?? null;
                 const isRead = readPositions ? readPositions.includes(ch.position) : false;
+                const chapterGuardImage = {
+                  id: ch.projectId * 1000 + ch.position,
+                  nsfwLevel: ch.nsfwLevel,
+                };
 
                 return (
                   <Link
@@ -221,7 +247,19 @@ function ComicOverview({ project }: { project: Project }) {
                     <span className={styles.chapterNumber}>{ch.position + 1}</span>
                     <div className={styles.chapterThumb}>
                       {thumbUrl ? (
-                        <img src={getEdgeUrl(thumbUrl, { width: 120 })} alt={ch.name} />
+                        <ImageGuard2 image={chapterGuardImage}>
+                          {(safe) =>
+                            safe ? (
+                              <img src={getEdgeUrl(thumbUrl, { width: 120 })} alt={ch.name} />
+                            ) : (
+                              <img
+                                src={getEdgeUrl(thumbUrl, { width: 120 })}
+                                alt={ch.name}
+                                className="blur-md scale-110"
+                              />
+                            )
+                          }
+                        </ImageGuard2>
                       ) : (
                         <div className={`${styles.chapterThumb} ${styles.chapterThumbEmpty}`}>
                           <IconPhoto size={18} />
@@ -424,8 +462,34 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             </div>
           ) : (
             <div className={styles.readerPanels}>
-              {panels.map((panel) =>
-                panel.imageUrl ? (
+              {panels.map((panel) => {
+                if (!panel.imageUrl) return null;
+                if (panel.image) {
+                  return (
+                    <ImageGuard2 key={panel.id} image={panel.image}>
+                      {(safe) =>
+                        safe ? (
+                          <img
+                            src={panel.imageUrl!}
+                            alt={panel.prompt}
+                            loading="lazy"
+                            className={styles.readerPanel}
+                          />
+                        ) : (
+                          <div className="relative overflow-hidden">
+                            <img
+                              src={panel.imageUrl!}
+                              alt={panel.prompt}
+                              loading="lazy"
+                              className={`${styles.readerPanel} blur-xl scale-110`}
+                            />
+                          </div>
+                        )
+                      }
+                    </ImageGuard2>
+                  );
+                }
+                return (
                   <img
                     key={panel.id}
                     src={panel.imageUrl}
@@ -433,8 +497,8 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     loading="lazy"
                     className={styles.readerPanel}
                   />
-                ) : null
-              )}
+                );
+              })}
             </div>
           )}
         </Container>
