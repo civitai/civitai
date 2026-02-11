@@ -56,6 +56,7 @@ const storageAdapter = createLocalStorageAdapter({
       scope: 'workflow',
       condition: (ctx) => ctx.workflow === 'txt2img:draft',
     },
+    { name: 'workflow', keys: ['images', 'video'], scope: 'workflow' },
     // Model-family specific settings scoped to ecosystem
     // Values for inactive nodes are automatically retained in storage
     // (e.g., cfgScale/steps when switching to Ultra mode which doesn't have them)
@@ -258,12 +259,12 @@ function InnerProvider({
   useEffect(() => {
     function syncPreferredEcosystem() {
       const snapshot = graph.getSnapshot() as Record<string, unknown>;
-      const baseModel = snapshot.baseModel as string | undefined;
+      const ecosystem = snapshot.ecosystem as string | undefined;
       const workflow = snapshot.workflow as string | undefined;
-      if (!baseModel || !workflow) return;
+      if (!ecosystem || !workflow) return;
 
       // Update the preferred ecosystem for this specific workflow
-      workflowPreferences.setPreferredEcosystem(workflow, baseModel);
+      workflowPreferences.setPreferredEcosystem(workflow, ecosystem);
     }
 
     // Subscribe to graph changes

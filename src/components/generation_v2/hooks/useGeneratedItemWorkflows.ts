@@ -9,7 +9,6 @@
 import { useMemo } from 'react';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
-  getWorkflowsForOutputType,
   getOutputTypeForWorkflow,
   getInputTypeForWorkflow,
   getValidEcosystemForWorkflow,
@@ -17,8 +16,12 @@ import {
   workflowConfigByKey,
   type WorkflowOption,
   type WorkflowCategory,
+  getEcosystemsForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
-import { getEcosystemsForWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import {
+  getWorkflowsForMediaType,
+  workflowHasNode,
+} from '~/shared/data-graph/generation/generation-graph';
 import { openCompatibilityConfirmModal } from '~/components/generation_v2/CompatibilityConfirmModal';
 import { generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
@@ -65,23 +68,15 @@ export interface UseGeneratedItemWorkflowsReturn {
 // =============================================================================
 
 const categoryLabels: Record<WorkflowCategory, string> = {
-  'text-to-image': 'Text to Image',
-  'image-to-image': 'Image to Image',
-  'image-enhancements': 'Enhancements',
-  'text-to-video': 'Text to Video',
-  'image-to-video': 'Image to Video',
-  'video-enhancements': 'Video Enhancements',
+  image: 'Image',
+  video: 'Video',
 };
 
 /** Categories relevant for image outputs (workflows that accept image input) */
-const imageCategoryOrder: WorkflowCategory[] = [
-  'image-to-image',
-  'image-enhancements',
-  'image-to-video',
-];
+const imageCategoryOrder: WorkflowCategory[] = ['image', 'video'];
 
 /** Categories relevant for video outputs (workflows that accept video input) */
-const videoCategoryOrder: WorkflowCategory[] = ['video-enhancements'];
+const videoCategoryOrder: WorkflowCategory[] = ['video'];
 
 // =============================================================================
 // Hook
@@ -94,8 +89,8 @@ export function useGeneratedItemWorkflows({
   return useMemo(() => {
     const ecosystemId = ecosystemKey ? ecosystemByKey.get(ecosystemKey)?.id : undefined;
 
-    // Get all workflows that accept this output type as input
-    const availableWorkflows = getWorkflowsForOutputType(outputType);
+    // Get all workflows that accept this output type as input (derived from graph structure)
+    const availableWorkflows = getWorkflowsForMediaType(outputType);
 
     // Determine compatibility for each workflow
     const isCompatible = (workflowId: string): boolean => {
@@ -174,17 +169,20 @@ function applyWorkflowToForm({
 
   const inputType = getInputTypeForWorkflow(workflowId);
   const stepParams = step.params;
-  const workflowCategory = workflowConfigByKey.get(workflowId)?.category;
+  const config = workflowConfigByKey.get(workflowId);
 
   // Build images in graph format { url, width, height }[]
-  const images =
-    inputType === 'image'
-      ? [{ url: image.url, width: image.width, height: image.height }]
-      : undefined;
+  // Pass image for workflows that require it (inputType: 'image') OR
+  // for text-input workflows whose graph has an 'images' node
+  const isImageType = image.type !== 'video';
+  const acceptsImages =
+    inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+  const images = acceptsImages
+    ? [{ url: image.url, width: image.width, height: image.height }]
+    : undefined;
 
   // For enhancement workflows, store the original metadata
-  const isEnhancement =
-    workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
+  const isEnhancement = config?.enhancement === true;
 
   if (isEnhancement && step.metadata) {
     // Store source metadata keyed by the image/video URL

@@ -14,6 +14,7 @@ import {
   createCheckpointGraph,
   denoiseNode,
   enhancedCompatibilityNode,
+  imagesNode,
   negativePromptNode,
   resourcesNode,
   samplerNode,
@@ -44,12 +45,11 @@ const sd1AspectRatios = [
 // Stable Diffusion Graph V2
 // =============================================================================
 
-/** Workflows that require the denoise node */
-const workflowsWithDenoise = [
+/** Workflows that always show the denoise node (regardless of images) */
+const DENOISE_ALWAYS = [
   'txt2img:face-fix',
-  'txt2img:hires-fix',
-  'img2img',
   'img2img:face-fix',
+  'txt2img:hires-fix',
   'img2img:hires-fix',
 ];
 
@@ -60,11 +60,23 @@ const workflowsWithDenoise = [
  * Meta only contains dynamic props - static props like label are in components.
  */
 export const stableDiffusionGraph = new DataGraph<
-  { ecosystem: string; workflow: string; input: 'text' | 'image' | 'video' },
+  { ecosystem: string; workflow: string },
   GenerationCtx
 >()
   // Merge checkpoint graph (includes model node and ecosystem sync effect)
   .merge(createCheckpointGraph())
+  // Images node - shown for img2img variants (required), hidden for all txt variants
+  .node(
+    'images',
+    (ctx) => {
+      const isImg2img = ctx.workflow.startsWith('img2img');
+      return {
+        ...imagesNode({ max: 1, min: isImg2img ? 1 : 0 }),
+        when: isImg2img,
+      };
+    },
+    ['workflow']
+  )
   .node(
     'resources',
     (ctx, ext) =>
@@ -79,9 +91,10 @@ export const stableDiffusionGraph = new DataGraph<
     'aspectRatio',
     (ctx) => {
       const options = ctx.ecosystem === 'SD1' ? sd1AspectRatios : sdAspectRatios;
-      return { ...aspectRatioNode({ options }), when: ctx.input === 'text' };
+      const hasImages = Array.isArray(ctx.images) && ctx.images.length > 0;
+      return { ...aspectRatioNode({ options }), when: !hasImages };
     },
-    ['ecosystem', 'input']
+    ['ecosystem', 'images']
   )
   .node('negativePrompt', negativePromptNode())
   .node('sampler', samplerNode())
@@ -90,16 +103,19 @@ export const stableDiffusionGraph = new DataGraph<
   .node('clipSkip', clipSkipNode())
   .node('seed', seedNode())
   .node('enhancedCompatibility', enhancedCompatibilityNode())
-  // Denoise is only shown for specific workflows (face-fix, hires-fix, img2img variants)
-  // Max is 0.75 for text input (txt2img variants), 1.0 for image input (img2img variants)
+  // Denoise is shown for face-fix/hires-fix (always) or img2img/txt2img when images are present
+  // Max is 0.75 when no images (text-only), 1.0 when images are present
   .node(
     'denoise',
     (ctx) => {
-      const max = ctx.input === 'text' ? 0.75 : 1;
+      const hasImages = Array.isArray(ctx.images) && ctx.images.length > 0;
+      const alwaysShow = DENOISE_ALWAYS.includes(ctx.workflow);
+      const showForImages = (ctx.workflow === 'txt2img' || ctx.workflow === 'img2img') && hasImages;
+      const max = hasImages ? 1 : 0.75;
       return {
         ...denoiseNode({ max }),
-        when: workflowsWithDenoise.includes(ctx.workflow),
+        when: alwaysShow || showForImages,
       };
     },
-    ['workflow', 'input']
+    ['workflow', 'images']
   );

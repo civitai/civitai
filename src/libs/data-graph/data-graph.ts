@@ -24,6 +24,19 @@ type EffectFn<Ctx, ExternalCtx> = (
   set: <K extends keyof Ctx>(key: K, value: Ctx[K]) => void
 ) => void;
 
+/** Describes how a target key was found in a graph */
+export type KeyMatch =
+  | { kind: 'direct' }
+  | { kind: 'nested'; discriminator: string; branches: BranchKeyInfo[] };
+
+/** Info about a discriminator branch that contains a target key */
+export interface BranchKeyInfo {
+  /** Branch value (e.g., 'image:create' or 'SD1') */
+  value: string;
+  /** How the key was found in this branch */
+  match: KeyMatch;
+}
+
 /** Options for reset method */
 export interface ResetOptions<Ctx> {
   /** Keys to preserve (won't be reset) */
@@ -366,7 +379,15 @@ type GraphEntry =
     }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   | { kind: 'effect'; run: (ctx: any, ext: any, set: any) => void; deps: readonly string[] }
-  | { kind: 'discriminator'; discriminatorKey: string; factory: DiscriminatorFactory };
+  | {
+      kind: 'discriminator';
+      discriminatorKey: string;
+      factory: DiscriminatorFactory;
+      /** Maps individual values to their group name (for groupedDiscriminator).
+       *  When present, branch identity uses the group name so that switching
+       *  between values in the same group does NOT trigger deactivation/reactivation. */
+      groupOf?: Map<string, string>;
+    };
 
 // ============================================================================
 // Active Entry Types (Runtime - entries with source tracking)
@@ -1123,10 +1144,15 @@ export class DataGraph<
     BuildGroupedValuesUnion<CtxValues, Groups>
   > {
     // Convert grouped branches to a flat BranchesRecord for runtime
+    // Also build a value→group map so the discriminator can tell when two values
+    // belong to the same group (avoiding unnecessary branch deactivation/reactivation)
     const branches: BranchesRecord = {};
+    const groupOf = new Map<string, string>();
     for (const group of groups) {
+      const groupName = group.values[0] as string;
       for (const value of group.values) {
         branches[value] = group.graph;
+        groupOf.set(value, groupName);
       }
     }
 
@@ -1134,6 +1160,7 @@ export class DataGraph<
       kind: 'discriminator',
       discriminatorKey: key,
       factory: () => branches,
+      groupOf,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return this as any;
@@ -1460,6 +1487,197 @@ export class DataGraph<
   }
 
   // ===========================================================================
+  // Branch Key Introspection
+  // ===========================================================================
+
+  /**
+   * Check if a graph has a node or computed key as a direct entry
+   * (not behind a discriminator).
+   *
+   * When context is provided, tries to evaluate the node factory and check
+   * the `when` condition. If `when` is explicitly `false`, the node is
+   * considered absent. Falls back to treating the node as present if the
+   * factory throws (e.g., needs more context than discriminator values).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private static hasDirectKey(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    graph: DataGraph<any, any, any, any>,
+    nodeKey: string,
+    context?: Record<string, unknown>
+  ): boolean {
+    for (const entry of graph.entries) {
+      if ((entry.kind === 'node' || entry.kind === 'computed') && entry.key === nodeKey) {
+        // If we have context and it's a node with a factory, check `when`
+        if (context && entry.kind === 'node') {
+          try {
+            const result = entry.factory(context, {}, {});
+            if (result && 'when' in result && result.when === false) {
+              return false;
+            }
+          } catch {
+            // Factory needs more context than we have; assume node is active
+          }
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Resolve a branch definition to a DataGraph instance.
+   * Handles both direct DataGraph instances and lazy factories.
+   */
+  private static resolveBranch(branch: BranchDefinition): BranchGraph | null {
+    if (branch instanceof DataGraph) return branch;
+    if (typeof branch === 'function') {
+      try {
+        const lazyGraph = branch({}, {});
+        if (lazyGraph instanceof DataGraph) return lazyGraph;
+      } catch {
+        // If lazy factory fails, skip it
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Resolve the default value for a discriminator by evaluating the corresponding
+   * node factory with the given context. Returns undefined if no node is found
+   * or the factory throws.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private static resolveDiscriminatorDefault(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    graph: DataGraph<any, any, any, any>,
+    discriminatorKey: string,
+    context: Record<string, unknown>
+  ): string | undefined {
+    for (const entry of graph.entries) {
+      if (entry.kind === 'node' && entry.key === discriminatorKey) {
+        try {
+          const result = entry.factory(context, {}, {});
+          if (result && result.defaultValue !== undefined) {
+            return String(result.defaultValue);
+          }
+        } catch {
+          // Factory needs more context than we have
+        }
+        break;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Find which branches of a discriminator contain a specific node key,
+   * drilling through nested discriminators along a specified search path.
+   *
+   * The `discriminators` array defines the search path:
+   * 1. The first discriminator is looked up in this graph's entries
+   * 2. For each branch, checks if `nodeKey` exists directly (node/computed entry)
+   * 3. If found directly → `{ kind: 'direct' }`, stop drilling
+   * 4. If not found and there are remaining discriminators → recurse into the
+   *    sub-graph with the remaining discriminators
+   * 5. Continue until the node is found or discriminators are exhausted
+   *
+   * When context is provided, it controls which branches are visited:
+   * - **Pinned**: If the context contains a value for the current discriminator,
+   *   only that branch is visited (e.g., `{ workflow: 'image:draft' }`)
+   * - **Resolved**: If context exists but doesn't pin the current discriminator,
+   *   the discriminator's node factory is evaluated with the accumulated context
+   *   to resolve a default value, and only that branch is visited
+   * - **Discovery**: If no context is provided, all branches are iterated
+   *
+   * Context is also passed to node factories to evaluate `when` conditions.
+   *
+   * @example
+   * ```ts
+   * // Discovery: find all workflows that have an 'images' node
+   * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images')
+   *
+   * // Context-aware: check if image:draft has an 'images' node
+   * // Resolves ecosystem to default (SD1), evaluates when → false
+   * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images',
+   *   { workflow: 'image:draft' })
+   * // → [] (images has when:false in SD family for draft)
+   * ```
+   */
+  findKeyInBranches(
+    discriminators: string[],
+    nodeKey: string,
+    _context?: Record<string, unknown>
+  ): BranchKeyInfo[] {
+    if (discriminators.length === 0) return [];
+
+    const context = _context ?? {};
+    const [currentDisc, ...remainingDiscs] = discriminators;
+
+    // Find the discriminator entry matching the current discriminator key
+    const discEntry = this.entries.find(
+      (e): e is Extract<GraphEntry, { kind: 'discriminator' }> =>
+        e.kind === 'discriminator' && e.discriminatorKey === currentDisc
+    );
+    if (!discEntry) return [];
+
+    const branches = discEntry.factory({}, {});
+
+    // Determine which branch values to visit
+    let valuesToVisit: string[];
+
+    if (currentDisc in context) {
+      // Pinned: context specifies this discriminator's value
+      const pinned = String(context[currentDisc]);
+      valuesToVisit = pinned in branches ? [pinned] : [];
+    } else if (_context) {
+      // Resolved: context exists but doesn't pin this discriminator.
+      // Evaluate the discriminator's node factory to get the default value.
+      const defaultValue = DataGraph.resolveDiscriminatorDefault(this, currentDisc, context);
+      if (defaultValue && defaultValue in branches) {
+        valuesToVisit = [defaultValue];
+      } else {
+        // Couldn't resolve a default — fall back to all branches
+        valuesToVisit = Object.keys(branches);
+      }
+    } else {
+      // Discovery: no context, iterate all branches
+      valuesToVisit = Object.keys(branches);
+    }
+
+    const results: BranchKeyInfo[] = [];
+
+    for (const value of valuesToVisit) {
+      const branchDef = branches[value];
+      const graph = DataGraph.resolveBranch(branchDef);
+      if (!graph) continue;
+
+      // Build context with the current discriminator value
+      const branchContext = { ...context, [currentDisc]: value };
+
+      // Check if the key exists directly in this branch's graph
+      if (DataGraph.hasDirectKey(graph, nodeKey, branchContext)) {
+        results.push({ value, match: { kind: 'direct' } });
+        continue;
+      }
+
+      // If there are more discriminators, recurse into the sub-graph
+      if (remainingDiscs.length > 0) {
+        const nested = graph.findKeyInBranches(remainingDiscs, nodeKey, branchContext);
+        if (nested.length > 0) {
+          results.push({
+            value,
+            match: { kind: 'nested', discriminator: remainingDiscs[0], branches: nested },
+          });
+          continue;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  // ===========================================================================
   // Branch Management - Add/Remove entries when discriminators change
   // ===========================================================================
 
@@ -1563,7 +1781,7 @@ export class DataGraph<
 
   /** Evaluate the graph and return the set of keys that changed. */
   private _evaluate(inputValues: Partial<Ctx> = {}): Set<string> {
-    const log = this._debug ? console.log.bind(console) : () => {};
+    const log = this._debug ? console.log.bind(console) : () => undefined;
 
     const changed = new Set<string>(Object.keys(inputValues));
 
@@ -1728,6 +1946,11 @@ export class DataGraph<
         const targetBranch = discriminatorValue as string;
         const branchDef = targetBranch ? branches[targetBranch] : undefined;
 
+        // For groupedDiscriminator, resolve the effective branch name (group name).
+        // Values in the same group share the same graph, so switching between them
+        // should NOT trigger branch deactivation/reactivation.
+        const effectiveBranch = entry.groupOf?.get(targetBranch) ?? targetBranch;
+
         if (!branchDef) {
           if (current) {
             log(`  🔀 discriminator: no matching branch for "${targetBranch}", cleaning up`);
@@ -1744,9 +1967,9 @@ export class DataGraph<
           continue;
         }
 
-        const needsSwitch = !current || current.branch !== targetBranch;
+        const needsSwitch = !current || current.branch !== effectiveBranch;
         if (needsSwitch) {
-          log(`  🔀 discriminator: switching to branch "${targetBranch}"`);
+          log(`  🔀 discriminator: switching to branch "${effectiveBranch}"`);
 
           // Deactivate old branch
           if (current) {
@@ -1758,8 +1981,8 @@ export class DataGraph<
             for (const key of removedKeys) changed.add(key);
           }
 
-          // Get or create branch graph
-          const cacheKey = `${entry.discriminatorKey}:${targetBranch}`;
+          // Get or create branch graph (cache by effective branch, not raw value)
+          const cacheKey = `${entry.discriminatorKey}:${effectiveBranch}`;
           let branchGraph: BranchGraph;
           if (typeof branchDef === 'function') {
             const cached = this.lazyBranchCache.get(cacheKey);
@@ -1768,25 +1991,25 @@ export class DataGraph<
             } else {
               branchGraph = branchDef(this._ctx, this._ext);
               this.lazyBranchCache.set(cacheKey, branchGraph);
-              log(`  📦 lazy branch "${targetBranch}" instantiated and cached`);
+              log(`  📦 lazy branch "${effectiveBranch}" instantiated and cached`);
             }
           } else {
             branchGraph = branchDef;
           }
 
           // Activate new branch - insert entries after this discriminator
-          // Pass the discriminator entry's source as parent for nested discriminators
+          // Use effective branch name so source paths are consistent within a group
           const { entryKeys } = this.activateBranch(
             entry.discriminatorKey,
-            targetBranch,
+            effectiveBranch,
             branchGraph,
             currentIndex,
             entry.source // Parent source for nested path tracking
           );
 
-          // Track active branch
+          // Track active branch using the effective (group) name
           this.activeDiscriminators.set(entry.discriminatorKey, {
-            branch: targetBranch,
+            branch: effectiveBranch,
             entryKeys,
           });
 

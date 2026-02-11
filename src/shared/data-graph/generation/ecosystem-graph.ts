@@ -19,11 +19,11 @@ import {
   getWorkflowsForEcosystem,
   isWorkflowAvailable,
   getDefaultEcosystemForWorkflow,
+  workflowGroups,
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { quantityNode, imagesNode, promptNode } from './common';
-import { workflowConfigs, getImagesConfig } from './config';
+import { quantityNode, promptNode } from './common';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
 import { qwenGraph } from './qwen-graph';
@@ -113,6 +113,16 @@ export const ecosystemGraph = new DataGraph<
         return;
       }
 
+      // If there's a workflow group override for this ecosystem that includes the workflow,
+      // let the subgraph handle it (e.g., Wan I2V ecosystems switching T2V↔I2V internally)
+      const group = workflowGroups.find((g) => g.workflows.includes(ctx.workflow));
+      if (group) {
+        const override = group.overrides?.find((o) => o.ecosystemIds.includes(ecosystem.id));
+        if (override?.workflows.includes(ctx.workflow)) {
+          return;
+        }
+      }
+
       // Find a compatible ecosystem for this workflow
       const validEcosystem = getValidEcosystemForWorkflow(ctx.workflow, ctx.ecosystem);
       if (validEcosystem !== ctx.ecosystem) {
@@ -132,13 +142,13 @@ export const ecosystemGraph = new DataGraph<
         return;
       }
 
-      // Workflow not supported - find a compatible workflow for this ecosystem
-      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id);
+      // Workflow not supported - find a compatible non-enhancement workflow
+      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter(
+        (w) => !w.enhancement
+      );
       if (compatibleWorkflows.length > 0) {
-        // Pick the first compatible workflow (primary workflow for this ecosystem)
         set('workflow', compatibleWorkflows[0].id);
       } else {
-        // Fallback to 'txt2img' if no compatible workflows found (shouldn't happen)
         set('workflow', 'txt2img');
       }
     },
@@ -152,19 +162,6 @@ export const ecosystemGraph = new DataGraph<
       return quantityNode({ min: isDraft ? 4 : 1, step: isDraft ? 4 : 1 })(ctx, ext);
     },
     ['workflow']
-  )
-  .node('prompt', (ctx) => promptNode({ required: ctx.input === 'text' }), ['input'])
-
-  .node(
-    'images',
-    (ctx) => {
-      const config = getImageConfig(ctx);
-      const max = config?.max ?? 1;
-      const min = config?.min ?? 1;
-      const slots = config?.slots;
-      return { ...imagesNode({ max, min, slots }), when: ctx.input === 'image' };
-    },
-    ['workflow', 'ecosystem', 'model', 'input']
   )
 
   // Use groupedDiscriminator to reduce TypeScript type complexity:
@@ -227,6 +224,14 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
   ])
+  .node(
+    'prompt',
+    (ctx) => {
+      const images = 'images' in ctx ? (ctx.images as unknown[]) : undefined;
+      return promptNode({ required: !images?.length });
+    },
+    ['images']
+  )
   .computed(
     'triggerWords',
     (ctx) => {
@@ -237,16 +242,3 @@ export const ecosystemGraph = new DataGraph<
     },
     ['model', 'resources']
   );
-
-/**
- * Get image config from workflow configs.
- *
- * Priority (most specific wins):
- * 1. Version overrides (by version ID or group)
- * 2. Ecosystem overrides
- * 3. Workflow base nodes
- */
-function getImageConfig(ctx: { workflow?: string; ecosystem?: string; model?: { id: number } }) {
-  if (!ctx.workflow || !ctx.ecosystem) return undefined;
-  return getImagesConfig(workflowConfigs, ctx.workflow, ctx.ecosystem, ctx.model?.id);
-}

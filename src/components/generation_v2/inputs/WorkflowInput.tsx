@@ -6,7 +6,7 @@
  * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Badge, Button, Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconChevronDown,
@@ -23,12 +23,9 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   getAllWorkflowsGrouped,
-  getWorkflowsForEcosystem,
   workflowOptionById,
-  type WorkflowOption as ConfigWorkflowOption,
 } from '~/shared/data-graph/generation/config/workflows';
 
 // =============================================================================
@@ -102,22 +99,22 @@ function WorkflowMenuItem({
 
   if (disabled) {
     return (
-        <RequireMembership>
-          <SupportButtonPolymorphic
-            icon={IconDiamond}
-            position="right"
-            className="w-full !px-3 !py-2.5 !h-auto !min-h-[44px]"
-          >
-            <div className="flex flex-col items-start gap-0.5 py-0.5">
-              <span className="text-sm leading-tight">{workflow.label}</span>
-              {workflow.description && (
-                <span className="text-xs text-dimmed opacity-70 leading-tight">
-                  {workflow.description}
-                </span>
-              )}
-            </div>
-          </SupportButtonPolymorphic>
-        </RequireMembership>
+      <RequireMembership>
+        <SupportButtonPolymorphic
+          icon={IconDiamond}
+          position="right"
+          className="!h-auto !min-h-[44px] w-full !px-3 !py-2.5"
+        >
+          <div className="flex flex-col items-start gap-0.5 py-0.5">
+            <span className="text-sm leading-tight">{workflow.label}</span>
+            {workflow.description && (
+              <span className="text-dimmed text-xs leading-tight opacity-70">
+                {workflow.description}
+              </span>
+            )}
+          </div>
+        </SupportButtonPolymorphic>
+      </RequireMembership>
     );
   }
 
@@ -306,88 +303,16 @@ function WorkflowSelectModal({
 export interface SelectedWorkflowDisplayProps {
   /** The workflow ID to display */
   workflowId?: string;
-  /** The current ecosystem key (used to determine available workflows) */
-  ecosystemKey?: string;
-  /** Called when the user selects a different workflow */
-  onChange?: (workflowId: string) => void;
   /** Additional class name */
   className?: string;
 }
 
-const INPUT_TYPE_LABELS: Record<string, string> = {
-  text: 'From text',
-  image: 'From image',
-  video: 'From video',
-};
-
 /**
- * Displays the currently selected workflow with input type buttons and workflow badges.
- * - When multiple input types are available, shows buttons to switch between them.
- * - Always shows the selected workflow as a badge (with sibling badges when multiple exist).
- * - Falls back to a simple label when only one workflow total is available.
+ * Displays the currently selected workflow label and description.
  */
-export function SelectedWorkflowDisplay({
-  workflowId,
-  ecosystemKey,
-  onChange,
-  className,
-}: SelectedWorkflowDisplayProps) {
+export function SelectedWorkflowDisplay({ workflowId, className }: SelectedWorkflowDisplayProps) {
   const workflow = workflowId ? workflowOptionById.get(workflowId) : undefined;
-
-  // Get available workflows for the current ecosystem, excluding enhancements,
-  // grouped by input type (text, image, video)
-  const workflowsByInputType = useMemo(() => {
-    if (!ecosystemKey) return new Map<string, ConfigWorkflowOption[]>();
-    const ecosystem = ecosystemByKey.get(ecosystemKey);
-    if (!ecosystem) return new Map<string, ConfigWorkflowOption[]>();
-
-    const available = getWorkflowsForEcosystem(ecosystem.id).filter(
-      (w) => !w.category.endsWith('enhancements')
-    );
-
-    const groups = new Map<string, ConfigWorkflowOption[]>();
-    for (const w of available) {
-      const existing = groups.get(w.inputType) ?? [];
-      existing.push(w);
-      groups.set(w.inputType, existing);
-    }
-    return groups;
-  }, [ecosystemKey]);
-
   if (!workflow) return null;
-
-  const currentInputType = workflow.inputType;
-  const inputTypes = Array.from(workflowsByInputType.keys());
-  const hasMultipleInputTypes = inputTypes.length > 1;
-  const currentTypeWorkflows = workflowsByInputType.get(currentInputType) ?? [];
-
-  // Nothing interesting to show — single workflow, single input type
-  if (!hasMultipleInputTypes && currentTypeWorkflows.length <= 1) {
-    return (
-      <div
-        className={clsx(
-          'rounded-lg border border-gray-2 bg-gray-0 px-3 py-2.5 dark:border-dark-4 dark:bg-dark-6',
-          className
-        )}
-      >
-        <Text size="md" fw={600} className="leading-tight">
-          {workflow.label}
-        </Text>
-        {workflow.description && (
-          <Text size="sm" c="dimmed" className="mt-0.5">
-            {workflow.description}
-          </Text>
-        )}
-      </div>
-    );
-  }
-
-  const handleInputTypeChange = (newInputType: string) => {
-    const workflows = workflowsByInputType.get(newInputType);
-    if (workflows?.length) {
-      onChange?.(workflows[0].id);
-    }
-  };
 
   return (
     <div
@@ -396,35 +321,11 @@ export function SelectedWorkflowDisplay({
         className
       )}
     >
-      {hasMultipleInputTypes && (
-        <Group gap={6} wrap="nowrap">
-          {inputTypes.map((type) => (
-            <Button
-              key={type}
-              size="compact-xs"
-              variant={type === currentInputType ? 'filled' : 'default'}
-              onClick={() => handleInputTypeChange(type)}
-            >
-              {INPUT_TYPE_LABELS[type] ?? type}
-            </Button>
-          ))}
-        </Group>
-      )}
-      <Group gap={6} wrap="wrap" className={hasMultipleInputTypes ? 'mt-2' : ''}>
-        {currentTypeWorkflows.map((w) => (
-          <Badge
-            key={w.id}
-            variant={w.id === workflowId ? 'filled' : 'light'}
-            color={w.id === workflowId ? 'blue' : 'gray'}
-            className="cursor-pointer"
-            onClick={() => onChange?.(w.id)}
-          >
-            {w.label}
-          </Badge>
-        ))}
-      </Group>
+      <Text size="md" fw={600} className="leading-tight">
+        {workflow.label}
+      </Text>
       {workflow.description && (
-        <Text size="sm" c="dimmed" className="mt-1.5">
+        <Text size="sm" c="dimmed" className="mt-0.5">
           {workflow.description}
         </Text>
       )}
@@ -453,30 +354,12 @@ export function WorkflowInput({
   const selected = getSelectedWorkflow(options, value);
 
   // Separate image and video categories
-  const imageCategories = options.filter(
-    (cat) =>
-      cat.category === 'text-to-image' ||
-      cat.category === 'image-to-image' ||
-      cat.category === 'image-enhancements'
-  );
-  const videoCategories = options.filter(
-    (cat) =>
-      cat.category === 'text-to-video' ||
-      cat.category === 'image-to-video' ||
-      cat.category === 'video-enhancements'
-  );
+  const imageCategories = options.filter((cat) => cat.category === 'image');
+  const videoCategories = options.filter((cat) => cat.category === 'video');
 
   // Check if current selection is image or video
-  const isImageWorkflow =
-    selected &&
-    (selected.category.category === 'text-to-image' ||
-      selected.category.category === 'image-to-image' ||
-      selected.category.category === 'image-enhancements');
-  const isVideoWorkflow =
-    selected &&
-    (selected.category.category === 'text-to-video' ||
-      selected.category.category === 'image-to-video' ||
-      selected.category.category === 'video-enhancements');
+  const isImageWorkflow = selected && selected.category.category === 'image';
+  const isVideoWorkflow = selected && selected.category.category === 'video';
 
   const handleImageSelect = (workflowId: string) => {
     onChange?.(workflowId);

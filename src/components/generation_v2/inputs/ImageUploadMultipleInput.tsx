@@ -6,8 +6,7 @@
  * Value format: ImageValue[] | null
  *
  * Styling:
- * - max=1: Single image mode with full-width dropzone/preview (similar to VideoInput)
- * - max>1: Horizontal strip layout with large dropzone when empty, compact when images exist
+ * - Compact dropzone + horizontal image strip layout for all non-slot modes
  * - slots: Side-by-side named slots (e.g., first/last frame)
  */
 
@@ -76,7 +75,6 @@ export function ImageUploadMultipleInput({
   ...inputWrapperProps
 }: ImageUploadMultipleInputProps) {
   const isSlotsMode = !!slots?.length;
-  const isSingleMode = max === 1 && !isSlotsMode;
 
   // For slots mode, use the built-in slots layout
   if (isSlotsMode) {
@@ -101,33 +99,7 @@ export function ImageUploadMultipleInput({
     );
   }
 
-  // For single mode, use the built-in VideoInput-style layout
-  if (isSingleMode) {
-    return (
-      <Input.Wrapper
-        {...inputWrapperProps}
-        label={label}
-        description={description}
-        error={error}
-        required={required}
-      >
-        <SourceImageUploadMultiple
-          value={value as SourceImageProps[] | null | undefined}
-          onChange={(v) => onChange?.(v ?? [])}
-          max={1}
-          warnOnMissingAiMetadata={warnOnMissingAiMetadata}
-          aspectRatios={aspectRatios}
-          cropToFirstImage={cropToFirstImage}
-          disabled={disabled}
-        />
-      </Input.Wrapper>
-    );
-  }
-
-  // For multiple mode, use improved layout
-  // Note: canAddMore is computed inside the render function using previewItems.length
-  // to account for uploading items
-
+  // Compact layout for both single and multiple image modes
   return (
     <Input.Wrapper
       {...inputWrapperProps}
@@ -161,9 +133,11 @@ export function ImageUploadMultipleInput({
                     <Text size="sm" c="dimmed">
                       {hasImages ? 'Add more images' : 'Drop images here or click to select'}
                     </Text>
-                    <Text size="xs" c="dimmed">
-                      {completedCount} of {max} images
-                    </Text>
+                    {max > 1 && (
+                      <Text size="xs" c="dimmed">
+                        {completedCount} of {max} images
+                      </Text>
+                    )}
                   </div>
                 </SourceImageUploadMultiple.Dropzone>
               )}
@@ -179,8 +153,8 @@ export function ImageUploadMultipleInput({
                 </div>
               )}
 
-              {/* Show count when at limit */}
-              {!canAddMore && (
+              {/* Show count when at limit (only for multi-image mode) */}
+              {!canAddMore && max > 1 && (
                 <Text size="xs" c="dimmed">
                   {completedCount} of {max} images (limit reached)
                 </Text>

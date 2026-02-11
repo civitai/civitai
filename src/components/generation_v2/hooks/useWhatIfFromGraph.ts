@@ -32,6 +32,47 @@ import { usePromptFocusedStore } from '../inputs/PromptInput';
 const IGNORED_KEYS_FOR_WHATIF = ['negativePrompt', 'seed', 'denoise'] as const;
 
 // =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Get a user-friendly message explaining why generation cannot proceed.
+ * Returns null if all requirements are met.
+ */
+export function getMissingFieldMessage(
+  snapshot: Record<string, unknown> | null,
+  workflowId?: string
+): string | null {
+  if (!snapshot) return 'Loading...';
+
+  const workflow = (snapshot.workflow as string | undefined) ?? workflowId;
+  if (!workflow) return 'Select a workflow to continue';
+
+  const input = (snapshot.input as string | undefined) ?? 'text';
+
+  // Check for missing media
+  if (input === 'image') {
+    const images = snapshot.images as unknown[] | undefined;
+    if (!images || images.length === 0) {
+      return 'Upload an image to continue';
+    }
+  }
+  if (input === 'video') {
+    if (!snapshot.video) {
+      return 'Upload a video to continue';
+    }
+  }
+
+  // Check for missing ecosystem (for non-standalone workflows)
+  const config = workflowConfigByKey.get(workflow);
+  if (config && config.ecosystemIds.length > 0 && !snapshot.ecosystem) {
+    return 'Select a model to continue';
+  }
+
+  return null;
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -95,20 +136,29 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   );
 
   // Lighter check for cost estimation: only require cost-affecting fields.
-  // The backend fills in placeholders for non-cost-affecting fields (images)
-  // via applyWhatIfDefaults, so we don't need full validation to pass.
+  // The backend fills in placeholders for non-cost-affecting fields like prompt
+  // via applyWhatIfDefaults, but source media (images/video) must be present
+  // when required because dimensions affect cost calculation.
   const canEstimateCost = useMemo(() => {
     if (!snapshot) return false;
 
     const workflow = snapshot.workflow as string | undefined;
     if (!workflow) return false;
 
-    const config = workflowConfigByKey.get(workflow);
-    if (!config) return false;
+    const input = (snapshot.input as string | undefined) ?? 'text';
 
-    // Standalone workflows (upscale, remove-bg, vid2vid) need actual source media
-    // for cost calculation (dimensions affect scale factor), so require full validation
-    if (config.ecosystemIds.length === 0) return true;
+    // Check if required media is present based on workflow's input type
+    if (input === 'image') {
+      const images = snapshot.images as unknown[] | undefined;
+      if (!images || images.length === 0) return false; // Can't estimate without images
+    }
+    if (input === 'video') {
+      if (!snapshot.video) return false; // Can't estimate without video
+    }
+
+    // Standalone workflows (upscale, remove-bg, vid2vid) have no ecosystem requirement
+    const config = workflowConfigByKey.get(workflow);
+    if (!config || config.ecosystemIds.length === 0) return true;
 
     // Ecosystem workflows need ecosystem to determine pricing
     if (!snapshot.ecosystem) return false;
@@ -141,5 +191,6 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   return {
     ...queryResult,
     isLoading: queryResult.isFetching,
+    canEstimateCost, // Expose validation state for UI
   };
 }

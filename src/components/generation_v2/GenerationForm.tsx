@@ -13,8 +13,8 @@ import {
   Input,
   Paper,
   Radio,
-  SegmentedControl,
   Stack,
+  Tabs,
   Text,
 } from '@mantine/core';
 import React, { useCallback, useState, useRef, useEffect } from 'react';
@@ -24,11 +24,18 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { Controller, MultiController, useGraph } from '~/libs/data-graph/react';
-import { type GenerationGraphTypes, type VideoValue } from '~/shared/data-graph/generation';
+import {
+  type GenerationGraphTypes,
+  type VideoValue,
+  wanVersionOptions,
+  ecosystemToVersionDef,
+  wanVersionDefs,
+} from '~/shared/data-graph/generation';
+import { getWorkflowModes } from '~/shared/data-graph/generation/config';
 
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
-import { openCompatibilityConfirmModal, type PendingChange } from './CompatibilityConfirmModal';
+import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter } from './FormFooter';
 import { ResourceAlerts, ExperimentalModelAlert, ReadyAlert } from './ResourceAlerts';
 
@@ -48,6 +55,7 @@ import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
 import { PriorityInput } from './inputs/PriorityInput';
 import { OutputFormatInput } from './inputs/OutputFormatInput';
 import { ScaleFactorInput } from './inputs/ScaleFactorInput';
+import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 
 // =============================================================================
 // Component
@@ -88,7 +96,6 @@ export function GenerationForm() {
       if (!compatibility.isWorkflowCompatible(newWorkflow)) {
         const target = compatibility.getTargetEcosystemForWorkflow(newWorkflow);
         if (target && compatibility.currentEcosystemKey) {
-          // Get current ecosystem display name
           const currentEcoName =
             graph
               .getNodeMeta('ecosystem')
@@ -104,7 +111,10 @@ export function GenerationForm() {
               targetEcosystem: target.displayName,
             },
             onConfirm: () => {
-              graphRef.current.set({ workflow: newWorkflow } as Parameters<typeof graph.set>[0]);
+              graphRef.current.set({
+                workflow: newWorkflow,
+                ecosystem: target.key,
+              } as Parameters<typeof graph.set>[0]);
             },
           });
           return;
@@ -186,17 +196,26 @@ export function GenerationForm() {
             />
           </Group>
 
-          {/* Selected workflow display */}
-          <MultiController
+          {/* Selected workflow display OR mode selector */}
+          <Controller
             graph={graph}
-            names={['workflow', 'ecosystem'] as const}
-            render={({ values }) => (
-              <SelectedWorkflowDisplay
-                workflowId={values.workflow as string}
-                ecosystemKey={values.ecosystem as string}
-                onChange={handleWorkflowChange}
-              />
-            )}
+            name="workflow"
+            render={({ value }) => {
+              const modes = snapshot.ecosystem
+                ? getWorkflowModes(value as string, snapshot.ecosystem)
+                : [];
+              if (modes.length > 0) {
+                return (
+                  <SegmentedControlWrapper
+                    value={value as string}
+                    onChange={(v) => graph.set({ workflow: v } as Parameters<typeof graph.set>[0])}
+                    data={modes}
+                    fullWidth
+                  />
+                );
+              }
+              return <SelectedWorkflowDisplay workflowId={value as string} />;
+            }}
           />
 
           {/* Checkpoint/Model selector with version selector */}
@@ -219,6 +238,29 @@ export function GenerationForm() {
                     : undefined
                 }
                 versions={meta.versions}
+              />
+            )}
+          />
+
+          {/* Wan version picker */}
+          <Controller
+            graph={graph}
+            name="wanVersion"
+            render={({ value }) => (
+              <SegmentedControlWrapper
+                value={value}
+                onChange={(v) => {
+                  const def = wanVersionDefs.find((d) => d.version === v);
+                  if (!def) return;
+                  const snap = graph.getSnapshot() as { workflow?: string };
+                  const isImg2vid = snap.workflow === 'img2vid';
+                  // Set ecosystem directly — wanVersion is computed from it
+                  // v2.1: always T2V, wan21Graph handles I2V (resolution-dependent)
+                  const eco =
+                    isImg2vid && def.version !== 'v2.1' ? def.ecosystems.i2v : def.ecosystems.t2v;
+                  (graph as { set: (v: Record<string, unknown>) => void }).set({ ecosystem: eco });
+                }}
+                data={wanVersionOptions}
               />
             )}
           />
@@ -278,7 +320,7 @@ export function GenerationForm() {
           {/* Ready State Alert - Resources need downloading */}
           <ReadyAlert />
 
-          {/* Source images (img2img only) */}
+          {/* Source images with optional mode selector */}
           <Controller
             graph={graph}
             name="images"
@@ -469,12 +511,11 @@ export function GenerationForm() {
               return (
                 <div className="flex flex-col gap-1">
                   <Input.Label>Duration</Input.Label>
-                  <SegmentedControl
-                    key={value?.toString()} // Force remount when value changes to reset internal state
-                    value={value?.toString()}
+                  <SegmentedControlWrapper
+                    value={value}
                     onChange={(v) => onChange(v)}
                     data={
-                      options?.map((o) => ({ label: o.label, value: o.value.toString() })) ?? []
+                      options?.map((o) => ({ label: o.label, value: o.value })) ?? []
                     }
                     disabled={disabled}
                   />
@@ -499,25 +540,6 @@ export function GenerationForm() {
                   ))}
                 </Group>
               </Radio.Group>
-            )}
-          />
-
-          {/* Resolution (Wan/Sora video quality) */}
-          <Controller
-            graph={graph}
-            name="resolution"
-            render={({ value, meta, onChange }) => (
-              <div className="flex flex-col gap-1">
-                <Input.Label>Resolution</Input.Label>
-                <SegmentedControl
-                  value={value}
-                  onChange={(v) => onChange(v as typeof value)}
-                  data={meta.options.map((o: { label: string; value: string }) => ({
-                    label: o.label,
-                    value: o.value,
-                  }))}
-                />
-              </div>
             )}
           />
 
@@ -576,6 +598,25 @@ export function GenerationForm() {
 
           {/* Advanced section */}
           <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
+            {/* Resolution (Wan/Sora video quality) */}
+            <Controller
+              graph={graph}
+              name="resolution"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Resolution</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
+
             {/* CFG Scale / Guidance - label varies by model family */}
             <Controller
               graph={graph}
@@ -646,7 +687,7 @@ export function GenerationForm() {
               render={({ value, meta, onChange }) => (
                 <div className="flex flex-col gap-1">
                   <Input.Label>Movement Amplitude</Input.Label>
-                  <SegmentedControl
+                  <SegmentedControlWrapper
                     value={value}
                     onChange={onChange}
                     data={meta.options.map((o: { label: string; value: string }) => ({

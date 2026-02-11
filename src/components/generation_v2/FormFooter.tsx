@@ -41,6 +41,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
+import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
@@ -73,6 +74,7 @@ function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
 interface PriorityAlertSpaceProps {
   submitError?: string;
   onClearSubmitError: () => void;
+  missingFieldMessage?: string | null;
 }
 
 /**
@@ -81,19 +83,36 @@ interface PriorityAlertSpaceProps {
  * Layout:
  * - DailyBoostRewardClaim (always shown if available)
  * - Priority alert (only one shows):
- *   1. WhatIf error (cost estimation failed)
- *   2. Submit error
- *   3. Membership upsell
- *   4. Queue snackbar (fallback)
+ *   1. Missing field guidance (validation helper)
+ *   2. WhatIf error (cost estimation failed)
+ *   3. Submit error
+ *   4. Membership upsell
+ *   5. Queue snackbar (fallback)
  */
-function PriorityAlertSpace({ submitError, onClearSubmitError }: PriorityAlertSpaceProps) {
+function PriorityAlertSpace({
+  submitError,
+  onClearSubmitError,
+  missingFieldMessage,
+}: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
   const dailyBoost = useDailyBoostReward();
   const membershipUpsell = useMembershipUpsell();
 
   // Determine which priority alert to show
   let priorityAlert: ReactNode;
-  if (hasWhatIfError && whatIfError) {
+  if (missingFieldMessage) {
+    // Show helper message for missing required fields (not an error, just guidance)
+    priorityAlert = (
+      <Notification
+        icon={<IconAlertTriangle size={18} />}
+        color="blue"
+        className="whitespace-pre-wrap rounded-md bg-blue-8/20"
+        withCloseButton={false}
+      >
+        {missingFieldMessage}
+      </Notification>
+    );
+  } else if (hasWhatIfError && whatIfError) {
     priorityAlert = (
       <Notification
         icon={<IconX size={18} />}
@@ -148,10 +167,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 
   // Get whatIf data from context (provided by WhatIfProvider)
   // isLoading includes both pending debounce AND fetching states
-  const { data, isError, isLoading: isWhatIfLoading } = useWhatIfContext();
+  const { data, isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
 
   // Get values from graph for tip calculation
-  const snapshot = graph.getSnapshot() as ResourceSnapshot;
+  const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };
   const hasCreatorTip = getHasCreatorTip(snapshot);
 
   // Calculate tip amounts
@@ -174,7 +193,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       loading={isWhatIfLoading || isSubmitting}
       cost={totalCost}
-      disabled={isError}
+      disabled={isError || !canEstimateCost}
       onClick={handleClick}
       transactions={data?.transactions}
       allowMatureContent={data?.allowMatureContent}
@@ -208,6 +227,15 @@ export function FormFooter() {
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const remixOfId = useRemixOfId();
+
+  // Get validation state from whatIf context
+  const { canEstimateCost } = useWhatIfContext();
+
+  // Get user-friendly message if required fields are missing
+  const snapshot = graph.getSnapshot() as Record<string, unknown> & { workflow?: string };
+  const missingFieldMessage = !canEstimateCost
+    ? getMissingFieldMessage(snapshot, snapshot.workflow)
+    : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
@@ -274,11 +302,9 @@ export function FormFooter() {
     const hasCreatorTip = getHasCreatorTip(snapshot);
 
     // Check if this is an enhancement workflow and retrieve source metadata
-    const workflowCategory = snapshot.workflow
-      ? workflowConfigByKey.get(snapshot.workflow)?.category
-      : undefined;
-    const isEnhancement =
-      workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
+    const isEnhancement = snapshot.workflow
+      ? workflowConfigByKey.get(snapshot.workflow)?.enhancement === true
+      : false;
 
     let sourceMetadata: SourceMetadata | undefined;
     if (isEnhancement) {
@@ -415,6 +441,7 @@ export function FormFooter() {
           <PriorityAlertSpace
             submitError={submitError}
             onClearSubmitError={() => setSubmitError(undefined)}
+            missingFieldMessage={missingFieldMessage}
           />
 
           {/* Quantity Input, Submit Button, Reset Button */}

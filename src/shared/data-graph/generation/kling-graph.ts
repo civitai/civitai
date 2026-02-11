@@ -29,6 +29,7 @@ import {
   aspectRatioNode,
   cfgScaleNode,
   enumNode,
+  imagesNode,
   createCheckpointGraph,
 } from './common';
 
@@ -88,6 +89,16 @@ type KlingCtx = { ecosystem: string; workflow: string };
  * - V2/V2.5: Professional only
  */
 export const klingGraph = new DataGraph<KlingCtx, GenerationCtx>()
+  // Images node - shown for img2vid, hidden for txt2vid
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 1, min: 0 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+
   // Merge checkpoint graph with model versions
   .merge(
     createCheckpointGraph({
@@ -113,7 +124,7 @@ export const klingGraph = new DataGraph<KlingCtx, GenerationCtx>()
   .node(
     'aspectRatio',
     (ctx) => {
-      const isTxt2Vid = ctx.workflow === 'txt2vid';
+      const isTxt2Vid = !ctx.images?.length;
       return {
         ...aspectRatioNode({ options: klingAspectRatios, defaultValue: '1:1' }),
         when: isTxt2Vid,

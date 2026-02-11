@@ -15,6 +15,7 @@ import {
   getEcosystemsForWorkflow,
   getValidEcosystemForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
+import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 // =============================================================================
 // Types
@@ -120,9 +121,19 @@ export function useCompatibilityInfo({
     };
 
     const getTargetEcosystemForWorkflow = (workflowId: string) => {
-      // Use the same logic as ecosystem-graph: check if current ecosystem supports the workflow,
-      // otherwise fall back to the default ecosystem for that workflow
-      return getValidEcosystemForWorkflow(workflowId, currentEcosystemKey);
+      // 1. Check if current ecosystem supports the workflow
+      const fromCurrent = getValidEcosystemForWorkflow(workflowId, currentEcosystemKey);
+      if (fromCurrent && fromCurrent.key === currentEcosystemKey) return fromCurrent;
+
+      // 2. Check if the user's last-used ecosystem for this workflow is still valid
+      const preferred = workflowPreferences.getPreferredEcosystem(workflowId);
+      if (preferred) {
+        const fromPreferred = getValidEcosystemForWorkflow(workflowId, preferred);
+        if (fromPreferred && fromPreferred.key === preferred) return fromPreferred;
+      }
+
+      // 3. Fall back to config default
+      return fromCurrent ?? getValidEcosystemForWorkflow(workflowId);
     };
 
     const getTargetWorkflowForEcosystem = (targetEcosystemKey: string) => {

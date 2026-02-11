@@ -21,6 +21,7 @@ import {
   cfgScaleNode,
   stepsNode,
   enumNode,
+  imagesNode,
   resourcesNode,
   createCheckpointGraph,
 } from './common';
@@ -58,6 +59,16 @@ type LTXV2Ctx = { ecosystem: string; workflow: string };
  * Txt2vid with optional LoRA support.
  */
 export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
+  // Images node - shown for img2vid, hidden for txt2vid
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 1, min: 0 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+
   // Merge checkpoint graph (model node with locked model from ecosystem settings)
   .merge(createCheckpointGraph())
 

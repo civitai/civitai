@@ -41,6 +41,7 @@ function SegmentedControlWrapperInner<T extends string | number>(
 
   return (
     <SegmentedControl
+      key={parsedValue}
       ref={ref}
       value={parsedValue}
       defaultValue={parsedDefaultValue}

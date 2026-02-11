@@ -14,6 +14,7 @@ import {
   cfgScaleNode,
   createCheckpointGraph,
   enhancedCompatibilityNode,
+  imagesNode,
   resourcesNode,
   seedNode,
   stepsNode,
@@ -43,6 +44,15 @@ const qwenAspectRatios = [
 export const qwenGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph (includes model node and baseModel sync effect)
   .merge(createCheckpointGraph())
+  // Images node - shown for img2img variants, hidden for txt2img
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 1, min: ctx.workflow === 'img2img:edit' ? 1 : 0 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
   .node(
     'resources',
     (ctx, ext) =>

@@ -27,6 +27,7 @@ import {
 } from '~/shared/data-graph/generation/generation-graph';
 import {
   getInputTypeForWorkflow,
+  isWorkflowAvailable,
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -46,7 +47,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
-import { getEcosystemName } from '~/shared/constants/basemodel.constants';
+import { ecosystemByKey, getEcosystemName } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 
 // Ecosystem handlers - unified router
@@ -316,11 +317,71 @@ async function validateAndEnrichResources(
 // =============================================================================
 
 /**
+ * Normalizes workflow between txt2img and img2img:edit based on image state.
+ * - txt2img + images present + edit-capable ecosystem → img2img:edit
+ * - img2img:edit + no images → txt2img
+ * - img2img / img2img:face-fix / img2img:hires-fix + no images → corresponding txt variant
+ *
+ * Runs before graph validation so the correct workflow's image requirements apply.
+ */
+function normalizeImageWorkflow(input: Record<string, unknown>): Record<string, unknown> {
+  const workflow = input.workflow as string | undefined;
+  const images = input.images as unknown[] | undefined;
+  const ecosystem = input.ecosystem as string | undefined;
+  const hasImages = Array.isArray(images) && images.length > 0;
+
+  if (workflow === 'txt2img' && hasImages && ecosystem) {
+    const eco = ecosystemByKey.get(ecosystem);
+    if (eco && isWorkflowAvailable('img2img:edit', eco.id)) {
+      return { ...input, workflow: 'img2img:edit' };
+    }
+  } else if (workflow === 'img2img:edit' && !hasImages) {
+    return { ...input, workflow: 'txt2img' };
+  } else if (!hasImages && workflow?.startsWith('img2img')) {
+    // img2img variants without images → corresponding txt variant
+    const txtVariant = workflow.replace('img2img', 'txt2img');
+    if (txtVariant !== workflow) {
+      return { ...input, workflow: txtVariant };
+    }
+  }
+
+  return input;
+}
+
+/**
+ * Normalizes video workflows without images back to txt2vid.
+ * Handles the case where a user submits img2vid:first-last-frame or img2vid:ref2vid
+ * without images (e.g., after removing images from the form).
+ */
+function normalizeVideoWorkflow(input: Record<string, unknown>): Record<string, unknown> {
+  let workflow = input.workflow as string | undefined;
+  const images = input.images as unknown[] | undefined;
+  const hasImages = Array.isArray(images) && images.length > 0;
+
+  // img2vid workflows without images → txt2vid
+  if ((workflow === 'img2vid:first-last-frame' || workflow === 'img2vid:ref2vid') && !hasImages) {
+    workflow = 'txt2vid';
+  } else if (images && workflow === 'img2vid:first-last-frame' && images.length === 1) {
+    workflow = 'txt2vid';
+  }
+
+  return { ...input, workflow };
+}
+
+/**
+ * Applies all workflow normalizations to input.
+ * Handles txt2img ↔ img2img:edit and video workflow corrections.
+ */
+function normalizeInput(input: Record<string, unknown>): Record<string, unknown> {
+  return normalizeVideoWorkflow(normalizeImageWorkflow(input));
+}
+
+/**
  * Validates input using the generation graph and returns the validated output.
  * The output type is discriminated by the workflow property.
  */
 function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
-  const result = generationGraph.safeParse(input, externalCtx);
+  const result = generationGraph.safeParse(normalizeInput(input), externalCtx);
 
   if (!result.success) {
     const errorMessages = Object.entries(result.errors)
@@ -531,9 +592,7 @@ export async function createWorkflowStepFromGraph({
       };
 
   // Check if this is an enhancement workflow with source metadata
-  const workflowCategory = workflowConfigByKey.get(data.workflow)?.category;
-  const isEnhancement =
-    workflowCategory === 'image-enhancements' || workflowCategory === 'video-enhancements';
+  const isEnhancement = workflowConfigByKey.get(data.workflow)?.enhancement === true;
 
   // For enhancement workflows with source metadata, restructure metadata to preserve original generation
   if (!isWhatIf && isEnhancement && sourceMetadata) {
@@ -602,13 +661,12 @@ export async function generateFromGraph({
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
-  const [process, name] = data.workflow.split(':');
+  const outputTag = data.output === 'image' ? WORKFLOW_TAGS.IMAGE : WORKFLOW_TAGS.VIDEO;
 
   const tags = [
     WORKFLOW_TAGS.GENERATION,
-    data.output === 'image' ? WORKFLOW_TAGS.IMAGE : WORKFLOW_TAGS.VIDEO,
-    process,
-    name,
+    outputTag,
+    data.workflow,
     ecosystem,
     ...customTags,
   ].filter(isDefined);
@@ -671,24 +729,26 @@ function applyWhatIfDefaults(input: Record<string, unknown>): Record<string, unk
   const workflow = result.workflow as string | undefined;
   if (!workflow) return result;
 
-  const inputType = getInputTypeForWorkflow(workflow);
+  result.prompt = 'cost estimation';
 
-  // Fill prompt for text-input workflows (prompt text doesn't affect cost)
-  if (inputType === 'text' && !result.prompt) {
-    result.prompt = 'cost estimation';
-  }
+  // const inputType = getInputTypeForWorkflow(workflow);
 
-  // Fill images for ecosystem image-input workflows
-  // Standalone enhancements (ecosystemIds: []) need actual dimensions, so skip those
-  if (inputType === 'image') {
-    const images = result.images as unknown[] | undefined;
-    if (!images || images.length === 0) {
-      const config = workflowConfigByKey.get(workflow);
-      if (config && config.ecosystemIds.length > 0) {
-        result.images = [WHATIF_PLACEHOLDER_IMAGE];
-      }
-    }
-  }
+  // // Fill prompt for text-input workflows (prompt text doesn't affect cost)
+  // if (inputType === 'text' && !result.prompt) {
+  //   result.prompt = 'cost estimation';
+  // }
+
+  // // Fill images for ecosystem image-input workflows
+  // // Standalone enhancements (ecosystemIds: []) need actual dimensions, so skip those
+  // if (inputType === 'image') {
+  //   const images = result.images as unknown[] | undefined;
+  //   if (!images || images.length === 0) {
+  //     const config = workflowConfigByKey.get(workflow);
+  //     if (config && config.ecosystemIds.length > 0) {
+  //       result.images = [WHATIF_PLACEHOLDER_IMAGE];
+  //     }
+  //   }
+  // }
 
   // Video-input workflows (vid2vid:*) are standalone and need actual video metadata
   // for cost calculation (dimensions * scaleFactor, fps * interpolationFactor), so no defaults
@@ -709,7 +769,7 @@ export async function whatIfFromGraph({
   token,
   currencies,
 }: WhatIfOptions) {
-  const data = validateInput(applyWhatIfDefaults(input), externalCtx);
+  const data = validateInput(applyWhatIfDefaults(normalizeInput(input)), externalCtx);
   const step = await createWorkflowStepFromGraph({
     data,
     isWhatIf: true,

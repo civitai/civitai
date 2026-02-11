@@ -27,6 +27,7 @@ import {
   seedNode,
   negativePromptNode,
   aspectRatioNode,
+  imagesNode,
   createCheckpointGraph,
   resourcesNode,
 } from './common';
@@ -110,6 +111,16 @@ const veo3WorkflowVersions = {
  * - img2vid: Aspect ratio derived from source image, img2vid model versions
  */
 export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
+  // Images node - shown for img2vid, hidden for txt2vid
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 1, min: 0 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+
   // Merge checkpoint graph with workflow-specific versions
   // The workflowVersions option handles automatic model syncing when workflow changes
   .merge(
