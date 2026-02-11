@@ -59,6 +59,8 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { RuleDefinitionPopover } from '~/components/Moderation/RuleDefinitionPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import TosViolationDialog from '~/components/Dialog/Common/TosViolationDialog';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -744,7 +746,6 @@ function ModerationControls({
     );
   }
 
-  const handleBlockSelected = () => handlModerateImage('block');
   const handleUnblockSelected = () => handlModerateImage('unblock');
 
   const handleSelectAll = () => {
@@ -808,19 +809,51 @@ function ModerationControls({
           )}
 
           {view !== ModReviewType.Appeals && (
-            <PopConfirm
-              message={`Are you sure you want to delete ${selected.length} image(s)?`}
-              position="bottom-end"
-              onConfirm={handleBlockSelected}
-              withArrow
-              withinPortal
-            >
-              <ButtonTooltip label="Delete" {...tooltipProps}>
-                <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
-                  <IconTrash size="1.25rem" />
-                </LegacyActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
+            <ButtonTooltip label="Delete" {...tooltipProps}>
+              <LegacyActionIcon
+                variant="outline"
+                disabled={!selected.length}
+                color="red"
+                onClick={() => {
+                  dialogStore.trigger({
+                    component: TosViolationDialog,
+                    props: {
+                      title: 'Delete Selected Images',
+                      message: `Are you sure you want to delete ${selected.length} image(s)?`,
+                      onConfirm: async (violationType, violationDetails) => {
+                        deselectAll();
+                        moderateImagesMutation.mutate(
+                          {
+                            ids: selected,
+                            reviewAction: 'block',
+                            violationType,
+                            violationDetails,
+                          },
+                          {
+                            onSuccess() {
+                              showSuccessNotification({
+                                message: `The images have been blocked`,
+                              });
+                              if (viewingReported) {
+                                const selectedReports = images
+                                  .map((x) => (selected.includes(x.id) ? x.report?.id : undefined))
+                                  .filter(isDefined);
+                                return reportMutation.mutate({
+                                  ids: selectedReports,
+                                  status: 'Actioned',
+                                });
+                              }
+                            },
+                          }
+                        );
+                      },
+                    },
+                  });
+                }}
+              >
+                <IconTrash size="1.25rem" />
+              </LegacyActionIcon>
+            </ButtonTooltip>
           )}
 
           <ButtonTooltip {...tooltipProps} label="Report CSAM">
