@@ -164,7 +164,6 @@ const baseModelConfig = [
   { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B', ecosystem: 'flux2' },
   { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base', ecosystem: 'flux2' },
   { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B', ecosystem: 'flux2' },
-  
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 type BaseModelGroupConfigEntry = {

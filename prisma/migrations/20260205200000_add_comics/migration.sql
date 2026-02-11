@@ -55,6 +55,8 @@ CREATE TABLE "ComicProject" (
     "name" VARCHAR(255) NOT NULL,
     "description" TEXT,
     "coverImageId" INTEGER,
+    "heroImageId" INTEGER,
+    "heroImagePosition" INTEGER NOT NULL DEFAULT 50,
     "status" "ComicProjectStatus" NOT NULL DEFAULT 'Active',
     "baseModel" VARCHAR(50),
     "genre" "ComicGenre",
@@ -69,11 +71,14 @@ CREATE TABLE "ComicProject" (
 CREATE INDEX "ComicProject_userId_idx" ON "ComicProject"("userId");
 CREATE INDEX "ComicProject_status_idx" ON "ComicProject"("status");
 CREATE INDEX "ComicProject_coverImageId_idx" ON "ComicProject"("coverImageId");
+CREATE INDEX "ComicProject_heroImageId_idx" ON "ComicProject"("heroImageId");
 
 ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_coverImageId_fkey"
   FOREIGN KEY ("coverImageId") REFERENCES "Image"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ComicProject" ADD CONSTRAINT "ComicProject_heroImageId_fkey"
+  FOREIGN KEY ("heroImageId") REFERENCES "Image"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- CreateTable: ComicChapter (Composite PK: projectId + position, no separate id)
 CREATE TABLE "ComicChapter" (

@@ -183,23 +183,33 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     let sortKeysetCondition: Prisma.Sql;
     switch (sort) {
       case ChallengeSort.EndingSoon:
-        sortKeysetCondition = Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        sortKeysetCondition = Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${
+          sortValue as Date
+        } AND c.id < ${id}))`;
         break;
       case ChallengeSort.MostEntries:
         sortKeysetCondition = Prisma.sql`(
-          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${sortValue as number}
+          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${
+            sortValue as number
+          }
           OR (
-            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${sortValue as number}
+            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${
+              sortValue as number
+            }
             AND c.id < ${id}
           )
         )`;
         break;
       case ChallengeSort.HighestPrize:
-        sortKeysetCondition = Prisma.sql`(c."prizePool" < ${sortValue as number} OR (c."prizePool" = ${sortValue as number} AND c.id < ${id}))`;
+        sortKeysetCondition = Prisma.sql`(c."prizePool" < ${
+          sortValue as number
+        } OR (c."prizePool" = ${sortValue as number} AND c.id < ${id}))`;
         break;
       case ChallengeSort.Newest:
       default:
-        sortKeysetCondition = Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        sortKeysetCondition = Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${
+          sortValue as Date
+        } AND c.id < ${id}))`;
         break;
     }
 

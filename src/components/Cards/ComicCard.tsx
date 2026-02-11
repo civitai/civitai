@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { RouterOutput } from '~/types/router';
+import { formatRelativeDate, formatGenreLabel } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
 
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
@@ -39,7 +40,7 @@ export function ComicCard({ comic }: { comic: ComicItem }) {
         {/* Genre badge */}
         {comic.genre && (
           <Badge size="xs" variant="light" className="absolute right-2 top-2">
-            {comic.genre.replace(/([A-Z])/g, ' $1').trim()}
+            {formatGenreLabel(comic.genre)}
           </Badge>
         )}
       </div>
@@ -66,17 +67,4 @@ export function ComicCard({ comic }: { comic: ComicItem }) {
       </div>
     </Link>
   );
-}
-
-function formatRelativeDate(date: Date | string): string {
-  const now = new Date();
-  const d = new Date(date);
-  const diff = now.getTime() - d.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days === 0) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return d.toLocaleDateString();
 }

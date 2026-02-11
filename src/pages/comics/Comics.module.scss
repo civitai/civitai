@@ -24,7 +24,7 @@
 /* ── Comic Card (browse grid) ─────────────────────── */
 .comicCard {
   background: light-dark(var(--mantine-color-gray-0), #25262b);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
@@ -47,7 +47,7 @@
 .comicCardImage {
   width: 100%;
   aspect-ratio: 3 / 4;
-  background: light-dark(var(--mantine-color-gray-1), #2C2E33);
+  background: light-dark(var(--mantine-color-gray-1), #2c2e33);
   overflow: hidden;
   position: relative;
 
@@ -133,7 +133,7 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: light-dark(var(--mantine-color-gray-2), #373A40);
+  background: light-dark(var(--mantine-color-gray-2), #373a40);
   overflow: hidden;
   flex-shrink: 0;
   display: flex;
@@ -226,7 +226,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center top;
+  object-position: center 50%; /* overridden inline via heroImagePosition */
   display: block;
 }
 
@@ -328,7 +328,7 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: light-dark(var(--mantine-color-gray-2), #373A40);
+  background: light-dark(var(--mantine-color-gray-2), #373a40);
   overflow: hidden;
   flex-shrink: 0;
   display: flex;
@@ -421,7 +421,7 @@
 
 .chapterListItem {
   background: light-dark(var(--mantine-color-gray-0), #25262b);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   border-radius: 10px;
   padding: 12px 16px;
   display: flex;
@@ -433,7 +433,7 @@
   color: inherit;
 
   &:hover {
-    background: light-dark(var(--mantine-color-gray-1), #2C2E33);
+    background: light-dark(var(--mantine-color-gray-1), #2c2e33);
     border-color: rgba(250, 176, 5, 0.4);
     transform: translateX(4px);
 
@@ -461,7 +461,7 @@
   width: 48px;
   height: 64px;
   border-radius: 6px;
-  background: light-dark(var(--mantine-color-gray-1), #2C2E33);
+  background: light-dark(var(--mantine-color-gray-1), #2c2e33);
   overflow: hidden;
   flex-shrink: 0;
 
@@ -513,7 +513,7 @@
   top: 0;
   z-index: 100;
   background: light-dark(var(--mantine-color-gray-0), #1a1b1e);
-  border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   border-image: linear-gradient(90deg, #fab005, #fd7e14, transparent) 1;
 }
 
@@ -602,7 +602,7 @@
 
 .readerNavBtn {
   background: light-dark(var(--mantine-color-gray-0), #25262b);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   color: light-dark(var(--mantine-color-gray-7), #c1c2c5);
   border-radius: 8px;
   padding: 10px 20px;
@@ -639,7 +639,7 @@
 
 .notFoundLink {
   background: light-dark(var(--mantine-color-gray-0), #25262b);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   color: light-dark(var(--mantine-color-gray-7), #c1c2c5);
   border-radius: 8px;
   padding: 10px 20px;
@@ -668,7 +668,7 @@
 
 .loadMoreBtn {
   background: light-dark(var(--mantine-color-gray-0), #25262b);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373A40);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   color: light-dark(var(--mantine-color-gray-7), #c1c2c5);
   border-radius: 8px;
   padding: 10px 28px;
@@ -693,15 +693,19 @@
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spinner {
   display: inline-block;
   width: 28px;
   height: 28px;
-  border: 3px solid #373A40;
+  border: 3px solid #373a40;
   border-top-color: #fab005;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;

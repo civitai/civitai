@@ -60,7 +60,6 @@ export async function enhanceComicPrompt(input: {
   }
 
   try {
-    const names = characterNames && characterNames.length > 0 ? characterNames : [characterName];
     const textParts = [
       `Characters in this project: ${names.join(', ')}`,
       characterName && `Active character (has reference images): ${characterName}`,

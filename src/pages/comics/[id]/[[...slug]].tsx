@@ -1,4 +1,4 @@
-import { ActionIcon, Container, Select, Textarea, Button } from '@mantine/core';
+import { ActionIcon, Container, Select } from '@mantine/core';
 import {
   IconArrowLeft,
   IconBell,
@@ -8,18 +8,19 @@ import {
   IconChevronRight,
   IconPhoto,
   IconPhotoOff,
-  IconSend,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { ChapterComments } from '~/components/Comics/ChapterComments';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ComicEngagementType } from '~/shared/utils/prisma/enums';
+import { formatRelativeDate } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -84,7 +85,9 @@ type Project = RouterOutput['comics']['getPublicProjectForReader'];
 function ComicOverview({ project }: { project: Project }) {
   const currentUser = useCurrentUser();
   const totalPanels = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
-  const coverUrl =
+  // Hero image for the wide banner, fallback to cover, then first panel
+  const heroUrl =
+    project.heroImage?.url ??
     project.coverImage?.url ??
     project.chapters.flatMap((ch) => ch.panels).find((p) => p.imageUrl)?.imageUrl ??
     null;
@@ -117,12 +120,13 @@ function ComicOverview({ project }: { project: Project }) {
       <div className={styles.overviewRoot}>
         {/* Hero image */}
         <div className={styles.overviewHero}>
-          {coverUrl ? (
+          {heroUrl ? (
             <>
               <img
-                src={getEdgeUrl(coverUrl, { width: 1200 })}
+                src={getEdgeUrl(heroUrl, { width: 1200 })}
                 alt={project.name}
                 className={styles.overviewHeroImage}
+                style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
               />
               <div className={styles.overviewHeroGradient} />
             </>
@@ -451,113 +455,6 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       </div>
     </>
   );
-}
-
-// ─── Comments ────────────────────────────────────────────────────────────────
-
-function ChapterComments({
-  projectId,
-  chapterPosition,
-}: {
-  projectId: number;
-  chapterPosition: number;
-}) {
-  const currentUser = useCurrentUser();
-  const [comment, setComment] = useState('');
-
-  const { data: thread, isLoading } = trpc.comics.getChapterThread.useQuery(
-    { projectId, chapterPosition },
-    { enabled: projectId > 0 }
-  );
-
-  const utils = trpc.useUtils();
-  const createComment = trpc.comics.createChapterComment.useMutation({
-    onSuccess: () => {
-      setComment('');
-      utils.comics.getChapterThread.invalidate({ projectId, chapterPosition });
-    },
-  });
-
-  const handleSubmit = () => {
-    if (!comment.trim()) return;
-    createComment.mutate({ projectId, chapterPosition, content: comment.trim() });
-  };
-
-  return (
-    <div>
-      <h3 className="text-base font-medium mb-3">
-        Comments {thread?.commentCount ? `(${thread.commentCount})` : ''}
-      </h3>
-
-      {/* Comment input */}
-      {currentUser ? (
-        <div className="flex gap-2 mb-4">
-          <Textarea
-            placeholder="Write a comment..."
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            className="flex-1"
-            size="sm"
-            autosize
-            maxRows={4}
-          />
-          <Button
-            onClick={handleSubmit}
-            loading={createComment.isPending}
-            disabled={!comment.trim()}
-            size="sm"
-            variant="filled"
-          >
-            <IconSend size={16} />
-          </Button>
-        </div>
-      ) : (
-        <p className="text-sm text-gray-400 mb-4">
-          <Link href="/login" className="text-blue-400 hover:underline">
-            Sign in
-          </Link>{' '}
-          to leave a comment.
-        </p>
-      )}
-
-      {/* Comment list */}
-      {isLoading ? (
-        <div className="text-sm text-gray-400">Loading comments...</div>
-      ) : !thread?.comments?.length ? (
-        <div className="text-sm text-gray-400">No comments yet. Be the first!</div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {thread.comments.map((c) => (
-            <div key={c.id} className="flex gap-2">
-              <UserAvatarSimple {...c.user} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-medium">{c.user.username}</span>
-                  <span className="text-xs text-gray-400">{formatRelativeDate(c.createdAt)}</span>
-                </div>
-                <p className="text-sm mt-0.5 whitespace-pre-wrap break-words">{c.content}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function formatRelativeDate(date: Date | string): string {
-  const now = new Date();
-  const d = new Date(date);
-  const diff = now.getTime() - d.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days === 0) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return d.toLocaleDateString();
 }
 
 export default Page(PublicComicReader, { header: null });

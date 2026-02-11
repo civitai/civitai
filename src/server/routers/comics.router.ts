@@ -77,6 +77,11 @@ const isChapterOwner = middleware(async ({ ctx, next, input = {} }) => {
 // Schemas
 const createProjectSchema = z.object({
   name: z.string().min(1).max(255),
+  description: z.string().max(5000).optional(),
+  genre: z.nativeEnum(ComicGenre).optional(),
+  coverUrl: z.string().optional(),
+  heroUrl: z.string().optional(),
+  heroImagePosition: z.number().int().min(0).max(100).optional(),
 });
 
 const getProjectSchema = z.object({
@@ -193,7 +198,12 @@ const updateProjectSchema = z.object({
   id: z.number().int(),
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(5000).nullish(),
+  genre: z.nativeEnum(ComicGenre).nullish(),
   coverImageId: z.number().int().nullish(),
+  coverUrl: z.string().nullish(),
+  heroImageId: z.number().int().nullish(),
+  heroUrl: z.string().nullish(),
+  heroImagePosition: z.number().int().min(0).max(100).optional(),
 });
 
 const deleteReferenceSchema = z.object({
@@ -391,6 +401,7 @@ export const comicsRouter = router({
       },
       include: {
         coverImage: { select: { id: true, url: true, nsfwLevel: true } },
+        heroImage: { select: { id: true, url: true, nsfwLevel: true } },
         chapters: {
           include: {
             _count: { select: { panels: true } },
@@ -415,6 +426,7 @@ export const comicsRouter = router({
         name: p.name,
         description: p.description,
         coverImage: p.coverImage,
+        heroImage: p.heroImage,
         panelCount,
         thumbnailUrl,
         createdAt: p.createdAt,
@@ -428,6 +440,7 @@ export const comicsRouter = router({
       where: { id: input.id },
       include: {
         coverImage: { select: { id: true, url: true, nsfwLevel: true } },
+        heroImage: { select: { id: true, url: true, nsfwLevel: true } },
         chapters: {
           orderBy: { position: 'asc' },
           include: {
@@ -582,6 +595,8 @@ export const comicsRouter = router({
           name: true,
           description: true,
           coverImage: { select: { id: true, url: true, nsfwLevel: true } },
+          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          heroImagePosition: true,
           genre: true,
           nsfwLevel: true,
           updatedAt: true,
@@ -651,6 +666,7 @@ export const comicsRouter = router({
           description: p.description,
           thumbnailUrl,
           coverImage: p.coverImage,
+          heroImage: p.heroImage,
           genre: p.genre,
           nsfwLevel: p.nsfwLevel,
           readyPanelCount,
@@ -675,6 +691,8 @@ export const comicsRouter = router({
           name: true,
           description: true,
           coverImage: { select: { id: true, url: true, nsfwLevel: true } },
+          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          heroImagePosition: true,
           genre: true,
           nsfwLevel: true,
           status: true,
@@ -723,6 +741,8 @@ export const comicsRouter = router({
         name: project.name,
         description: project.description,
         coverImage: project.coverImage,
+        heroImage: project.heroImage,
+        heroImagePosition: project.heroImagePosition,
         user: project.user,
         chapters,
       };
@@ -782,6 +802,9 @@ export const comicsRouter = router({
       data: {
         userId: ctx.user.id,
         name: input.name,
+        description: input.description ?? null,
+        genre: input.genre ?? null,
+        heroImagePosition: input.heroImagePosition ?? 50,
         chapters: {
           create: {
             name: 'Chapter 1',
@@ -793,6 +816,46 @@ export const comicsRouter = router({
         chapters: true,
       },
     });
+
+    // Handle cover image
+    if (input.coverUrl) {
+      const image = await dbWrite.image.create({
+        data: {
+          url: input.coverUrl,
+          userId: ctx.user.id,
+          width: 0,
+          height: 0,
+          ingestion: 'Pending',
+        },
+      });
+      await dbWrite.comicProject.update({
+        where: { id: project.id },
+        data: { coverImageId: image.id },
+      });
+      ingestImageById({ id: image.id }).catch((e) =>
+        console.error(`Failed to ingest cover image ${image.id}:`, e)
+      );
+    }
+
+    // Handle hero image
+    if (input.heroUrl) {
+      const image = await dbWrite.image.create({
+        data: {
+          url: input.heroUrl,
+          userId: ctx.user.id,
+          width: 0,
+          height: 0,
+          ingestion: 'Pending',
+        },
+      });
+      await dbWrite.comicProject.update({
+        where: { id: project.id },
+        data: { heroImageId: image.id },
+      });
+      ingestImageById({ id: image.id }).catch((e) =>
+        console.error(`Failed to ingest hero image ${image.id}:`, e)
+      );
+    }
 
     return project;
   }),
@@ -826,17 +889,63 @@ export const comicsRouter = router({
     const data: Record<string, any> = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.description !== undefined) data.description = input.description;
-    if (input.coverImageId !== undefined) data.coverImageId = input.coverImageId;
+    if (input.genre !== undefined) data.genre = input.genre;
+    if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
+
+    // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
+    if (input.coverImageId !== undefined) {
+      data.coverImageId = input.coverImageId;
+    } else if (input.coverUrl !== undefined) {
+      if (input.coverUrl) {
+        const image = await dbWrite.image.create({
+          data: {
+            url: input.coverUrl,
+            userId: ctx.user.id,
+            width: 0,
+            height: 0,
+            ingestion: 'Pending',
+          },
+        });
+        data.coverImageId = image.id;
+      } else {
+        data.coverImageId = null;
+      }
+    }
+
+    // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
+    if (input.heroImageId !== undefined) {
+      data.heroImageId = input.heroImageId;
+    } else if (input.heroUrl !== undefined) {
+      if (input.heroUrl) {
+        const image = await dbWrite.image.create({
+          data: {
+            url: input.heroUrl,
+            userId: ctx.user.id,
+            width: 0,
+            height: 0,
+            ingestion: 'Pending',
+          },
+        });
+        data.heroImageId = image.id;
+      } else {
+        data.heroImageId = null;
+      }
+    }
 
     const updated = await dbWrite.comicProject.update({
       where: { id: input.id },
       data,
     });
 
-    // Trigger ingestion for new cover image
-    if (input.coverImageId) {
-      ingestImageById({ id: input.coverImageId }).catch((e) =>
-        console.error(`Failed to ingest cover image ${input.coverImageId}:`, e)
+    // Trigger ingestion for new images
+    if (data.coverImageId) {
+      ingestImageById({ id: data.coverImageId }).catch((e) =>
+        console.error(`Failed to ingest cover image ${data.coverImageId}:`, e)
+      );
+    }
+    if (data.heroImageId) {
+      ingestImageById({ id: data.heroImageId }).catch((e) =>
+        console.error(`Failed to ingest hero image ${data.heroImageId}:`, e)
       );
     }
 

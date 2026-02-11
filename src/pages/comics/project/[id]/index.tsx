@@ -1,20 +1,18 @@
 import {
   ActionIcon,
   Button,
-  Code,
   Container,
   Group,
   Loader,
-  Menu,
   Modal,
   ScrollArea,
+  Select,
   Stack,
   Switch,
   Text,
   Textarea,
   TextInput,
   Title,
-  Badge,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDisclosure } from '@mantine/hooks';
@@ -24,7 +22,6 @@ import {
   IconArrowLeft,
   IconBook,
   IconBug,
-  IconDotsVertical,
   IconPencil,
   IconPhoto,
   IconPhotoUp,
@@ -47,23 +44,32 @@ import { slugit } from '~/utils/string-helpers';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
+import { PanelCard, SortablePanel } from '~/components/Comics/PanelCard';
+import { PanelDebugModal } from '~/components/Comics/PanelDebugModal';
+import { ReferenceSidebarItem } from '~/components/Comics/ReferenceSidebarItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { formatGenreLabel } from '~/utils/comic-helpers';
+import { ComicGenre } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
   ssr: false,
 });
+
+const genreOptions = Object.entries(ComicGenre).map(([key, value]) => ({
+  value,
+  label: formatGenreLabel(key),
+}));
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -120,7 +126,17 @@ function ProjectWorkspace() {
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editCoverUrl, setEditCoverUrl] = useState<string | null>(null);
+  const [editCoverImageId, setEditCoverImageId] = useState<number | null>(null);
+  const [editGenre, setEditGenre] = useState<string | null>(null);
+  const [editHeroUrl, setEditHeroUrl] = useState<string | null>(null);
+  const [editHeroImageId, setEditHeroImageId] = useState<number | null>(null);
+  const [editHeroPosition, setEditHeroPosition] = useState(50);
   const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
+  const {
+    uploadToCF: uploadHeroToCF,
+    files: heroUploadFiles,
+    resetFiles: resetHeroFiles,
+  } = useCFImageUpload();
 
   // Panel detail drawer state
   const [detailPanelId, setDetailPanelId] = useState<number | null>(null);
@@ -584,8 +600,14 @@ function ProjectWorkspace() {
   const handleOpenSettings = () => {
     setEditName(project.name);
     setEditDescription(project.description ?? '');
+    setEditGenre((project as any).genre ?? null);
     setEditCoverUrl(project.coverImage?.url ?? null);
+    setEditCoverImageId(project.coverImage?.id ?? null);
+    setEditHeroUrl((project as any).heroImage?.url ?? null);
+    setEditHeroImageId((project as any).heroImage?.id ?? null);
+    setEditHeroPosition((project as any).heroImagePosition ?? 50);
     resetCoverFiles();
+    resetHeroFiles();
     openSettings();
   };
 
@@ -594,6 +616,17 @@ function ProjectWorkspace() {
       id: projectId,
       name: editName.trim() || undefined,
       description: editDescription.trim() || null,
+      genre:
+        editGenre !== ((project as any).genre ?? null)
+          ? (editGenre as ComicGenre) ?? null
+          : undefined,
+      // Pass URL for new uploads (backend creates Image record), or null to clear
+      coverUrl: editCoverUrl !== (project.coverImage?.url ?? null) ? editCoverUrl : undefined,
+      heroUrl: editHeroUrl !== ((project as any).heroImage?.url ?? null) ? editHeroUrl : undefined,
+      heroImagePosition:
+        editHeroPosition !== ((project as any).heroImagePosition ?? 50)
+          ? editHeroPosition
+          : undefined,
     });
   };
 
@@ -601,6 +634,14 @@ function ProjectWorkspace() {
     if (files.length === 0) return;
     const result = await uploadToCF(files[0]);
     setEditCoverUrl(result.id);
+    setEditCoverImageId(null); // New upload — backend will create Image record
+  };
+
+  const handleHeroDrop = async (files: File[]) => {
+    if (files.length === 0) return;
+    const result = await uploadHeroToCF(files[0]);
+    setEditHeroUrl(result.id);
+    setEditHeroImageId(null); // New upload — backend will create Image record
   };
 
   const resetSmartState = () => {
@@ -1637,10 +1678,21 @@ function ProjectWorkspace() {
             value={editDescription}
             onChange={(e) => setEditDescription(e.target.value)}
           />
+          <Select
+            label="Genre"
+            placeholder="Select a genre"
+            data={genreOptions}
+            value={editGenre}
+            onChange={setEditGenre}
+            clearable
+          />
 
           <div>
             <Text size="sm" fw={500} mb={4}>
               Cover Image
+            </Text>
+            <Text size="xs" c="dimmed" mb={8}>
+              Portrait image shown in cards and chapter lists (3:4 ratio recommended)
             </Text>
             {editCoverUrl ? (
               <div className="relative inline-block">
@@ -1659,7 +1711,10 @@ function ProjectWorkspace() {
                   color="dark"
                   size="xs"
                   className="absolute -top-2 -right-2"
-                  onClick={() => setEditCoverUrl(null)}
+                  onClick={() => {
+                    setEditCoverUrl(null);
+                    setEditCoverImageId(null);
+                  }}
                 >
                   <IconX size={12} />
                 </ActionIcon>
@@ -1689,6 +1744,49 @@ function ProjectWorkspace() {
             )}
           </div>
 
+          <div>
+            <Text size="sm" fw={500} mb={4}>
+              Hero Image
+            </Text>
+            <Text size="xs" c="dimmed" mb={8}>
+              Wide banner shown on the comic overview page (16:9 or wider recommended)
+            </Text>
+            {editHeroUrl ? (
+              <HeroPositionPicker
+                url={editHeroUrl}
+                position={editHeroPosition}
+                onPositionChange={setEditHeroPosition}
+                onRemove={() => {
+                  setEditHeroUrl(null);
+                  setEditHeroImageId(null);
+                  setEditHeroPosition(50);
+                }}
+              />
+            ) : (
+              <Dropzone onDrop={handleHeroDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
+                <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
+                  <Dropzone.Accept>
+                    <IconUpload size={24} className="text-blue-500" />
+                  </Dropzone.Accept>
+                  <Dropzone.Reject>
+                    <IconX size={24} className="text-red-500" />
+                  </Dropzone.Reject>
+                  <Dropzone.Idle>
+                    <IconPhoto size={24} style={{ color: '#909296' }} />
+                  </Dropzone.Idle>
+                  <Text size="sm" c="dimmed">
+                    Drop a hero banner or click to browse
+                  </Text>
+                </Group>
+              </Dropzone>
+            )}
+            {heroUploadFiles.some((f) => f.status === 'uploading') && (
+              <Text size="xs" c="dimmed" mt={4}>
+                Uploading...
+              </Text>
+            )}
+          </div>
+
           <Group justify="flex-end">
             <Button variant="default" onClick={closeSettings}>
               Cancel
@@ -1707,450 +1805,6 @@ function ProjectWorkspace() {
       {/* ── Debug Modal ──────────────────────────── */}
       <PanelDebugModal panelId={debugPanelId} opened={debugModalOpened} onClose={closeDebugModal} />
     </>
-  );
-}
-
-// ── Reference sidebar item ─────────────────────────
-function ReferenceSidebarItem({
-  character: ref,
-  projectId,
-  referenceImageMap,
-  onDelete,
-  getStatusDotClass,
-  getStatusLabel,
-}: {
-  character: { id: number; name: string; status: string; images?: any[] };
-  projectId: number;
-  referenceImageMap: Map<number, { url: string }>;
-  onDelete: (id: number, name: string) => void;
-  getStatusDotClass: (status: string, hasRefs: boolean) => string;
-  getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
-}) {
-  const coverImage = referenceImageMap.get(ref.id);
-  const hasImages = (ref.images?.length ?? 0) > 0;
-  const isFailed = ref.status === 'Failed';
-
-  return (
-    <div className={styles.characterCard}>
-      <Link
-        href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
-        className={styles.characterAvatar}
-        onClick={(e: React.MouseEvent) => e.stopPropagation()}
-      >
-        {isFailed ? (
-          <IconAlertTriangle size={18} style={{ color: '#fa5252' }} />
-        ) : coverImage ? (
-          <EdgeMedia2
-            src={coverImage.url}
-            type="image"
-            name={ref.name}
-            alt={ref.name}
-            width={80}
-            style={{
-              maxWidth: '100%',
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              objectPosition: 'top center',
-              display: 'block',
-            }}
-          />
-        ) : (
-          <IconUser size={18} style={{ color: '#909296' }} />
-        )}
-      </Link>
-
-      <div className={styles.characterInfo}>
-        <Link
-          href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
-          className={styles.characterName}
-          onClick={(e: React.MouseEvent) => e.stopPropagation()}
-        >
-          {ref.name}
-        </Link>
-        <p className={styles.characterStatus}>
-          <span className={clsx(styles.statusDot, getStatusDotClass(ref.status, hasImages))} />
-          {getStatusLabel(ref.status, hasImages, isFailed)}
-        </p>
-      </div>
-
-      <div className={styles.characterDelete}>
-        <ActionIcon
-          variant="subtle"
-          color="red"
-          size="sm"
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation();
-            onDelete(ref.id, ref.name);
-          }}
-        >
-          <IconTrash size={14} />
-        </ActionIcon>
-      </div>
-    </div>
-  );
-}
-
-// ── Sortable panel wrapper ─────────────────────────
-function SortablePanel({ id, children }: { id: number; children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id,
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        cursor: isDragging ? 'grabbing' : 'grab',
-        opacity: isDragging ? 0.5 : 1,
-        touchAction: 'none',
-      }}
-      {...attributes}
-      {...listeners}
-    >
-      {children}
-    </div>
-  );
-}
-
-// ── Panel card ─────────────────────────────────────
-interface PanelCardProps {
-  panel: {
-    id: number;
-    imageUrl: string | null;
-    prompt: string;
-    status: string;
-    errorMessage: string | null;
-  };
-  position: number;
-  referenceNames: string[];
-  onDelete: () => void;
-  onViewDebug: () => void;
-  onRegenerate: () => void;
-  onInsertAfter: () => void;
-  onClick: () => void;
-}
-
-function PanelCard({
-  panel,
-  position,
-  referenceNames,
-  onDelete,
-  onViewDebug,
-  onRegenerate,
-  onInsertAfter,
-  onClick,
-}: PanelCardProps) {
-  const { imageUrl, prompt, status, errorMessage } = panel;
-
-  return (
-    <div className={styles.panelCard} onClick={onClick}>
-      {imageUrl ? (
-        <>
-          <img
-            src={getEdgeUrl(imageUrl, { width: 450 })}
-            alt={prompt}
-            className={styles.panelImage}
-          />
-          <div className={styles.panelOverlay}>
-            <div className="flex justify-between items-start">
-              <span className={styles.panelNumber}>#{position}</span>
-              <div className={styles.panelMenu}>
-                <Menu position="bottom-end" withinPortal>
-                  <Menu.Target>
-                    <ActionIcon
-                      variant="filled"
-                      color="dark"
-                      size="sm"
-                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                    >
-                      <IconDotsVertical size={14} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {(status === 'Ready' || status === 'Failed') && (
-                      <Menu.Item
-                        leftSection={<IconRefreshDot size={14} />}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          onRegenerate();
-                        }}
-                      >
-                        Regenerate
-                      </Menu.Item>
-                    )}
-                    <Menu.Item
-                      leftSection={<IconPlus size={14} />}
-                      onClick={(e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        onInsertAfter();
-                      }}
-                    >
-                      Insert after
-                    </Menu.Item>
-                    <Menu.Item
-                      leftSection={<IconBug size={14} />}
-                      onClick={(e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        onViewDebug();
-                      }}
-                    >
-                      Debug Info
-                    </Menu.Item>
-                    <Menu.Item
-                      color="red"
-                      leftSection={<IconTrash size={14} />}
-                      onClick={(e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        onDelete();
-                      }}
-                    >
-                      Delete
-                    </Menu.Item>
-                  </Menu.Dropdown>
-                </Menu>
-              </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              {referenceNames.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {referenceNames.map((name) => (
-                    <span key={name} className={styles.panelCharacterPill}>
-                      <IconUser size={10} />
-                      {name}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <p className={styles.panelPrompt}>{prompt}</p>
-            </div>
-          </div>
-        </>
-      ) : (
-        <>
-          {status === 'Generating' || status === 'Pending' ? (
-            <div className={styles.panelEmpty}>
-              <div className={styles.spinner} />
-              <Text size="xs">{status === 'Pending' ? 'Queued' : 'Generating...'}</Text>
-            </div>
-          ) : status === 'Failed' ? (
-            <div className={styles.panelFailed}>
-              <IconAlertTriangle size={28} />
-              <Text size="xs" c="red">
-                Failed
-              </Text>
-              {errorMessage && (
-                <Text size="xs" c="dimmed" ta="center" lineClamp={2} px="xs">
-                  {errorMessage}
-                </Text>
-              )}
-            </div>
-          ) : (
-            <div className={styles.panelEmpty}>
-              <IconPhoto size={28} />
-            </div>
-          )}
-          <div className="absolute top-2 left-2">
-            <span className={styles.panelNumber}>#{position}</span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── Debug modal ────────────────────────────────────
-function PanelDebugModal({
-  panelId,
-  opened,
-  onClose,
-}: {
-  panelId: number | null;
-  opened: boolean;
-  onClose: () => void;
-}) {
-  const { data, isLoading } = trpc.comics.getPanelDebugInfo.useQuery(
-    { panelId: panelId ?? 0 },
-    { enabled: opened && panelId != null && panelId > 0 }
-  );
-
-  const meta = data?.panel.metadata as Record<string, any> | null | undefined;
-
-  return (
-    <Modal opened={opened} onClose={onClose} title="Panel Debug Info" size="lg">
-      <ScrollArea.Autosize mah="70vh">
-        {isLoading ? (
-          <Stack align="center" py="xl">
-            <Loader />
-          </Stack>
-        ) : data ? (
-          <Stack gap="md">
-            {data.panel.errorMessage && (
-              <div>
-                <Text fw={600} size="sm" mb={4} c="red">
-                  Error
-                </Text>
-                <Code block color="red">
-                  {data.panel.errorMessage}
-                </Code>
-              </div>
-            )}
-            <div>
-              <Group gap="xs" mb={4}>
-                <Text fw={600} size="sm">
-                  Prompts
-                </Text>
-                <Badge size="xs" variant="light" color={meta?.enhanceEnabled ? 'teal' : 'gray'}>
-                  Enhance {meta?.enhanceEnabled ? 'ON' : 'OFF'}
-                </Badge>
-              </Group>
-              <Stack gap="xs">
-                <div>
-                  <Text size="xs" c="dimmed" mb={2}>
-                    Original
-                  </Text>
-                  <Code block>{data.panel.prompt}</Code>
-                </div>
-                {data.panel.enhancedPrompt && (
-                  <div>
-                    <Text size="xs" c="dimmed" mb={2}>
-                      Enhanced
-                    </Text>
-                    <Code block>{data.panel.enhancedPrompt}</Code>
-                  </div>
-                )}
-              </Stack>
-            </div>
-            {meta?.previousPanelId && (
-              <div>
-                <Text fw={600} size="sm" mb={4}>
-                  Previous Panel Context
-                </Text>
-                <Stack gap="xs">
-                  <Group gap="xs">
-                    <Text size="xs" c="dimmed">
-                      ID:
-                    </Text>
-                    <Code>{meta.previousPanelId}</Code>
-                  </Group>
-                  {meta.previousPanelPrompt && (
-                    <div>
-                      <Text size="xs" c="dimmed" mb={2}>
-                        Prompt used
-                      </Text>
-                      <Code block>{meta.previousPanelPrompt}</Code>
-                    </div>
-                  )}
-                  <Group gap="xs">
-                    <Text size="xs" c="dimmed">
-                      Had image:
-                    </Text>
-                    <Badge
-                      size="xs"
-                      variant="light"
-                      color={meta.previousPanelImageUrl ? 'green' : 'gray'}
-                    >
-                      {meta.previousPanelImageUrl ? 'Yes' : 'No'}
-                    </Badge>
-                  </Group>
-                </Stack>
-              </div>
-            )}
-            {meta?.referenceImages?.length > 0 && (
-              <div>
-                <Text fw={600} size="sm" mb={4}>
-                  Reference Images ({meta!.referenceImages.length})
-                </Text>
-                <Stack gap="xs">
-                  {(meta!.referenceImages as { url: string; width: number; height: number }[]).map(
-                    (img, i) => (
-                      <Group key={i} gap="xs">
-                        <Badge size="xs" variant="light">
-                          {img.width}x{img.height}
-                        </Badge>
-                        <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }} lineClamp={1}>
-                          {img.url}
-                        </Text>
-                      </Group>
-                    )
-                  )}
-                </Stack>
-              </div>
-            )}
-            <div>
-              <Text fw={600} size="sm" mb={4}>
-                References ({data.references?.length ?? 0})
-              </Text>
-              {data.references && data.references.length > 0 ? (
-                <Stack gap="xs">
-                  {data.references.map((ref: any) => (
-                    <Group key={ref.id} gap="xs">
-                      <Text size="xs">{ref.name}</Text>
-                      <Badge size="xs" variant="light">
-                        {ref.images?.length ?? 0} images
-                      </Badge>
-                    </Group>
-                  ))}
-                  {(meta?.allReferenceNames ?? meta?.allCharacterNames) && (
-                    <Group gap="xs">
-                      <Text size="xs" c="dimmed">
-                        All known:
-                      </Text>
-                      <Text size="xs">
-                        {((meta.allReferenceNames ?? meta.allCharacterNames) as string[]).join(
-                          ', '
-                        )}
-                      </Text>
-                    </Group>
-                  )}
-                </Stack>
-              ) : (
-                <Text size="xs" c="dimmed">
-                  No reference info
-                </Text>
-              )}
-            </div>
-            <div>
-              <Text fw={600} size="sm" mb={4}>
-                Generation Parameters
-              </Text>
-              <Code block>
-                {JSON.stringify(meta?.generationParams ?? data.generation, null, 2)}
-              </Code>
-            </div>
-            <div>
-              <Text fw={600} size="sm" mb={4}>
-                Panel Record
-              </Text>
-              <Code block>
-                {JSON.stringify(
-                  {
-                    id: data.panel.id,
-                    status: data.panel.status,
-                    workflowId: data.panel.workflowId,
-                    createdAt: data.panel.createdAt,
-                    updatedAt: data.panel.updatedAt,
-                  },
-                  null,
-                  2
-                )}
-              </Code>
-            </div>
-            {data.workflow && (
-              <div>
-                <Text fw={600} size="sm" mb={4}>
-                  Orchestrator Workflow
-                </Text>
-                <Code block>{JSON.stringify(data.workflow, null, 2)}</Code>
-              </div>
-            )}
-          </Stack>
-        ) : (
-          <Text c="dimmed">No debug info available</Text>
-        )}
-      </ScrollArea.Autosize>
-    </Modal>
   );
 }
 

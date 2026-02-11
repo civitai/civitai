@@ -1468,6 +1468,7 @@ model Image {
   comicPanels             ComicPanel[]
   comicReferenceImages    ComicReferenceImage[]
   comicProjectCover       ComicProject[]         @relation("comicProjectCover")
+  comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
 
@@ -4919,7 +4920,10 @@ model ComicProject {
   description   String?            @db.Text
   coverImageId  Int?
   coverImage    Image?             @relation("comicProjectCover", fields: [coverImageId], references: [id], onDelete: SetNull)
-  status        ComicProjectStatus @default(Active)
+  heroImageId       Int?
+  heroImage         Image?             @relation("comicProjectHero", fields: [heroImageId], references: [id], onDelete: SetNull)
+  heroImagePosition Int                @default(50)
+  status            ComicProjectStatus @default(Active)
   baseModel     String?            @db.VarChar(50)
   genre         ComicGenre?
   nsfwLevel     Int                @default(0)
@@ -4933,6 +4937,7 @@ model ComicProject {
   @@index([userId])
   @@index([status])
   @@index([coverImageId])
+  @@index([heroImageId])
 }
 
 model ComicChapter {

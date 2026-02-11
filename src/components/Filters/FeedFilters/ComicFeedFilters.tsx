@@ -3,12 +3,12 @@ import { Group, Select } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { formatGenreLabel } from '~/utils/comic-helpers';
 import { ComicGenre } from '~/shared/utils/prisma/enums';
 
 const genreOptions = [
   { value: '', label: 'All Genres' },
-  ...Object.keys(ComicGenre).map((g) => ({ value: g, label: g.replace(/([A-Z])/g, ' $1').trim() })),
+  ...Object.keys(ComicGenre).map((g) => ({ value: g, label: formatGenreLabel(g) })),
 ];
 
 const sortOptions = [
@@ -27,7 +27,6 @@ const periodOptions = [
 
 export function ComicFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
-  const currentUser = useCurrentUser();
 
   const setParam = (key: string, value: string) => {
     const query = { ...router.query };
