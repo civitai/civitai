@@ -1019,66 +1019,60 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
         background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
       }}
     >
-      <Container size="xl">
-        <Stack gap="md" py={32}>
-          <Group wrap="wrap" justify="space-between">
-            <Group wrap="wrap">
-              <Title order={2}>Entries</Title>
-              <Text c="dimmed" size="sm">
-                {challenge.entryCount.toLocaleString()} total{' '}
-                {challenge.entryCount === 1 ? 'entry' : 'entries'}
-              </Text>
-            </Group>
-            {displaySubmitAction && (
-              <Group gap="xs">
-                <Button
-                  size="sm"
-                  variant="filled"
-                  onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
-                  leftSection={<IconBrush size={16} />}
-                >
-                  Generate Entries
-                </Button>
-                <Button
-                  size="sm"
-                  variant="light"
-                  onClick={handleOpenSubmitModal}
-                  leftSection={<IconPhoto size={16} />}
-                >
-                  Submit Entries
-                </Button>
+      <MasonryProvider columnWidth={appConstants.cardSizes.image} maxSingleColumnWidth={450}>
+        <MasonryContainer>
+          <Stack gap="md" py={32}>
+            <Group wrap="wrap" justify="space-between">
+              <Group wrap="wrap">
+                <Title order={2}>Entries</Title>
+                <Text c="dimmed" size="sm">
+                  {challenge.entryCount.toLocaleString()} total{' '}
+                  {challenge.entryCount === 1 ? 'entry' : 'entries'}
+                </Text>
               </Group>
-            )}
-          </Group>
+              {displaySubmitAction && (
+                <Group gap="xs">
+                  <Button
+                    size="sm"
+                    variant="filled"
+                    onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
+                    leftSection={<IconBrush size={16} />}
+                  >
+                    Generate Entries
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    onClick={handleOpenSubmitModal}
+                    leftSection={<IconPhoto size={16} />}
+                  >
+                    Submit Entries
+                  </Button>
+                </Group>
+              )}
+            </Group>
 
-          {challenge.entryCount === 0 || !hasCollection ? (
-            <NoContent
-              message={
-                isActive
-                  ? 'No entries yet. Be the first to submit!'
-                  : 'No entries for this challenge.'
-              }
-            />
-          ) : (
-            <MasonryProvider
-              columnWidth={appConstants.cardSizes.image}
-              maxColumnCount={4}
-              maxSingleColumnWidth={450}
-            >
-              <MasonryContainer m={0} p={0} px={0}>
-                <ImagesInfinite
-                  filters={{
-                    collectionId: challenge.collectionId ?? undefined,
-                    period: 'AllTime',
-                    sort: ImageSort.Random,
-                  }}
-                  disableStoreFilters
-                />
-              </MasonryContainer>
-            </MasonryProvider>
-          )}
-        </Stack>
-      </Container>
+            {challenge.entryCount === 0 || !hasCollection ? (
+              <NoContent
+                message={
+                  isActive
+                    ? 'No entries yet. Be the first to submit!'
+                    : 'No entries for this challenge.'
+                }
+              />
+            ) : (
+              <ImagesInfinite
+                filters={{
+                  collectionId: challenge.collectionId ?? undefined,
+                  period: 'AllTime',
+                  sort: ImageSort.Random,
+                }}
+                disableStoreFilters
+              />
+            )}
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
     </Container>
   );
 }

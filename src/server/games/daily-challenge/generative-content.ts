@@ -1,5 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
-
 import type {
   ChallengePrompts,
   JudgingConfig,
@@ -7,13 +5,8 @@ import type {
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { openrouter, AI_MODELS } from '~/server/services/ai/openrouter';
-import {
-  parseBitwiseBrowsingLevel,
-  browsingLevelLabels,
-} from '~/shared/constants/browsingLevel.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { markdownToHtml } from '~/utils/markdown-helpers';
-import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
 
 type GenerateCollectionDetailsInput = {
@@ -91,16 +84,7 @@ type GeneratedArticle = {
   invitation: string;
   theme: string;
 };
-export async function generateArticle({
-  resource,
-  image,
-  challengeDate,
-  prizes,
-  entryPrizeRequirement,
-  entryPrize,
-  allowedNsfwLevel,
-  config,
-}: GenerateArticleInput) {
+export async function generateArticle({ resource, image, config }: GenerateArticleInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
   const result = await openrouter.getJsonCompletion<GeneratedArticle>({
@@ -137,52 +121,6 @@ export async function generateArticle({
 
   const markdownContent = stripLeadingWhitespace(`
     ${result.body}
-
-    ## 🤔 How to Create Entries
-    Use the **Generate** button on this page to open the on-site generator with the challenge model pre-loaded. Type in your prompt, generate images, and submit your favorites!
-
-    You can also:
-    - Browse the [model gallery](/models/${
-      resource.modelId
-    }) and **Remix** any image to create your own version.
-    - Upload images you've created locally using the challenge [model](/models/${resource.modelId}).
-
-    ## 📝 How to Submit
-    Click the **Submit** button on this page to open the submission panel. You can submit entries from:
-    - **From Generator** — select images you just generated on-site.
-    - **My Images** — choose from your existing image library.
-    - **Upload New** — drag and drop images created outside of Civitai.
-
-    ## ⭐ Prizes
-    **Winners will receive**:
-    ${prizes
-      .map(
-        (prize, i) =>
-          `- **${asOrdinal(i + 1)}**: <span style="color:#fab005">${numberWithCommas(
-            prize.buzz
-          )} Buzz</span>, ${prize.points} Challenge Points`
-      )
-      .join('\n')}
-
-    Winners will be announced at 12am UTC and notified via on-site notification.
-
-    **Participation rewards!**:
-    Submit ${entryPrizeRequirement} valid entries to earn <span style="color:#228be6">${
-    entryPrize.buzz
-  } Buzz</span> and ${
-    entryPrize.points
-  } Challenge Points. Only entries that follow the rules below count toward this reward!
-
-    ## 📜 Rules
-    1. All entries must be submitted before the end of ${dayjs(challengeDate).format(
-      'MMMM DD'
-    )} (23:59 UTC).
-    2. All submitted images must be rated ${parseBitwiseBrowsingLevel(allowedNsfwLevel)
-      .map((level) => browsingLevelLabels[level as keyof typeof browsingLevelLabels])
-      .join(', ')} and adhere to our **Terms of Service**.
-    3. Participants can submit up to ${entryPrizeRequirement * 2} images.
-    4. Low-effort entries are not allowed. Submitting entries with no relevance to the challenge, with the intention of farming Participation Reward Buzz, may result in a Contest Ban. Contest-banned users will be prohibited from participating in all future Civitai contests!
-    5. Entries must use the provided model.
   `);
   const content = await markdownToHtml(markdownContent);
 
