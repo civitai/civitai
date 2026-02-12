@@ -33,7 +33,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const searchableAttributes: SearchableAttributes = ['prompt'];
 
-  const sortableAttributes: SortableAttributes = ['id', 'sortAt'];
+  const sortableAttributes: SortableAttributes = ['id', 'sortAt', 'reactionCount'];
 
   const filterableAttributes: FilterableAttributes = [
     'id',
@@ -93,6 +93,7 @@ type ImageTag = { imageId: number; tagName: string };
 type ImageTool = { imageId: number; toolName: string };
 type ImageTechnique = { imageId: number; techniqueName: string };
 type ImageBaseModel = { imageId: number; baseModel: string };
+type ImageMetrics = { id: number; reactionCount: number };
 
 // ---------------------------------------------------------------------------
 // Transform
@@ -103,12 +104,14 @@ const transformData = async ({
   tools,
   techniques,
   baseModels,
+  metrics,
 }: {
   images: ImageRow[];
   tags: ImageTag[];
   tools: ImageTool[];
   techniques: ImageTechnique[];
   baseModels: ImageBaseModel[];
+  metrics: ImageMetrics[];
 }) => {
   // Build lookup maps
   const tagMap = new Map<number, string[]>();
@@ -137,6 +140,11 @@ const transformData = async ({
     if (bm.baseModel) baseModelMap.set(bm.imageId, bm.baseModel);
   }
 
+  const metricsMap = new Map<number, number>();
+  for (const m of metrics) {
+    metricsMap.set(m.id, m.reactionCount);
+  }
+
   return images
     .map((img) => ({
       id: img.id,
@@ -145,6 +153,7 @@ const transformData = async ({
       type: img.type,
       postId: img.postId,
       prompt: img.prompt ? img.prompt.slice(0, 400) : null,
+      reactionCount: metricsMap.get(img.id) ?? 0,
       user: {
         id: img.userId,
         username: img.username,
@@ -257,7 +266,7 @@ export const imagesSearchSearchIndex = createSearchIndexUpdateProcessor({
     const images = await imagesQuery.result();
 
     if (images.length === 0) {
-      return { images: [], tags: [], tools: [], techniques: [], baseModels: [] };
+      return { images: [], tags: [], tools: [], techniques: [], baseModels: [], metrics: [] };
     }
 
     const ids = images.map((img) => img.id);
@@ -305,11 +314,32 @@ export const imagesSearchSearchIndex = createSearchIndexUpdateProcessor({
     `);
     const baseModels = await baseModelsQuery.result();
 
+    // Step 6: Reaction counts from ClickHouse
+    let metrics: ImageMetrics[] = [];
+    try {
+      const chunkSize = 5000;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        const chunkMetrics = await clickhouse?.$query<ImageMetrics>(`
+          SELECT
+            entityId as id,
+            sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount"
+          FROM entityMetricDailyAgg
+          WHERE entityType = 'Image'
+            AND entityId IN (${chunk.join(',')})
+          GROUP BY id
+        `);
+        if (chunkMetrics) metrics.push(...chunkMetrics);
+      }
+    } catch (e) {
+      logger(`pullData :: ClickHouse metrics query failed: ${e}`);
+    }
+
     logger(
-      `pullData :: ${images.length} images, ${tags.length} tags, ${tools.length} tools, ${techniques.length} techniques`
+      `pullData :: ${images.length} images, ${tags.length} tags, ${tools.length} tools, ${techniques.length} techniques, ${metrics.length} metrics`
     );
 
-    return { images, tags, tools, techniques, baseModels };
+    return { images, tags, tools, techniques, baseModels, metrics };
   },
   transformData,
   pushData: async ({ indexName }, records) => {
