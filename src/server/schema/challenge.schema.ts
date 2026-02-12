@@ -344,3 +344,74 @@ export type GetChallengeEventsInput = z.infer<typeof getChallengeEventsSchema>;
 export const getChallengeEventsSchema = z.object({
   activeOnly: z.boolean().default(false),
 });
+
+// --- Judge Playground ---
+
+// Get a single judge by ID (full data including all prompts)
+export type GetJudgeByIdInput = z.infer<typeof getJudgeByIdSchema>;
+export const getJudgeByIdSchema = z.object({
+  id: z.number(),
+});
+
+// Create or update a judge
+export type UpsertJudgeInput = z.infer<typeof upsertJudgeSchema>;
+export const upsertJudgeSchema = z.object({
+  id: z.number().optional(),
+  userId: z.number(),
+  name: z.string().min(1).max(255),
+  bio: z.string().optional().nullable(),
+  sourceCollectionId: z.number().optional().nullable(),
+  systemPrompt: z.string().optional().nullable(),
+  collectionPrompt: z.string().optional().nullable(),
+  contentPrompt: z.string().optional().nullable(),
+  reviewPrompt: z.string().optional().nullable(),
+  winnerSelectionPrompt: z.string().optional().nullable(),
+  active: z.boolean().optional(),
+});
+
+// Playground: Generate content for a model version
+export type PlaygroundGenerateContentInput = z.infer<typeof playgroundGenerateContentSchema>;
+export const playgroundGenerateContentSchema = z.object({
+  modelVersionId: z.number(),
+  judgeId: z.number().optional(),
+  promptOverrides: z
+    .object({
+      systemMessage: z.string().optional(),
+      content: z.string().optional(),
+    })
+    .optional(),
+  userMessage: z.string().optional(),
+  aiModel: z.string().optional(),
+});
+
+// Playground: Review an image
+export type PlaygroundReviewImageInput = z.infer<typeof playgroundReviewImageSchema>;
+export const playgroundReviewImageSchema = z.object({
+  imageUrl: z.string().url(),
+  theme: z.string(),
+  creator: z.string().optional(),
+  judgeId: z.number().optional(),
+  promptOverrides: z
+    .object({
+      systemMessage: z.string().optional(),
+      review: z.string().optional(),
+    })
+    .optional(),
+  userMessage: z.string().optional(),
+  aiModel: z.string().optional(),
+});
+
+// Playground: Pick winners from a challenge
+export type PlaygroundPickWinnersInput = z.infer<typeof playgroundPickWinnersSchema>;
+export const playgroundPickWinnersSchema = z.object({
+  challengeId: z.number(),
+  judgeId: z.number().optional(),
+  promptOverrides: z
+    .object({
+      systemMessage: z.string().optional(),
+      winner: z.string().optional(),
+    })
+    .optional(),
+  userMessage: z.string().optional(),
+  aiModel: z.string().optional(),
+});

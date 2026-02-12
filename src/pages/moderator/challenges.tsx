@@ -316,6 +316,14 @@ export default function ModeratorChallengesPage() {
                 <SystemSettingsPopover />
                 <Button
                   component={Link}
+                  href="/moderator/challenges/playground"
+                  leftSection={<IconRobot size={16} />}
+                  variant="light"
+                >
+                  Judge Playground
+                </Button>
+                <Button
+                  component={Link}
                   href="/moderator/challenges/events"
                   leftSection={<IconCalendarEvent size={16} />}
                   variant="light"
