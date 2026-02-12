@@ -345,6 +345,7 @@ export function GenerationForm() {
                 max={meta?.max}
                 slots={meta?.slots}
                 error={error?.message}
+                enableDrawing={snapshot.workflow === 'img2img:edit'}
               />
             )}
           />

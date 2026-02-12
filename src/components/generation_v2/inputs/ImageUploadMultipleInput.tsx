@@ -8,16 +8,28 @@
  * Styling:
  * - Compact dropzone + horizontal image strip layout for all non-slot modes
  * - slots: Side-by-side named slots (e.g., first/last frame)
+ *
+ * Drawing support:
+ * - When enableDrawing is true, images can be annotated with drawings
+ * - Annotations are stored in the source-metadata store keyed by composite URL
+ * - The store enables re-editing: looking up a composite URL retrieves the original image + lines
  */
 
+import { useMemo } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
 import { Input, Text } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
 import {
   SourceImageUploadMultiple,
+  type ImageAnnotation,
   type ImageSlot,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
+import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  useSourceMetadataStore,
+  sourceMetadataStore,
+} from '~/store/source-metadata.store';
 
 // =============================================================================
 // Types
@@ -49,6 +61,8 @@ export interface ImageUploadMultipleInputProps
   cropToFirstImage?: boolean;
   /** Whether the input is disabled */
   disabled?: boolean;
+  /** Enable drawing overlay tools on images (for img2img:edit workflows) */
+  enableDrawing?: boolean;
 }
 
 // Re-export ImageSlot for convenience
@@ -72,9 +86,68 @@ export function ImageUploadMultipleInput({
   error,
   required,
   disabled,
+  enableDrawing = false,
   ...inputWrapperProps
 }: ImageUploadMultipleInputProps) {
   const isSlotsMode = !!slots?.length;
+
+  // Build annotations array from the store for the current images
+  const metadataByUrl = useSourceMetadataStore((state) => state.metadataByUrl);
+  const annotations = useMemo(() => {
+    if (!enableDrawing || !value?.length) return undefined;
+    const result: ImageAnnotation[] = [];
+    for (const img of value) {
+      const annotation = metadataByUrl[img.url]?.annotation;
+      if (annotation) {
+        result.push({ ...annotation, compositeUrl: img.url });
+      }
+    }
+    return result.length > 0 ? result : undefined;
+  }, [enableDrawing, value, metadataByUrl]);
+
+  function handleDrawingComplete(
+    compositeImage: SourceImageProps,
+    index: number,
+    lines: DrawingElement[]
+  ) {
+    const currentImages = value ?? [];
+    const currentImage = currentImages[index];
+    if (!currentImage) return;
+
+    // Check if this image already has an annotation (re-editing)
+    const existingAnnotation = sourceMetadataStore.getAnnotation(currentImage.url);
+
+    // The original is either from existing annotation or the current image
+    const originalImage = existingAnnotation
+      ? {
+          url: existingAnnotation.originalUrl,
+          width: existingAnnotation.originalWidth,
+          height: existingAnnotation.originalHeight,
+        }
+      : currentImage;
+
+    // 1. Replace the image with the composite
+    const updatedImages = [...currentImages];
+    updatedImages[index] = compositeImage;
+    onChange?.(updatedImages);
+
+    // 2. Clean up old annotation (if re-editing, the old composite URL entry is stale)
+    if (existingAnnotation) {
+      sourceMetadataStore.removeAnnotation(currentImage.url);
+    }
+
+    // 3. Store new annotation keyed by composite URL
+    sourceMetadataStore.setAnnotation(compositeImage.url, {
+      originalUrl: originalImage.url,
+      originalWidth: originalImage.width,
+      originalHeight: originalImage.height,
+      lines,
+    });
+  }
+
+  function handleRemove(removedImage: SourceImageProps) {
+    sourceMetadataStore.removeAnnotation(removedImage.url);
+  }
 
   // For slots mode, use the built-in slots layout
   if (isSlotsMode) {
@@ -117,6 +190,10 @@ export function ImageUploadMultipleInput({
         aspectRatios={aspectRatios}
         cropToFirstImage={cropToFirstImage}
         disabled={disabled}
+        enableDrawing={enableDrawing}
+        annotations={annotations}
+        onDrawingComplete={enableDrawing ? handleDrawingComplete : undefined}
+        onRemove={enableDrawing ? handleRemove : undefined}
       >
         {(previewItems) => {
           const hasImages = previewItems.length > 0;
