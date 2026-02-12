@@ -6,13 +6,6 @@ import { ComicGenreScroller } from '~/components/Comics/ComicGenreScroller';
 import { ComicsInfinite } from '~/components/Comics/ComicsInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-
-const sortOptions = [
-  { label: 'Newest', value: 'Newest' },
-  { label: 'Most Followed', value: 'MostFollowed' },
-  { label: 'Most Chapters', value: 'MostChapters' },
-] as const;
 
 function ComicsBrowse() {
   const router = useRouter();
@@ -21,6 +14,8 @@ function ComicsBrowse() {
     | 'Newest'
     | 'MostFollowed'
     | 'MostChapters';
+  const period = (router.query.period as string) || undefined;
+  const followed = router.query.followed === 'true' || undefined;
 
   const setQuery = (updates: Record<string, string | undefined>) => {
     const query = { ...router.query };
@@ -40,22 +35,7 @@ function ComicsBrowse() {
       <MasonryContainer>
         <Stack gap="xs">
           <ComicGenreScroller value={genre} onChange={(g) => setQuery({ genre: g })} />
-          <div className="flex items-center gap-2">
-            <SelectMenuV2
-              label={
-                sort === 'MostFollowed'
-                  ? 'Most Followed'
-                  : sort === 'MostChapters'
-                  ? 'Most Chapters'
-                  : 'Newest'
-              }
-              options={[...sortOptions]}
-              value={sort}
-              onClick={(v) => setQuery({ sort: v })}
-              size="compact-sm"
-            />
-          </div>
-          <ComicsInfinite filters={{ genre, sort }} showEof />
+          <ComicsInfinite filters={{ genre, sort, period, followed }} showEof />
         </Stack>
       </MasonryContainer>
     </>

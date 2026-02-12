@@ -2,6 +2,7 @@ import { Badge, Text } from '@mantine/core';
 import { IconBook } from '@tabler/icons-react';
 import clsx from 'clsx';
 import cardClasses from '~/components/Cards/Cards.module.css';
+import { ComicCardContextMenu } from '~/components/Cards/ComicCardContextMenu';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { RouterOutput } from '~/types/router';
@@ -26,16 +27,21 @@ export function ComicCard({ data }: { data: ComicItem }) {
       aspectRatio="portrait"
       image={coverImage}
       header={
-        data.genre && (
-          <Badge
-            size="sm"
-            variant="gradient"
-            gradient={{ from: 'cyan', to: 'blue' }}
-            className={cardClasses.chip}
-          >
-            {formatGenreLabel(data.genre)}
-          </Badge>
-        )
+        <div className="flex w-full items-start justify-between">
+          <div>
+            {data.genre && (
+              <Badge
+                size="sm"
+                variant="gradient"
+                gradient={{ from: 'cyan', to: 'blue' }}
+                className={cardClasses.chip}
+              >
+                {formatGenreLabel(data.genre)}
+              </Badge>
+            )}
+          </div>
+          <ComicCardContextMenu comic={{ id: data.id, user: data.user }} />
+        </div>
       }
       footer={
         <div className="flex w-full flex-col gap-2">

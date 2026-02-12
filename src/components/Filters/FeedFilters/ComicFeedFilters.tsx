@@ -1,66 +1,68 @@
 import type { GroupProps } from '@mantine/core';
-import { Group, Select } from '@mantine/core';
+import { Group } from '@mantine/core';
+import { IconUsersGroup, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
-import { formatGenreLabel } from '~/utils/comic-helpers';
-import { ComicGenre } from '~/shared/utils/prisma/enums';
-
-const genreOptions = [
-  { value: '', label: 'All Genres' },
-  ...Object.keys(ComicGenre).map((g) => ({ value: g, label: formatGenreLabel(g) })),
-];
+import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const sortOptions = [
-  { value: 'Newest', label: 'Newest' },
-  { value: 'MostFollowed', label: 'Most Followed' },
-  { value: 'MostChapters', label: 'Most Chapters' },
-];
+  { label: 'Newest', value: 'Newest' },
+  { label: 'Most Followed', value: 'MostFollowed' },
+  { label: 'Most Chapters', value: 'MostChapters' },
+] as const;
 
 const periodOptions = [
-  { value: 'AllTime', label: 'All Time' },
-  { value: 'Day', label: 'Today' },
-  { value: 'Week', label: 'This Week' },
-  { value: 'Month', label: 'This Month' },
-  { value: 'Year', label: 'This Year' },
-];
+  { label: 'All Time', value: 'AllTime' },
+  { label: 'Today', value: 'Day' },
+  { label: 'This Week', value: 'Week' },
+  { label: 'This Month', value: 'Month' },
+  { label: 'This Year', value: 'Year' },
+] as const;
 
 export function ComicFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
+  const currentUser = useCurrentUser();
 
-  const setParam = (key: string, value: string) => {
+  const sort = (router.query.sort as string) || 'Newest';
+  const period = (router.query.period as string) || 'AllTime';
+  const followed = (router.query.followed as string) || 'false';
+
+  const setParam = (key: string, value: string | undefined) => {
     const query = { ...router.query };
     if (!value) delete query[key];
     else query[key] = value;
-    router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
   };
 
   return (
     <Group className={classes.filtersWrapper} gap={4} wrap="nowrap" {...groupProps}>
-      <Select
-        data={genreOptions}
-        value={(router.query.genre as string) ?? ''}
-        onChange={(v) => setParam('genre', v ?? '')}
-        size="xs"
-        w={130}
-        placeholder="Genre"
-        clearable={false}
+      {currentUser && (
+        <SelectMenuV2
+          label={followed === 'true' ? 'Followed' : 'Everyone'}
+          options={[
+            { label: 'Followed', value: 'true' },
+            { label: 'Everyone', value: 'false' },
+          ]}
+          icon={followed === 'true' ? IconUsersGroup : IconWorld}
+          onClick={(v) => setParam('followed', v === 'false' ? undefined : v)}
+          value={followed}
+          size="compact-sm"
+        />
+      )}
+      <SelectMenuV2
+        label={sortOptions.find((o) => o.value === sort)?.label ?? 'Newest'}
+        options={[...sortOptions]}
+        onClick={(v) => setParam('sort', v === 'Newest' ? undefined : v)}
+        value={sort}
+        size="compact-sm"
       />
-      <Select
-        data={periodOptions}
-        value={(router.query.period as string) ?? 'AllTime'}
-        onChange={(v) => setParam('period', v ?? '')}
-        size="xs"
-        w={120}
-        clearable={false}
-      />
-      <Select
-        data={sortOptions}
-        value={(router.query.sort as string) ?? 'Newest'}
-        onChange={(v) => setParam('sort', v ?? '')}
-        size="xs"
-        w={140}
-        clearable={false}
+      <SelectMenuV2
+        label={periodOptions.find((o) => o.value === period)?.label ?? 'All Time'}
+        options={[...periodOptions]}
+        onClick={(v) => setParam('period', v === 'AllTime' ? undefined : v)}
+        value={period}
+        size="compact-sm"
       />
     </Group>
   );
