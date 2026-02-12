@@ -13,11 +13,12 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import * as z from 'zod';
 
 import { Page } from '~/components/AppLayout/Page';
@@ -47,6 +48,7 @@ import {
   IconPhoto,
   IconShare3,
   IconSparkles,
+  IconStarFilled,
   IconTrash,
   IconTrophy,
   IconX,
@@ -58,6 +60,7 @@ import type { Props as DescriptionTableProps } from '~/components/DescriptionTab
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { slugit } from '~/utils/string-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -81,6 +84,7 @@ import {
   nsfwLevelColors,
 } from '~/shared/constants/browsingLevel.constants';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants as appConstants } from '~/server/common/constants';
@@ -564,20 +568,22 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               Generate
             </Button>
             {challenge.collectionId && (
-              <Button
-                onClick={() => {
-                  dialogStore.trigger({
-                    component: ChallengeSubmitModal,
-                    props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-                  });
-                }}
-                leftSection={<IconPhoto size={16} />}
-                variant="light"
-                color="blue"
-                fullWidth
-              >
-                Submit
-              </Button>
+              <LoginRedirect reason="submit-challenge">
+                <Button
+                  onClick={() => {
+                    dialogStore.trigger({
+                      component: ChallengeSubmitModal,
+                      props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+                    });
+                  }}
+                  leftSection={<IconPhoto size={16} />}
+                  variant="light"
+                  color="blue"
+                  fullWidth
+                >
+                  Submit
+                </Button>
+              </LoginRedirect>
             )}
           </>
         ) : challenge.status === ChallengeStatus.Completed ? (
@@ -956,7 +962,9 @@ function WinnerPodiumCard({
       {winner.imageUrl && (
         <Link href={`/images/${winner.imageId}`}>
           <div
-            className={`w-full overflow-hidden ${isFirst ? 'aspect-square' : 'aspect-[4/3]'}`}
+            className={`relative w-full overflow-hidden ${
+              isFirst ? 'aspect-square' : 'aspect-[4/3]'
+            }`}
             style={{ cursor: 'pointer' }}
           >
             <EdgeMedia2
@@ -965,6 +973,11 @@ function WinnerPodiumCard({
               width={450}
               className="size-full object-cover transition-transform duration-300 hover:scale-105"
             />
+            {winner.judgeScore && (
+              <div className="absolute left-2 top-2">
+                <JudgeScoreBadge score={winner.judgeScore} />
+              </div>
+            )}
           </div>
         </Link>
       )}
@@ -1031,9 +1044,22 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
 
+  const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
+
+  const judgeInfo = useMemo(
+    () =>
+      challenge.judge
+        ? {
+            userId: challenge.judge.userId,
+            username: challenge.judge.name,
+            profilePicture: challenge.judge.profilePicture,
+          }
+        : undefined,
+    [challenge.judge]
+  );
 
   const handleOpenSubmitModal = () => {
     if (challenge.collectionId) {
@@ -1062,6 +1088,33 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                   {challenge.entryCount.toLocaleString()} total{' '}
                   {challenge.entryCount === 1 ? 'entry' : 'entries'}
                 </Text>
+                {challenge.judgedTagId && (
+                  <Tooltip
+                    label={
+                      judgeReviewedOnly
+                        ? 'Showing only judge-reviewed entries. Click to show all.'
+                        : 'Filter to entries scored by the judge'
+                    }
+                    withArrow
+                  >
+                    <Button
+                      size="compact-sm"
+                      radius="xl"
+                      px="lg"
+                      variant={judgeReviewedOnly ? 'filled' : 'light'}
+                      color={judgeReviewedOnly ? 'green' : 'gray'}
+                      leftSection={<IconStarFilled size={14} />}
+                      onClick={() => setJudgeReviewedOnly((v) => !v)}
+                      styles={{
+                        root: {
+                          fontWeight: judgeReviewedOnly ? 600 : 500,
+                        },
+                      }}
+                    >
+                      Judge Reviewed
+                    </Button>
+                  </Tooltip>
+                )}
               </Group>
               {displaySubmitAction && (
                 <Group gap="xs">
@@ -1073,14 +1126,16 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                   >
                     Generate Entries
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    onClick={handleOpenSubmitModal}
-                    leftSection={<IconPhoto size={16} />}
-                  >
-                    Submit Entries
-                  </Button>
+                  <LoginRedirect reason="submit-challenge">
+                    <Button
+                      size="sm"
+                      variant="light"
+                      onClick={handleOpenSubmitModal}
+                      leftSection={<IconPhoto size={16} />}
+                    >
+                      Submit Entries
+                    </Button>
+                  </LoginRedirect>
                 </Group>
               )}
             </Group>
@@ -1097,10 +1152,14 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
               <ImagesInfinite
                 filters={{
                   collectionId: challenge.collectionId ?? undefined,
+                  collectionTagId: judgeReviewedOnly
+                    ? challenge.judgedTagId ?? undefined
+                    : undefined,
                   period: 'AllTime',
                   sort: ImageSort.Random,
                 }}
                 disableStoreFilters
+                judgeInfo={judgeInfo}
               />
             )}
           </Stack>
@@ -1131,20 +1190,22 @@ function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
           Generate Entries
         </Button>
         {challenge.collectionId && (
-          <Button
-            onClick={() => {
-              dialogStore.trigger({
-                component: ChallengeSubmitModal,
-                props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-              });
-            }}
-            leftSection={<IconPhoto size={16} />}
-            variant="light"
-            color="blue"
-            fullWidth
-          >
-            Submit Entries
-          </Button>
+          <LoginRedirect reason="submit-challenge">
+            <Button
+              onClick={() => {
+                dialogStore.trigger({
+                  component: ChallengeSubmitModal,
+                  props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+                });
+              }}
+              leftSection={<IconPhoto size={16} />}
+              variant="light"
+              color="blue"
+              fullWidth
+            >
+              Submit Entries
+            </Button>
+          </LoginRedirect>
         )}
       </Stack>
       <ShareButton url={router.asPath} title={challenge.title}>
