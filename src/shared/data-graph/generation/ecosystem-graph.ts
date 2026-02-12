@@ -154,14 +154,17 @@ export const ecosystemGraph = new DataGraph<
     },
     ['ecosystem']
   )
-  // Quantity node - workflow-dependent (draft uses step=4)
+  // Quantity node - image output only, workflow-dependent (draft uses step=4)
   .node(
     'quantity',
     (ctx, ext) => {
       const isDraft = ctx.workflow === 'txt2img:draft';
-      return quantityNode({ min: isDraft ? 4 : 1, step: isDraft ? 4 : 1 })(ctx, ext);
+      return {
+        ...quantityNode({ min: isDraft ? 4 : 1, step: isDraft ? 4 : 1 })(ctx, ext),
+        when: ctx.output === 'image',
+      };
     },
-    ['workflow']
+    ['workflow', 'output']
   )
 
   // Use groupedDiscriminator to reduce TypeScript type complexity:
