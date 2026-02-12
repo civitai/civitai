@@ -3849,6 +3849,7 @@ model ChallengeWinner {
   @@unique([challengeId, userId])
   @@index([challengeId])
   @@index([userId])
+  @@index([createdAt])
 }
 
 model ChallengeEvent {
