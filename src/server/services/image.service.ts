@@ -30,6 +30,10 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import {
+  parseJudgeScore,
+  type JudgeScore,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -1620,19 +1624,10 @@ export const getAllImages = async (
       hasPositivePrompt?: boolean;
       poi?: boolean;
       minor?: boolean;
-      judgeScore?: { theme: number; wittiness: number; humor: number; aesthetic: number } | null;
+      judgeScore?: JudgeScore | null;
     }
   > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
-    const parsedNote = collectionItemNote
-      ? (() => {
-          try {
-            return JSON.parse(collectionItemNote);
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-    const judgeScore = parsedNote?.score ?? null;
+    const judgeScore = parseJudgeScore(collectionItemNote ?? null);
     const match = imageMetrics[i.id];
     const thumbnail = thumbnails[i.id];
     const userData = userBasicData[creatorId];

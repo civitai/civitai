@@ -3,7 +3,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
-import { deriveChallengeNsfwLevel, type Prize } from './daily-challenge.utils';
+import {
+  deriveChallengeNsfwLevel,
+  parseJudgeScore,
+  type JudgeScore,
+  type Prize,
+} from './daily-challenge.utils';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
@@ -379,7 +384,7 @@ export async function getChallengeWinners(challengeId: number): Promise<
     buzzAwarded: number;
     pointsAwarded: number;
     reason: string | null;
-    judgeScore: { theme: number; wittiness: number; humor: number; aesthetic: number } | null;
+    judgeScore: JudgeScore | null;
   }>
 > {
   const rows = await dbRead.$queryRaw<
@@ -417,18 +422,10 @@ export async function getChallengeWinners(challengeId: number): Promise<
     ORDER BY cw.place ASC
   `;
 
-  return rows.map(({ collectionItemNote, ...row }) => {
-    let judgeScore = null;
-    if (collectionItemNote) {
-      try {
-        const parsed = JSON.parse(collectionItemNote);
-        judgeScore = parsed?.score ?? null;
-      } catch {
-        // ignore malformed JSON
-      }
-    }
-    return { ...row, judgeScore };
-  });
+  return rows.map(({ collectionItemNote, ...row }) => ({
+    ...row,
+    judgeScore: parseJudgeScore(collectionItemNote),
+  }));
 }
 
 // =============================================================================

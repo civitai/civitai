@@ -5,13 +5,7 @@ import { useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { trpc } from '~/utils/trpc';
-
-type JudgeScore = {
-  theme: number;
-  wittiness: number;
-  humor: number;
-  aesthetic: number;
-};
+import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
 const categories: { key: keyof JudgeScore; label: string }[] = [
   { key: 'theme', label: 'Theme' },
@@ -20,7 +14,15 @@ const categories: { key: keyof JudgeScore; label: string }[] = [
   { key: 'aesthetic', label: 'Aesthetic' },
 ];
 
-function getScoreColor(score: number) {
+const CIVCHAN_USER_ID = 7665867;
+
+function getScoreColor(score: number, vibrant?: boolean) {
+  if (vibrant) {
+    if (score >= 8) return 'pink';
+    if (score >= 6) return 'grape';
+    if (score >= 4) return 'violet';
+    return 'red';
+  }
   if (score >= 8) return 'green';
   if (score >= 6) return 'yellow';
   if (score >= 4) return 'orange';
@@ -41,6 +43,7 @@ export function JudgeScoreBadge({
   const avgRounded = Math.round(avg * 10) / 10;
 
   const hasJudge = !!imageId && !!judgeInfo;
+  const vibrant = judgeInfo?.userId === CIVCHAN_USER_ID;
 
   const { data: judgeComment, isLoading: commentLoading } = trpc.challenge.getJudgeComment.useQuery(
     { imageId: imageId!, judgeUserId: judgeInfo?.userId ?? 0 },
@@ -51,7 +54,7 @@ export function JudgeScoreBadge({
     <Popover opened={opened} onChange={setOpened} withArrow withinPortal shadow="md" width={240}>
       <Popover.Target>
         <Badge
-          color={getScoreColor(avg)}
+          color={getScoreColor(avg, vibrant)}
           radius="xl"
           h={26}
           variant="filled"
@@ -104,7 +107,11 @@ export function JudgeScoreBadge({
                   {score[key]}/10
                 </Text>
               </Group>
-              <Progress value={score[key] * 10} color={getScoreColor(score[key])} size="sm" />
+              <Progress
+                value={score[key] * 10}
+                color={getScoreColor(score[key], vibrant)}
+                size="sm"
+              />
             </div>
           ))}
           <Group
@@ -116,7 +123,7 @@ export function JudgeScoreBadge({
             <Text size="xs" fw={600}>
               Average
             </Text>
-            <Text size="xs" fw={700} c={getScoreColor(avg)}>
+            <Text size="xs" fw={700} c={getScoreColor(avg, vibrant)}>
               {avgRounded.toFixed(1)}/10
             </Text>
           </Group>

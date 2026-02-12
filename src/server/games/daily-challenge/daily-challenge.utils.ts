@@ -390,6 +390,19 @@ export type Score = {
   aesthetic: number; // 0-10 how aesthetically pleasing it is
 };
 
+/** Alias for Score — used in client-facing contexts (image cards, winner displays). */
+export type JudgeScore = Score;
+
+export function parseJudgeScore(note: string | null): JudgeScore | null {
+  if (!note) return null;
+  try {
+    const parsed = JSON.parse(note);
+    return parsed?.score ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type DailyChallengeDetails = {
   challengeId: number; // Challenge table ID for status updates
   articleId?: number; // Deprecated: Legacy article ID (no longer used for new challenges)

@@ -6,6 +6,7 @@ import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
@@ -138,7 +139,7 @@ export type ChallengeDetail = {
     imageUrl: string;
     buzzAwarded: number;
     reason: string | null;
-    judgeScore?: { theme: number; wittiness: number; humor: number; aesthetic: number } | null;
+    judgeScore?: JudgeScore | null;
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
