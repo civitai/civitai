@@ -226,19 +226,20 @@ export const toggleHideCommentHandler = async ({
   const { id, entityType } = input;
 
   try {
+    const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
     const comment = await dbRead.commentV2.findFirst({
       where: { id },
       select: {
         hidden: true,
         userId: true,
-        thread: { select: { [entityType]: { select: { userId: true } } } },
+        thread: { select: { [entityType]: { select: { [ownerField]: true } } } },
       },
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
     if (
       !isModerator &&
       // Nasty hack to get around the fact that the thread is not typed
-      (comment.thread[entityType] as any)?.userId !== userId
+      (comment.thread[entityType] as any)?.[ownerField] !== userId
     )
       throw throwAuthorizationError();
 
