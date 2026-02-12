@@ -1548,41 +1548,29 @@ export async function upsertChallengeEvent({
     });
   }
 
-  // Auto-deactivate other events when setting this one as active
-  if (data.active) {
-    await dbWrite.challengeEvent.updateMany({
-      where: {
-        active: true,
-        ...(id ? { id: { not: id } } : {}),
+  return dbWrite.$transaction(async (tx) => {
+    if (id) {
+      return tx.challengeEvent.update({
+        where: { id },
+        data,
+      });
+    }
+
+    return tx.challengeEvent.create({
+      data: {
+        ...data,
+        createdById: userId,
       },
-      data: { active: false },
     });
-  }
-
-  if (id) {
-    return dbWrite.challengeEvent.update({
-      where: { id },
-      data,
-    });
-  }
-
-  return dbWrite.challengeEvent.create({
-    data: {
-      ...data,
-      createdById: userId,
-    },
   });
 }
 
 /**
- * Delete a challenge event (unlinks challenges, does not delete them).
+ * Delete a challenge event.
+ * The FK on Challenge.eventId is defined with onDelete: SetNull,
+ * so linked challenges are automatically unlinked by the DB.
  */
 export async function deleteChallengeEvent(id: number) {
-  // Unlink all challenges first
-  await dbWrite.challenge.updateMany({
-    where: { eventId: id },
-    data: { eventId: null },
-  });
   await dbWrite.challengeEvent.delete({ where: { id } });
   return { success: true };
 }

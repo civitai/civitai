@@ -3859,8 +3859,8 @@ model ChallengeEvent {
   startDate   DateTime
   endDate     DateTime
   active      Boolean  @default(true)
-  createdById Int
-  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdById Int?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

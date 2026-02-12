@@ -302,16 +302,32 @@ export type ChallengeEventListItem = {
   challenges: ChallengeListItem[];
 };
 
+// Valid title colors for challenge events (maps to Tailwind color classes)
+export const challengeEventTitleColors = [
+  'blue',
+  'purple',
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'pink',
+] as const;
+
 // Moderator: Create/Update challenge event
-export const upsertChallengeEventSchema = z.object({
+export const upsertChallengeEventBaseSchema = z.object({
   id: z.number().optional(),
   title: z.string().min(3).max(200),
   description: z.string().optional().nullable(),
-  titleColor: z.string().optional().nullable(),
+  titleColor: z.enum(challengeEventTitleColors).optional().nullable(),
   startDate: z.date(),
   endDate: z.date(),
   active: z.boolean().default(true),
 });
+
+export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(
+  (data) => data.endDate > data.startDate,
+  { message: 'End date must be after start date', path: ['endDate'] }
+);
 export type UpsertChallengeEventInput = z.infer<typeof upsertChallengeEventSchema>;
 
 // Moderator: Get events list

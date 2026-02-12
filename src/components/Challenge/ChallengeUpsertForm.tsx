@@ -281,7 +281,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               name="description"
               label="Description"
               placeholder="What is the challenge about? Provide details, rules, and any other information participants should know."
-              includeControls={['heading', 'formatting', 'list', 'link']}
+              includeControls={['heading', 'formatting', 'list', 'link', 'colors']}
               editorSize="lg"
               stickyToolbar
               disabled={isTerminal}

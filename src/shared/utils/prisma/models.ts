@@ -2880,8 +2880,8 @@ export interface ChallengeEvent {
   startDate: Date;
   endDate: Date;
   active: boolean;
-  createdById: number;
-  createdBy?: User;
+  createdById: number | null;
+  createdBy?: User | null;
   createdAt: Date;
   updatedAt: Date;
   challenges?: Challenge[];

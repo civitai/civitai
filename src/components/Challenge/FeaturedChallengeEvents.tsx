@@ -31,7 +31,7 @@ export function FeaturedChallengeEvents() {
           </Title>
           <TwScrollX className="flex gap-4">
             {event.challenges.map((challenge) => (
-              <div key={challenge.id} className="w-[250px] shrink-0">
+              <div key={challenge.id} className="w-[320px] shrink-0">
                 <ChallengeCard data={challenge} />
               </div>
             ))}

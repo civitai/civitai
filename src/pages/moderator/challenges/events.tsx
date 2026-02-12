@@ -19,6 +19,7 @@ import { IconCalendarEvent, IconDots, IconPencil, IconPlus, IconTrash } from '@t
 import { useState } from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { challengeEventTitleColors } from '~/server/schema/challenge.schema';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Meta } from '~/components/Meta/Meta';
@@ -51,7 +52,7 @@ const titleColorSwatches: Record<string, string> = {
 
 const titleColorOptions = [
   { value: '', label: 'Default' },
-  ...Object.keys(titleColorSwatches).map((color) => ({
+  ...challengeEventTitleColors.map((color) => ({
     value: color,
     label: color.charAt(0).toUpperCase() + color.slice(1),
   })),
@@ -110,15 +111,12 @@ function EventFormModal({
   });
 
   const upsertMutation = trpc.challenge.upsertEvent.useMutation({
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
       queryUtils.challenge.getEvents.invalidate();
       queryUtils.challenge.getActiveEvents.invalidate();
       const action = editingId ? 'updated' : 'created';
-      const deactivateNote = variables.active
-        ? ' Any previously active events have been deactivated.'
-        : '';
       showSuccessNotification({
-        message: `Event ${action}.${deactivateNote}`,
+        message: `Event ${action}.`,
       });
       onClose();
     },
@@ -136,7 +134,7 @@ function EventFormModal({
       id: editingId,
       title: data.title,
       description: data.description || undefined,
-      titleColor: data.titleColor || undefined,
+      titleColor: (data.titleColor as (typeof challengeEventTitleColors)[number]) || undefined,
       startDate: data.startDate,
       endDate: data.endDate,
       active: data.active,
@@ -190,7 +188,7 @@ function EventFormModal({
           <InputSwitch
             name="active"
             label="Active"
-            description="Only one event can be active at a time. Activating this event will deactivate others."
+            description="Active events are displayed in the featured challenges section."
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>
