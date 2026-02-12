@@ -633,6 +633,9 @@ function filterPreferences<
     case 'tools':
       // No need to apply hidden preferences to tools
       return { items: value, hidden };
+    case 'comics':
+      // No need to apply hidden preferences to comics
+      return { items: value, hidden };
     default:
       throw new Error('unhandled hidden user preferences filter type');
   }
@@ -757,6 +760,10 @@ type BaseTool = {
   id: number;
 };
 
+type BaseComic = {
+  id: number;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -767,4 +774,5 @@ export type BaseDataTypeMap = {
   posts: BasePost[];
   tags: BaseTag[];
   tools: BaseTool[];
+  comics: BaseComic[];
 };

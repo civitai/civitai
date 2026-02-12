@@ -6,6 +6,7 @@ import {
   IconBook,
   IconChevronLeft,
   IconChevronRight,
+  IconFlag,
   IconPhoto,
   IconPhotoOff,
 } from '@tabler/icons-react';
@@ -15,11 +16,14 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { ChapterComments } from '~/components/Comics/ChapterComments';
 import { Page } from '~/components/AppLayout/Page';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { ComicEngagementType } from '~/shared/utils/prisma/enums';
 import { formatRelativeDate } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -169,19 +173,37 @@ function ComicOverview({ project }: { project: Project }) {
             </Link>
 
             {currentUser && (
-              <ActionIcon
-                variant={isFollowing ? 'filled' : 'subtle'}
-                color={isFollowing ? 'blue' : 'gray'}
-                onClick={() =>
-                  toggleEngagement.mutate({
-                    projectId: project.id,
-                    type: ComicEngagementType.Notify,
-                  })
-                }
-                loading={toggleEngagement.isPending}
-              >
-                {isFollowing ? <IconBellOff size={18} /> : <IconBell size={18} />}
-              </ActionIcon>
+              <>
+                <ActionIcon
+                  variant={isFollowing ? 'filled' : 'subtle'}
+                  color={isFollowing ? 'blue' : 'gray'}
+                  onClick={() =>
+                    toggleEngagement.mutate({
+                      projectId: project.id,
+                      type: ComicEngagementType.Notify,
+                    })
+                  }
+                  loading={toggleEngagement.isPending}
+                >
+                  {isFollowing ? <IconBellOff size={18} /> : <IconBell size={18} />}
+                </ActionIcon>
+                {currentUser.id !== project.user.id && (
+                  <LoginRedirect reason="report-comic">
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={() =>
+                        openReportModal({
+                          entityType: ReportEntity.ComicProject,
+                          entityId: project.id,
+                        })
+                      }
+                    >
+                      <IconFlag size={18} />
+                    </ActionIcon>
+                  </LoginRedirect>
+                )}
+              </>
             )}
           </div>
 

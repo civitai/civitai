@@ -31,7 +31,8 @@ import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { comicsSearchIndex } from '~/server/search-index';
 
 // Constants
 const NANOBANANA_VERSION_ID = 2154472;
@@ -195,6 +196,27 @@ const enhancePanelSchema = z.object({
   useContext: z.boolean().default(true),
   includePreviousImage: z.boolean().default(false),
   position: z.number().int().min(0).optional(),
+});
+
+const bulkCreatePanelsSchema = z.object({
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
+  panels: z
+    .array(
+      z.object({
+        // For generation mode (text prompt -> image)
+        prompt: z.string().max(2000).optional(),
+        enhance: z.boolean().default(true),
+        // For upload/enhance mode (source image -> comic panel)
+        sourceImageUrl: z.string().optional(),
+        sourceImageWidth: z.number().int().positive().optional(),
+        sourceImageHeight: z.number().int().positive().optional(),
+        // For import mode (existing image ID)
+        imageId: z.number().int().optional(),
+      })
+    )
+    .min(1)
+    .max(20),
 });
 
 const updateProjectSchema = z.object({
@@ -865,6 +887,10 @@ export const comicsRouter = router({
       );
     }
 
+    await comicsSearchIndex.queueUpdate([
+      { id: project.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
     return project;
   }),
 
@@ -881,6 +907,10 @@ export const comicsRouter = router({
       where: { id: input.id },
       data: { status: ComicProjectStatus.Deleted },
     });
+
+    await comicsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
 
     return { success: true };
   }),
@@ -956,6 +986,10 @@ export const comicsRouter = router({
         console.error(`Failed to ingest hero image ${data.heroImageId}:`, e)
       );
     }
+
+    await comicsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
     return updated;
   }),
@@ -1909,6 +1943,11 @@ export const comicsRouter = router({
         }
       }
 
+      // Update search index — publishing a chapter may make the project discoverable
+      await comicsSearchIndex.queueUpdate([
+        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
       return updated;
     }),
 
@@ -1932,6 +1971,11 @@ export const comicsRouter = router({
         },
         data: { status: ComicChapterStatus.Draft },
       });
+
+      // Update search index — unpublishing may affect discoverability
+      await comicsSearchIndex.queueUpdate([
+        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
 
       return updated;
     }),
@@ -2286,6 +2330,336 @@ export const comicsRouter = router({
         });
         return updated;
       }
+    }),
+
+  // ──── Bulk Create Panels ────
+
+  bulkCreatePanels: protectedProcedure
+    .input(bulkCreatePanelsSchema)
+    .use(isChapterOwner)
+    .mutation(async ({ ctx, input }) => {
+      // Verify chapter ownership
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        include: { project: { select: { id: true, userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      // Get next position after existing panels
+      const lastPanel = await dbWrite.comicPanel.findFirst({
+        where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      });
+      let nextPosition = (lastPanel?.position ?? -1) + 1;
+
+      // Get all user's ready references (needed for generated panels)
+      const allUserRefs = await dbRead.comicReference.findMany({
+        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
+        select: { id: true, name: true },
+      });
+      const allReferenceNames = allUserRefs.map((r) => r.name);
+
+      // Get reference images (needed for generated panels)
+      let primaryReferenceName = '';
+      const combinedRefImages: { url: string; width: number; height: number }[] = [];
+      for (const refId of allUserRefs.map((r) => r.id)) {
+        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        combinedRefImages.push(...imgs);
+      }
+
+      const createdPanels: any[] = [];
+      let contextPanel: {
+        id: number;
+        prompt: string;
+        enhancedPrompt: string | null;
+        imageUrl: string | null;
+      } | null = null;
+
+      // Get the last panel for initial context
+      if (nextPosition > 0) {
+        contextPanel = await dbRead.comicPanel.findFirst({
+          where: { projectId: input.projectId, chapterPosition: input.chapterPosition },
+          orderBy: { position: 'desc' },
+          select: { id: true, prompt: true, enhancedPrompt: true, imageUrl: true },
+        });
+      }
+
+      for (let i = 0; i < input.panels.length; i++) {
+        const panelDef = input.panels[i];
+        const position = nextPosition + i;
+
+        // Mode 1: Import from existing image ID
+        if (panelDef.imageId != null) {
+          const image = await dbRead.image.findUnique({
+            where: { id: panelDef.imageId },
+            select: { id: true, userId: true, url: true },
+          });
+          if (!image || image.userId !== ctx.user!.id) {
+            throw throwAuthorizationError();
+          }
+
+          const panel = await dbWrite.comicPanel.create({
+            data: {
+              projectId: input.projectId,
+              chapterPosition: input.chapterPosition,
+              imageId: image.id,
+              imageUrl: image.url,
+              prompt: panelDef.prompt ?? '',
+              position,
+              status: ComicPanelStatus.Ready,
+            },
+          });
+
+          updateComicChapterNsfwLevels([input.projectId]).catch((e) =>
+            console.error(`Failed to update chapter NSFW for project ${input.projectId}:`, e)
+          );
+          updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
+            console.error(`Failed to update project NSFW for project ${input.projectId}:`, e)
+          );
+
+          createdPanels.push(panel);
+          contextPanel = {
+            id: panel.id,
+            prompt: panel.prompt,
+            enhancedPrompt: null,
+            imageUrl: panel.imageUrl,
+          };
+          continue;
+        }
+
+        // Mode 2: Source image without prompt — create directly (free)
+        if (panelDef.sourceImageUrl && (!panelDef.prompt || !panelDef.prompt.trim())) {
+          const image = await dbWrite.image.create({
+            data: {
+              url: panelDef.sourceImageUrl,
+              userId: ctx.user!.id,
+              width: panelDef.sourceImageWidth ?? 512,
+              height: panelDef.sourceImageHeight ?? 512,
+              ingestion: 'Pending',
+            },
+          });
+
+          const panel = await dbWrite.comicPanel.create({
+            data: {
+              projectId: input.projectId,
+              chapterPosition: input.chapterPosition,
+              imageId: image.id,
+              imageUrl: panelDef.sourceImageUrl,
+              prompt: '',
+              position,
+              status: ComicPanelStatus.Ready,
+              metadata: {
+                sourceImageUrl: panelDef.sourceImageUrl,
+                sourceImageWidth: panelDef.sourceImageWidth,
+                sourceImageHeight: panelDef.sourceImageHeight,
+              },
+            },
+          });
+
+          ingestImageById({ id: image.id }).catch((e) =>
+            console.error(`Failed to ingest bulk panel image ${image.id}:`, e)
+          );
+
+          createdPanels.push(panel);
+          contextPanel = {
+            id: panel.id,
+            prompt: '',
+            enhancedPrompt: null,
+            imageUrl: panel.imageUrl,
+          };
+          continue;
+        }
+
+        // Mode 3: Source image + prompt — img2img enhancement (costs buzz)
+        if (panelDef.sourceImageUrl && panelDef.prompt?.trim()) {
+          // Resolve @mentions from prompt
+          const { mentionedIds } = resolveReferenceMentions({
+            prompt: panelDef.prompt,
+            references: allUserRefs,
+          });
+
+          // Build prompt — optionally enhance
+          let fullPrompt = panelDef.prompt;
+          if (panelDef.enhance) {
+            fullPrompt = await enhanceComicPrompt({
+              userPrompt: panelDef.prompt,
+              characterName: primaryReferenceName,
+              characterNames: allReferenceNames,
+              previousPanel: contextPanel ?? undefined,
+            });
+          }
+
+          const sourceEdgeUrl = getEdgeUrl(panelDef.sourceImageUrl, { original: true });
+          const allImages = [
+            {
+              url: sourceEdgeUrl,
+              width: panelDef.sourceImageWidth ?? 512,
+              height: panelDef.sourceImageHeight ?? 512,
+            },
+            ...combinedRefImages,
+          ];
+
+          const metadata = {
+            sourceImageUrl: panelDef.sourceImageUrl,
+            sourceImageWidth: panelDef.sourceImageWidth,
+            sourceImageHeight: panelDef.sourceImageHeight,
+            referenceImages: combinedRefImages,
+            enhanceEnabled: panelDef.enhance,
+            primaryReferenceName,
+            allReferenceNames,
+            generationParams: {
+              engine: 'gemini',
+              baseModel: 'NanoBanana',
+              checkpointVersionId: NANOBANANA_VERSION_ID,
+              width: PANEL_WIDTH,
+              height: PANEL_HEIGHT,
+              prompt: fullPrompt,
+              negativePrompt: '',
+            },
+          };
+
+          const panel = await dbWrite.comicPanel.create({
+            data: {
+              projectId: input.projectId,
+              chapterPosition: input.chapterPosition,
+              prompt: panelDef.prompt,
+              enhancedPrompt: panelDef.enhance ? fullPrompt : null,
+              position,
+              status: ComicPanelStatus.Pending,
+              metadata,
+            },
+          });
+
+          if (mentionedIds.length > 0) {
+            await dbWrite.comicPanelReference.createMany({
+              data: mentionedIds.map((rid) => ({ panelId: panel.id, referenceId: rid })),
+              skipDuplicates: true,
+            });
+          }
+
+          try {
+            const token = await getOrchestratorToken(ctx.user!.id, ctx);
+            const result = await createImageGen({
+              params: {
+                prompt: fullPrompt,
+                negativePrompt: '',
+                engine: 'gemini',
+                baseModel: 'NanoBanana' as any,
+                width: PANEL_WIDTH,
+                height: PANEL_HEIGHT,
+                workflow: 'txt2img',
+                sampler: 'Euler',
+                steps: 25,
+                quantity: 1,
+                draft: false,
+                disablePoi: false,
+                priority: 'low',
+                sourceImage: null,
+                images: allImages,
+              },
+              resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+              tags: ['comics'],
+              tips: { creators: 0, civitai: 0 },
+              user: ctx.user! as SessionUser,
+              token,
+              currencies: ['yellow'],
+            });
+
+            const updated = await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: { workflowId: result.id, status: ComicPanelStatus.Generating },
+            });
+            createdPanels.push(updated);
+            contextPanel = {
+              id: updated.id,
+              prompt: panelDef.prompt,
+              enhancedPrompt: updated.enhancedPrompt,
+              imageUrl: updated.imageUrl,
+            };
+          } catch (error: any) {
+            const errorDetails: string[] = [];
+            if (error instanceof Error) {
+              errorDetails.push(error.message);
+              if (error.cause) errorDetails.push(`Cause: ${JSON.stringify(error.cause)}`);
+            } else {
+              errorDetails.push(String(error));
+            }
+            if (error?.response?.data) {
+              errorDetails.push(`Response: ${JSON.stringify(error.response.data)}`);
+            }
+            if (error?.data) {
+              errorDetails.push(`Data: ${JSON.stringify(error.data)}`);
+            }
+
+            const errorMessage = errorDetails.join(' | ');
+            console.error('Comics bulkCreatePanels enhance failed:', {
+              panelId: panel.id,
+              error: errorMessage,
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+
+            const updated = await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: { status: ComicPanelStatus.Failed, errorMessage },
+            });
+            createdPanels.push(updated);
+            contextPanel = {
+              id: updated.id,
+              prompt: panelDef.prompt,
+              enhancedPrompt: updated.enhancedPrompt,
+              imageUrl: null,
+            };
+          }
+          continue;
+        }
+
+        // Mode 4: Only prompt — text2img generation (costs buzz)
+        if (panelDef.prompt?.trim()) {
+          if (combinedRefImages.length === 0) {
+            throw throwBadRequestError('No references available for generation');
+          }
+
+          const { mentionedIds } = resolveReferenceMentions({
+            prompt: panelDef.prompt,
+            references: allUserRefs,
+          });
+
+          const panel = await createSinglePanel({
+            projectId: input.projectId,
+            chapterPosition: input.chapterPosition,
+            referenceIds: mentionedIds,
+            prompt: panelDef.prompt,
+            enhance: panelDef.enhance,
+            position,
+            contextPanel,
+            allReferenceNames,
+            primaryReferenceName,
+            refImages: combinedRefImages,
+            userId: ctx.user!.id,
+            ctx,
+          });
+
+          createdPanels.push(panel);
+          contextPanel = {
+            id: panel.id,
+            prompt: panelDef.prompt,
+            enhancedPrompt: panel.enhancedPrompt,
+            imageUrl: panel.imageUrl,
+          };
+          continue;
+        }
+
+        // No valid configuration — skip this panel
+        throw throwBadRequestError(`Panel ${i + 1} has no prompt, source image, or image ID`);
+      }
+
+      return { panels: createdPanels };
     }),
 
   // ──── Phase 2: Create panel from existing Image (manual mode) ────

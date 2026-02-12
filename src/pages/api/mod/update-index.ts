@@ -4,6 +4,7 @@ import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   METRICS_IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -21,6 +22,7 @@ import {
   collectionsSearchIndex,
   bountiesSearchIndex,
   toolsSearchIndex,
+  comicsSearchIndex,
 } from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedEnumArray, commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -38,6 +40,7 @@ export const schema = z.object({
     COLLECTIONS_SEARCH_INDEX,
     BOUNTIES_SEARCH_INDEX,
     TOOLS_SEARCH_INDEX,
+    COMICS_SEARCH_INDEX,
   ]),
 });
 export default ModEndpoint(async function updateIndexSync(
@@ -120,6 +123,13 @@ export default ModEndpoint(async function updateIndexSync(
             await toolsSearchIndex.processQueues(processQueuesOpts, jobContext);
           } else {
             await toolsSearchIndex.updateSync(data, jobContext);
+          }
+          break;
+        case COMICS_SEARCH_INDEX:
+          if (processQueuesOpts) {
+            await comicsSearchIndex.processQueues(processQueuesOpts, jobContext);
+          } else {
+            await comicsSearchIndex.updateSync(data, jobContext);
           }
           break;
         default:

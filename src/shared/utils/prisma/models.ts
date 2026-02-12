@@ -949,6 +949,7 @@ export interface Report {
   bounty?: BountyReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
+  comicProject?: ComicProjectReport | null;
   automated?: ReportAutomated | null;
 }
 
@@ -1032,6 +1033,13 @@ export interface BountyEntryReport {
 export interface ChatReport {
   chatId: number;
   chat?: Chat;
+  reportId: number;
+  report?: Report;
+}
+
+export interface ComicProjectReport {
+  comicProjectId: number;
+  comicProject?: ComicProject;
   reportId: number;
   report?: Report;
 }
@@ -3820,6 +3828,7 @@ export interface ComicProject {
   updatedAt: Date;
   chapters?: ComicChapter[];
   engagements?: ComicProjectEngagement[];
+  reports?: ComicProjectReport[];
 }
 
 export interface ComicChapter {

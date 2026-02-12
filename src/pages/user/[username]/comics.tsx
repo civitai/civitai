@@ -1,9 +1,11 @@
-import { Button, Container } from '@mantine/core';
-import { IconPhoto, IconPhotoOff, IconPlus } from '@tabler/icons-react';
+import { Box, Button, Center, Container, Loader } from '@mantine/core';
+import { IconAlertCircle, IconPhoto, IconPhotoOff, IconPlus } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
+import { ComicCard } from '~/components/Cards/ComicCard';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -27,20 +29,25 @@ export const getServerSideProps = createServerSideProps({
 function UserComicsPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const username = router.query.username as string;
+  const username = (router.query.username as string) ?? '';
   const isSelf = currentUser?.username === username;
 
+  if (!username) return <NotFound />;
+
+  if (!isSelf) {
+    return <UserPublicComics username={username} />;
+  }
+
+  return <UserOwnComics />;
+}
+
+function UserOwnComics() {
   const {
     data: projects,
     isLoading,
     isError,
     refetch,
-  } = trpc.comics.getMyProjects.useQuery(undefined, { enabled: isSelf });
-
-  if (!isSelf) {
-    // For other users, show their public comics
-    return <UserPublicComics username={username} />;
-  }
+  } = trpc.comics.getMyProjects.useQuery(undefined);
 
   return (
     <Container size="xl" py="md">
@@ -91,13 +98,78 @@ function UserComicsPage() {
 }
 
 function UserPublicComics({ username }: { username: string }) {
-  // TODO: query public comics for the user when a public user-specific query exists
+  const { data: user, isLoading: userLoading } = trpc.userProfile.get.useQuery({ username });
+
+  const {
+    data,
+    isLoading: comicsLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = trpc.comics.getPublicProjects.useInfiniteQuery(
+    { limit: 20, userId: user?.id },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      enabled: !!user?.id,
+    }
+  );
+
+  const items = data?.pages.flatMap((page) => page.items) ?? [];
+  const isLoading = userLoading || comicsLoading;
+
+  if (isLoading) {
+    return (
+      <Box mt="md">
+        <Center>
+          <Loader />
+        </Center>
+      </Box>
+    );
+  }
+
+  if (!user && !userLoading) return <NotFound />;
+
   return (
     <Container size="xl" py="md">
-      <div className="flex flex-col items-center gap-3 py-12 text-gray-400">
-        <IconPhotoOff size={48} />
-        <p>No public comics yet</p>
-      </div>
+      {isError ? (
+        <div className="flex flex-col items-center gap-3 py-12 text-gray-400">
+          <IconAlertCircle size={48} />
+          <p>Failed to load comics</p>
+          <Button variant="default" onClick={() => refetch()}>
+            Try Again
+          </Button>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 py-12 text-gray-400">
+          <IconPhotoOff size={48} />
+          <p>No public comics yet</p>
+        </div>
+      ) : (
+        <>
+          <div
+            className="grid gap-5"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
+          >
+            {items.map((comic) => (
+              <ComicCard key={comic.id} comic={comic} />
+            ))}
+          </div>
+
+          {hasNextPage && (
+            <div className="flex justify-center py-6">
+              <Button
+                variant="default"
+                onClick={() => fetchNextPage()}
+                loading={isFetchingNextPage}
+              >
+                Load More
+              </Button>
+            </div>
+          )}
+        </>
+      )}
     </Container>
   );
 }

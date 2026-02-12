@@ -16,7 +16,7 @@ export const comicNotifications = createNotificationProcessor({
       const det = details as NotifDetailsNewComicChapter;
       return {
         message: `${det.authorUsername} published a new chapter "${det.chapterName}" in "${det.comicProjectName}"`,
-        url: `/comics/read/${det.comicProjectId}`,
+        url: `/comics/${det.comicProjectId}`,
       };
     },
   },

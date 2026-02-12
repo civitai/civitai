@@ -1136,6 +1136,7 @@ model Report {
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
+  comicProject   ComicProjectReport?
   automated      ReportAutomated?
 }
 
@@ -1257,6 +1258,16 @@ model ChatReport {
 
   @@id([reportId, chatId])
   @@index([chatId], type: Hash)
+}
+
+model ComicProjectReport {
+  comicProjectId Int
+  comicProject   ComicProject @relation(fields: [comicProjectId], references: [id], onDelete: Cascade)
+  reportId       Int          @unique
+  report         Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, comicProjectId])
+  @@index([comicProjectId], type: Hash)
 }
 
 model ResourceReview {
@@ -4933,6 +4944,7 @@ model ComicProject {
 
   chapters    ComicChapter[]
   engagements ComicProjectEngagement[]
+  reports     ComicProjectReport[]
 
   @@index([userId])
   @@index([status])
