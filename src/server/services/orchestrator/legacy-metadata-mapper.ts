@@ -50,6 +50,21 @@ const COMFY_KEY_TO_WORKFLOW: Record<string, string> = {
 };
 
 /**
+ * Reverse of COMFY_KEY_TO_WORKFLOW: maps graph workflow keys back to legacy comfy keys.
+ * Used by mapGraphToLegacyParams to restore the hyphenated format the legacy form expects.
+ * Special cases (e.g. txt2img:draft → draft flag) are handled separately.
+ */
+const WORKFLOW_TO_COMFY_KEY: Record<string, string> = {
+  'txt2img:face-fix': 'txt2img-facefix',
+  'txt2img:hires-fix': 'txt2img-hires',
+  'img2img:face-fix': 'img2img-facefix',
+  'img2img:hires-fix': 'img2img-hires',
+  'img2img:upscale': 'img2img-upscale',
+  'img2img:remove-background': 'img2img-background-removal',
+  'img2img:edit': 'img2img',
+};
+
+/**
  * Flux Ultra aspect ratio dimensions.
  * Used to resolve fluxUltraAspectRatio string → { value, width, height }.
  */
@@ -104,7 +119,7 @@ function modelFromFluxModeAir(air: string): ResourceData | undefined {
 
 // Re-export shared engine utilities for backwards compatibility
 export { getEngineFromEcosystem } from '~/shared/utils/engine.utils';
-import { ENGINE_TO_ECOSYSTEM } from '~/shared/utils/engine.utils';
+import { ENGINE_TO_ECOSYSTEM, getEngineFromEcosystem } from '~/shared/utils/engine.utils';
 
 // Alias for backwards compatibility with existing code
 const ENGINE_TO_BASE_MODEL = ENGINE_TO_ECOSYSTEM;
@@ -571,9 +586,48 @@ export function mapGraphToLegacyParams(
     transparent,
     quality,
     fluxMode,
+    workflow,
+    // v2 DataGraph uses 'wanVersion'; legacy form uses 'version'
+    wanVersion,
     // Pass through everything else
     ...rest
   } = graphOutput;
+
+  // Decompose graph workflow keys into legacy format.
+  // Graph uses colon-separated variants (txt2img:face-fix), legacy uses hyphens (txt2img-facefix).
+  // mapDataToGraphInput strips 'process' (consumed to compute 'workflow'),
+  // but legacy video forms (e.g. Wan, Vidu) need 'process' to distinguish txt2vid/img2vid.
+  let legacyWorkflow = workflow;
+  let process: string | undefined;
+  let draft: boolean | undefined;
+  if (typeof workflow === 'string') {
+    // Map graph workflow keys back to comfy-format keys (colon → hyphen variants)
+    if (workflow in WORKFLOW_TO_COMFY_KEY) {
+      legacyWorkflow = WORKFLOW_TO_COMFY_KEY[workflow];
+    }
+
+    // Handle draft variant: 'txt2img:draft' → workflow='txt2img' + draft=true
+    if (workflow === 'txt2img:draft') {
+      legacyWorkflow = 'txt2img';
+      draft = true;
+    }
+
+    // Restore process for video workflows
+    const base = workflow.split(':')[0];
+    if (['txt2vid', 'img2vid', 'vid2vid'].includes(base)) {
+      process = base;
+    }
+  }
+
+  // Restore 'engine' from ecosystem for video workflows.
+  // mapDataToGraphInput strips 'engine', but legacy video schemas need it.
+  const engine =
+    typeof ecosystem === 'string' ? getEngineFromEcosystem(ecosystem) : undefined;
+
+  // Map wanVersion → version for legacy Wan form compatibility.
+  // The v2 DataGraph stores 'wanVersion', but the legacy form expects 'version'.
+  const version = wanVersion ?? rest.version;
+  if (wanVersion) delete rest.version; // avoid both fields
 
   // Convert aspectRatio object to string
   let aspectRatioValue: string | undefined;
@@ -588,7 +642,8 @@ export function mapGraphToLegacyParams(
     aspectRatioValue = aspectRatio;
   }
 
-  // Convert images array to sourceImage (v1 form uses single sourceImage)
+  // Convert images array to sourceImage for v1 image form (uses single sourceImage).
+  // Also pass images array through for video forms which use it directly.
   let sourceImage: { url: string; width: number; height: number } | undefined;
   if (Array.isArray(images) && images.length > 0) {
     const firstImage = images[0] as { url?: string; width?: number; height?: number };
@@ -620,11 +675,17 @@ export function mapGraphToLegacyParams(
   return removeEmpty({
     ...rest,
     baseModel: ecosystem, // Map back to legacy field name
+    workflow: legacyWorkflow,
+    process,
+    engine,
+    version,
+    draft,
     aspectRatio: aspectRatioValue,
     fluxUltraAspectRatio,
     width,
     height,
     sourceImage,
+    images: Array.isArray(images) ? images : undefined, // Pass through for video forms
     fluxMode: legacyFluxMode,
     // Map back to legacy field names
     ...(transparent != null && { openAITransparentBackground: transparent }),

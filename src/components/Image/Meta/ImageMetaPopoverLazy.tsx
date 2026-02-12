@@ -1,12 +1,11 @@
 import { CloseButton } from '@headlessui/react';
 import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Divider, Group } from '@mantine/core';
-import { IconBrush } from '@tabler/icons-react';
+import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import React from 'react';
-import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta'; //
+import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
+import { useMetadataCopy } from '~/hooks/useMetadataCopy';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { encodeMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 
 // export default function ImageMetaPopoverLazy({ imageId }: ImageMetaPopoverProps) {
@@ -43,6 +42,7 @@ const sharedButtonProps: ButtonProps = {
 export default function ImageMetaPopoverLazy({ imageId }: { imageId: number }) {
   const { data, isLoading } = trpc.image.getGenerationData.useQuery({ id: imageId });
   const { meta, canRemix, type = 'image' } = data ?? {};
+  const { copy, copied } = useMetadataCopy(meta);
 
   return (
     <Card withBorder className="flex w-96 max-w-full flex-col gap-3 rounded-xl">
@@ -93,14 +93,16 @@ export default function ImageMetaPopoverLazy({ imageId }: { imageId: number }) {
               </Button>
             )}
             {meta && (
-              <CopyButton value={() => encodeMetadata(meta)}>
-                {({ copy, copied, color, Icon }) => (
-                  <Button {...sharedButtonProps} className="-ml-px" onClick={copy} color={color}>
-                    <Icon size={16} />
-                    {!canRemix && (!copied ? 'Copy Generation Data' : 'Copied')}
-                  </Button>
-                )}
-              </CopyButton>
+              <Button
+                {...sharedButtonProps}
+                className="-ml-px"
+                onClick={copy}
+                color={copied ? 'teal' : undefined}
+                data-activity="copy:image-meta"
+              >
+                {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                {!canRemix && (!copied ? 'Copy Generation Data' : 'Copied')}
+              </Button>
             )}
           </Button.Group>
         </>

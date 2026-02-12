@@ -323,19 +323,22 @@ export async function applyWorkflowWithCheck({
       : getValidEcosystemForWorkflow(workflowId, ecosystemKey);
 
     if (target) {
+      const compatibleIds = getEcosystemsForWorkflow(workflowId);
       openCompatibilityConfirmModal({
         pendingChange: {
           type: 'workflow',
           value: workflowId,
+          optionId: workflowId,
           currentEcosystem: ecosystemKey,
-          targetEcosystem: target.displayName,
+          compatibleEcosystemIds: compatibleIds,
+          defaultEcosystemKey: target.key,
         },
-        onConfirm: () =>
+        onConfirm: (selectedEcosystemKey) =>
           applyWorkflowToForm({
             workflowId,
             image,
             step,
-            ecosystem: target.key,
+            ecosystem: selectedEcosystemKey ?? target.key,
             clearResources: true,
           }),
       });

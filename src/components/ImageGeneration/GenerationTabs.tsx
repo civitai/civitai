@@ -41,14 +41,13 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   const toggleGenerator = useLegacyGeneratorStore((state) => state.toggle);
   const [bannerDismissed] = useLocalStorage({
     key: 'dismiss-generator-toggle-banner',
-    defaultValue: false,
   });
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
   const view = useGenerationPanelStore((state) => state.view);
-  const showToggle = hasExplicitPreference || bannerDismissed;
+  const showToggle = hasExplicitPreference || bannerDismissed || bannerDismissed === undefined; // Show if dismissed or no value set (new user)
   useEffect(() => {
     if (isImageFeedSeparate && view === 'generate') generationGraphPanel.setView('queue');
   }, [isImageFeedSeparate, view]);

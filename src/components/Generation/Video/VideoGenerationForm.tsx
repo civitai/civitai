@@ -42,6 +42,7 @@ import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell'
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
   mapDataToGraphInput,
+  mapGraphToLegacyParams,
   splitResourcesByType,
 } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
@@ -132,7 +133,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
       const metadata = config.metadataFn(validated as any);
       const graphInput = mapDataToGraphInput(metadata as Record<string, unknown>, []);
       const parsedResources =
-        'resources' in metadata
+        'resources' in metadata && Array.isArray((metadata as any).resources)
           ? (metadata as any).resources.map((r: any) => {
               const parsed = parseAIR(r.air);
               return removeEmpty({
@@ -182,10 +183,12 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   useEffect(() => {
     if (storeData && config) {
       const { params, resources, runType } = storeData;
-      let data = params;
+      // Store params are in graph format (workflow, ecosystem, wanVersion).
+      // Convert to legacy format (process, engine, version) for softValidate.
+      let data = mapGraphToLegacyParams(params);
       if (runType === 'patch') {
         const formData = form.getValues();
-        data = { ...formData, ...params };
+        data = { ...formData, ...data };
       }
       const validated = config.softValidate(data);
       form.reset({ ...validated, resources }, { keepDefaultValues: true });
@@ -322,7 +325,7 @@ function SubmitButton2({
           } as any);
           const graphInput = mapDataToGraphInput(metadata as Record<string, unknown>, []);
           const parsedResources =
-            'resources' in metadata
+            'resources' in metadata && Array.isArray((metadata as any).resources)
               ? (metadata as any).resources.map((r: any) => {
                   const parsed = parseAIR(r.air);
                   return removeEmpty({

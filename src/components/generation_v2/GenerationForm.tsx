@@ -32,6 +32,7 @@ import {
   wanVersionDefs,
 } from '~/shared/data-graph/generation';
 import { getWorkflowModes } from '~/shared/data-graph/generation/config';
+import { getOutputTypeForWorkflow } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemById } from '~/shared/constants/basemodel.constants';
 
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
@@ -93,32 +94,43 @@ export function GenerationForm() {
   graphRef.current = graph;
 
   // Handle workflow selection with compatibility check
-  // Receives (graphKey, ecosystemIds) from WorkflowInput — ecosystemIds are per-entry (not aggregated)
+  // Receives (graphKey, ecosystemIds, optionId) from WorkflowInput — ecosystemIds are per-entry (not aggregated)
   const handleWorkflowChange = useCallback(
-    (graphKey: string, ecosystemIds: number[]) => {
+    (graphKey: string, ecosystemIds: number[], optionId: string) => {
       // Check if the selected entry is compatible with the current ecosystem
+      // Cross-output-type changes (image ↔ video) are always compatible — the graph resolves the ecosystem
+      const changesOutputType =
+        compatibility.currentOutputType !== undefined &&
+        getOutputTypeForWorkflow(graphKey) !== compatibility.currentOutputType;
       const isEntryCompatible =
+        changesOutputType ||
         ecosystemIds.length === 0 ||
         (compatibility.currentEcosystemId !== undefined &&
           ecosystemIds.includes(compatibility.currentEcosystemId));
 
       if (!isEntryCompatible) {
-        // Find target ecosystem from the entry's ecosystemIds
-        const targetEcoId = ecosystemIds[0];
-        const target = targetEcoId !== undefined ? ecosystemById.get(targetEcoId) : undefined;
-        if (target && compatibility.currentEcosystemKey) {
+        // Get recommended ecosystem (considers last-used preferences)
+        const recommended = compatibility.getTargetEcosystemForWorkflow(graphKey);
+        const defaultKey = recommended?.key;
+
+        if (ecosystemIds.length > 0 && compatibility.currentEcosystemKey) {
           openCompatibilityConfirmModal({
             pendingChange: {
               type: 'workflow',
               value: graphKey,
+              optionId,
               currentEcosystem: compatibility.currentEcosystemKey,
-              targetEcosystem: target.displayName,
+              compatibleEcosystemIds: ecosystemIds,
+              defaultEcosystemKey:
+                defaultKey ?? ecosystemById.get(ecosystemIds[0]!)?.key ?? '',
             },
-            onConfirm: () => {
-              graphRef.current.set({
-                workflow: graphKey,
-                ecosystem: target.key,
-              } as Parameters<typeof graph.set>[0]);
+            onConfirm: (selectedEcosystemKey) => {
+              if (selectedEcosystemKey) {
+                graphRef.current.set({
+                  workflow: graphKey,
+                  ecosystem: selectedEcosystemKey,
+                } as Parameters<typeof graph.set>[0]);
+              }
             },
           });
           return;
@@ -134,6 +146,18 @@ export function GenerationForm() {
     (newBaseModel: string, ecosystemLabel: string) => {
       if (!compatibility.isEcosystemKeyCompatible(newBaseModel)) {
         const target = compatibility.getTargetWorkflowForEcosystem(newBaseModel);
+
+        // Cross-output-type changes (video → image or image → video) are intentional
+        // mode switches — apply directly without a confirmation modal
+        const targetOutputType = getOutputTypeForWorkflow(target.id);
+        if (compatibility.currentOutputType && targetOutputType !== compatibility.currentOutputType) {
+          graphRef.current.set({
+            workflow: target.id,
+            ecosystem: newBaseModel,
+          } as Parameters<typeof graph.set>[0]);
+          return;
+        }
+
         openCompatibilityConfirmModal({
           pendingChange: {
             type: 'ecosystem',
@@ -207,21 +231,20 @@ export function GenerationForm() {
               const modes = snapshot.ecosystem
                 ? getWorkflowModes(value as string, snapshot.ecosystem)
                 : [];
-              if (modes.length > 0) {
-                return (
-                  <SegmentedControlWrapper
-                    value={value as string}
-                    onChange={(v) => graph.set({ workflow: v } as Parameters<typeof graph.set>[0])}
-                    data={modes}
-                    fullWidth
-                  />
-                );
-              }
+
               return (
+                <>
                 <SelectedWorkflowDisplay
                   workflowId={value as string}
                   ecosystemId={compatibility.currentEcosystemId}
                 />
+                {modes.length > 0 && <SegmentedControlWrapper
+                    value={value as string}
+                    onChange={(v) => graph.set({ workflow: v } as Parameters<typeof graph.set>[0])}
+                    data={modes}
+                    fullWidth
+                  />}
+                </>
               );
             }}
           />
@@ -411,12 +434,12 @@ export function GenerationForm() {
                 error={error?.message}
               >
                 <Paper
-                  px="sm"
                   radius="md"
                   withBorder
                   className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
                 >
                   <PromptInput
+                    px="sm"
                     name="prompt"
                     value={value}
                     onChange={onChange}

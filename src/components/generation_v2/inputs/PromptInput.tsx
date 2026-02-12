@@ -5,7 +5,7 @@ import type { ClipboardEvent, KeyboardEvent } from 'react';
 import { useState } from 'react';
 import { create } from 'zustand';
 
-import { parsePromptMetadata } from '~/utils/metadata';
+import { extractCivitaiMetadata, parsePromptMetadata } from '~/utils/metadata';
 
 // Store to track prompt focus state for whatIf debouncing
 export const usePromptFocusedStore = create<{ focused: boolean }>(() => ({ focused: false }));
@@ -17,6 +17,7 @@ export type PromptInputProps = Omit<TextareaProps, 'onChange'> & {
 
 export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
   const [showFillForm, setShowFillForm] = useState(false);
+  const [pastedMetadata, setPastedMetadata] = useState<Record<string, unknown> | null>(null);
 
   function handleArrowUpOrDown(event: KeyboardEvent<HTMLElement> | globalThis.KeyboardEvent) {
     if (props.name) {
@@ -33,14 +34,35 @@ export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
 
   function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     if (!onFillForm) return;
+
+    // Check for structured Civitai metadata in the HTML clipboard
+    const html = e.clipboardData?.getData('text/html');
+    if (html) {
+      const metadata = extractCivitaiMetadata(html);
+      if (metadata) {
+        setPastedMetadata(metadata);
+        setShowFillForm(true);
+        return;
+      }
+    }
+
+    // Fall back to text-based detection for external sources
     const text = e.clipboardData?.getData('text/plain');
-    if (text) setShowFillForm(text.includes('Steps:'));
+    if (text) {
+      setPastedMetadata(null);
+      setShowFillForm(text.includes('Steps:'));
+    }
   }
 
   function handleFillForm() {
-    const metadata = parsePromptMetadata(String(props.value ?? ''));
-    onFillForm?.(metadata);
+    if (pastedMetadata) {
+      onFillForm?.(pastedMetadata);
+    } else {
+      const metadata = parsePromptMetadata(String(props.value ?? ''));
+      onFillForm?.(metadata);
+    }
     setShowFillForm(false);
+    setPastedMetadata(null);
   }
 
   return (
@@ -56,7 +78,6 @@ export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
       {showFillForm && (
         <Button
           size="compact-xs"
-          variant="light"
           leftSection={<IconSparkles size={14} />}
           onClick={handleFillForm}
           className="absolute right-2 top-2"

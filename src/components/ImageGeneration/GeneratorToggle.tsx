@@ -24,9 +24,8 @@ const DISMISS_KEY = 'dismiss-generator-toggle-banner';
 export function GeneratorToggleBanner() {
   const { useLegacy, switchToNew, switchToLegacy, hasExplicitPreference } =
     useLegacyGeneratorStore();
-  const [dismissed, setDismissed] = useLocalStorage({
+  const [dismissed, setDismissed] = useLocalStorage<boolean>({
     key: DISMISS_KEY,
-    defaultValue: false,
   });
 
   // Don't show if user explicitly chose and dismissed

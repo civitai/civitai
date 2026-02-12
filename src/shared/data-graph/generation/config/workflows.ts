@@ -131,6 +131,29 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: TXT2IMG_IDS,
   },
 
+  'txt2img:draft': {
+    label: 'Draft',
+    description: 'Fast generation for quick iterations',
+    category: 'image',
+    ecosystemIds: DRAFT_IDS,
+  },
+
+  'txt2img:face-fix': {
+    label: 'Create + Face Fix',
+    modeLabel: 'Text to Image',
+    description: 'Generate with automatic face correction',
+    category: 'image',
+    ecosystemIds: SD_FAMILY_IDS,
+  },
+
+  'txt2img:hires-fix': {
+    label: 'Create + Hires Fix',
+    modeLabel: 'Text to Image',
+    description: 'Generate with upscaling for higher detail',
+    category: 'image',
+    ecosystemIds: SD_FAMILY_IDS,
+  },
+
   img2img: {
     label: 'Image to Image',
     description: 'Generate an image from an existing image',
@@ -145,40 +168,17 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: EDIT_IMG_IDS,
   },
 
-  'txt2img:draft': {
-    label: 'Draft',
-    description: 'Fast generation for quick iterations',
-    category: 'image',
-    ecosystemIds: DRAFT_IDS,
-  },
-
-  'txt2img:face-fix': {
-    label: 'Face Fix',
-    modeLabel: 'Text',
-    description: 'Generate with automatic face correction',
-    category: 'image',
-    ecosystemIds: SD_FAMILY_IDS,
-  },
-
   'img2img:face-fix': {
-    label: 'Face Fix (Image)',
-    modeLabel: 'Image',
+    label: 'Image Face Fix',
+    modeLabel: 'Image to Image',
     description: 'Fix faces in an existing image',
     category: 'image',
     ecosystemIds: SD_FAMILY_IDS,
   },
 
-  'txt2img:hires-fix': {
-    label: 'Hires Fix',
-    modeLabel: 'Text',
-    description: 'Generate with upscaling for higher detail',
-    category: 'image',
-    ecosystemIds: SD_FAMILY_IDS,
-  },
-
   'img2img:hires-fix': {
-    label: 'Hires Fix (Image)',
-    modeLabel: 'Image',
+    label: 'Image Hires Fix',
+    modeLabel: 'Image to Image',
     description: 'Hires fix from an existing image',
     category: 'image',
     ecosystemIds: SD_FAMILY_IDS,

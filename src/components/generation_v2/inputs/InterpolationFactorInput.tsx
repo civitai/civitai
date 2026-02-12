@@ -6,8 +6,9 @@
  * Displays the estimated target FPS for the selected option.
  */
 
-import { Alert, Group, Input, Radio, Text } from '@mantine/core';
+import { Alert, Input, Text } from '@mantine/core';
 import type { InputWrapperProps } from '@mantine/core';
+import { Radio } from '~/libs/form/components/RadioGroup';
 
 // =============================================================================
 // Types
@@ -87,17 +88,20 @@ export function InterpolationFactorInput({
     >
       <div className="flex flex-col gap-3">
         {/* Radio options */}
-        <Radio.Group value={value?.toString()} onChange={(val) => onChange?.(parseInt(val, 10))}>
-          <Group gap="sm">
-            {options.map((option) => (
-              <Radio
-                key={option.value}
-                value={option.value.toString()}
-                label={option.label}
-                disabled={disabled || option.disabled}
-              />
-            ))}
-          </Group>
+        <Radio.Group
+          value={value}
+          onChange={(v) => onChange?.(v as number)}
+          className="flex gap-2"
+          disabled={disabled}
+        >
+          {options.map((option) => (
+            <Radio.Item
+              key={option.value}
+              value={option.value}
+              label={option.label}
+              disabled={option.disabled}
+            />
+          ))}
         </Radio.Group>
 
         {/* Target FPS display */}
