@@ -1,6 +1,12 @@
 import * as z from 'zod';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { ChallengeSource, ChallengeStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeSource,
+  ChallengeStatus,
+  MetricTimeframe,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
@@ -33,6 +39,14 @@ export const prizeSchema = z.object({
   points: z.number(),
 });
 export type Prize = z.infer<typeof prizeSchema>;
+
+export const prizeDistributionSchema = z
+  .array(z.number().min(0).max(100))
+  .length(3)
+  .refine((arr) => arr.reduce((a, b) => a + b, 0) === 100, {
+    message: 'Distribution must sum to 100%',
+  })
+  .default([50, 30, 20]);
 
 // Types for challenge data
 export type ChallengeListItem = {
@@ -114,6 +128,12 @@ export type ChallengeDetail = {
   entryPrize: Prize | null;
   entryPrizeRequirement: number;
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: number[] | null;
   operationBudget: number;
   entryCount: number;
   createdBy: {
@@ -239,6 +259,12 @@ export const upsertChallengeBaseSchema = z.object({
   entryPrizeRequirement: z.number().min(1).max(100).default(10),
   prizePool: z.number().min(0).default(0),
   operationBudget: z.number().min(0).default(0),
+  prizeMode: z.nativeEnum(PrizeMode).default(PrizeMode.Fixed),
+  basePrizePool: z.number().min(0).default(0),
+  buzzPerAction: z.number().min(0).default(0),
+  poolTrigger: z.nativeEnum(PoolTrigger).optional().nullable(),
+  maxPrizePool: z.number().min(0).optional().nullable(),
+  prizeDistribution: prizeDistributionSchema.optional().nullable(),
   startsAt: z.date(),
   endsAt: z.date(),
   visibleAt: z.date(),

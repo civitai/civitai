@@ -1,9 +1,19 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeSource,
+  ChallengeStatus,
+  CollectionMode,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import type { Prize } from './daily-challenge.utils';
+
+// Re-export pure pool computation (lives in separate file to avoid pulling
+// DB/Redis into client bundles)
+export { computeDynamicPool } from './challenge-pool';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
@@ -38,6 +48,12 @@ export type ChallengeDetails = {
   entryPrize: Prize | null;
   entryPrizeRequirement: number; // Min entries for participation prize
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: number[] | null;
   operationBudget: number;
   operationSpent: number;
   createdById: number;
@@ -56,6 +72,7 @@ type ChallengeDbRow = Omit<
   | 'coverImageHeight'
   | 'prizes'
   | 'entryPrize'
+  | 'prizeDistribution'
   | 'judgeId'
 > & {
   modelVersionIds: number[] | null; // Can be null from DB
@@ -66,6 +83,7 @@ type ChallengeDbRow = Omit<
   coverImageHeight: number | null;
   prizes: Prize[] | string; // JSON comes as string or parsed
   entryPrize: Prize | string | null;
+  prizeDistribution: number[] | string | null; // JSON comes as string or parsed; null for Fixed mode
   judgeId: number | null;
 };
 
@@ -99,6 +117,12 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."entryPrize",
       c."entryPrizeRequirement",
       c."prizePool",
+      c."prizeMode",
+      c."basePrizePool",
+      c."buzzPerAction",
+      c."poolTrigger",
+      c."maxPrizePool",
+      c."prizeDistribution",
       c."operationBudget",
       c."operationSpent",
       c."createdById",
@@ -118,6 +142,12 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
     prizes: typeof result.prizes === 'string' ? JSON.parse(result.prizes) : result.prizes,
     entryPrize:
       typeof result.entryPrize === 'string' ? JSON.parse(result.entryPrize) : result.entryPrize,
+    prizeDistribution:
+      result.prizeDistribution == null
+        ? null
+        : typeof result.prizeDistribution === 'string'
+          ? JSON.parse(result.prizeDistribution)
+          : result.prizeDistribution,
   };
 }
 
@@ -248,6 +278,12 @@ export type CreateChallengeInput = {
   entryPrize?: Prize;
   entryPrizeRequirement?: number; // Min entries for participation prize
   prizePool?: number;
+  prizeMode?: PrizeMode;
+  basePrizePool?: number;
+  buzzPerAction?: number;
+  poolTrigger?: PoolTrigger | null;
+  maxPrizePool?: number | null;
+  prizeDistribution?: number[] | null;
   operationBudget?: number;
   createdById: number;
   source?: ChallengeSource;
@@ -310,6 +346,14 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       entryPrize: input.entryPrize as unknown as Prisma.InputJsonValue,
       entryPrizeRequirement: input.entryPrizeRequirement ?? 10,
       prizePool: input.prizePool ?? 0,
+      prizeMode: input.prizeMode ?? PrizeMode.Fixed,
+      basePrizePool: input.basePrizePool ?? 0,
+      buzzPerAction: input.buzzPerAction ?? 0,
+      poolTrigger: input.poolTrigger ?? null,
+      maxPrizePool: input.maxPrizePool ?? null,
+      prizeDistribution: input.prizeDistribution
+        ? (input.prizeDistribution as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       operationBudget: input.operationBudget ?? 0,
       createdById: input.createdById,
       source: input.source ?? ChallengeSource.System,

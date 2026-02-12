@@ -5,6 +5,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  computeDynamicPool,
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
@@ -13,7 +14,7 @@ import {
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus, PrizeMode, PoolTrigger } from '~/shared/utils/prisma/enums';
 import type {
   ChallengeConfig,
   DailyChallengeDetails,
@@ -560,9 +561,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Get the Challenge record to check allowedNsfwLevel and judgeId
   // Fall back to PG-only (1) and default judge for old article-based challenges
   const [challengeRecord] = await dbRead.$queryRaw<
-    [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
+    [
+      | {
+          allowedNsfwLevel: number;
+          judgeId: number | null;
+          judgingPrompt: string | null;
+          prizeMode: PrizeMode;
+          basePrizePool: number;
+          buzzPerAction: number;
+          poolTrigger: PoolTrigger | null;
+          maxPrizePool: number | null;
+          prizeDistribution: number[] | null;
+        }
+      | undefined,
+    ]
   >`
-    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt"
+    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
+           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -886,6 +901,47 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       });
       log('Users notified');
     }
+  }
+
+  // Dynamic prize pool recomputation
+  // ----------------------------------------------
+  if (
+    challengeRecord?.prizeMode === PrizeMode.Dynamic &&
+    challengeRecord.poolTrigger &&
+    challengeRecord.prizeDistribution
+  ) {
+    const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
+      SELECT
+        COUNT(*) as "entryCount",
+        COUNT(DISTINCT i."userId") as "uniqueUsers"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+    `;
+
+    const actionCount =
+      challengeRecord.poolTrigger === PoolTrigger.Entry
+        ? Number(stats.entryCount)
+        : Number(stats.uniqueUsers);
+
+    const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
+      basePrizePool: challengeRecord.basePrizePool,
+      buzzPerAction: challengeRecord.buzzPerAction,
+      actionCount,
+      maxPrizePool: challengeRecord.maxPrizePool,
+      prizeDistribution: challengeRecord.prizeDistribution,
+    });
+
+    await dbWrite.challenge.update({
+      where: { id: currentChallenge.challengeId },
+      data: {
+        prizePool: totalPool,
+        prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
   }
 
   // Update last review time in Challenge metadata
