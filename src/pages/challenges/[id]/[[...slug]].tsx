@@ -674,9 +674,14 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                         <Text size="sm" fw={500} lineClamp={1}>
                           {m.name}
                         </Text>
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          {m.versionName}
-                        </Text>
+                        <Group gap={4} wrap="nowrap">
+                          <Badge size="xs" variant="light">
+                            {m.baseModel}
+                          </Badge>
+                          <Text size="xs" c="dimmed" lineClamp={1}>
+                            {m.versionName}
+                          </Text>
+                        </Group>
                       </div>
                     </Link>
                     {isActive && (
