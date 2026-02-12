@@ -964,7 +964,13 @@ function getResourcesFromStep(
   const refs = getResourceRefsFromStep(step);
   return refs
     .map((ref) => {
-      const enriched = allResources.find((r) => r.id === ref.id);
+      // Match by both id and epochNumber to handle the same model version used with different epochs
+      const enriched =
+        allResources.find(
+          (r) =>
+            r.id === ref.id &&
+            (r.epochDetails?.epochNumber ?? r.epochNumber) === ref.epochNumber
+        ) ?? allResources.find((r) => r.id === ref.id);
       if (!enriched) return null;
       return {
         ...enriched,
