@@ -74,6 +74,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
+import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -153,6 +154,8 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  expireStrikesJob,
+  processTimedUnmutesJob,
 ];
 
 const log = createLogger('jobs', 'green');

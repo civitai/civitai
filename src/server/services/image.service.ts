@@ -5341,10 +5341,7 @@ export async function getImageRatingRequests({
   };
 }
 
-export async function getIngestionErrorImages({
-  cursor,
-  limit,
-}: IngestionErrorReviewInput) {
+export async function getIngestionErrorImages({ cursor, limit }: IngestionErrorReviewInput) {
   const query = Prisma.sql`
     SELECT
       i.id,
