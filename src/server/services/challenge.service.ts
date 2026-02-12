@@ -207,9 +207,16 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
         break;
       case ChallengeSort.Newest:
       default:
-        sortKeysetCondition = Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${
-          sortValue as Date
-        } AND c.id < ${id}))`;
+        // Scheduled challenges sort soonest-first (ASC), others sort newest-first (DESC)
+        if (cursorStatus === 'Scheduled') {
+          sortKeysetCondition = Prisma.sql`(c."startsAt" > ${
+            sortValue as Date
+          } OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        } else {
+          sortKeysetCondition = Prisma.sql`(c."startsAt" < ${
+            sortValue as Date
+          } OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        }
         break;
     }
 
@@ -244,7 +251,13 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       break;
     case ChallengeSort.Newest:
     default:
-      orderByClause = Prisma.sql`${statusOrderPrefix}, c."startsAt" DESC, c.id DESC`;
+      // Scheduled challenges sort soonest-first (ASC), others sort newest-first (DESC)
+      orderByClause = Prisma.sql`${statusOrderPrefix},
+        CASE WHEN c.status = 'Scheduled'
+          THEN EXTRACT(EPOCH FROM c."startsAt")
+          ELSE -EXTRACT(EPOCH FROM c."startsAt")
+        END ASC,
+        c.id DESC`;
       break;
   }
 
