@@ -1,83 +1,63 @@
-import { Badge } from '@mantine/core';
-import { IconPhoto } from '@tabler/icons-react';
-import Link from 'next/link';
-
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { Badge, Text } from '@mantine/core';
+import { IconBook } from '@tabler/icons-react';
+import clsx from 'clsx';
+import cardClasses from '~/components/Cards/Cards.module.css';
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { RouterOutput } from '~/types/router';
-import { formatRelativeDate, formatGenreLabel } from '~/utils/comic-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { formatGenreLabel } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
 
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
 
-export function ComicCard({ comic }: { comic: ComicItem }) {
-  const guardImage = comic.coverImage ?? { id: comic.id, nsfwLevel: comic.nsfwLevel };
+export function ComicCard({ data }: { data: ComicItem }) {
+  const coverImage = data.coverImage
+    ? {
+        ...data.coverImage,
+        type: data.coverImage.type ?? ('image' as const),
+        metadata: (data.coverImage.metadata as MixedObject) ?? null,
+      }
+    : undefined;
 
   return (
-    <Link
-      href={`/comics/${comic.id}/${slugit(comic.name)}`}
-      className="group block overflow-hidden rounded-lg border border-gray-700 bg-gray-800 transition-colors hover:border-gray-500"
-    >
-      {/* Cover Image */}
-      <div className="relative aspect-[3/4] overflow-hidden bg-gray-900">
-        <ImageGuard2 image={guardImage}>
-          {(safe) => (
-            <>
-              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-              {comic.thumbnailUrl ? (
-                safe ? (
-                  <img
-                    src={getEdgeUrl(comic.thumbnailUrl, { width: 450 })}
-                    alt={comic.name}
-                    className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                  />
-                ) : (
-                  <div className="relative h-full w-full overflow-hidden">
-                    <img
-                      src={getEdgeUrl(comic.thumbnailUrl, { width: 450 })}
-                      alt={comic.name}
-                      className="h-full w-full scale-110 object-cover blur-xl"
-                    />
-                  </div>
-                )
-              ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <IconPhoto size={36} className="text-gray-600" />
-                </div>
-              )}
-            </>
-          )}
-        </ImageGuard2>
-
-        {/* Genre badge */}
-        {comic.genre && (
-          <Badge size="xs" variant="light" className="absolute right-2 top-2">
-            {formatGenreLabel(comic.genre)}
+    <AspectRatioImageCard
+      href={`/comics/${data.id}/${slugit(data.name)}`}
+      aspectRatio="portrait"
+      image={coverImage}
+      header={
+        data.genre && (
+          <Badge
+            size="sm"
+            variant="gradient"
+            gradient={{ from: 'cyan', to: 'blue' }}
+            className={cardClasses.chip}
+          >
+            {formatGenreLabel(data.genre)}
           </Badge>
-        )}
-      </div>
-
-      {/* Body */}
-      <div className="p-3">
-        <h3 className="text-sm font-medium truncate">{comic.name}</h3>
-
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <UserAvatarSimple {...comic.user} />
+        )
+      }
+      footer={
+        <div className="flex w-full flex-col gap-2">
+          <UserAvatarSimple {...data.user} />
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
+            {data.name}
+          </Text>
+          <Badge
+            className={clsx(cardClasses.statChip, cardClasses.chip)}
+            variant="light"
+            radius="xl"
+          >
+            <div className="flex items-center gap-0.5">
+              <IconBook size={14} strokeWidth={2.5} />
+              <Text fw="bold" size="xs">
+                {abbreviateNumber(data.chapterCount)} ch.
+              </Text>
+            </div>
+          </Badge>
         </div>
-
-        {/* Latest chapters */}
-        {comic.latestChapters && comic.latestChapters.length > 0 && (
-          <div className="mt-2 flex flex-col gap-0.5">
-            {comic.latestChapters.map((ch, i) => (
-              <span key={`${ch.projectId}-${ch.position}`} className="text-xs text-gray-400">
-                Ch. {comic.chapterCount - i}
-                {ch.publishedAt && <> &middot; {formatRelativeDate(ch.publishedAt)}</>}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    </Link>
+      }
+      footerGradient
+    />
   );
 }

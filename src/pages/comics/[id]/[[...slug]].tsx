@@ -1,19 +1,23 @@
-import { ActionIcon, Container, Select } from '@mantine/core';
+import { ActionIcon, Container, CopyButton, Select, Tooltip } from '@mantine/core';
 import {
   IconArrowLeft,
   IconBell,
   IconBellOff,
   IconBook,
+  IconCheck,
   IconChevronLeft,
   IconChevronRight,
   IconFlag,
+  IconLink,
   IconPhoto,
   IconPhotoOff,
+  IconShare,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChapterComments } from '~/components/Comics/ChapterComments';
 import { Page } from '~/components/AppLayout/Page';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -188,20 +192,28 @@ function ComicOverview({ project }: { project: Project }) {
                   {isFollowing ? <IconBellOff size={18} /> : <IconBell size={18} />}
                 </ActionIcon>
                 {currentUser.id !== project.user.id && (
-                  <LoginRedirect reason="report-comic">
-                    <ActionIcon
-                      variant="subtle"
-                      color="gray"
-                      onClick={() =>
-                        openReportModal({
-                          entityType: ReportEntity.ComicProject,
-                          entityId: project.id,
-                        })
-                      }
-                    >
-                      <IconFlag size={18} />
-                    </ActionIcon>
-                  </LoginRedirect>
+                  <>
+                    <TipBuzzButton
+                      toUserId={project.user.id}
+                      entityId={project.id}
+                      entityType="ComicProject"
+                      size="compact-md"
+                    />
+                    <LoginRedirect reason="report-comic">
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        onClick={() =>
+                          openReportModal({
+                            entityType: ReportEntity.ComicProject,
+                            entityId: project.id,
+                          })
+                        }
+                      >
+                        <IconFlag size={18} />
+                      </ActionIcon>
+                    </LoginRedirect>
+                  </>
                 )}
               </>
             )}
@@ -219,6 +231,41 @@ function ComicOverview({ project }: { project: Project }) {
           {project.description && (
             <p className={styles.overviewDescription}>{project.description}</p>
           )}
+
+          {/* Share */}
+          <div className="mt-4 flex items-center gap-2">
+            <CopyButton
+              value={
+                typeof window !== 'undefined'
+                  ? `${window.location.origin}/comics/${project.id}/${projectSlug}`
+                  : ''
+              }
+            >
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? 'Copied!' : 'Copy link'}>
+                  <ActionIcon variant="subtle" color={copied ? 'green' : 'gray'} onClick={copy}>
+                    {copied ? <IconCheck size={18} /> : <IconLink size={18} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              component="a"
+              href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                `Check out "${project.name}" on Civitai Comics!`
+              )}&url=${encodeURIComponent(
+                typeof window !== 'undefined'
+                  ? `${window.location.origin}/comics/${project.id}/${projectSlug}`
+                  : ''
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <IconShare size={18} />
+            </ActionIcon>
+          </div>
 
           {/* Stats */}
           <div className={styles.overviewStats}>
@@ -361,6 +408,23 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChapter?.position, currentUser?.id]);
 
+  // Keyboard navigation: arrow keys for prev/next chapter
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture when user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'ArrowLeft' && hasPrev) {
+        goToChapter(safeIdx - 1);
+      } else if (e.key === 'ArrowRight' && hasNext) {
+        goToChapter(safeIdx + 1);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasPrev, hasNext, safeIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Hide header on scroll down, show on scroll up
   const handleScroll = useCallback(() => {
     if (!headerRef.current) return;
@@ -459,6 +523,15 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 >
                   <IconChevronRight size={18} />
                 </ActionIcon>
+                <CopyButton value={typeof window !== 'undefined' ? window.location.href : ''}>
+                  {({ copied, copy }) => (
+                    <Tooltip label={copied ? 'Copied!' : 'Copy link'}>
+                      <ActionIcon variant="subtle" color={copied ? 'green' : 'gray'} onClick={copy}>
+                        {copied ? <IconCheck size={16} /> : <IconLink size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </CopyButton>
               </div>
             </div>
           </Container>

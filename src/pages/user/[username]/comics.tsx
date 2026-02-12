@@ -153,7 +153,7 @@ function UserPublicComics({ username }: { username: string }) {
             style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
           >
             {items.map((comic) => (
-              <ComicCard key={comic.id} comic={comic} />
+              <ComicCard key={comic.id} data={comic} />
             ))}
           </div>
 
