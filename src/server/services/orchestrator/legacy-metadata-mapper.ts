@@ -220,6 +220,8 @@ export function resolveWorkflow(
       case 'img2vid':
       case 'img2vid:first-last-frame': // Legacy key, now just img2vid
         return resolveImg2VidWorkflow(baseModel, imageCount);
+      case 'ref2vid':
+        return 'img2vid:ref2vid';
       case 'txt2img':
         return 'txt2img';
       case 'txt2vid':
@@ -612,10 +614,11 @@ export function mapGraphToLegacyParams(
       draft = true;
     }
 
-    // Restore process for video workflows
-    const base = workflow.split(':')[0];
+    // Restore process for video workflows.
+    // ref2vid is a distinct process in the Vidu legacy form, not a variant of img2vid.
+    const [base, variant] = workflow.split(':');
     if (['txt2vid', 'img2vid', 'vid2vid'].includes(base)) {
-      process = base;
+      process = variant === 'ref2vid' ? 'ref2vid' : base;
     }
   }
 

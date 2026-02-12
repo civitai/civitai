@@ -101,13 +101,15 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       });
 
       // Build enriched resources with all needed fields:
-      // - id, epochNumber, air (for whatIfFromGraph resources)
+      // - id, epochDetails, air (for whatIfFromGraph resources)
       // - baseModel, model.type (for mapDataToGraphInput inference)
       const enrichedResources = [
         // Main model (checkpoint)
         removeEmpty({
           id: modelVersionId,
-          epochNumber: model?.epochDetails?.epochNumber,
+          epochDetails: model?.epochDetails?.epochNumber != null
+            ? { epochNumber: model.epochDetails.epochNumber }
+            : undefined,
           air: model?.air,
           baseModel: params.baseModel,
           model: { type: model?.model?.type ?? 'Checkpoint' },
@@ -116,7 +118,9 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         ...(resources?.map((r) =>
           removeEmpty({
             id: r.id as number,
-            epochNumber: r.epochDetails?.epochNumber,
+            epochDetails: r.epochDetails?.epochNumber != null
+              ? { epochNumber: r.epochDetails.epochNumber }
+              : undefined,
             air: r.air,
             baseModel: r.baseModel ?? params.baseModel,
             model: { type: r.model?.type ?? 'LORA' },
@@ -127,7 +131,9 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
           ? [
               removeEmpty({
                 id: vae.id,
-                epochNumber: vae.epochDetails?.epochNumber,
+                epochDetails: vae.epochDetails?.epochNumber != null
+                  ? { epochNumber: vae.epochDetails.epochNumber }
+                  : undefined,
                 air: vae.air,
                 baseModel: vae.baseModel ?? params.baseModel,
                 model: { type: 'VAE' as const },

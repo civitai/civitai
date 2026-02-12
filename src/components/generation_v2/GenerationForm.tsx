@@ -3,6 +3,19 @@
  *
  * Main form component for the generation UI using the Controller pattern.
  * Handles workflow/ecosystem selection with compatibility checks.
+ *
+ * Zustand stores used across this file and its associated components/hooks:
+ *
+ * | Store                              | Definition                                  | Used By                                                          | Storage        |
+ * |------------------------------------|---------------------------------------------|------------------------------------------------------------------|----------------|
+ * | useGenerationGraphStore            | store/generation-graph.store.ts              | GenerationForm, GenerationFormProvider, GeneratedItemWorkflowMenu | memory (immer) |
+ * | useWorkflowPreferencesStore        | store/workflow-preferences.store.ts          | GenerationFormProvider, useCompatibilityInfo, useGeneratedItemWorkflows | localStorage   |
+ * | useTipStore                        | store/tip.store.ts                           | FormFooter                                                       | localStorage   |
+ * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
+ * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
+ * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
+ * | useLegacyGeneratorStore            | store/legacy-generator.store.ts              | useGeneratedItemWorkflows                                        | localStorage   |
+ * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
  */
 
 import {
@@ -28,7 +41,6 @@ import {
   type GenerationGraphTypes,
   type VideoValue,
   wanVersionOptions,
-  ecosystemToVersionDef,
   wanVersionDefs,
 } from '~/shared/data-graph/generation';
 import { getWorkflowModes } from '~/shared/data-graph/generation/config';

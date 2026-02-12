@@ -344,11 +344,7 @@ export function GenerationFormContent() {
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.canGenerate !== false)
-      .map((r) => ({
-        ...r,
-        epochNumber: r.epochDetails?.epochNumber,
-      }));
+      .filter((x) => x.canGenerate !== false);
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');

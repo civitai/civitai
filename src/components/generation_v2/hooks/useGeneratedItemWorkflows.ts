@@ -7,13 +7,14 @@
  */
 
 import { useMemo } from 'react';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { ecosystemById, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   getOutputTypeForWorkflow,
   getInputTypeForWorkflow,
   getValidEcosystemForWorkflow,
   isWorkflowAvailable,
   workflowConfigByKey,
+  workflowOptionById,
   type WorkflowOption,
   type WorkflowCategory,
   getEcosystemsForWorkflow,
@@ -23,7 +24,7 @@ import {
   workflowHasNode,
 } from '~/shared/data-graph/generation/generation-graph';
 import { openCompatibilityConfirmModal } from '~/components/generation_v2/CompatibilityConfirmModal';
-import { generationGraphStore } from '~/store/generation-graph.store';
+import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type {
@@ -143,15 +144,31 @@ function isCrossMediaWorkflow(image: NormalizedGeneratedImage, workflowId: strin
 
 /**
  * Get the target ecosystem for a workflow, respecting stored preferences.
- * - Cross-media: use stored preference (image's ecosystem can't work for different media)
+ * - Cross-media with alias constraint: force an ecosystem from the alias's ecosystemIds
+ * - Cross-media with single-ecosystem workflow: force that ecosystem (e.g., ref2vid → Vidu)
+ * - Cross-media with broad support: let the graph keep its current ecosystem (effect validates)
  * - Same-media: use image's ecosystem, falling back to stored preference
  */
 function getTargetEcosystemKey(
   workflowId: string,
   ecosystemKey: string | undefined,
-  isCrossMedia: boolean
+  isCrossMedia: boolean,
+  aliasEcosystemIds?: number[]
 ): string | undefined {
-  if (isCrossMedia) return workflowPreferences.getPreferredEcosystem(workflowId);
+  if (isCrossMedia) {
+    // Alias-specific workflows (e.g., "First/Last Frame" → Vidu only) need a forced ecosystem
+    if (aliasEcosystemIds && aliasEcosystemIds.length > 0) {
+      return ecosystemById.get(aliasEcosystemIds[0])?.key;
+    }
+    // Single-ecosystem workflows (e.g., ref2vid → Vidu only) must force
+    // the ecosystem so the legacy form gets the correct engine
+    const workflowEcosystems = getEcosystemsForWorkflow(workflowId);
+    if (workflowEcosystems.length === 1) {
+      return ecosystemById.get(workflowEcosystems[0])?.key;
+    }
+    // Broad cross-media: let the graph keep its current ecosystem
+    return undefined;
+  }
   return ecosystemKey ?? workflowPreferences.getPreferredEcosystem(workflowId);
 }
 
@@ -166,6 +183,7 @@ function applyWorkflowToForm({
   clearResources,
 }: ApplyWorkflowOptions & { ecosystem?: string; clearResources: boolean }) {
   dialogStore.closeById('generated-image');
+  generationGraphPanel.setView('generate');
 
   const inputType = getInputTypeForWorkflow(workflowId);
   const stepParams = step.params;
@@ -299,12 +317,19 @@ async function openEnhancementModal(
  * For legacy generator users, opens dedicated modals for enhancement workflows.
  */
 export async function applyWorkflowWithCheck({
-  workflowId,
+  workflowId: rawWorkflowId,
   ecosystemKey,
   image,
   step,
   compatible,
 }: ApplyWorkflowOptions & { ecosystemKey?: string; compatible: boolean }) {
+  // Resolve alias option IDs (e.g., 'img2vid#0') to the actual graph key ('img2vid')
+  const option = workflowOptionById.get(rawWorkflowId);
+  const workflowId = option?.graphKey ?? rawWorkflowId;
+  // For aliases, capture their specific ecosystem constraint (e.g., First/Last Frame → Vidu only)
+  const isAlias = option && option.id !== option.graphKey;
+  const aliasEcosystemIds = isAlias ? option.ecosystemIds : undefined;
+
   // For legacy generator users, check if we should open a modal instead
   if (shouldOpenModal(workflowId)) {
     const modalOpened = await openEnhancementModal(workflowId, image, step);
@@ -353,7 +378,7 @@ export async function applyWorkflowWithCheck({
     workflowId,
     image,
     step,
-    ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia),
+    ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
     clearResources,
   });
 }

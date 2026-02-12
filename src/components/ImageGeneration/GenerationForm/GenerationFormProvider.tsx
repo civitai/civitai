@@ -387,6 +387,29 @@ export function GenerationFormProvider({
           runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
         setValues(values);
         break;
+      case 'patch': {
+        // Patch: partial update from workflow menu items on generated outputs.
+        // Merge incoming resources with current form resources so the user keeps
+        // their model/LoRAs when the ecosystem is compatible. formatGenerationData
+        // handles filtering out incompatible resources when the base model changes.
+        const patchFormResources = [
+          formData.model,
+          ...(formData.resources ?? []),
+          formData.vae,
+        ].filter(isDefined) as GenerationResource[];
+        const patchResources =
+          resources.length > 0
+            ? uniqBy([...resources, ...patchFormResources], 'id')
+            : patchFormResources;
+
+        const patchData = formatGenerationData({
+          params: legacyParams,
+          resources: patchResources,
+        });
+
+        setValues({ ...removeEmpty(patchData), resources: patchData.resources });
+        break;
+      }
     }
 
     if (remixOfId) {

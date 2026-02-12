@@ -769,7 +769,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Seedance - checkpoint only
-  { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
+  // { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
