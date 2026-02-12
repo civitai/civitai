@@ -1,6 +1,12 @@
 import type { BadgeProps } from '@mantine/core';
 import { Badge, Group, Text } from '@mantine/core';
-import { IconClockHour4, IconPhoto, IconTrophy, IconSparkles } from '@tabler/icons-react';
+import {
+  IconClockHour4,
+  IconMessageCircle2,
+  IconPhoto,
+  IconTrophy,
+  IconSparkles,
+} from '@tabler/icons-react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -82,6 +88,7 @@ export function ChallengeCard({ data }: Props) {
     source,
     prizePool,
     entryCount,
+    commentCount,
     createdBy,
   } = data;
 
@@ -166,21 +173,40 @@ export function ChallengeCard({ data }: Props) {
               className={cardClasses.chip}
               style={darkBgStyle}
             />
-            <IconBadge
-              icon={<IconPhoto size={14} />}
-              color="gray.0"
-              p={0}
-              px={8}
-              size="lg"
-              variant="transparent"
-              className={cardClasses.chip}
-              style={darkBgStyle}
-              radius="xl"
-            >
-              <Text fw="bold" size="xs">
-                {abbreviateNumber(entryCount)}
-              </Text>
-            </IconBadge>
+            <Group gap={4}>
+              {commentCount > 0 && (
+                <IconBadge
+                  icon={<IconMessageCircle2 size={14} />}
+                  color="gray.0"
+                  p={0}
+                  px={8}
+                  size="lg"
+                  variant="transparent"
+                  className={cardClasses.chip}
+                  style={darkBgStyle}
+                  radius="xl"
+                >
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(commentCount)}
+                  </Text>
+                </IconBadge>
+              )}
+              <IconBadge
+                icon={<IconPhoto size={14} />}
+                color="gray.0"
+                p={0}
+                px={8}
+                size="lg"
+                variant="transparent"
+                className={cardClasses.chip}
+                style={darkBgStyle}
+                radius="xl"
+              >
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(entryCount)}
+                </Text>
+              </IconBadge>
+            </Group>
           </div>
         </div>
       }
