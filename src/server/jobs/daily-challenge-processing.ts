@@ -13,6 +13,7 @@ import {
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
+import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type {
   ChallengeConfig,
@@ -1275,12 +1276,30 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     return [];
   }
 
-  // Fetch engagement metrics from Redis for best entries only
-  const imageIds = userBestEntries.map((entry) => entry.imageId);
+  // Exclude users who won a challenge within the cooldown period
+  const recentWinners = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT cw."userId"
+    FROM "ChallengeWinner" cw
+    JOIN "Challenge" c ON c.id = cw."challengeId"
+    WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
+      AND c.status = 'Completed'
+  `;
+  const recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
+
+  log('Winner cooldown filter:', {
+    total: userBestEntries.length,
+    excluded: userBestEntries.length - eligibleEntries.length,
+    eligible: eligibleEntries.length,
+    cooldown: config.winnerCooldown,
+  });
+
+  // Fetch engagement metrics from Redis for eligible entries only
+  const imageIds = eligibleEntries.map((entry) => entry.imageId);
   const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
 
   // Calculate engagement (sum of all metrics except Buzz)
-  const entriesWithEngagement = userBestEntries.map((entry) => {
+  const entriesWithEngagement = eligibleEntries.map((entry) => {
     const metrics = metricsMap.get(entry.imageId);
     const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
     return { ...entry, engagement };
