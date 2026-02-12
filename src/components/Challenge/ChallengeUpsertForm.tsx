@@ -49,9 +49,10 @@ const InputNumberWrapper = withController(NumberInputWrapper);
 // judgeId is overridden to string|null because Mantine Select uses string values
 // Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
 const schema = upsertChallengeBaseSchema
-  .omit({ prizes: true, entryPrize: true, judgeId: true })
+  .omit({ prizes: true, entryPrize: true, judgeId: true, eventId: true })
   .extend({
     judgeId: z.string().nullish().default('1'),
+    eventId: z.string().nullish().default(null),
     coverImage: z
       .object({ id: z.number().optional(), url: z.string() })
       .refine((val) => !!val.url, { error: 'Cover image is required' }),
@@ -72,6 +73,7 @@ type ChallengeForEdit = {
   nsfwLevel: number;
   allowedNsfwLevel: number;
   judgeId: number | null;
+  eventId: number | null;
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxEntriesPerUser: number;
@@ -100,8 +102,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     challenge?.status === ChallengeStatus.Completed ||
     challenge?.status === ChallengeStatus.Cancelled;
 
-  // Fetch available judges for dropdown
+  // Fetch available judges and events for dropdowns
   const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
+  const { data: events = [] } = trpc.challenge.getEvents.useQuery({ activeOnly: false });
 
   // Default dates
   const defaultStartsAt = dayjs().add(1, 'day').startOf('day').toDate();
@@ -124,6 +127,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? sfwBrowsingLevelsFlag,
       judgeId: challenge?.judgeId ? String(challenge.judgeId) : '1',
+      eventId: challenge?.eventId ? String(challenge.eventId) : null,
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
       maxEntriesPerUser: challenge?.maxEntriesPerUser ?? 20,
@@ -185,6 +189,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       nsfwLevel: data.nsfwLevel,
       allowedNsfwLevel: data.allowedNsfwLevel,
       judgeId: data.judgeId ? Number(data.judgeId) : null,
+      eventId: data.eventId ? Number(data.eventId) : null,
       judgingPrompt: data.judgingPrompt || undefined,
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
@@ -276,7 +281,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               name="description"
               label="Description"
               placeholder="What is the challenge about? Provide details, rules, and any other information participants should know."
-              includeControls={['heading', 'formatting', 'list', 'link']}
+              includeControls={['heading', 'formatting', 'list', 'link', 'colors']}
               editorSize="lg"
               stickyToolbar
               disabled={isTerminal}
@@ -454,6 +459,25 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               minRows={3}
               maxRows={8}
               disabled={isActive || isTerminal}
+            />
+          </Stack>
+        </Paper>
+
+        {/* Event */}
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+          <Stack gap="md">
+            <Title order={4}>Event</Title>
+            <InputSelect
+              name="eventId"
+              label="Challenge Event"
+              placeholder="None (standalone challenge)"
+              description="Assign this challenge to a featured event. Event challenges appear in the featured section on the challenges page."
+              data={events.map((e) => ({
+                value: String(e.id),
+                label: `${e.title} (${e._count.challenges} challenges)`,
+              }))}
+              clearable
+              disabled={isTerminal}
             />
           </Stack>
         </Paper>

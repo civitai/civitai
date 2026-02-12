@@ -384,6 +384,7 @@ model User {
   challengesCreated          Challenge[]
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
+  challengeEventsCreated     ChallengeEvent[]
 
   @@index([deletedAt])
 }
@@ -3791,12 +3792,17 @@ model Challenge {
   // Relations
   winners ChallengeWinner[]
 
+  // Event grouping
+  eventId Int?
+  event   ChallengeEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
   // Compound indexes for efficient feed queries
   @@index([status, endsAt]) // "Ending Soon" feed
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
+  @@index([eventId])
 }
 
 model ChallengeJudge {
@@ -3843,6 +3849,24 @@ model ChallengeWinner {
   @@unique([challengeId, userId])
   @@index([challengeId])
   @@index([userId])
+}
+
+model ChallengeEvent {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?  @db.Text
+  titleColor  String?
+  startDate   DateTime
+  endDate     DateTime
+  active      Boolean  @default(true)
+  createdById Int?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  challenges Challenge[]
+
+  @@index([active, endDate])
 }
 
 /// @view

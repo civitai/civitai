@@ -18,6 +18,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import {
+  IconCalendarEvent,
   IconDots,
   IconFilter,
   IconPencil,
@@ -313,6 +314,14 @@ export default function ModeratorChallengesPage() {
               </Group>
               <Group gap="sm">
                 <SystemSettingsPopover />
+                <Button
+                  component={Link}
+                  href="/moderator/challenges/events"
+                  leftSection={<IconCalendarEvent size={16} />}
+                  variant="light"
+                >
+                  Events
+                </Button>
                 <Button
                   component={Link}
                   href="/moderator/challenges/create"
