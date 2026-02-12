@@ -79,7 +79,14 @@ async function autoMuteIfScamAccount({
     });
     await invalidateSession(userId);
 
-    log(`Auto-muted user ${userId} (account age: ${accountAgeDays}d, tags: ${matches.join(', ')})`);
+    // Delete the scammer's chat messages so recipients don't see them
+    const deleted = await dbWrite.chatMessage.deleteMany({
+      where: { userId },
+    });
+
+    log(
+      `Auto-muted user ${userId} and deleted ${deleted.count} messages (account age: ${accountAgeDays}d, tags: ${matches.join(', ')})`
+    );
   } catch (error) {
     logAx({ message: 'Error auto-muting user', data: { error, userId, matches } });
   }
