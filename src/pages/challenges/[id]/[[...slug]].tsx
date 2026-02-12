@@ -60,6 +60,7 @@ import type { Props as DescriptionTableProps } from '~/components/DescriptionTab
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { slugit } from '~/utils/string-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -567,20 +568,22 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               Generate
             </Button>
             {challenge.collectionId && (
-              <Button
-                onClick={() => {
-                  dialogStore.trigger({
-                    component: ChallengeSubmitModal,
-                    props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-                  });
-                }}
-                leftSection={<IconPhoto size={16} />}
-                variant="light"
-                color="blue"
-                fullWidth
-              >
-                Submit
-              </Button>
+              <LoginRedirect reason="submit-challenge">
+                <Button
+                  onClick={() => {
+                    dialogStore.trigger({
+                      component: ChallengeSubmitModal,
+                      props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+                    });
+                  }}
+                  leftSection={<IconPhoto size={16} />}
+                  variant="light"
+                  color="blue"
+                  fullWidth
+                >
+                  Submit
+                </Button>
+              </LoginRedirect>
             )}
           </>
         ) : challenge.status === ChallengeStatus.Completed ? (
@@ -1123,14 +1126,16 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                   >
                     Generate Entries
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    onClick={handleOpenSubmitModal}
-                    leftSection={<IconPhoto size={16} />}
-                  >
-                    Submit Entries
-                  </Button>
+                  <LoginRedirect reason="submit-challenge">
+                    <Button
+                      size="sm"
+                      variant="light"
+                      onClick={handleOpenSubmitModal}
+                      leftSection={<IconPhoto size={16} />}
+                    >
+                      Submit Entries
+                    </Button>
+                  </LoginRedirect>
                 </Group>
               )}
             </Group>
@@ -1185,20 +1190,22 @@ function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
           Generate Entries
         </Button>
         {challenge.collectionId && (
-          <Button
-            onClick={() => {
-              dialogStore.trigger({
-                component: ChallengeSubmitModal,
-                props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-              });
-            }}
-            leftSection={<IconPhoto size={16} />}
-            variant="light"
-            color="blue"
-            fullWidth
-          >
-            Submit Entries
-          </Button>
+          <LoginRedirect reason="submit-challenge">
+            <Button
+              onClick={() => {
+                dialogStore.trigger({
+                  component: ChallengeSubmitModal,
+                  props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+                });
+              }}
+              leftSection={<IconPhoto size={16} />}
+              variant="light"
+              color="blue"
+              fullWidth
+            >
+              Submit Entries
+            </Button>
+          </LoginRedirect>
         )}
       </Stack>
       <ShareButton url={router.asPath} title={challenge.title}>
