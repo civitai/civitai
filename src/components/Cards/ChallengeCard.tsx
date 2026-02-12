@@ -86,6 +86,7 @@ export function ChallengeCard({ data }: Props) {
     endsAt,
     status,
     source,
+    nsfwLevel,
     prizePool,
     entryCount,
     commentCount,
@@ -101,7 +102,7 @@ export function ChallengeCard({ data }: Props) {
         type: coverImage.type,
         width: coverImage.width ?? 512,
         height: coverImage.height ?? 512,
-        nsfwLevel: coverImage.nsfwLevel,
+        nsfwLevel, // Use challenge content level instead of image's own level
         hash: coverImage.hash,
         metadata: null,
       }

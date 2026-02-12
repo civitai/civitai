@@ -38,6 +38,7 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
+  deriveChallengeNsfwLevel,
   getChallengeConfig,
   setChallengeConfig,
   getJudgingConfig,
@@ -140,6 +141,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     modelVersionId,
     includeEnded,
     excludeEventChallenges,
+    browsingLevel,
     limit,
     cursor,
   } = input;
@@ -185,6 +187,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   // Exclude challenges that belong to an event (shown in featured section instead)
   if (excludeEventChallenges) {
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
+  }
+
+  // Content level filter - only show challenges whose nsfwLevel is within the browsing level
+  if (browsingLevel) {
+    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
   }
 
   // Composite cursor for stable keyset pagination across all sort types
@@ -297,6 +304,8 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       modelVersionIds: number[] | null;
       modelId: number | null;
       modelName: string | null;
+      nsfwLevel: number;
+      allowedNsfwLevel: number;
       collectionId: number | null;
       createdById: number;
       creatorUsername: string | null;
@@ -321,6 +330,8 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      c."nsfwLevel",
+      c."allowedNsfwLevel",
       c."modelVersionIds",
       (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
@@ -384,6 +395,8 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       status: item.status,
       source: item.source,
       prizePool: item.prizePool,
+      nsfwLevel: item.nsfwLevel,
+      allowedNsfwLevel: item.allowedNsfwLevel,
       collectionId: item.collectionId,
       entryCount: Number(item.entryCount),
       commentCount: Number(item.commentCount),
@@ -844,6 +857,7 @@ export async function upsertChallenge({
         where: { id },
         data: {
           ...data,
+          nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
           coverImageId,
           judgeId: judgeId ?? null,
           eventId: eventId ?? null,
@@ -912,6 +926,7 @@ export async function upsertChallenge({
         data: {
           ...data,
           status,
+          nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
           coverImageId,
           judgeId: judgeId ?? null,
           eventId: eventId ?? null,
@@ -1421,6 +1436,8 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
           endsAt: true,
           status: true,
           source: true,
+          nsfwLevel: true,
+          allowedNsfwLevel: true,
           prizePool: true,
           modelVersionIds: true,
           collectionId: true,
@@ -1520,6 +1537,8 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
         endsAt: c.endsAt,
         status: c.status,
         source: c.source,
+        nsfwLevel: c.nsfwLevel,
+        allowedNsfwLevel: c.allowedNsfwLevel,
         prizePool: c.prizePool,
         collectionId: c.collectionId,
         entryCount: c.collectionId ? entryCounts.get(c.collectionId) ?? 0 : 0,

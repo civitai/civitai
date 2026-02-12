@@ -20,6 +20,7 @@ import type {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   challengeToLegacyFormat,
+  deriveChallengeNsfwLevel,
   endChallenge,
   getActiveChallenges,
   getChallengeConfig,
@@ -304,7 +305,7 @@ async function createChallengeFromSelection(
     theme: challengeContent.theme,
     invitation: challengeContent.invitation,
     coverImageId,
-    nsfwLevel: 1,
+    nsfwLevel: deriveChallengeNsfwLevel(sfwBrowsingLevelsFlag),
     allowedNsfwLevel: sfwBrowsingLevelsFlag,
     modelVersionIds,
     collectionId: collection.id,

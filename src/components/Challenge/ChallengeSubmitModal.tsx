@@ -52,6 +52,7 @@ import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   parseBitwiseBrowsingLevel,
   browsingLevelLabels,
+  nsfwLevelColors,
   orchestratorNsfwLevelMap,
 } from '~/shared/constants/browsingLevel.constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -122,16 +123,6 @@ const useGeneratorStore = create<GeneratorStoreState>()(
 );
 
 // ---------------------------------------------------------------------------
-// Color mapping for NSFW levels
-// ---------------------------------------------------------------------------
-const nsfwLevelColors: Record<number, string> = {
-  [NsfwLevel.PG]: 'green',
-  [NsfwLevel.PG13]: 'yellow',
-  [NsfwLevel.R]: 'orange',
-  [NsfwLevel.X]: 'red',
-  [NsfwLevel.XXX]: 'grape',
-};
-
 // ---------------------------------------------------------------------------
 // Main Modal
 // ---------------------------------------------------------------------------

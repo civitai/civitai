@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import clsx from 'clsx';
 import { Stack, Title } from '@mantine/core';
 import { ChallengeCard } from '~/components/Cards/ChallengeCard';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
 
 const eventTitleColors: Record<string, string> = {
@@ -15,12 +17,39 @@ const eventTitleColors: Record<string, string> = {
 };
 
 export function FeaturedChallengeEvents() {
-  const { data: events, isLoading } = trpc.challenge.getActiveEvents.useQuery(undefined, {
+  const {
+    data: events,
+    isLoading,
+    isRefetching,
+  } = trpc.challenge.getActiveEvents.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
   });
 
-  const visibleEvents = events?.filter((e) => e.challenges.length > 0);
-  if (isLoading || !visibleEvents || visibleEvents.length === 0) return null;
+  const allChallenges = useMemo(() => events?.flatMap((e) => e.challenges) ?? [], [events]);
+
+  const { items: filteredChallenges, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'challenges',
+    data: allChallenges,
+    isRefetching,
+  });
+
+  const filteredIds = useMemo(
+    () => new Set(filteredChallenges.map((c) => c.id)),
+    [filteredChallenges]
+  );
+
+  const visibleEvents = useMemo(
+    () =>
+      events
+        ?.map((event) => ({
+          ...event,
+          challenges: event.challenges.filter((c) => filteredIds.has(c.id)),
+        }))
+        .filter((e) => e.challenges.length > 0),
+    [events, filteredIds]
+  );
+
+  if (isLoading || loadingPreferences || !visibleEvents || visibleEvents.length === 0) return null;
 
   return (
     <Stack gap="md">
