@@ -755,13 +755,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci."tagId" = ${config.reviewMeTagId}
   `;
   log('Requested review:', requestReview.length);
-  // Filter reviewMe entries to also respect per-user cap
+  // Paid review entries bypass per-user cap — users paid for guaranteed review
   for (const entry of requestReview) {
-    const userScored = scoredCountMap.get(entry.userId) ?? 0;
-    if (userScored >= config.maxScoredPerUser) continue;
-    if (reviewingUsers.has(entry.userId)) continue;
     toReview.push(entry);
-    reviewingUsers.add(entry.userId);
   }
 
   // Rate entries

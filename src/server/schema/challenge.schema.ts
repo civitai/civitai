@@ -119,6 +119,7 @@ export type ChallengeDetail = {
   entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
+  reviewCost: number;
   entryCount: number;
   commentCount: number;
   createdBy: {
@@ -245,6 +246,7 @@ export const upsertChallengeBaseSchema = z.object({
   entryPrizeRequirement: z.number().min(1).max(100).default(10),
   prizePool: z.number().min(0).default(0),
   operationBudget: z.number().min(0).default(0),
+  reviewCost: z.number().min(0).default(0),
   startsAt: z.date(),
   endsAt: z.date(),
   visibleAt: z.date(),
@@ -295,6 +297,26 @@ export const updateChallengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
 });
 export type UpdateChallengeConfigInput = z.infer<typeof updateChallengeConfigSchema>;
+
+// --- Paid Review ---
+
+// Request paid review for entries
+export type RequestReviewInput = z.infer<typeof requestReviewSchema>;
+export const requestReviewSchema = z.object({
+  challengeId: z.number(),
+  imageIds: z.array(z.number()).min(1).max(20),
+});
+
+// Get user's unjudged entries for a challenge
+export type GetUserUnjudgedEntriesInput = z.infer<typeof getUserUnjudgedEntriesSchema>;
+export const getUserUnjudgedEntriesSchema = z.object({
+  challengeId: z.number(),
+});
+
+export type UnjudgedEntry = {
+  imageId: number;
+  url: string;
+};
 
 // --- Challenge Events ---
 

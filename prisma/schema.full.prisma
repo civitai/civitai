@@ -3774,6 +3774,7 @@ model Challenge {
   prizePool       Int  @default(0) // Total buzz for prizes
   operationBudget Int  @default(0) // Budget for AI review costs
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
+  reviewCost      Int  @default(0) // Buzz cost per entry to guarantee judging (0 = disabled)
 
   // Ownership & Source
   createdById Int

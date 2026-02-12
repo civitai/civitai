@@ -20,6 +20,7 @@ import { IconInfoCircle, IconPhoto, IconSparkles, IconUpload, IconX } from '@tab
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -38,6 +39,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
+import { Currency } from '~/shared/utils/prisma/enums';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
@@ -142,6 +144,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const [activeTab, setActiveTab] = useState<string | null>('library');
   const [error, setError] = useState('');
   const [tagId, setTagId] = useState<number | null>(null);
+  const [guaranteeReview, setGuaranteeReview] = useState(false);
 
   // Selection state
   const selectedImageIds = useStore((state) => Object.keys(state.selected).map(Number));
@@ -173,19 +176,39 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   // ---- Mutations ----
   const addSimpleImagePostMutation = trpc.collection.addSimpleImagePost.useMutation();
   const bulkSaveItemsMutation = trpc.collection.bulkSaveItems.useMutation();
+  const requestReviewMutation = trpc.challenge.requestReview.useMutation();
 
   const handleClose = () => {
     resetFiles();
     deselectAll();
     deselectAllGenerator();
     setError('');
+    setGuaranteeReview(false);
     dialog.onClose();
   };
 
-  const handleSuccess = async () => {
+  const handleSuccess = async (submittedImageIds?: number[]) => {
+    // If guarantee review is checked, request paid review for the submitted entries
+    if (guaranteeReview && challenge?.reviewCost && submittedImageIds?.length) {
+      try {
+        await requestReviewMutation.mutateAsync({
+          challengeId,
+          imageIds: submittedImageIds,
+        });
+      } catch (e) {
+        // Entries were saved successfully but paid review failed — still close
+        showErrorNotification({
+          title: 'Entries submitted, but paid review failed',
+          error: e instanceof Error ? e : new Error('Failed to request paid review'),
+        });
+      }
+    }
+
     handleClose();
     showSuccessNotification({
-      message: 'Your images have been submitted to the challenge for review.',
+      message: guaranteeReview
+        ? 'Your images have been submitted and queued for guaranteed review.'
+        : 'Your images have been submitted to the challenge for review.',
     });
     await queryUtils.image.getInfinite.invalidate();
     await queryUtils.collection.getById.invalidate({ id: collectionId });
@@ -230,7 +253,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     }
 
     bulkSaveItemsMutation.mutate(data, {
-      onSuccess: handleSuccess,
+      onSuccess: () => handleSuccess(selectedImageIds),
       onError: handleMutationError,
     });
   };
@@ -289,7 +312,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
       addSimpleImagePostMutation.mutate(
         { collectionId, images },
         {
-          onSuccess: handleSuccess,
+          onSuccess: () => handleSuccess(),
           onError: handleMutationError,
         }
       );
@@ -322,7 +345,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     }
 
     addSimpleImagePostMutation.mutate(data, {
-      onSuccess: handleSuccess,
+      onSuccess: () => handleSuccess(),
       onError: handleMutationError,
     });
   };
@@ -513,6 +536,24 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           />
         )}
 
+        {/* Paid Review Checkbox */}
+        {challenge && challenge.reviewCost > 0 && activeTab === 'library' && submitCount > 0 && (
+          <Checkbox
+            label={
+              <Group gap={4}>
+                <Text size="sm">Guarantee entries get judged</Text>
+                <CurrencyBadge
+                  currency={Currency.BUZZ}
+                  unitAmount={challenge.reviewCost * submitCount}
+                  size="sm"
+                />
+              </Group>
+            }
+            checked={guaranteeReview}
+            onChange={(e) => setGuaranteeReview(e.currentTarget.checked)}
+          />
+        )}
+
         {/* Footer */}
         <Group
           gap="xs"
@@ -531,11 +572,13 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           </Button>
           <Button
             onClick={handleSubmit}
-            loading={loading}
+            loading={loading || requestReviewMutation.isPending}
             disabled={submitCount === 0 || remainingEntries === 0}
           >
             {submitCount > 0
-              ? `Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'}`
+              ? guaranteeReview && challenge?.reviewCost
+                ? `Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'} (${challenge.reviewCost * submitCount} Buzz)`
+                : `Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'}`
               : 'Submit'}
           </Button>
         </Group>

@@ -2827,6 +2827,7 @@ export interface Challenge {
   prizePool: number;
   operationBudget: number;
   operationSpent: number;
+  reviewCost: number;
   createdById: number;
   createdBy?: User;
   source: ChallengeSource;

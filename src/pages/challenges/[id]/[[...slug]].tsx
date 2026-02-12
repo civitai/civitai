@@ -3,10 +3,13 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Checkbox,
   Container,
   Divider,
   Group,
+  Loader,
   Menu,
+  Paper,
   ScrollArea,
   Spoiler,
   Stack,
@@ -33,6 +36,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
@@ -436,6 +440,9 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         <Container size="xl" id="comments" py={32}>
           <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
         </Container>
+
+        {/* Unjudged Entries — Paid Review */}
+        <UnjudgedEntriesSection challenge={challenge} />
 
         {/* Entries Section */}
         <ChallengeEntries challenge={challenge} />
@@ -1023,6 +1030,107 @@ function WinnerPodiumCard({
         )}
       </div>
     </div>
+  );
+}
+
+function UnjudgedEntriesSection({ challenge }: { challenge: ChallengeDetail }) {
+  const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  const isActive = challenge.status === ChallengeStatus.Active;
+
+  const { data: unjudgedEntries, isLoading } = trpc.challenge.getUserUnjudgedEntries.useQuery(
+    { challengeId: challenge.id },
+    { enabled: !!currentUser && isActive && challenge.reviewCost > 0 }
+  );
+
+  const requestReviewMutation = trpc.challenge.requestReview.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({ message: 'Entries queued for guaranteed review!' });
+      setSelectedIds(new Set());
+      queryUtils.challenge.getUserUnjudgedEntries.invalidate({ challengeId: challenge.id });
+    },
+    onError: (error) => {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+
+  if (!isActive || !currentUser || challenge.reviewCost <= 0) return null;
+  if (isLoading) return null;
+  if (!unjudgedEntries?.length) return null;
+
+  const toggleSelection = (imageId: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(imageId)) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(unjudgedEntries.map((e) => e.imageId)));
+  };
+
+  const totalCost = selectedIds.size * challenge.reviewCost;
+
+  return (
+    <Container size="xl" py="md">
+      <Paper withBorder p="md">
+        <Stack gap="sm">
+          <Group justify="space-between">
+            <Text fw={500}>
+              Unjudged Entries ({unjudgedEntries.length})
+            </Text>
+            <Button variant="subtle" size="xs" onClick={selectAll}>
+              Select All
+            </Button>
+          </Group>
+          <Text size="sm" c="dimmed">
+            Select entries to guarantee they get reviewed by the AI judge.
+          </Text>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2">
+            {unjudgedEntries.map((entry) => (
+              <div
+                key={entry.imageId}
+                className={`relative cursor-pointer overflow-hidden rounded-lg border-2 ${
+                  selectedIds.has(entry.imageId) ? 'border-blue-5' : 'border-transparent'
+                }`}
+                onClick={() => toggleSelection(entry.imageId)}
+              >
+                <EdgeMedia2
+                  src={entry.url}
+                  width={200}
+                  type={MediaType.image}
+                  className="aspect-square w-full object-cover"
+                />
+                <Checkbox
+                  checked={selectedIds.has(entry.imageId)}
+                  readOnly
+                  size="sm"
+                  className="absolute right-1 top-1"
+                />
+              </div>
+            ))}
+          </div>
+          {selectedIds.size > 0 && (
+            <Button
+              onClick={() =>
+                requestReviewMutation.mutate({
+                  challengeId: challenge.id,
+                  imageIds: Array.from(selectedIds),
+                })
+              }
+              loading={requestReviewMutation.isPending}
+              leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+            >
+              Request Review ({selectedIds.size} x {challenge.reviewCost} = {totalCost} Buzz)
+            </Button>
+          )}
+        </Stack>
+      </Paper>
+    </Container>
   );
 }
 

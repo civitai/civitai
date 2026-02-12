@@ -80,6 +80,7 @@ type ChallengeForEdit = {
   entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
+  reviewCost: number;
   startsAt: Date;
   endsAt: Date;
   visibleAt: Date;
@@ -134,6 +135,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
+      reviewCost: challenge?.reviewCost ?? 0,
       startsAt: challenge?.startsAt ?? defaultStartsAt,
       endsAt: challenge?.endsAt ?? defaultEndsAt,
       visibleAt: challenge?.visibleAt ?? defaultVisibleAt,
@@ -196,6 +198,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: data.entryPrizeRequirement,
       prizePool: totalPrizePool,
       operationBudget: data.operationBudget,
+      reviewCost: data.reviewCost,
       startsAt: data.startsAt,
       endsAt: data.endsAt,
       visibleAt: data.visibleAt,
@@ -424,6 +427,20 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 disabled={isActive || isTerminal}
               />
             </SimpleGrid>
+
+            <Divider />
+
+            {/* Paid Review */}
+            <InputNumberWrapper
+              name="reviewCost"
+              label="Paid Review Cost (per entry)"
+              description="Buzz cost for users to guarantee their entry gets judged. Set to 0 to disable."
+              leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+              currency={Currency.BUZZ}
+              min={0}
+              step={10}
+              disabled={isTerminal}
+            />
           </Stack>
         </Paper>
 

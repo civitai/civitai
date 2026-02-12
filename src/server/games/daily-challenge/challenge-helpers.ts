@@ -40,6 +40,7 @@ export type ChallengeDetails = {
   prizePool: number;
   operationBudget: number;
   operationSpent: number;
+  reviewCost: number;
   createdById: number;
   source: ChallengeSource;
   status: ChallengeStatus;
@@ -101,6 +102,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."prizePool",
       c."operationBudget",
       c."operationSpent",
+      c."reviewCost",
       c."createdById",
       c.source,
       c.status,
@@ -249,6 +251,7 @@ export type CreateChallengeInput = {
   entryPrizeRequirement?: number; // Min entries for participation prize
   prizePool?: number;
   operationBudget?: number;
+  reviewCost?: number;
   createdById: number;
   source?: ChallengeSource;
   status?: ChallengeStatus;
@@ -311,6 +314,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       entryPrizeRequirement: input.entryPrizeRequirement ?? 10,
       prizePool: input.prizePool ?? 0,
       operationBudget: input.operationBudget ?? 0,
+      reviewCost: input.reviewCost ?? 0,
       createdById: input.createdById,
       source: input.source ?? ChallengeSource.System,
       status: input.status ?? ChallengeStatus.Scheduled,

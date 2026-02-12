@@ -23,6 +23,7 @@ import {
   type UpsertChallengeInput,
   type UpsertChallengeEventInput,
   type UpdateChallengeConfigInput,
+  type UnjudgedEntry,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
@@ -50,7 +51,10 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createBuzzTransactionMany,
+} from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
@@ -649,6 +653,7 @@ export async function getChallengeDetail(
     entryPrizeRequirement: challenge.entryPrizeRequirement,
     prizePool: challenge.prizePool,
     operationBudget: challenge.operationBudget,
+    reviewCost: challenge.reviewCost,
     entryCount,
     commentCount,
     createdBy: {
@@ -1012,6 +1017,117 @@ export async function getUserEntryCount(challengeId: number, userId: number) {
   });
 
   return { count };
+}
+
+// =============================================================================
+// Paid Review
+// =============================================================================
+
+/**
+ * Pay Buzz to guarantee entries get reviewed by the AI judge.
+ * Tags entries with reviewMeTagId so the next job run picks them up.
+ */
+export async function requestReview(
+  challengeId: number,
+  imageIds: number[],
+  userId: number
+) {
+  // 1. Get challenge with reviewCost
+  const challenge = await getChallengeById(challengeId);
+  if (!challenge) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+  if (challenge.status !== ChallengeStatus.Active) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Challenge is not active',
+    });
+  }
+  if (challenge.reviewCost <= 0) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Paid review is not available for this challenge',
+    });
+  }
+  if (!challenge.collectionId) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Challenge has no collection',
+    });
+  }
+
+  // 2. Verify all images belong to this user and are eligible
+  //    (in the challenge collection, ACCEPTED, not already queued/judged)
+  const config = await getChallengeConfig();
+  const eligibleEntries = await dbRead.$queryRaw<{ imageId: number }[]>`
+    SELECT ci."imageId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${challenge.collectionId}
+      AND ci.status = 'ACCEPTED'
+      AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+      AND i."userId" = ${userId}
+      AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])
+  `;
+
+  if (eligibleEntries.length !== imageIds.length) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Some entries are not eligible for review (already judged, queued, or not yours)',
+    });
+  }
+
+  // 3. Charge buzz
+  const totalCost = challenge.reviewCost * eligibleEntries.length;
+  await createBuzzTransaction({
+    fromAccountId: userId,
+    toAccountId: 0,
+    type: TransactionType.Purchase,
+    amount: totalCost,
+    description: `Challenge review: ${eligibleEntries.length} entries`,
+    externalTransactionId: `challenge-review-${challengeId}-${userId}-${Date.now()}`,
+  });
+
+  // 4. Tag entries with reviewMeTagId
+  const eligibleImageIds = eligibleEntries.map((e) => e.imageId);
+  await dbWrite.$executeRaw`
+    UPDATE "CollectionItem"
+    SET "tagId" = ${config.reviewMeTagId}
+    WHERE "collectionId" = ${challenge.collectionId}
+      AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
+  `;
+
+  return { queued: eligibleEntries.length, totalCost };
+}
+
+/**
+ * Get user's entries that haven't been judged or queued for review yet.
+ */
+export async function getUserUnjudgedEntries(
+  challengeId: number,
+  userId: number
+): Promise<UnjudgedEntry[]> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { collectionId: true, reviewCost: true },
+  });
+
+  if (!challenge?.collectionId) return [];
+  if (challenge.reviewCost <= 0) return [];
+
+  const config = await getChallengeConfig();
+  const entries = await dbRead.$queryRaw<UnjudgedEntry[]>`
+    SELECT ci."imageId", i.url
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${challenge.collectionId}
+      AND ci.status = 'ACCEPTED'
+      AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+      AND i."userId" = ${userId}
+    ORDER BY ci."createdAt" DESC
+  `;
+
+  return entries;
 }
 
 const log = createLogger('challenge-service', 'blue');
