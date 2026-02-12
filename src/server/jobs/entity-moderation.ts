@@ -11,6 +11,7 @@ import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { createReport } from '~/server/services/report.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { updateUserById } from '~/server/services/user.service';
 import { invalidateSession } from '~/server/auth/session-invalidation';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
@@ -82,6 +83,18 @@ async function autoMuteIfScamAccount({
     // Delete the scammer's chat messages so recipients don't see them
     const deleted = await dbWrite.chatMessage.deleteMany({
       where: { userId },
+    });
+
+    // Audit trail — track in ModActivity (Postgres) and userActivities (ClickHouse)
+    await trackModActivity(-1, {
+      entityType: 'user',
+      entityId: userId,
+      activity: 'autoMuteScam',
+    });
+    await tracker.userActivity({
+      type: 'Muted',
+      targetUserId: userId,
+      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(', ')}, deleted: ${deleted.count} msgs)`,
     });
 
     log(
