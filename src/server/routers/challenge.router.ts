@@ -13,6 +13,7 @@ import {
   updateChallengeConfigSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { z } from 'zod';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -40,6 +41,7 @@ import {
   getChallengeSystemConfig,
   updateChallengeSystemConfig,
 } from '~/server/services/challenge.service';
+import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 
 // Router definition
 export const challengeRouter = router({
@@ -147,4 +149,10 @@ export const challengeRouter = router({
     .input(deleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => deleteChallengeEvent(input.id)),
+
+  // Public: Get judge's comment on a specific image
+  getJudgeComment: publicProcedure
+    .input(z.object({ imageId: z.number(), judgeUserId: z.number() }))
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getJudgeCommentForImage(input)),
 });

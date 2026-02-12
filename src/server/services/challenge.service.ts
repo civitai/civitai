@@ -613,6 +613,9 @@ export async function getChallengeDetail(
   const completionSummary =
     (metadata?.completionSummary as ChallengeCompletionSummary | undefined) ?? null;
 
+  // Get challenge config for judgedTagId
+  const challengeConfig = await getChallengeConfig();
+
   return {
     id: challenge.id,
     title: challenge.title,
@@ -659,6 +662,7 @@ export async function getChallengeDetail(
     judge,
     winners,
     completionSummary,
+    judgedTagId: challengeConfig.judgedTagId ?? null,
   };
 }
 

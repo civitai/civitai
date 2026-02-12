@@ -138,10 +138,12 @@ export type ChallengeDetail = {
     imageUrl: string;
     buzzAwarded: number;
     reason: string | null;
+    judgeScore?: { theme: number; wittiness: number; humor: number; aesthetic: number } | null;
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
   completionSummary: ChallengeCompletionSummary | null;
+  judgedTagId: number | null;
 };
 
 export type ModeratorChallengeListItem = {

@@ -16,6 +16,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
+import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -154,6 +155,13 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       'duration' in image.metadata && (
                         <DurationBadge duration={image.metadata.duration ?? 0} />
                       )}
+                    {safe && image.judgeScore && (
+                      <JudgeScoreBadge
+                        score={image.judgeScore}
+                        imageId={image.id}
+                        judgeInfo={contextProps.judgeInfo}
+                      />
+                    )}
                     {isModerator && image.minor && (
                       <Badge variant="filled" radius="xl" h={26} color="pink.3">
                         Minor
