@@ -93,7 +93,7 @@ export const klingGraph = new DataGraph<KlingCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

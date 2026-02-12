@@ -57,6 +57,7 @@ import { PriorityInput } from './inputs/PriorityInput';
 import { OutputFormatInput } from './inputs/OutputFormatInput';
 import { ScaleFactorInput } from './inputs/ScaleFactorInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 // =============================================================================
 // Component
@@ -233,7 +234,12 @@ export function GenerationForm() {
               <ResourceSelectInput
                 value={value as any}
                 onChange={onChange as any}
-                label="Model"
+                label={
+                  <ControllerLabel
+                    label="Model"
+                    info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
+                  />
+                }
                 buttonLabel="Select Model"
                 modalTitle="Select Model"
                 options={meta.options}
@@ -393,7 +399,16 @@ export function GenerationForm() {
             graph={graph}
             name="prompt"
             render={({ value, onChange, meta, error }) => (
-              <Input.Wrapper label="Prompt" required={meta.required} error={error?.message}>
+              <Input.Wrapper
+                label={
+                  <ControllerLabel
+                    label="Prompt"
+                    info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
+                  />
+                }
+                required={meta.required}
+                error={error?.message}
+              >
                 <Paper
                   px="sm"
                   radius="md"
@@ -632,7 +647,12 @@ export function GenerationForm() {
                 <SliderInput
                   value={value}
                   onChange={onChange}
-                  label="CFG Scale"
+                  label={
+                    <ControllerLabel
+                      label="CFG Scale"
+                      info="Controls how closely the generation follows the text prompt."
+                    />
+                  }
                   min={meta.min}
                   max={meta.max}
                   step={meta.step}
@@ -649,7 +669,12 @@ export function GenerationForm() {
                 <SelectInput
                   value={value}
                   onChange={onChange}
-                  label="Sampler"
+                  label={
+                    <ControllerLabel
+                      label="Sampler"
+                      info="Each will produce a slightly (or significantly) different result."
+                    />
+                  }
                   options={meta.options}
                   presets={meta.presets}
                 />
@@ -664,7 +689,12 @@ export function GenerationForm() {
                 <SelectInput
                   value={value}
                   onChange={onChange}
-                  label="Scheduler"
+                  label={
+                    <ControllerLabel
+                      label="Scheduler"
+                      info="Controls the noise schedule during generation, affecting quality and style."
+                    />
+                  }
                   options={meta.options}
                 />
               )}
@@ -678,7 +708,12 @@ export function GenerationForm() {
                 <SliderInput
                   value={value}
                   onChange={onChange}
-                  label="Steps"
+                  label={
+                    <ControllerLabel
+                      label="Steps"
+                      info="The number of iterations spent generating."
+                    />
+                  }
                   min={meta.min}
                   max={meta.max}
                   step={meta.step}
@@ -693,7 +728,10 @@ export function GenerationForm() {
               name="movementAmplitude"
               render={({ value, meta, onChange }) => (
                 <div className="flex flex-col gap-1">
-                  <Input.Label>Movement Amplitude</Input.Label>
+                  <ControllerLabel
+                    label="Movement Amplitude"
+                    info="Control the scale of camera movements and subject actions. Default: Auto (fits most use cases)."
+                  />
                   <SegmentedControlWrapper
                     value={value}
                     onChange={onChange}
@@ -758,7 +796,12 @@ export function GenerationForm() {
                 <ResourceSelectInput
                   value={value as any}
                   onChange={onChange as any}
-                  label="VAE"
+                  label={
+                    <ControllerLabel
+                      label="VAE"
+                      info="These provide additional color and detail improvements."
+                    />
+                  }
                   buttonLabel="Select VAE"
                   modalTitle="Select VAE"
                   options={meta.options}
@@ -915,7 +958,12 @@ export function GenerationForm() {
                 <Radio.Group
                   value={value}
                   onChange={(v) => onChange(v as typeof value)}
-                  label="Mode"
+                  label={
+                    <ControllerLabel
+                      label="Mode"
+                      info="Standard mode is faster to generate and more cost-effective. Pro takes longer to generate and has higher quality output."
+                    />
+                  }
                 >
                   <Group mt="xs">
                     {meta.options.map((o: { label: string; value: string }) => (
@@ -929,6 +977,19 @@ export function GenerationForm() {
         </Stack>
       </div>
       <FormFooter />
+    </div>
+  );
+}
+
+
+function ControllerLabel({ label, info }: { label: React.ReactNode; info?: string }) {
+  if (!info) return <Input.Label>{label}</Input.Label>;
+  return (
+    <div className="flex items-center gap-1">
+      <Input.Label>{label}</Input.Label>
+      <InfoPopover size="xs" iconProps={{ size: 14 }}>
+        {info}
+      </InfoPopover>
     </div>
   );
 }

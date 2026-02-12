@@ -68,13 +68,10 @@ export const stableDiffusionGraph = new DataGraph<
   // Images node - shown for img2img variants (required), hidden for all txt variants
   .node(
     'images',
-    (ctx) => {
-      const isImg2img = ctx.workflow.startsWith('img2img');
-      return {
-        ...imagesNode({ max: 1, min: isImg2img ? 1 : 0 }),
-        when: isImg2img,
-      };
-    },
+    (ctx) => ({
+      ...imagesNode(),
+      when: ctx.workflow.startsWith('img2img'),
+    }),
     ['workflow']
   )
   .node(

@@ -765,6 +765,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               }))}
               allowDeselect={false}
               withAsterisk
+              searchable
             />
             {hasBaseModelType && (
               <InputSelect

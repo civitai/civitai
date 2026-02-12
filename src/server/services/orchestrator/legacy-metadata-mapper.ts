@@ -26,7 +26,7 @@ import { getBaseModelFromResources } from '~/shared/constants/generation.constan
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
 import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
-import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -111,14 +111,12 @@ const ENGINE_TO_BASE_MODEL = ENGINE_TO_ECOSYSTEM;
 
 /**
  * Checks if a baseModel key's ecosystem is listed in a workflow config's ecosystemIds.
+ * Uses the aggregated workflowConfigByKey (includes alias ecosystemIds).
  */
 function ecosystemSupportsWorkflow(baseModel: string, workflowKey: string): boolean {
   const eco = ecosystemByKey.get(baseModel);
   if (!eco) return false;
-  return (
-    workflowConfigs[workflowKey as keyof typeof workflowConfigs]?.ecosystemIds.includes(eco.id) ??
-    false
-  );
+  return isWorkflowAvailable(workflowKey, eco.id);
 }
 
 /**
@@ -205,6 +203,7 @@ export function resolveWorkflow(
       case 'img2img':
         return resolveImg2ImgWorkflow(baseModel);
       case 'img2vid':
+      case 'img2vid:first-last-frame': // Legacy key, now just img2vid
         return resolveImg2VidWorkflow(baseModel, imageCount);
       case 'txt2img':
         return 'txt2img';

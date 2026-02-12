@@ -27,7 +27,7 @@ import { imagesNode } from './common';
  */
 export const imageRemoveBackgroundGraph = new DataGraph<Record<never, never>, GenerationCtx>().node(
   'images',
-  () => imagesNode({ max: 1, min: 1 }),
+  () => imagesNode(),
   []
 );
 

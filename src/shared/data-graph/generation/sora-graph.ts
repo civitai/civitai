@@ -58,7 +58,7 @@ export const soraGraph = new DataGraph<SoraCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

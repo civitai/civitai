@@ -366,7 +366,7 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

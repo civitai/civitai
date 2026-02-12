@@ -70,24 +70,22 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => {
-      const baseNode = imagesNode({ max: 1, min: 0 }); // Default for hidden state
-
       if (ctx.workflow === 'img2vid') {
         return {
           ...imagesNode({
-            slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame' }],
+            slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
           }),
           when: true,
         };
       }
       if (ctx.workflow === 'img2vid:ref2vid') {
         return {
-          ...imagesNode({ max: 7, min: 1 }),
+          ...imagesNode({ max: 7 }),
           when: true,
         };
       }
       // txt2vid — hide images node entirely
-      return { ...baseNode, when: false };
+      return { ...imagesNode(), when: false };
     },
     ['workflow']
   )

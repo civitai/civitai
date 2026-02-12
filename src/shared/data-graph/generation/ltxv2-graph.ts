@@ -63,7 +63,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

@@ -115,7 +115,7 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

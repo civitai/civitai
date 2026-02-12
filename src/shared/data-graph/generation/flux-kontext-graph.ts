@@ -82,7 +82,7 @@ export const fluxKontextGraph = new DataGraph<
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: ctx.workflow === 'img2img:edit' ? 1 : 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

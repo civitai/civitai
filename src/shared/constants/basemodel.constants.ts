@@ -1350,6 +1350,26 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: [ModelType.LORA],
     support: 'partial',
   },
+
+  // ==========================================================================
+  // Flux2 Klein Cross-Support
+  // ==========================================================================
+  // Flux2 Klein 4B has partial support for Flux2 Klein 4B-base
+  {
+    sourceEcosystemId: ECO.Flux2Klein_4B_base,
+    targetEcosystemId: ECO.Flux2Klein_4B,
+    supportType: 'generation',
+    modelTypes: [ModelType.LORA],
+    support: 'partial',
+  },
+  // Flux2 Klein 9B has partial support for Flux2 Klein 9B-base
+  {
+    sourceEcosystemId: ECO.Flux2Klein_9B_base,
+    targetEcosystemId: ECO.Flux2Klein_9B,
+    supportType: 'generation',
+    modelTypes: [ModelType.LORA],
+    support: 'partial',
+  },
 ];
 
 // =============================================================================

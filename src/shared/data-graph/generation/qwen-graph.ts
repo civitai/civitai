@@ -48,7 +48,7 @@ export const qwenGraph = new DataGraph<{ ecosystem: string; workflow: string }, 
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 1, min: ctx.workflow === 'img2img:edit' ? 1 : 0 }),
+      ...imagesNode(),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']

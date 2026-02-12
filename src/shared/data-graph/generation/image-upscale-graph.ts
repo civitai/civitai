@@ -39,7 +39,7 @@ const UPSCALE_MULTIPLIERS = [2, 3, 4] as const;
  */
 export const imageUpscaleGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   // Images node - upscale only allows 1 image
-  .node('images', () => imagesNode({ max: 1, min: 1 }), [])
+  .node('images', () => imagesNode(), [])
   // Scale factor node - depends on image dimensions for available options
   .node(
     'scaleFactor',

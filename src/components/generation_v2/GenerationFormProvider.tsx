@@ -31,7 +31,7 @@ import { needsHydration, type PartialResourceValue } from './inputs/resource-sel
 // Constants
 // =============================================================================
 
-const STORAGE_KEY = 'data-graph-v2';
+const STORAGE_KEY = 'generation-graph';
 
 // =============================================================================
 // Storage Adapter

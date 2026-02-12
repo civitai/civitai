@@ -923,7 +923,7 @@ export interface ImagesNodeConfig {
  *   ]
  * }), [])
  */
-export function imagesNode({ min = 1, max = 1, slots, modes }: ImagesNodeConfig) {
+export function imagesNode({ min = 1, max = 1, slots, modes }: ImagesNodeConfig = {}) {
   // When slots are provided, max is derived from slots length
   const effectiveMax = slots?.length ?? max;
   const effectiveMin = slots ? slots.filter((s) => s.required).length : min;
