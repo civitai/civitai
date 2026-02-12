@@ -81,6 +81,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants as appConstants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { ChallengeDiscussion } from '~/components/Challenge/ChallengeDiscussion';
 
 /** Open the generation panel for a challenge's model versions. */
 function openChallengeGenerator(modelVersionIds: number[]) {
@@ -408,6 +409,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
         {/* Winners Section (for completed challenges) */}
         {isCompleted && challenge.winners.length > 0 && <ChallengeWinners challenge={challenge} />}
+
+        {/* Discussion Section */}
+        <Container size="xl" id="comments">
+          <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
+        </Container>
 
         {/* Entries Section */}
         <ChallengeEntries challenge={challenge} />

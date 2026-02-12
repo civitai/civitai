@@ -1658,6 +1658,8 @@ export interface Thread {
   bountyEntry?: BountyEntry | null;
   clubPostId: number | null;
   clubPost?: ClubPost | null;
+  challengeId: number | null;
+  challenge?: Challenge | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -2835,6 +2837,7 @@ export interface Challenge {
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
+  threads?: Thread[];
   eventId: number | null;
   event?: ChallengeEvent | null;
 }

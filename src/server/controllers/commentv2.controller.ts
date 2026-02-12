@@ -76,6 +76,8 @@ export const upsertCommentV2Handler = async ({
         ? 'BountyEntry'
         : input.entityType === 'clubPost'
         ? 'ClubPost'
+        : input.entityType === 'challenge'
+        ? 'Challenge'
         : null;
 
     if (type === 'Post' || type === 'Article') {
@@ -119,7 +121,7 @@ export const upsertCommentV2Handler = async ({
 
     const result = await upsertComment({ ...input, userId: ctx.user.id });
     if (!input.id) {
-      if (type && type !== 'ClubPost' && type !== 'Article') {
+      if (type && type !== 'ClubPost' && type !== 'Article' && type !== 'Challenge') {
         await ctx.track.comment({
           type,
           nsfw: result.nsfw,

@@ -47,6 +47,7 @@ export type ChallengeListItem = {
   source: ChallengeSource;
   prizePool: number;
   entryCount: number;
+  commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
   createdBy: {
@@ -116,6 +117,7 @@ export type ChallengeDetail = {
   prizePool: number;
   operationBudget: number;
   entryCount: number;
+  commentCount: number;
   createdBy: {
     id: number;
     username: string | null;

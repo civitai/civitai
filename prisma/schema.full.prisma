@@ -2112,6 +2112,8 @@ model Thread {
   bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
   clubPostId    Int?            @unique
   clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
+  challengeId   Int?            @unique
+  challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -2126,6 +2128,7 @@ model Thread {
   @@index([imageId], type: Hash)
   @@index([articleId], type: Hash)
   @@index([rootThreadId], type: Hash)
+  @@index([challengeId], type: Hash)
 }
 
 model QuestionReaction {
@@ -3791,6 +3794,7 @@ model Challenge {
 
   // Relations
   winners ChallengeWinner[]
+  threads Thread[]
 
   // Event grouping
   eventId Int?

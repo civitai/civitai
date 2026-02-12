@@ -293,6 +293,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
+      commentCount: bigint;
       modelVersionIds: number[] | null;
       modelId: number | null;
       modelName: string | null;
@@ -319,6 +320,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.source,
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
+      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
       c."modelVersionIds",
       (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
@@ -384,6 +386,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       prizePool: item.prizePool,
       collectionId: item.collectionId,
       entryCount: Number(item.entryCount),
+      commentCount: Number(item.commentCount),
       coverImage: coverImage
         ? {
             id: coverImage.id,
@@ -451,6 +454,13 @@ export async function getChallengeDetail(
     `;
     entryCount = Number(countResult.count);
   }
+
+  // Get comment count from the challenge's thread
+  const commentThread = await dbRead.thread.findUnique({
+    where: { challengeId: id },
+    select: { commentCount: true },
+  });
+  const commentCount = commentThread?.commentCount ?? 0;
 
   // Get creator info with profile picture and cosmetics
   const [creator] = await dbRead.$queryRaw<
@@ -625,6 +635,7 @@ export async function getChallengeDetail(
     prizePool: challenge.prizePool,
     operationBudget: challenge.operationBudget,
     entryCount,
+    commentCount,
     createdBy: {
       ...displayUser,
       profilePicture: displayProfilePics[displayUserId] ?? null,
@@ -1474,6 +1485,18 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     for (const row of counts) entryCounts.set(row.collectionId, Number(row.count));
   }
 
+  // Get comment counts for all challenges
+  const allChallengeIds = allChallenges.map((c) => c.id);
+  const commentCounts = new Map<number, number>();
+  if (allChallengeIds.length > 0) {
+    const counts = await dbRead.$queryRaw<
+      Array<{ challengeId: number; commentCount: number }>
+    >`SELECT "challengeId", "commentCount" FROM "Thread" WHERE "challengeId" IN (${Prisma.join(
+      allChallengeIds
+    )})`;
+    for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
+  }
+
   return events.map((event) => ({
     id: event.id,
     title: event.title,
@@ -1498,6 +1521,7 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
         prizePool: c.prizePool,
         collectionId: c.collectionId,
         entryCount: c.collectionId ? entryCounts.get(c.collectionId) ?? 0 : 0,
+        commentCount: commentCounts.get(c.id) ?? 0,
         coverImage: coverImage
           ? {
               id: coverImage.id,
