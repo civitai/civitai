@@ -42,6 +42,7 @@ const challengeConfigSchema = z.object({
   reviewMeTagId: z.number(),
   userCooldown: z.string(),
   resourceCooldown: z.string(),
+  winnerCooldown: z.string(),
   prizes: z.array(
     z.object({
       buzz: z.number(),
@@ -73,6 +74,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   reviewMeTagId: 301770,
   userCooldown: '14 day',
   resourceCooldown: '90 day',
+  winnerCooldown: '7 day',
   prizes: [
     { buzz: 5000, points: 150 },
     { buzz: 2500, points: 100 },
