@@ -31,11 +31,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes: SearchableAttributes = [
-    'prompt',
-    'tagNames',
-    'user.username',
-  ];
+  const searchableAttributes: SearchableAttributes = ['prompt'];
 
   const sortableAttributes: SortableAttributes = ['id', 'sortAt'];
 
@@ -148,7 +144,7 @@ const transformData = async ({
       nsfwLevel: img.nsfwLevel,
       type: img.type,
       postId: img.postId,
-      prompt: img.prompt ? img.prompt.slice(0, 500) : null,
+      prompt: img.prompt ? img.prompt.slice(0, 400) : null,
       user: {
         id: img.userId,
         username: img.username,
@@ -250,7 +246,7 @@ export const imagesSearchSearchIndex = createSearchIndexUpdateProcessor({
         i."postId",
         CASE
           WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-          THEN LEFT(i.meta->>'prompt', 500)
+          THEN LEFT(i.meta->>'prompt', 400)
           ELSE NULL
         END as prompt
       FROM "Image" i
