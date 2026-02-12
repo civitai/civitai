@@ -15,7 +15,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChapterComments } from '~/components/Comics/ChapterComments';
@@ -25,9 +25,12 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { Flags } from '~/shared/utils/flags';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { ComicEngagementType } from '~/shared/utils/prisma/enums';
 import { formatRelativeDate } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -93,7 +96,18 @@ type Project = RouterOutput['comics']['getPublicProjectForReader'];
 
 function ComicOverview({ project }: { project: Project }) {
   const currentUser = useCurrentUser();
-  const totalPanels = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
+  const { blurLevels } = useBrowsingLevelContext();
+  const [unblurredChapters, setUnblurredChapters] = useState<Set<number>>(new Set());
+  const toggleChapterBlur = useCallback((e: React.MouseEvent, position: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setUnblurredChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(position)) next.delete(position);
+      else next.add(position);
+      return next;
+    });
+  }, []);
   // Hero image for the wide banner, fallback to cover, then first panel
   const heroImage = project.heroImage ?? project.coverImage;
   const heroUrl =
@@ -147,12 +161,16 @@ function ComicOverview({ project }: { project: Project }) {
                   </>
                 ) : (
                   <>
-                    <div className="relative h-full w-full overflow-hidden">
+                    <div className="absolute inset-0 overflow-hidden">
                       <img
                         src={getEdgeUrl(heroUrl, { width: 1200 })}
                         alt={project.name}
-                        className={`${styles.overviewHeroImage} blur-xl scale-110`}
-                        style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
+                        className={styles.overviewHeroImage}
+                        style={{
+                          objectPosition: `center ${project.heroImagePosition ?? 50}%`,
+                          filter: 'blur(32px)',
+                          transform: 'scale(1.2)',
+                        }}
                       />
                     </div>
                     <div className={styles.overviewHeroGradient} />
@@ -273,10 +291,6 @@ function ComicOverview({ project }: { project: Project }) {
               <span className={styles.overviewStatDot} />
               {project.chapters.length} {project.chapters.length === 1 ? 'chapter' : 'chapters'}
             </span>
-            <span className={styles.overviewStatPill}>
-              <span className={styles.overviewStatDot} />
-              {totalPanels} {totalPanels === 1 ? 'panel' : 'panels'}
-            </span>
           </div>
 
           {/* CTA */}
@@ -299,10 +313,8 @@ function ComicOverview({ project }: { project: Project }) {
               {project.chapters.map((ch) => {
                 const thumbUrl = ch.panels[0]?.imageUrl ?? null;
                 const isRead = readPositions ? readPositions.includes(ch.position) : false;
-                const chapterGuardImage = {
-                  id: ch.projectId * 1000 + ch.position,
-                  nsfwLevel: ch.nsfwLevel,
-                };
+                const isNsfw = ch.nsfwLevel > 0 && Flags.hasFlag(blurLevels, ch.nsfwLevel);
+                const isBlurred = isNsfw && !unblurredChapters.has(ch.position);
 
                 return (
                   <Link
@@ -316,19 +328,22 @@ function ComicOverview({ project }: { project: Project }) {
                     <span className={styles.chapterNumber}>{ch.position + 1}</span>
                     <div className={styles.chapterThumb}>
                       {thumbUrl ? (
-                        <ImageGuard2 image={chapterGuardImage}>
-                          {(safe) =>
-                            safe ? (
-                              <img src={getEdgeUrl(thumbUrl, { width: 120 })} alt={ch.name} />
-                            ) : (
-                              <img
-                                src={getEdgeUrl(thumbUrl, { width: 120 })}
-                                alt={ch.name}
-                                className="blur-md scale-110"
-                              />
-                            )
-                          }
-                        </ImageGuard2>
+                        <>
+                          <img
+                            src={getEdgeUrl(thumbUrl, { width: 120 })}
+                            alt={ch.name}
+                            className={isBlurred ? styles.chapterThumbBlurred : undefined}
+                          />
+                          {isBlurred && (
+                            <button
+                              className={styles.chapterThumbBadge}
+                              onClick={(e) => toggleChapterBlur(e, ch.position)}
+                              title="Click to show"
+                            >
+                              {getBrowsingLevelLabel(ch.nsfwLevel)}
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <div className={`${styles.chapterThumb} ${styles.chapterThumbEmpty}`}>
                           <IconPhoto size={18} />
@@ -341,6 +356,15 @@ function ComicOverview({ project }: { project: Project }) {
                           <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5" />
                         )}
                         {ch.name}
+                        {isNsfw && (
+                          <button
+                            className={styles.chapterRatingPill}
+                            onClick={(e) => toggleChapterBlur(e, ch.position)}
+                            title={isBlurred ? 'Click to show' : 'Click to hide'}
+                          >
+                            {getBrowsingLevelLabel(ch.nsfwLevel)}
+                          </button>
+                        )}
                       </p>
                       {ch.publishedAt && (
                         <p className={styles.chapterPanelCount}>
@@ -370,9 +394,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const safeIdx = chapterIdx >= 0 ? chapterIdx : 0;
   const activeChapter = chapters[safeIdx];
   const panels = activeChapter?.panels ?? [];
-  const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const lastScrollTop = useRef(0);
+
+  // Connection key for ImageGuard2 — all panels in a chapter share the same key
+  const chapterConnectId = `${project.id}-${activeChapter?.position ?? 0}`;
 
   const projectSlug = slugit(project.name);
 
@@ -391,7 +417,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const goToChapter = (idx: number) => {
     const ch = chapters[idx];
     if (!ch) return;
-    scrollRef.current?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
     void router.replace(
       `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`,
       undefined,
@@ -425,11 +451,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [hasPrev, hasNext, safeIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide header on scroll down, show on scroll up
+  // Hide reader header on scroll down, show on scroll up
   const handleScroll = useCallback(() => {
     if (!headerRef.current) return;
-    const el = scrollRef.current ?? document.documentElement;
-    const scrollTop = el.scrollTop ?? window.scrollY;
+    const scrollTop = window.scrollY;
     if (scrollTop > lastScrollTop.current && scrollTop > 80) {
       headerRef.current.style.transform = 'translateY(-100%)';
     } else {
@@ -439,9 +464,8 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   }, []);
 
   useEffect(() => {
-    const el = scrollRef.current ?? window;
-    el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, [handleScroll]);
 
   // Prev/next navigation component (shared between top and bottom)
@@ -470,7 +494,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     <>
       <Meta title={`${activeChapter?.name ?? 'Chapter'} - ${project.name} - Civitai Comics`} />
 
-      <div ref={scrollRef} className={styles.readerRoot}>
+      <div className={styles.readerRoot}>
         {/* Sticky header — hides on scroll down */}
         <div
           ref={headerRef}
@@ -559,31 +583,46 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             <div className={styles.readerPanels}>
               {panels.map((panel) => {
                 if (!panel.imageUrl) return null;
+
                 if (panel.image) {
                   return (
-                    <ImageGuard2 key={panel.id} image={panel.image}>
-                      {(safe) =>
-                        safe ? (
-                          <img
-                            src={panel.imageUrl!}
-                            alt={panel.prompt}
-                            loading="lazy"
-                            className={styles.readerPanel}
-                          />
-                        ) : (
-                          <div className="relative overflow-hidden">
+                    <div key={panel.id} className="relative">
+                      <ImageGuard2
+                        image={panel.image}
+                        connectType="comicChapter"
+                        connectId={chapterConnectId}
+                      >
+                        {(safe) =>
+                          safe ? (
                             <img
                               src={panel.imageUrl!}
                               alt={panel.prompt}
                               loading="lazy"
-                              className={`${styles.readerPanel} blur-xl scale-110`}
+                              className={styles.readerPanel}
                             />
-                          </div>
-                        )
-                      }
-                    </ImageGuard2>
+                          ) : (
+                            <div className={styles.readerPanelBlurWrap}>
+                              <img
+                                src={panel.imageUrl!}
+                                alt={panel.prompt}
+                                loading="lazy"
+                                className={styles.readerPanel}
+                                aria-hidden
+                              />
+                              <img
+                                src={panel.imageUrl!}
+                                alt={panel.prompt}
+                                loading="lazy"
+                                className={styles.readerPanelBlurred}
+                              />
+                            </div>
+                          )
+                        }
+                      </ImageGuard2>
+                    </div>
                   );
                 }
+
                 return (
                   <img
                     key={panel.id}
@@ -616,4 +655,4 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   );
 }
 
-export default Page(PublicComicReader, { header: null });
+export default Page(PublicComicReader);

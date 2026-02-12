@@ -285,6 +285,7 @@
 }
 
 .chapterThumb {
+  position: relative;
   width: 48px;
   height: 64px;
   border-radius: 6px;
@@ -297,6 +298,53 @@
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+}
+
+.chapterThumbBlurred {
+  filter: blur(8px);
+  transform: scale(1.3);
+}
+
+.chapterThumbBadge {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.25);
+  }
+}
+
+.chapterRatingPill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(224, 49, 49, 0.6);
+  vertical-align: middle;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+
+  &:hover {
+    background: rgba(224, 49, 49, 0.8);
   }
 }
 
@@ -395,8 +443,6 @@
 
 /* ── Reader panel display ─────────────────────────── */
 .readerRoot {
-  height: 100dvh;
-  overflow: auto;
   background: light-dark(var(--mantine-color-gray-1), #141517);
 }
 
@@ -409,6 +455,28 @@
 .readerPanel {
   width: 100%;
   display: block;
+}
+
+.readerPanelBlurWrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+
+  /* First img is an invisible sizer that maintains aspect ratio */
+  > img:first-child {
+    width: 100%;
+    display: block;
+    visibility: hidden;
+  }
+}
+
+.readerPanelBlurred {
+  position: absolute;
+  inset: -10%;
+  width: 120%;
+  height: 120%;
+  object-fit: cover;
+  filter: blur(32px);
 }
 
 .readerEmpty {
