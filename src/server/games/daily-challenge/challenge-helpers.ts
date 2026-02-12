@@ -3,7 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
-import type { Prize } from './daily-challenge.utils';
+import { deriveChallengeNsfwLevel, type Prize } from './daily-challenge.utils';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
@@ -297,7 +297,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       theme: input.theme,
       invitation: input.invitation,
       coverImageId: input.coverImageId,
-      nsfwLevel: input.nsfwLevel ?? 1,
+      nsfwLevel: input.nsfwLevel ?? deriveChallengeNsfwLevel(input.allowedNsfwLevel ?? 1),
       allowedNsfwLevel: input.allowedNsfwLevel ?? 1,
       modelVersionIds: input.modelVersionIds ?? [],
       judgingPrompt: input.judgingPrompt,

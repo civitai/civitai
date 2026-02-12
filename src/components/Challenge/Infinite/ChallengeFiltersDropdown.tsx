@@ -58,10 +58,10 @@ export function ChallengeFiltersDropdown() {
   };
 
   // Count active filters (excluding defaults)
-  const isDefault =
+  const hasStatusDefault =
     statusFilter.length === defaultStatus.length &&
     defaultStatus.every((s) => statusFilter.includes(s));
-  const filterLength = isDefault ? 0 : 1;
+  const filterLength = hasStatusDefault ? 0 : 1;
 
   const target = (
     <Indicator

@@ -45,6 +45,8 @@ export type ChallengeListItem = {
   endsAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  nsfwLevel: number;
+  allowedNsfwLevel: number;
   prizePool: number;
   entryCount: number;
   commentCount: number;
@@ -191,6 +193,7 @@ export const getInfiniteChallengesSchema = z.object({
   modelVersionId: z.number().optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
+  browsingLevel: z.number().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
 

@@ -75,6 +75,11 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSubmitModal } from '~/components/Challenge/ChallengeSubmitModal';
+import {
+  parseBitwiseBrowsingLevel,
+  browsingLevelLabels,
+  nsfwLevelColors,
+} from '~/shared/constants/browsingLevel.constants';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -352,6 +357,23 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   >
                     {challenge.theme}
                   </IconBadge>
+                </>
+              )}
+
+              {/* Allowed content ratings */}
+              {challenge.allowedNsfwLevel > 0 && (
+                <>
+                  <Divider orientation="vertical" />
+                  <Group gap={4}>
+                    <Text size="xs" c="dimmed">
+                      Allowed Ratings:
+                    </Text>
+                    {parseBitwiseBrowsingLevel(challenge.allowedNsfwLevel).map((level) => (
+                      <Badge key={level} size="sm" color={nsfwLevelColors[level]} variant="filled">
+                        {browsingLevelLabels[level as keyof typeof browsingLevelLabels]}
+                      </Badge>
+                    ))}
+                  </Group>
                 </>
               )}
             </Group>

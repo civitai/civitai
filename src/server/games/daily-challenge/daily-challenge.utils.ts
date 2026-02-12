@@ -1,6 +1,8 @@
 import { mergeWith } from 'lodash-es';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -322,6 +324,15 @@ export async function getChallengeTypeConfig(type: string | undefined) {
       winner: result.promptWinner,
     },
   } as ChallengeType;
+}
+
+/**
+ * Derive a challenge's nsfwLevel from its allowedNsfwLevel bitwise flags.
+ * Returns the highest allowed NsfwLevel (most mature content permitted).
+ * Example: allowedNsfwLevel = 7 (PG|PG13|R) → nsfwLevel = 4 (R)
+ */
+export function deriveChallengeNsfwLevel(allowedNsfwLevel: number): number {
+  return Flags.maxValue(allowedNsfwLevel) || NsfwLevel.PG;
 }
 
 export type Prize = {
