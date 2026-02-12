@@ -475,6 +475,7 @@ export async function getChallengeDetail(
       select: {
         id: true,
         name: true,
+        baseModel: true,
         model: { select: { id: true, name: true } },
       },
     });
@@ -489,6 +490,7 @@ export async function getChallengeDetail(
         name: v.model.name,
         versionId: v.id,
         versionName: v.name,
+        baseModel: v.baseModel,
         image: img
           ? {
               id: img.id,

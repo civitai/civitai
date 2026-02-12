@@ -96,6 +96,7 @@ export type ChallengeDetail = {
     name: string;
     versionId: number;
     versionName: string;
+    baseModel: string;
     image: {
       id: number;
       url: string;
