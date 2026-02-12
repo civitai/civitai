@@ -21,7 +21,7 @@ export function ChallengeDiscussion({ challengeId, userId }: Props) {
       entityType="challenge"
       entityId={challengeId}
       limit={10}
-      badges={userId ? [{ userId, label: 'host', color: 'violet' }] : []}
+      badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
       {({
         data,
