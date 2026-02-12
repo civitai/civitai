@@ -411,7 +411,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         {isCompleted && challenge.winners.length > 0 && <ChallengeWinners challenge={challenge} />}
 
         {/* Discussion Section */}
-        <Container size="xl" id="comments">
+        <Container size="xl" id="comments" py={32}>
           <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
         </Container>
 

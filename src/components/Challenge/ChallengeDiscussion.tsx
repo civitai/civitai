@@ -20,7 +20,7 @@ export function ChallengeDiscussion({ challengeId, userId }: Props) {
     <RootThreadProvider
       entityType="challenge"
       entityId={challengeId}
-      limit={20}
+      limit={10}
       badges={userId ? [{ userId, label: 'host', color: 'violet' }] : []}
     >
       {({
