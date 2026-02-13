@@ -619,6 +619,9 @@ export async function getChallengeDetail(
   const completionSummary =
     (metadata?.completionSummary as ChallengeCompletionSummary | undefined) ?? null;
 
+  // Get challenge config for judgedTagId
+  const challengeConfig = await getChallengeConfig();
+
   return {
     id: challenge.id,
     title: challenge.title,
@@ -654,6 +657,12 @@ export async function getChallengeDetail(
     entryPrize: challenge.entryPrize,
     entryPrizeRequirement: challenge.entryPrizeRequirement,
     prizePool: challenge.prizePool,
+    prizeMode: challenge.prizeMode,
+    basePrizePool: challenge.basePrizePool,
+    buzzPerAction: challenge.buzzPerAction,
+    poolTrigger: challenge.poolTrigger,
+    maxPrizePool: challenge.maxPrizePool,
+    prizeDistribution: challenge.prizeDistribution,
     operationBudget: challenge.operationBudget,
     reviewCostType: challenge.reviewCostType,
     reviewCost: challenge.reviewCost,
@@ -667,6 +676,7 @@ export async function getChallengeDetail(
     judge,
     winners,
     completionSummary,
+    judgedTagId: challengeConfig.judgedTagId ?? null,
   };
 }
 
@@ -828,6 +838,12 @@ export async function upsertChallenge({
         source: true,
         maxEntriesPerUser: true,
         entryPrizeRequirement: true,
+        prizeMode: true,
+        basePrizePool: true,
+        buzzPerAction: true,
+        poolTrigger: true,
+        maxPrizePool: true,
+        prizeDistribution: true,
       },
     });
     if (!challenge) throw throwNotFoundError('Challenge not found');
@@ -852,6 +868,12 @@ export async function upsertChallenge({
       data.source = challenge.source as typeof data.source;
       data.maxEntriesPerUser = challenge.maxEntriesPerUser;
       data.entryPrizeRequirement = challenge.entryPrizeRequirement;
+      data.prizeMode = challenge.prizeMode as typeof data.prizeMode;
+      data.basePrizePool = challenge.basePrizePool;
+      data.buzzPerAction = challenge.buzzPerAction;
+      data.poolTrigger = challenge.poolTrigger as typeof data.poolTrigger;
+      data.maxPrizePool = challenge.maxPrizePool;
+      data.prizeDistribution = challenge.prizeDistribution as typeof data.prizeDistribution;
 
       // Validate endsAt > now() for Active challenges (can't set end date to the past)
       if (data.endsAt <= new Date()) {
@@ -876,6 +898,9 @@ export async function upsertChallenge({
           modelVersionIds: data.modelVersionIds ?? [],
           prizes: data.prizes,
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
+          prizeDistribution: data.prizeDistribution
+            ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         },
       });
 
@@ -949,6 +974,9 @@ export async function upsertChallenge({
           entryPrizeRequirement: data.entryPrizeRequirement ?? 10,
           prizes: data.prizes,
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
+          prizeDistribution: data.prizeDistribution
+            ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         },
       });
     });

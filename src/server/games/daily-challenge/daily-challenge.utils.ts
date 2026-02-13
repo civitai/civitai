@@ -42,6 +42,7 @@ const challengeConfigSchema = z.object({
   reviewMeTagId: z.number(),
   userCooldown: z.string(),
   resourceCooldown: z.string(),
+  winnerCooldown: z.string(),
   prizes: z.array(
     z.object({
       buzz: z.number(),
@@ -73,6 +74,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   reviewMeTagId: 301770,
   userCooldown: '14 day',
   resourceCooldown: '90 day',
+  winnerCooldown: '7 day',
   prizes: [
     { buzz: 5000, points: 150 },
     { buzz: 2500, points: 100 },
@@ -389,6 +391,19 @@ export type Score = {
   humor: number; // 0-10 how funny it is
   aesthetic: number; // 0-10 how aesthetically pleasing it is
 };
+
+/** Alias for Score — used in client-facing contexts (image cards, winner displays). */
+export type JudgeScore = Score;
+
+export function parseJudgeScore(note: string | null): JudgeScore | null {
+  if (!note) return null;
+  try {
+    const parsed = JSON.parse(note);
+    return parsed?.score ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export type DailyChallengeDetails = {
   challengeId: number; // Challenge table ID for status updates

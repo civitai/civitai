@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Paper,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
@@ -35,8 +36,16 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  Currency,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import { upsertChallengeBaseSchema, type Prize } from '~/server/schema/challenge.schema';
+import { computeDynamicPool } from '~/server/games/daily-challenge/challenge-pool';
 import type { GetActiveJudgesItem } from '~/types/router';
 import { IconCheck } from '@tabler/icons-react';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -61,6 +70,14 @@ const schema = upsertChallengeBaseSchema
     prize2Buzz: z.number().min(0).default(2500),
     prize3Buzz: z.number().min(0).default(1000),
     entryPrizeBuzz: z.number().min(0).default(0),
+    prizeMode: z.nativeEnum(PrizeMode).default(PrizeMode.Fixed),
+    basePrizePool: z.number().min(0).default(2500),
+    buzzPerAction: z.number().min(0).default(1),
+    poolTrigger: z.nativeEnum(PoolTrigger).default(PoolTrigger.Entry),
+    maxPrizePool: z.number().min(0).optional().nullable(),
+    dist1: z.number().min(0).max(100).default(50),
+    dist2: z.number().min(0).max(100).default(30),
+    dist3: z.number().min(0).max(100).default(20),
   });
 
 type ChallengeForEdit = {
@@ -90,6 +107,12 @@ type ChallengeForEdit = {
   source: ChallengeSource;
   prizes: Prize[];
   entryPrize: Prize | null;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: number[] | null;
 };
 
 type Props = {
@@ -147,6 +170,14 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       prize2Buzz: existingPrizes[1]?.buzz ?? 2500,
       prize3Buzz: existingPrizes[2]?.buzz ?? 1000,
       entryPrizeBuzz: existingEntryPrize?.buzz ?? 0,
+      prizeMode: challenge?.prizeMode ?? PrizeMode.Fixed,
+      basePrizePool: challenge?.basePrizePool ?? 2500,
+      buzzPerAction: challenge?.buzzPerAction ?? 1,
+      poolTrigger: challenge?.poolTrigger || PoolTrigger.Entry,
+      maxPrizePool: challenge?.maxPrizePool ?? undefined,
+      dist1: challenge?.prizeDistribution?.[0] ?? 50,
+      dist2: challenge?.prizeDistribution?.[1] ?? 30,
+      dist3: challenge?.prizeDistribution?.[2] ?? 20,
     },
   });
 
@@ -170,20 +201,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       return;
     }
 
-    // Build prizes array
-    const prizes: Prize[] = [
-      { buzz: data.prize1Buzz, points: 150 },
-      { buzz: data.prize2Buzz, points: 100 },
-      { buzz: data.prize3Buzz, points: 50 },
-    ].filter((p) => p.buzz > 0);
-
-    const entryPrize: Prize | null =
-      data.entryPrizeBuzz > 0 ? { buzz: data.entryPrizeBuzz, points: 10 } : null;
-
-    // Calculate total prize pool
-    const totalPrizePool = prizes.reduce((sum, p) => sum + p.buzz, 0);
-
-    upsertMutation.mutate({
+    // Shared fields for both modes
+    const sharedFields = {
       id: challenge?.id,
       title: data.title,
       description: data.description || undefined,
@@ -199,7 +218,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
       entryPrizeRequirement: data.entryPrizeRequirement,
-      prizePool: totalPrizePool,
       operationBudget: data.operationBudget,
       reviewCostType: data.reviewCostType,
       reviewCost: data.reviewCost,
@@ -207,6 +225,65 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       endsAt: data.endsAt,
       visibleAt: data.visibleAt,
       source: data.source,
+    };
+
+    if (data.prizeMode === PrizeMode.Dynamic) {
+      // Validate distribution sums to 100
+      const distTotal = (data.dist1 ?? 0) + (data.dist2 ?? 0) + (data.dist3 ?? 0);
+      if (distTotal !== 100) {
+        form.setError('dist1', { message: 'Distribution must sum to 100%' });
+        return;
+      }
+      // Validate cap >= base if set
+      if (data.maxPrizePool != null && data.maxPrizePool < data.basePrizePool) {
+        form.setError('maxPrizePool', { message: 'Cap must be >= base prize pool' });
+        return;
+      }
+
+      const distribution = [data.dist1, data.dist2, data.dist3];
+      const { totalPool, prizes } = computeDynamicPool({
+        basePrizePool: data.basePrizePool,
+        buzzPerAction: 0, // At creation time, no entries yet — pool starts at base
+        actionCount: 0,
+        maxPrizePool: data.maxPrizePool ?? null,
+        prizeDistribution: distribution,
+      });
+      const entryPrize: Prize | null =
+        data.entryPrizeBuzz > 0 ? { buzz: data.entryPrizeBuzz, points: 10 } : null;
+
+      upsertMutation.mutate({
+        ...sharedFields,
+        prizeMode: data.prizeMode,
+        basePrizePool: data.basePrizePool,
+        buzzPerAction: data.buzzPerAction,
+        poolTrigger: data.poolTrigger,
+        maxPrizePool: data.maxPrizePool ?? null,
+        prizeDistribution: distribution,
+        prizePool: totalPool,
+        prizes,
+        entryPrize,
+      });
+      return;
+    }
+
+    // Fixed mode (original logic)
+    const prizes: Prize[] = [
+      { buzz: data.prize1Buzz, points: 150 },
+      { buzz: data.prize2Buzz, points: 100 },
+      { buzz: data.prize3Buzz, points: 50 },
+    ].filter((p) => p.buzz > 0);
+
+    const entryPrize: Prize | null =
+      data.entryPrizeBuzz > 0 ? { buzz: data.entryPrizeBuzz, points: 10 } : null;
+
+    const fixedPrizePool = prizes.reduce((sum, p) => sum + p.buzz, 0);
+
+    upsertMutation.mutate({
+      ...sharedFields,
+      prizeMode: PrizeMode.Fixed,
+      poolTrigger: null,
+      prizeDistribution: null,
+      prizePool: fixedPrizePool,
       prizes,
       entryPrize,
     });
@@ -216,7 +293,17 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
   // Watch prize values for total calculation
   const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
-  const totalPrizePool = (prize1 || 0) + (prize2 || 0) + (prize3 || 0);
+  const prizeMode = form.watch('prizeMode') ?? PrizeMode.Fixed;
+  const [dist1, dist2, dist3] = form.watch(['dist1', 'dist2', 'dist3']);
+  const basePrizePool = form.watch('basePrizePool') ?? 0;
+  const maxPrizePool = form.watch('maxPrizePool');
+  const totalPct = (dist1 || 0) + (dist2 || 0) + (dist3 || 0);
+  // For Dynamic mode: show max pool if set (assume we'll hit it), otherwise base
+  const dynamicDisplayPool = maxPrizePool != null && maxPrizePool > 0 ? maxPrizePool : basePrizePool;
+  const totalPrizePool =
+    prizeMode === PrizeMode.Dynamic
+      ? dynamicDisplayPool
+      : (prize1 || 0) + (prize2 || 0) + (prize3 || 0);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -358,38 +445,140 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={totalPrizePool} size="lg" />
             </Group>
 
-            <SimpleGrid cols={{ base: 1, xs: 3 }}>
-              <InputNumberWrapper
-                name="prize1Buzz"
-                label="1st Place"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                currency={Currency.BUZZ}
-                min={0}
-                step={100}
-                disabled={isTerminal}
-              />
-              <InputNumberWrapper
-                name="prize2Buzz"
-                label="2nd Place"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                currency={Currency.BUZZ}
-                min={0}
-                step={100}
-                disabled={isTerminal}
-              />
-              <InputNumberWrapper
-                name="prize3Buzz"
-                label="3rd Place"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                currency={Currency.BUZZ}
-                min={0}
-                step={100}
-                disabled={isTerminal}
-              />
-            </SimpleGrid>
+            {/* Prize Mode Toggle */}
+            <SegmentedControl
+              value={prizeMode}
+              onChange={(val) => form.setValue('prizeMode', val as PrizeMode)}
+              data={[
+                { label: 'Fixed Prizes', value: PrizeMode.Fixed },
+                { label: 'Dynamic Pool', value: PrizeMode.Dynamic },
+              ]}
+              disabled={isActive || isTerminal}
+            />
+
+            <div className={prizeMode === PrizeMode.Fixed ? '' : 'hidden'}>
+              <SimpleGrid cols={{ base: 1, xs: 3 }}>
+                <InputNumberWrapper
+                  name="prize1Buzz"
+                  label="1st Place"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isTerminal}
+                />
+                <InputNumberWrapper
+                  name="prize2Buzz"
+                  label="2nd Place"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isTerminal}
+                />
+                <InputNumberWrapper
+                  name="prize3Buzz"
+                  label="3rd Place"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isTerminal}
+                />
+              </SimpleGrid>
+            </div>
+
+            <div className={prizeMode === PrizeMode.Dynamic ? '' : 'hidden'}>
+              <Stack gap="md">
+                {/* Base Prize Pool */}
+                <InputNumberWrapper
+                  name="basePrizePool"
+                  label="Base Prize Pool"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isActive || isTerminal}
+                />
+
+                {/* Growth Rule */}
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <InputNumberWrapper
+                    name="buzzPerAction"
+                    label="Buzz Per Trigger"
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    currency={Currency.BUZZ}
+                    min={0}
+                    step={1}
+                    disabled={isActive || isTerminal}
+                  />
+                  <InputSelect
+                    name="poolTrigger"
+                    label="Growth Trigger"
+                    data={[
+                      { value: PoolTrigger.Entry, label: 'Per Entry' },
+                      { value: PoolTrigger.User, label: 'Per Unique User' },
+                    ]}
+                    disabled={isActive || isTerminal}
+                  />
+                </SimpleGrid>
+
+                {/* Pool Cap */}
+                <InputNumberWrapper
+                  name="maxPrizePool"
+                  label="Max Prize Pool (optional)"
+                  description="Leave empty for unlimited growth"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isActive || isTerminal}
+                />
+
+                {/* Distribution */}
+                <SimpleGrid cols={3}>
+                  <InputNumber
+                    name="dist1"
+                    label="1st Place %"
+                    min={0}
+                    max={100}
+                    disabled={isActive || isTerminal}
+                  />
+                  <InputNumber
+                    name="dist2"
+                    label="2nd Place %"
+                    min={0}
+                    max={100}
+                    disabled={isActive || isTerminal}
+                  />
+                  <InputNumber
+                    name="dist3"
+                    label="3rd Place %"
+                    min={0}
+                    max={100}
+                    disabled={isActive || isTerminal}
+                  />
+                </SimpleGrid>
+                <Group gap="md" wrap="wrap">
+                  <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
+                    {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
+                    {totalPct === 100 ? ' \u2713' : ' (must equal 100%)'}
+                  </Text>
+                  {totalPct === 100 && dynamicDisplayPool > 0 && (
+                    <Text size="sm" c="dimmed">
+                      1st: {Math.floor(dynamicDisplayPool * (dist1 || 0) / 100).toLocaleString()}
+                      {' / '}2nd: {Math.floor(dynamicDisplayPool * (dist2 || 0) / 100).toLocaleString()}
+                      {' / '}3rd: {Math.floor(dynamicDisplayPool * (dist3 || 0) / 100).toLocaleString()}
+                      {' buzz'}
+                    </Text>
+                  )}
+                </Group>
+              </Stack>
+            </div>
 
             <Divider />
 
+            {/* Participation Prize - both modes */}
             <InputNumberWrapper
               name="entryPrizeBuzz"
               label="Participation Prize (per valid entry)"

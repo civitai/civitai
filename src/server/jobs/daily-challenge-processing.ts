@@ -5,6 +5,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  computeDynamicPool,
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
@@ -13,7 +14,14 @@ import {
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
-import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import type {
   ChallengeConfig,
   DailyChallengeDetails,
@@ -52,6 +60,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from './job';
+import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -563,9 +572,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Get the Challenge record to check allowedNsfwLevel and judgeId
   // Fall back to PG-only (1) and default judge for old article-based challenges
   const [challengeRecord] = await dbRead.$queryRaw<
-    [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
+    [
+      | {
+          allowedNsfwLevel: number;
+          judgeId: number | null;
+          judgingPrompt: string | null;
+          prizeMode: PrizeMode;
+          basePrizePool: number;
+          buzzPerAction: number;
+          poolTrigger: PoolTrigger | null;
+          maxPrizePool: number | null;
+          prizeDistribution: number[] | null;
+        }
+      | undefined
+    ]
   >`
-    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt"
+    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
+           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -666,7 +689,11 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     where: { id: currentChallenge.challengeId },
     select: { reviewCostType: true, reviewCost: true },
   });
-  if (challenge && challenge.reviewCostType === ChallengeReviewCostType.PerEntry && challenge.reviewCost > 0) {
+  if (
+    challenge &&
+    challenge.reviewCostType === ChallengeReviewCostType.PerEntry &&
+    challenge.reviewCost > 0
+  ) {
     // Only refund per-entry purchases (notes starting with 'challenge-review-' but NOT 'challenge-review-flat-')
     const paidRejected = await dbRead.$queryRaw<
       { imageId: number; userId: number; note: string }[]
@@ -729,12 +756,16 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         const tagged = await dbWrite.$executeRaw`
           UPDATE "CollectionItem" ci
           SET "tagId" = ${config.reviewMeTagId},
-              "note" = 'challenge-review-flat-' || ${String(currentChallenge.challengeId)} || '-' || ci."imageId"
+              "note" = 'challenge-review-flat-' || ${String(
+                currentChallenge.challengeId
+              )} || '-' || ci."imageId"
           FROM "Image" i
           WHERE i.id = ci."imageId"
             AND ci."collectionId" = ${currentChallenge.collectionId}
             AND ci.status = 'ACCEPTED'
-            AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+            AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${
+          config.judgedTagId
+        }))
             AND i."userId" = ANY(ARRAY[${Prisma.join(paidUserIds)}])
         `;
         log('Auto-tagged flat-rate entries:', { users: paidUserIds.length, entries: tagged });
@@ -960,6 +991,47 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       });
       log('Users notified');
     }
+  }
+
+  // Dynamic prize pool recomputation
+  // ----------------------------------------------
+  if (
+    challengeRecord?.prizeMode === PrizeMode.Dynamic &&
+    challengeRecord.poolTrigger &&
+    challengeRecord.prizeDistribution
+  ) {
+    const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
+      SELECT
+        COUNT(*) as "entryCount",
+        COUNT(DISTINCT i."userId") as "uniqueUsers"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+    `;
+
+    const actionCount =
+      challengeRecord.poolTrigger === PoolTrigger.Entry
+        ? Number(stats.entryCount)
+        : Number(stats.uniqueUsers);
+
+    const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
+      basePrizePool: challengeRecord.basePrizePool,
+      buzzPerAction: challengeRecord.buzzPerAction,
+      actionCount,
+      maxPrizePool: challengeRecord.maxPrizePool,
+      prizeDistribution: challengeRecord.prizeDistribution,
+    });
+
+    await dbWrite.challenge.update({
+      where: { id: currentChallenge.challengeId },
+      data: {
+        prizePool: totalPool,
+        prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
   }
 
   // Update last review time in Challenge metadata
@@ -1349,15 +1421,50 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     return [];
   }
 
-  // Sort entries by AI judge score
-  const judgedEntries = userBestEntries.map(({ note, ...entry }) => {
+  // Exclude users who won a challenge within the cooldown period
+  const recentWinners = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT cw."userId"
+    FROM "ChallengeWinner" cw
+    JOIN "Challenge" c ON c.id = cw."challengeId"
+    WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
+      AND c.status = 'Completed'
+  `;
+  const recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
+
+  log('Winner cooldown filter:', {
+    total: userBestEntries.length,
+    excluded: userBestEntries.length - eligibleEntries.length,
+    eligible: eligibleEntries.length,
+    cooldown: config.winnerCooldown,
+  });
+
+  // Fetch engagement metrics from Redis for eligible entries only
+  const imageIds = eligibleEntries.map((entry) => entry.imageId);
+  const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
+
+  // Calculate engagement (sum of all metrics except Buzz)
+  const entriesWithEngagement = eligibleEntries.map((entry) => {
+    const metrics = metricsMap.get(entry.imageId);
+    const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
+    return { ...entry, engagement };
+  });
+
+  // Sort entries by (rating * 0.75) and (engagement * 0.25)
+  const maxEngagement = Math.max(...entriesWithEngagement.map((entry) => entry.engagement));
+  const minEngagement = Math.min(...entriesWithEngagement.map((entry) => entry.engagement));
+  const judgedEntries = entriesWithEngagement.map(({ note, engagement, ...entry }) => {
     const { score, summary } = JSON.parse(note);
+    // Calculate average rating
     const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
+    // Adjust engagement to be between 0 and 10
+    const engagementNormalized =
+      ((engagement - minEngagement) / Math.max(maxEngagement - minEngagement, 1)) * 10;
     return {
       ...entry,
       summary,
       score,
-      weightedRating: rating,
+      weightedRating: rating * 0.75 + engagementNormalized * 0.25,
     };
   });
   judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);

@@ -342,6 +342,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
       width: f.width,
       height: f.height,
       mimeType: f.mimeType,
+      meta: f.meta,
     }));
 
     const data = { collectionId, images };
