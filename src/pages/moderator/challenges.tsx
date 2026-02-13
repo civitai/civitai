@@ -30,6 +30,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useRouter } from 'next/router';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -158,13 +159,26 @@ function SystemSettingsPopover() {
 }
 
 export default function ModeratorChallengesPage() {
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
-  const [query, setQuery] = useState('');
+
+  // Read filter state from URL query params (persists across refreshes)
+  const status = (router.query.status as string) || 'all';
+  const source = (router.query.source as string) || 'all';
+  const [query, setQuery] = useState((router.query.q as string) || '');
   const [debouncedQuery] = useDebouncedValue(query, 500);
-  const [status, setStatus] = useState<string>('all');
-  const [source, setSource] = useState<string>('all');
+
+  const setStatus = (value: string) => {
+    const newQuery = { ...router.query, status: value === 'all' ? undefined : value };
+    router.replace({ pathname: router.pathname, query: newQuery }, undefined, { shallow: true });
+  };
+
+  const setSource = (value: string) => {
+    const newQuery = { ...router.query, source: value === 'all' ? undefined : value };
+    router.replace({ pathname: router.pathname, query: newQuery }, undefined, { shallow: true });
+  };
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.challenge.getModeratorList.useInfiniteQuery(
@@ -221,8 +235,7 @@ export default function ModeratorChallengesPage() {
 
   const handleClearFilters = () => {
     setQuery('');
-    setStatus('all');
-    setSource('all');
+    router.replace({ pathname: router.pathname }, undefined, { shallow: true });
   };
 
   const handleEndAndPickWinners = (challengeId: number, title: string) => {
