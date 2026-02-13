@@ -235,7 +235,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu],
+    ecosystemIds: [ECO.Vidu, ECO.Veo3],
   },
 
   // ===========================================================================

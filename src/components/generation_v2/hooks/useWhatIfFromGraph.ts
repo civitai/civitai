@@ -12,9 +12,9 @@
 import { isEqual, omit } from 'lodash-es';
 import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { NodeError } from '~/libs/data-graph/data-graph';
 import { useGraph } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
@@ -36,37 +36,15 @@ const IGNORED_KEYS_FOR_WHATIF = ['negativePrompt', 'seed', 'denoise'] as const;
 // =============================================================================
 
 /**
- * Get a user-friendly message explaining why generation cannot proceed.
- * Returns null if all requirements are met.
+ * Get a user-friendly message from validation errors explaining why generation cannot proceed.
+ * Returns null if there are no errors.
  */
-export function getMissingFieldMessage(
-  snapshot: Record<string, unknown> | null,
-  workflowId?: string
-): string | null {
-  if (!snapshot) return 'Loading...';
+export function getMissingFieldMessage(errors: Record<string, NodeError> | null): string | null {
+  if (!errors) return null;
 
-  const workflow = (snapshot.workflow as string | undefined) ?? workflowId;
-  if (!workflow) return 'Select a workflow to continue';
-
-  const input = (snapshot.input as string | undefined) ?? 'text';
-
-  // Check for missing media
-  if (input === 'image') {
-    const images = snapshot.images as unknown[] | undefined;
-    if (!images || images.length === 0) {
-      return 'Upload an image to continue';
-    }
-  }
-  if (input === 'video') {
-    if (!snapshot.video) {
-      return 'Upload a video to continue';
-    }
-  }
-
-  // Check for missing ecosystem (for non-standalone workflows)
-  const config = workflowConfigByKey.get(workflow);
-  if (config && config.ecosystemIds.length > 0 && !snapshot.ecosystem) {
-    return 'Select a model to continue';
+  // Return the first error message found (errors are in graph node order)
+  for (const error of Object.values(errors)) {
+    if (error.message) return error.message;
   }
 
   return null;
@@ -128,51 +106,27 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     }
   }, [promptFocused, snapshot?.prompt]);
 
-  // Partial validation: get as much validated data as possible, omitting failed nodes.
-  // The backend provides defaults for missing fields (e.g. prompt) via applyWhatIfDefaults.
-  const partialResult = useMemo(
-    () => (snapshot ? graph.validatePartial() : null),
-    [snapshot, graph]
-  );
+  // Validate snapshot with a placeholder prompt for cost estimation.
+  // The prompt value affects SFW/NSFW classification and pricing, but we don't want
+  // to block cost estimation when the user hasn't typed a prompt yet.
+  const validationResult = useMemo(() => {
+    if (!snapshot) return null;
+    return graph.validate({
+      ...snapshot,
+      prompt: (snapshot.prompt as string) || 'cost estimation',
+    });
+  }, [snapshot, graph]);
 
-  // Lighter check for cost estimation: only require cost-affecting fields.
-  // The backend fills in placeholders for non-cost-affecting fields like prompt
-  // via applyWhatIfDefaults, but source media (images/video) must be present
-  // when required because dimensions affect cost calculation.
-  const canEstimateCost = useMemo(() => {
-    if (!snapshot) return false;
+  console.log({ validationResult, snapshot });
 
-    const workflow = snapshot.workflow as string | undefined;
-    if (!workflow) return false;
+  const canEstimateCost = validationResult?.success ?? false;
 
-    const input = (snapshot.input as string | undefined) ?? 'text';
-
-    // Check if required media is present based on workflow's input type
-    if (input === 'image') {
-      const images = snapshot.images as unknown[] | undefined;
-      if (!images || images.length === 0) return false; // Can't estimate without images
-    }
-    if (input === 'video') {
-      if (!snapshot.video) return false; // Can't estimate without video
-    }
-
-    // Standalone workflows (upscale, remove-bg, vid2vid) have no ecosystem requirement
-    const config = workflowConfigByKey.get(workflow);
-    if (!config || config.ecosystemIds.length === 0) return true;
-
-    // Ecosystem workflows need ecosystem to determine pricing
-    if (!snapshot.ecosystem) return false;
-
-    return true;
-  }, [snapshot]);
-
-  // Build the query payload from partially validated data.
-  // Uses validatePartial() to get output-schema-filtered values for nodes that pass,
-  // omitting nodes that fail (e.g. prompt). The backend fills in defaults for omitted fields.
+  // Build the query payload from validated data.
+  // When prompt is focused, use the last committed value to avoid race conditions with submit.
   const queryPayload = useMemo(() => {
-    if (!snapshot || !canEstimateCost || !partialResult) return null;
+    if (!validationResult?.success) return null;
 
-    const outputSnapshot = partialResult.data as Record<string, unknown>;
+    const outputSnapshot = validationResult.data as Record<string, unknown>;
 
     // When focused, use committed prompt value to avoid race conditions with submit
     // When not focused, use current snapshot value directly (effect updates ref for next focus)
@@ -182,15 +136,19 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     return filterSnapshotForSubmit(snapshotForQuery, {
       computedKeys: graph.getComputedKeys(),
     });
-  }, [snapshot, canEstimateCost, partialResult, graph, promptFocused]);
+  }, [validationResult, graph, promptFocused]);
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
     enabled: enabled && !!currentUser && !!queryPayload && !resourcesLoading,
   });
 
+  const validationErrors =
+    validationResult && !validationResult.success ? validationResult.errors : null;
+
   return {
     ...queryResult,
     isLoading: queryResult.isFetching,
-    canEstimateCost, // Expose validation state for UI
+    canEstimateCost,
+    validationErrors,
   };
 }

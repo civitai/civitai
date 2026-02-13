@@ -709,13 +709,6 @@ export async function generateFromGraph({
 // What-If Defaults
 // =============================================================================
 
-/** Placeholder image for cost estimation when source image doesn't affect cost */
-const WHATIF_PLACEHOLDER_IMAGE = {
-  url: 'https://placeholder.test/whatif.png',
-  width: 512,
-  height: 512,
-};
-
 /**
  * Applies placeholder defaults for non-cost-affecting fields in what-if requests.
  * This allows cost estimation before the user fills in all required fields
@@ -734,25 +727,6 @@ function applyWhatIfDefaults(input: Record<string, unknown>): Record<string, unk
   if (!workflow) return result;
 
   result.prompt = 'cost estimation';
-
-  // const inputType = getInputTypeForWorkflow(workflow);
-
-  // // Fill prompt for text-input workflows (prompt text doesn't affect cost)
-  // if (inputType === 'text' && !result.prompt) {
-  //   result.prompt = 'cost estimation';
-  // }
-
-  // // Fill images for ecosystem image-input workflows
-  // // Standalone enhancements (ecosystemIds: []) need actual dimensions, so skip those
-  // if (inputType === 'image') {
-  //   const images = result.images as unknown[] | undefined;
-  //   if (!images || images.length === 0) {
-  //     const config = workflowConfigByKey.get(workflow);
-  //     if (config && config.ecosystemIds.length > 0) {
-  //       result.images = [WHATIF_PLACEHOLDER_IMAGE];
-  //     }
-  //   }
-  // }
 
   // Video-input workflows (vid2vid:*) are standalone and need actual video metadata
   // for cost calculation (dimensions * scaleFactor, fps * interpolationFactor), so no defaults

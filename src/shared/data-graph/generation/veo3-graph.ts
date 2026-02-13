@@ -111,13 +111,18 @@ const veo3WorkflowVersions = {
  * - img2vid: Aspect ratio derived from source image, img2vid model versions
  */
 export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
-  // Images node - shown for img2vid, hidden for txt2vid
+  // Images node - shown for img2vid/ref2vid, hidden for txt2vid
   .node(
     'images',
-    (ctx) => ({
-      ...imagesNode(),
-      when: !ctx.workflow.startsWith('txt'),
-    }),
+    (ctx) => {
+      if (ctx.workflow === 'img2vid:ref2vid') {
+        return { ...imagesNode({ max: 7 }), when: true };
+      }
+      if (ctx.workflow === 'img2vid') {
+        return { ...imagesNode(), when: true };
+      }
+      return { ...imagesNode(), when: false };
+    },
     ['workflow']
   )
 
@@ -145,12 +150,12 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
   // Negative prompt node
   .node('negativePrompt', negativePromptNode())
 
-  // Aspect ratio node - only for txt2vid workflow
+  // Aspect ratio node - for txt2vid and ref2vid workflows (img2vid derives from source image)
   .node(
     'aspectRatio',
     (ctx) => ({
       ...aspectRatioNode({ options: veo3AspectRatios, defaultValue: '16:9' }),
-      when: ctx.workflow === 'txt2vid',
+      when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
     }),
     ['workflow']
   )

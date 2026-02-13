@@ -52,7 +52,7 @@ interface GraphActions<Ctx> {
 }
 
 /** Validation error from Zod */
-interface NodeError {
+export interface NodeError {
   message: string;
   code: string;
   path?: (string | number)[];
@@ -493,13 +493,6 @@ export class DataGraph<
   /** Cached full output snapshot for getOutputSnapshot() - invalidated on changes */
   private _outputSnapshot: Ctx | null = null;
 
-  /**
-   * Output cache: stores values parsed through output schemas.
-   * Key → { source: original value reference, filtered: parsed output }
-   * Used to avoid re-parsing output schemas on every getOutputValue/validate call.
-   */
-  private outputCache = new Map<string, { source: unknown; filtered: unknown }>();
-
   /** Meta keys for tracking meta changes */
   private nodeMetaKeys = new Map<string, number>();
 
@@ -570,40 +563,43 @@ export class DataGraph<
   }
 
   /**
-   * Validate current graph state against output schemas.
+   * Validate against output schemas.
    *
-   * This method validates the current internal state of an initialized graph.
-   * It updates `nodeErrors` and returns a ValidationResult.
-   *
-   * For non-mutating validation of arbitrary data, use `safeParse()` instead.
-   *
-   * @param options.notifyWatchers - Whether to notify watchers of changes (default: true)
-   * @returns ValidationResult with either validated data or errors
+   * Two modes:
+   * 1. `validate()` — validates internal graph state, updates nodeErrors, notifies watchers
+   * 2. `validate(data)` — validates external data against the graph's output schemas
+   *    without touching internal state. Useful for cost estimation where you want
+   *    to inject defaults (e.g. a placeholder prompt) without mutating the graph.
    *
    * @example
    * ```typescript
-   * // Validate current state (for React forms)
+   * // Validate internal state (updates nodeErrors, notifies watchers)
    * const result = graph.validate();
    *
-   * // Validate without saving state (useful for client-side cost estimation)
-   * const result = graph.validate({ saveState: false });
-   *
-   * // Non-mutating validation of arbitrary data (use safeParse)
-   * const result = templateGraph.safeParse(userInput, { session });
+   * // Validate external data with overrides
+   * const snapshot = graph.getSnapshot();
+   * const result = graph.validate({ ...snapshot, prompt: snapshot.prompt ?? 'default' });
    * ```
    */
-  validate(options: { saveState?: boolean } = {}): ValidationResult<Ctx> {
-    const { saveState = true } = options;
+  validate(data: Record<string, unknown>): ValidationResult<Ctx>;
+  validate(): ValidationResult<Ctx>;
+  validate(data?: Record<string, unknown>): ValidationResult<Ctx> {
     const root = this.rootGraph;
+    const { errors, data: validated } = root._validate(data);
 
-    const { errors, changed } = root._validate(saveState);
-
-    if (saveState) {
+    // Save error state and update ctx when validating internal data
+    if (!data) {
+      // Write output-parsed values back to ctx
+      for (const [key, value] of Object.entries(validated)) {
+        if (!errors.has(key) && !root.computedNodes.has(key)) {
+          (root._ctx as Record<string, unknown>)[key] = value;
+        }
+      }
+      const changed = root._saveErrors(errors);
       this._notifyChanges(changed);
-      return this._buildValidationResult();
     }
 
-    return root._buildValidationResult(errors);
+    return root._buildValidationResult(errors, validated as Ctx);
   }
 
   /**
@@ -616,23 +612,12 @@ export class DataGraph<
    */
   validatePartial(): PartialValidationResult<Ctx> {
     const root = this.rootGraph;
-    const { errors } = root._validate(false);
+    const { errors, data: validated } = root._validate();
 
-    // Build partial data with output-filtered values, excluding failed nodes
-    const data: Record<string, unknown> = {};
-    for (const entry of root.activeEntries) {
-      if (entry.kind === 'computed') {
-        if (entry.key in root._ctx) {
-          data[entry.key] = root._ctx[entry.key as keyof typeof root._ctx];
-        }
-        continue;
-      }
-      if (entry.kind !== 'node') continue;
-      if (!(entry.key in root._ctx)) continue;
-      if (errors.has(entry.key)) continue;
-
-      // Use output-filtered value (cached from _validate)
-      data[entry.key] = this.getOutputValue(entry.key as keyof Ctx & string);
+    // Build partial data excluding failed nodes
+    const partial: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(validated)) {
+      if (!errors.has(key)) partial[key] = value;
     }
 
     const errorsObj: Record<string, NodeError> = {};
@@ -640,19 +625,23 @@ export class DataGraph<
       errorsObj[key] = error;
     }
 
-    return { data: data as Partial<Ctx>, errors: errorsObj };
+    return { data: partial as Partial<Ctx>, errors: errorsObj };
   }
 
   /** Build a ValidationResult from an error map (defaults to nodeErrors) */
-  private _buildValidationResult(errorMap?: Map<string, NodeError>): ValidationResult<Ctx> {
+  private _buildValidationResult(
+    errorMap?: Map<string, NodeError>,
+    data?: Ctx
+  ): ValidationResult<Ctx> {
     const errors$ = errorMap ?? this.nodeErrors;
+    const source = data ?? this._ctx;
 
     const errors: Record<string, NodeError> = {};
     const nodes: Record<string, NodeEntry> = {};
 
     for (const entry of this.activeEntries) {
       if (entry.kind === 'node') {
-        if (!(entry.key in this._ctx)) continue;
+        if (!(entry.key in source)) continue;
 
         const error = errors$.get(entry.key);
         if (error) {
@@ -665,74 +654,72 @@ export class DataGraph<
     }
 
     if (Object.keys(errors).length === 0) {
-      return { success: true, data: this._ctx, nodes };
+      return { success: true, data: source, nodes };
     }
 
     return { success: false, errors };
   }
 
   /**
-   * Validate all nodes against output schemas.
-   * If saveState=true, updates nodeErrors and strips extra fields from ctx.
-   * Returns errors map and set of keys where error state changed.
-   * Uses output cache to skip re-parsing nodes that already validated successfully.
+   * Validate all active nodes by parsing values through their output schemas.
+   * Returns errors and the validated data (with output-schema-parsed values).
    */
-  private _validate(saveState = true): { errors: Map<string, NodeError>; changed: Set<string> } {
+  private _validate(source?: Record<string, unknown>): {
+    errors: Map<string, NodeError>;
+    data: Record<string, unknown>;
+  } {
+    const ctx = source ?? (this._ctx as Record<string, unknown>);
     const errors = new Map<string, NodeError>();
-    const changed = new Set<string>();
+    const data: Record<string, unknown> = {};
 
+    for (const entry of this.activeEntries) {
+      if (entry.kind === 'computed') {
+        if (entry.key in ctx) data[entry.key] = ctx[entry.key];
+        continue;
+      }
+      if (entry.kind !== 'node') continue;
+      if (!(entry.key in ctx)) continue;
+
+      const def = this.nodeDefs.get(entry.key);
+      if (!def?.output) {
+        data[entry.key] = ctx[entry.key];
+        continue;
+      }
+
+      const result = def.output.safeParse(ctx[entry.key]);
+      data[entry.key] = result.success ? result.data : ctx[entry.key];
+
+      if (!result.success) {
+        const issue = result.error.issues[0];
+        errors.set(entry.key, {
+          message: issue?.message ?? 'Validation failed',
+          code: issue?.code ?? 'unknown',
+        });
+      }
+    }
+
+    return { errors, data };
+  }
+
+  /** Save validation errors to nodeErrors state. Returns keys where error state changed. */
+  private _saveErrors(errors: Map<string, NodeError>): Set<string> {
+    const changed = new Set<string>();
     for (const entry of this.activeEntries) {
       if (entry.kind !== 'node') continue;
       if (!(entry.key in this._ctx)) continue;
 
-      const def = this.nodeDefs.get(entry.key);
-      if (!def) continue;
-
-      const currentValue = this._ctx[entry.key as keyof Ctx];
+      const error = errors.get(entry.key);
       const hadError = this.nodeErrors.has(entry.key);
 
-      // Check if we have a cached output for this value
-      const cached = this.outputCache.get(entry.key);
-      if (cached && Object.is(cached.source, currentValue)) {
-        // Cache hit - node already validated successfully
-        if (saveState) {
-          (this._ctx as Record<string, unknown>)[entry.key] = cached.filtered;
-          if (hadError) {
-            this.nodeErrors.delete(entry.key);
-            changed.add(entry.key);
-          }
-        }
-        continue;
-      }
-
-      // Cache miss - parse through output schema
-      const result = def.output.safeParse(currentValue);
-
-      if (!result.success) {
-        const issue = result.error.issues[0];
-        const error = {
-          message: issue?.message ?? 'Validation failed',
-          code: issue?.code ?? 'unknown',
-        };
-        errors.set(entry.key, error);
-        if (saveState) {
-          this.nodeErrors.set(entry.key, error);
-          if (!hadError) changed.add(entry.key);
-        }
-      } else {
-        // Cache the successful parse result
-        this.outputCache.set(entry.key, { source: currentValue, filtered: result.data });
-        if (saveState) {
-          (this._ctx as Record<string, unknown>)[entry.key] = result.data;
-          if (hadError) {
-            this.nodeErrors.delete(entry.key);
-            changed.add(entry.key);
-          }
-        }
+      if (error) {
+        this.nodeErrors.set(entry.key, error);
+        if (!hadError) changed.add(entry.key);
+      } else if (hadError) {
+        this.nodeErrors.delete(entry.key);
+        changed.add(entry.key);
       }
     }
-
-    return { errors, changed };
+    return changed;
   }
 
   /** Update meta for all active nodes and notify watchers. */
@@ -784,8 +771,8 @@ export class DataGraph<
     clone._setup(externalCtx);
     clone._evaluate(input);
 
-    const { errors } = clone._validate(false);
-    return clone._buildValidationResult(errors);
+    const { errors, data } = clone._validate();
+    return clone._buildValidationResult(errors, data as Ctx);
   }
 
   private watchNode(key: string, callback: NodeCallback): () => void {
@@ -895,60 +882,18 @@ export class DataGraph<
   }
 
   /**
-   * Get a node's value parsed through its output schema.
-   * Returns cached value if the source hasn't changed, otherwise parses and caches.
-   * If parsing fails (validation error), returns the original value.
-   */
-  getOutputValue<K extends keyof Ctx & string>(key: K): Ctx[K] {
-    const root = this.rootGraph;
-    const currentValue = (root._ctx as Ctx)[key];
-    const cached = root.outputCache.get(key);
-
-    // Return cached if source unchanged
-    if (cached && Object.is(cached.source, currentValue)) {
-      return cached.filtered as Ctx[K];
-    }
-
-    // Cache miss - parse through output schema
-    const def = root.nodeDefs.get(key);
-    if (!def?.output) return currentValue;
-
-    const result = def.output.safeParse(currentValue);
-    if (result.success) {
-      root.outputCache.set(key, { source: currentValue, filtered: result.data });
-      return result.data as Ctx[K];
-    }
-
-    // Validation failed - return original (let validate() handle errors)
-    return currentValue;
-  }
-
-  /**
    * Get a snapshot with all values parsed through their output schemas.
    * Useful for sending minimal, schema-conforming data to the server.
-   * Uses cached output values to avoid redundant parsing.
    */
   getOutputSnapshot(): Ctx {
     const root = this.rootGraph;
 
-    // Return cached if available
     if (root._outputSnapshot !== null) {
       return root._outputSnapshot;
     }
 
-    // Build output snapshot by getting output values for all keys
-    const snapshot = { ...root._ctx } as Record<string, unknown>;
-    for (const key of Object.keys(snapshot)) {
-      // Skip computed nodes - they don't have output schemas
-      if (root.computedNodes.has(key)) continue;
-
-      const def = root.nodeDefs.get(key);
-      if (def?.output) {
-        snapshot[key] = this.getOutputValue(key as keyof Ctx & string);
-      }
-    }
-
-    root._outputSnapshot = snapshot as Ctx;
+    const { data } = root._validate();
+    root._outputSnapshot = data as Ctx;
     return root._outputSnapshot;
   }
 
@@ -2048,8 +1993,6 @@ export class DataGraph<
       this._outputSnapshot = null;
     }
     for (const key of changed) {
-      // Invalidate output cache for this specific key
-      this.outputCache.delete(key);
       this.notifyNodeWatchers(key);
     }
     for (const callback of this.globalWatchers) {
@@ -2110,6 +2053,5 @@ export type {
   GroupedBranchesArray,
   InferOutput,
   AnyZodSchema,
-  NodeError,
   GraphActions,
 };

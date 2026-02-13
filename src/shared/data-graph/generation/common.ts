@@ -108,7 +108,7 @@ export function aspectRatioNode({
  * No meta - all props (label, placeholder, etc.) are static.
  */
 export function promptNode({ required }: { required?: boolean } = {}) {
-  let output = z.string().trim().max(1500, 'Prompt is too long');
+  let output = z.string().trim().max(10000, 'Prompt is too long');
   if (required) output = output.nonempty('Prompt is required');
   return {
     input: z.string().optional(),
@@ -952,7 +952,9 @@ export function imagesNode({ min = 1, max = 1, slots, modes }: ImagesNodeConfig 
       .array()
       .min(
         effectiveMin,
-        `At least ${effectiveMin} image${effectiveMin > 1 ? 's are' : ' is'} required`
+        effectiveMax === 1
+          ? 'An image is required'
+          : `At least ${effectiveMin} image${effectiveMin > 1 ? 's are' : ' is'} required`
       )
       .max(effectiveMax, `Maximum ${effectiveMax} image${effectiveMax > 1 ? 's' : ''} allowed`),
     defaultValue: [],
@@ -1056,7 +1058,10 @@ const videoValueSchema = z.object({
 export function videoNode() {
   return {
     input: z.union([z.string().transform((url) => ({ url })), videoValueSchema]).optional(),
-    output: videoValueSchema,
+    output: z.object(
+      { url: z.string(), metadata: videoMetadataSchema.optional() },
+      { message: 'A video is required' }
+    ),
     defaultValue: undefined,
   };
 }

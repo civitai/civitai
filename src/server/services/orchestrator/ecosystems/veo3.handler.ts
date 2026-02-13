@@ -30,7 +30,9 @@ const versionIdToMode = new Map<number, Veo3Mode>([
  * Supports txt2vid and img2vid with model versions, duration, audio generation, and LoRAs.
  */
 export const createVeo3Input = defineHandler<Veo3Ctx, Veo3VideoGenInput>((data, ctx) => {
-  const hasImages = !!data.images?.length;
+  const images = data.images;
+  const isRef2Vid = data.workflow === 'img2vid:ref2vid';
+  const hasImages = !!images?.length;
 
   // Determine mode from model version
   let mode: Veo3Mode = 'fast';
@@ -50,16 +52,26 @@ export const createVeo3Input = defineHandler<Veo3Ctx, Veo3VideoGenInput>((data, 
     }
   }
 
+  // For ref2vid: generate placeholder prompt if user didn't provide one
+  const prompt =
+    isRef2Vid && !data.prompt.length && hasImages
+      ? images!.map((_, index) => `[@image${index + 1}]`).join()
+      : data.prompt;
+
+  // ref2vid: all images go to `images` array; img2vid: first image only
+  const refImages = isRef2Vid && hasImages ? images!.map((x) => x.url) : undefined;
+  const sourceImages = !isRef2Vid && hasImages ? images!.map((x) => x.url) : undefined;
+
   return removeEmpty({
     engine: 'veo3',
     mode,
-    prompt: data.prompt,
+    prompt,
     negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
     aspectRatio: data.aspectRatio?.value as Veo3VideoGenInput['aspectRatio'],
     duration: 'duration' in data ? data.duration : undefined,
     version: 'version' in data ? data.version : undefined,
     generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
-    images: hasImages ? data.images?.map((x) => x.url) : undefined,
+    images: refImages ?? sourceImages,
     quantity: data.quantity ?? 1,
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,

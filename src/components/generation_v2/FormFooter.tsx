@@ -235,13 +235,10 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const invalidateWhatIf = useInvalidateWhatIf();
 
   // Get validation state from whatIf context
-  const { canEstimateCost } = useWhatIfContext();
+  const { canEstimateCost, validationErrors } = useWhatIfContext();
 
   // Get user-friendly message if required fields are missing
-  const snapshot = graph.getSnapshot() as Record<string, unknown> & { workflow?: string };
-  const missingFieldMessage = !canEstimateCost
-    ? getMissingFieldMessage(snapshot, snapshot.workflow)
-    : null;
+  const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
