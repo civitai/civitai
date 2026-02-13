@@ -58,6 +58,7 @@ export const constants = {
     'VAE',
     'Config',
     'Archive',
+    'Secondary Model',
   ],
   trainingMediaTypes: ['image', 'video'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],

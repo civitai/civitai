@@ -483,7 +483,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       '.yml',
       '.onnx',
     ],
-    acceptedModelFiles: ['Model', 'Config', 'Training Data'],
+    acceptedModelFiles: ['Model', 'Config', 'Training Data', 'Secondary Model'],
     maxFiles: 11,
   },
   MotionModule: {
@@ -503,7 +503,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       '.yaml',
       '.yml',
     ],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data', 'Secondary Model'],
     maxFiles: 4,
   },
   DoRA: {
@@ -518,7 +518,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       '.yaml',
       '.yml',
     ],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data', 'Secondary Model'],
     maxFiles: 4,
   },
   LoCon: {
@@ -533,7 +533,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       '.yaml',
       '.yml',
     ],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data', 'Secondary Model'],
     maxFiles: 4,
   },
   Detection: {

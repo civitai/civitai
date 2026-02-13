@@ -436,9 +436,9 @@ function FileEditForm({
     switch (extension) {
       case 'ckpt':
       case 'safetensors':
-        return ['Model', 'Negative', 'VAE'].includes(value);
+        return ['Model', 'Negative', 'VAE', 'Secondary Model'].includes(value);
       case 'pt':
-        return ['Model', 'Negative', 'VAE'].includes(value);
+        return ['Model', 'Negative', 'VAE', 'Secondary Model'].includes(value);
       case 'zip':
         return ['Training Data', 'Archive', 'Model'].includes(value);
       case 'yml':
