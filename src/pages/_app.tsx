@@ -53,7 +53,7 @@ import { PaddleProvider } from '~/providers/PaddleProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync, serverDomainMap } from '~/server/services/feature-flags.service';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
@@ -281,7 +281,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     return data;
   });
   // Pass this via the request so we can use it in SSR
-  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
+  const flags = await getFeatureFlagsAsync({ user: session?.user, host: request?.headers.host, req: request });
 
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
