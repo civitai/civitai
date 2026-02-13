@@ -1,6 +1,13 @@
 import * as z from 'zod';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { ChallengeSource, ChallengeStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  MetricTimeframe,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
@@ -34,6 +41,14 @@ export const prizeSchema = z.object({
   points: z.number(),
 });
 export type Prize = z.infer<typeof prizeSchema>;
+
+export const prizeDistributionSchema = z
+  .array(z.number().min(0).max(100))
+  .length(3)
+  .refine((arr) => arr.reduce((a, b) => a + b, 0) === 100, {
+    message: 'Distribution must sum to 100%',
+  })
+  .default([50, 30, 20]);
 
 // Types for challenge data
 export type ChallengeListItem = {
@@ -119,7 +134,15 @@ export type ChallengeDetail = {
   entryPrize: Prize | null;
   entryPrizeRequirement: number;
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: number[] | null;
   operationBudget: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   entryCount: number;
   commentCount: number;
   createdBy: {
@@ -157,6 +180,8 @@ export type ModeratorChallengeListItem = {
   status: ChallengeStatus;
   source: ChallengeSource;
   prizePool: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   entryCount: number;
   collectionId: number;
   createdById: number;
@@ -173,6 +198,15 @@ export type UpcomingTheme = {
 // Composite cursor for stable pagination across all sort types
 // Format: "sortValue:id" where sortValue depends on sort type
 export const challengeCursorSchema = z.string().optional();
+
+// Participation filter for user-centric challenge filtering
+export const ChallengeParticipation = {
+  Entered: 'entered',
+  NotEntered: 'not_entered',
+  Won: 'won',
+} as const;
+export type ChallengeParticipation =
+  (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
 
 // Query schema for infinite challenge list
 export type GetInfiniteChallengesInput = z.infer<typeof getInfiniteChallengesSchema>;
@@ -194,6 +228,9 @@ export const getInfiniteChallengesSchema = z.object({
     .default(ChallengeSort.Newest),
   userId: z.number().optional(),
   modelVersionId: z.number().optional(),
+  participation: z
+    .enum([ChallengeParticipation.Entered, ChallengeParticipation.NotEntered, ChallengeParticipation.Won])
+    .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
   browsingLevel: z.number().optional(),
@@ -248,6 +285,14 @@ export const upsertChallengeBaseSchema = z.object({
   entryPrizeRequirement: z.number().min(1).max(100).default(10),
   prizePool: z.number().min(0).default(0),
   operationBudget: z.number().min(0).default(0),
+  prizeMode: z.nativeEnum(PrizeMode).default(PrizeMode.Fixed),
+  basePrizePool: z.number().min(0).default(0),
+  buzzPerAction: z.number().min(0).default(0),
+  poolTrigger: z.nativeEnum(PoolTrigger).optional().nullable(),
+  maxPrizePool: z.number().min(0).optional().nullable(),
+  prizeDistribution: prizeDistributionSchema.optional().nullable(),
+  reviewCostType: z.enum(ChallengeReviewCostType).default(ChallengeReviewCostType.None),
+  reviewCost: z.number().min(0).default(0),
   startsAt: z.date(),
   endsAt: z.date(),
   visibleAt: z.date(),
@@ -298,6 +343,33 @@ export const updateChallengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
 });
 export type UpdateChallengeConfigInput = z.infer<typeof updateChallengeConfigSchema>;
+
+// --- Paid Review ---
+
+// Request paid review for entries
+export type RequestReviewInput = z.infer<typeof requestReviewSchema>;
+export const requestReviewSchema = z.object({
+  challengeId: z.number(),
+  imageIds: z.array(z.number()).min(1).max(20).optional(),
+});
+
+// Get user's unjudged entries for a challenge
+export type GetUserUnjudgedEntriesInput = z.infer<typeof getUserUnjudgedEntriesSchema>;
+export const getUserUnjudgedEntriesSchema = z.object({
+  challengeId: z.number(),
+});
+
+export type UserChallengeEntry = {
+  imageId: number;
+  url: string;
+  tagId: number | null;
+  reviewStatus: 'pending' | 'queued' | 'reviewed';
+};
+
+export type UserChallengeEntriesResult = {
+  entries: UserChallengeEntry[];
+  hasFlatRatePurchase: boolean;
+};
 
 // --- Challenge Events ---
 

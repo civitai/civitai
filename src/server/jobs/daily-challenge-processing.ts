@@ -5,6 +5,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  computeDynamicPool,
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
@@ -14,7 +15,13 @@ import {
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import type {
   ChallengeConfig,
   DailyChallengeDetails,
@@ -38,8 +45,10 @@ import {
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
@@ -51,6 +60,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from './job';
+import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -562,9 +572,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Get the Challenge record to check allowedNsfwLevel and judgeId
   // Fall back to PG-only (1) and default judge for old article-based challenges
   const [challengeRecord] = await dbRead.$queryRaw<
-    [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
+    [
+      | {
+          allowedNsfwLevel: number;
+          judgeId: number | null;
+          judgingPrompt: string | null;
+          prizeMode: PrizeMode;
+          basePrizePool: number;
+          buzzPerAction: number;
+          poolTrigger: PoolTrigger | null;
+          maxPrizePool: number | null;
+          prizeDistribution: number[] | null;
+        }
+      | undefined
+    ]
   >`
-    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt"
+    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
+           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -659,12 +683,95 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   });
   await limitConcurrency(notificationTasks, 3);
 
+  // Refund buzz for rejected entries that paid for per-entry guaranteed review.
+  // Flat-rate purchases are NOT refunded (you pay for all entries regardless of outcome).
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: currentChallenge.challengeId },
+    select: { reviewCostType: true, reviewCost: true },
+  });
+  if (
+    challenge &&
+    challenge.reviewCostType === ChallengeReviewCostType.PerEntry &&
+    challenge.reviewCost > 0
+  ) {
+    // Only refund per-entry purchases (notes starting with 'challenge-review-' but NOT 'challenge-review-flat-')
+    const paidRejected = await dbRead.$queryRaw<
+      { imageId: number; userId: number; note: string }[]
+    >`
+      SELECT ci."imageId", i."userId", ci.note
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'REJECTED'
+        AND ci.note LIKE 'challenge-review-%'
+        AND ci.note NOT LIKE 'challenge-review-flat-%'
+    `;
+    if (paidRejected.length > 0) {
+      log('Refunding rejected paid entries:', paidRejected.length);
+      await createBuzzTransactionMany(
+        paidRejected.map((e) => ({
+          fromAccountId: 0,
+          toAccountId: e.userId,
+          type: TransactionType.Refund,
+          amount: challenge.reviewCost,
+          description: `Challenge review refund: entry ${e.imageId}`,
+          externalTransactionId: `challenge-review-refund-${currentChallenge.challengeId}-${e.imageId}`,
+        }))
+      );
+    }
+  }
+
   // Remove rejected entries from collection
   await dbWrite.$executeRaw`
     DELETE FROM "CollectionItem"
     WHERE "collectionId" = ${currentChallenge.collectionId}
     AND status = 'REJECTED';
   `;
+
+  // Auto-tag entries from users who paid flat-rate review
+  // Check for ACCEPTED entries without reviewMeTagId or judgedTagId, then verify
+  // the user's flat-rate transaction exists via deterministic externalTransactionId
+  if (challenge && challenge.reviewCostType === ChallengeReviewCostType.Flat) {
+    const untaggedUsers = await dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT i."userId"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+        AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+    `;
+
+    if (untaggedUsers.length > 0) {
+      const paidUserIds: number[] = [];
+      await limitConcurrency(
+        untaggedUsers.map(({ userId }) => async () => {
+          const txId = `challenge-review-flat-${currentChallenge.challengeId}-${userId}`;
+          const tx = await getTransactionByExternalId(txId);
+          if (tx) paidUserIds.push(userId);
+        }),
+        5
+      );
+
+      if (paidUserIds.length > 0) {
+        const tagged = await dbWrite.$executeRaw`
+          UPDATE "CollectionItem" ci
+          SET "tagId" = ${config.reviewMeTagId},
+              "note" = 'challenge-review-flat-' || ${String(
+                currentChallenge.challengeId
+              )} || '-' || ci."imageId"
+          FROM "Image" i
+          WHERE i.id = ci."imageId"
+            AND ci."collectionId" = ${currentChallenge.collectionId}
+            AND ci.status = 'ACCEPTED'
+            AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${
+          config.judgedTagId
+        }))
+            AND i."userId" = ANY(ARRAY[${Prisma.join(paidUserIds)}])
+        `;
+        log('Auto-tagged flat-rate entries:', { users: paidUserIds.length, entries: tagged });
+      }
+    }
+  }
 
   // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
 
@@ -756,13 +863,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci."tagId" = ${config.reviewMeTagId}
   `;
   log('Requested review:', requestReview.length);
-  // Filter reviewMe entries to also respect per-user cap
+  // Paid review entries bypass per-user cap — users paid for guaranteed review
   for (const entry of requestReview) {
-    const userScored = scoredCountMap.get(entry.userId) ?? 0;
-    if (userScored >= config.maxScoredPerUser) continue;
-    if (reviewingUsers.has(entry.userId)) continue;
     toReview.push(entry);
-    reviewingUsers.add(entry.userId);
   }
 
   // Rate entries
@@ -888,6 +991,47 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       });
       log('Users notified');
     }
+  }
+
+  // Dynamic prize pool recomputation
+  // ----------------------------------------------
+  if (
+    challengeRecord?.prizeMode === PrizeMode.Dynamic &&
+    challengeRecord.poolTrigger &&
+    challengeRecord.prizeDistribution
+  ) {
+    const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
+      SELECT
+        COUNT(*) as "entryCount",
+        COUNT(DISTINCT i."userId") as "uniqueUsers"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+    `;
+
+    const actionCount =
+      challengeRecord.poolTrigger === PoolTrigger.Entry
+        ? Number(stats.entryCount)
+        : Number(stats.uniqueUsers);
+
+    const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
+      basePrizePool: challengeRecord.basePrizePool,
+      buzzPerAction: challengeRecord.buzzPerAction,
+      actionCount,
+      maxPrizePool: challengeRecord.maxPrizePool,
+      prizeDistribution: challengeRecord.prizeDistribution,
+    });
+
+    await dbWrite.challenge.update({
+      where: { id: currentChallenge.challengeId },
+      data: {
+        prizePool: totalPool,
+        prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
   }
 
   // Update last review time in Challenge metadata
@@ -1244,7 +1388,7 @@ export async function getCoverOfModel(modelId: number) {
 export async function getJudgedEntries(collectionId: number, config: ChallengeConfig) {
   // Get each user's BEST entry only (by AI score), so users with many entries
   // don't have an advantage over users with fewer entries
-  const userBestEntries = await dbRead.$queryRaw<Omit<JudgedEntry, 'engagement'>[]>`
+  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
     WITH ranked AS (
       SELECT
         ci."imageId",
@@ -1323,7 +1467,7 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
       weightedRating: rating * 0.75 + engagementNormalized * 0.25,
     };
   });
-  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating);
+  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
 
   // Take top entries for final judgment (already one per user from the query)
   return judgedEntries.slice(0, config.finalReviewAmount);
@@ -1337,5 +1481,4 @@ type JudgedEntry = {
   userId: number;
   username: string;
   note: string;
-  engagement: number;
 };

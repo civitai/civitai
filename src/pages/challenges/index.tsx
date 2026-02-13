@@ -20,7 +20,10 @@ import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChalleng
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
-import { parseStatusQuery } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
+import {
+  parseStatusQuery,
+  parseParticipationQuery,
+} from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -51,6 +54,7 @@ function ChallengesPage() {
     .map((s) => statusMap[s])
     .filter((s): s is ChallengeStatus => s != null);
   const includeEnded = statusFilters.includes('completed');
+  const participation = parseParticipationQuery(router.query.participation);
 
   return (
     <>
@@ -159,6 +163,7 @@ function ChallengesPage() {
               status: statusArray.length > 0 ? statusArray : undefined,
               includeEnded,
               excludeEventChallenges: true,
+              participation,
             }}
           />
         </Stack>

@@ -396,7 +396,45 @@ export type ComicGenre =
   | 'Thriller'
   | 'Other';
 
-export type UserRestrictionStatus = 'Pending' | 'Upheld' | 'Overturned';
+export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
+
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage";
+
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan";
+
+export type VaultItemStatus = "Pending" | "Stored" | "Failed";
+
+export type RedeemableCodeType = "Buzz" | "Membership";
+
+export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audio" | "Compute" | "GameEngines" | "Editor" | "LLM";
+
+export type TechniqueType = "Image" | "Video";
+
+export type AppealStatus = "Pending" | "Approved" | "Rejected";
+
+export type AuctionType = "Model" | "Image" | "Collection" | "Article";
+
+export type ModerationRuleAction = "Approve" | "Block" | "Hold";
+
+export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incident";
+
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
+
+export type ChallengeSource = "System" | "Mod" | "User";
+
+export type ChallengeStatus = "Scheduled" | "Active" | "Completed" | "Cancelled";
+
+export type PrizeMode = "Fixed" | "Dynamic";
+
+export type PoolTrigger = "Entry" | "User";
+
+export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
+
+export type EntityMetric_EntityType_Type = "Image";
+
+export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
+
+export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
 export interface Account {
   id: number;
@@ -3061,8 +3099,16 @@ export interface Challenge {
   entryPrize: JsonValue | null;
   entryPrizeRequirement: number;
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: JsonValue | null;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   createdById: number;
   createdBy?: User;
   source: ChallengeSource;
