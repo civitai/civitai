@@ -58,7 +58,10 @@ import InputResourceSelectMultiple from './ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from './TextToImageWhatIfProvider';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { useInvalidateWhatIf } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useGenerateFromGraph,
+  useInvalidateWhatIf,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -295,7 +298,7 @@ export function GenerationFormContent() {
     performTransactionOnPurchase: true,
   });
 
-  const { mutateAsync, isPending: isLoading } = trpc.orchestrator.generateFromGraph.useMutation();
+  const { mutateAsync, isPending: isLoading } = useGenerateFromGraph();
   const buyBuzz = useBuyBuzz();
 
   function handleSubmit(data: GenerationFormOutput) {
