@@ -669,6 +669,7 @@ export interface User {
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
+  challengeEventsCreated?: ChallengeEvent[];
 }
 
 export interface CustomerSubscription {
@@ -1893,6 +1894,8 @@ export interface Thread {
   comicProjectId: number | null;
   comicChapterPosition: number | null;
   comicChapter?: ComicChapter | null;
+  challengeId: number | null;
+  challenge?: Challenge | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -3070,6 +3073,9 @@ export interface Challenge {
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
+  threads?: Thread[];
+  eventId: number | null;
+  event?: ChallengeEvent | null;
 }
 
 export interface ChallengeJudge {
@@ -3103,6 +3109,21 @@ export interface ChallengeWinner {
   pointsAwarded: number;
   reason: string | null;
   createdAt: Date;
+}
+
+export interface ChallengeEvent {
+  id: number;
+  title: string;
+  description: string | null;
+  titleColor: string | null;
+  startDate: Date;
+  endDate: Date;
+  active: boolean;
+  createdById: number | null;
+  createdBy?: User | null;
+  createdAt: Date;
+  updatedAt: Date;
+  challenges?: Challenge[];
 }
 
 export interface QuestionRank {

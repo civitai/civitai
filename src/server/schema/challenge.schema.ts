@@ -6,6 +6,7 @@ import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
@@ -45,8 +46,11 @@ export type ChallengeListItem = {
   endsAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  nsfwLevel: number;
+  allowedNsfwLevel: number;
   prizePool: number;
   entryCount: number;
+  commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
   createdBy: {
@@ -87,6 +91,7 @@ export type ChallengeDetail = {
   visibleAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  eventId: number | null;
   nsfwLevel: number;
   allowedNsfwLevel: number;
   modelVersionIds: number[];
@@ -95,6 +100,7 @@ export type ChallengeDetail = {
     name: string;
     versionId: number;
     versionName: string;
+    baseModel: string;
     image: {
       id: number;
       url: string;
@@ -115,6 +121,7 @@ export type ChallengeDetail = {
   prizePool: number;
   operationBudget: number;
   entryCount: number;
+  commentCount: number;
   createdBy: {
     id: number;
     username: string | null;
@@ -132,10 +139,12 @@ export type ChallengeDetail = {
     imageUrl: string;
     buzzAwarded: number;
     reason: string | null;
+    judgeScore?: JudgeScore | null;
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
   completionSummary: ChallengeCompletionSummary | null;
+  judgedTagId: number | null;
 };
 
 export type ModeratorChallengeListItem = {
@@ -186,6 +195,8 @@ export const getInfiniteChallengesSchema = z.object({
   userId: z.number().optional(),
   modelVersionId: z.number().optional(),
   includeEnded: z.boolean().default(false),
+  excludeEventChallenges: z.boolean().default(false),
+  browsingLevel: z.number().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
 
@@ -242,6 +253,7 @@ export const upsertChallengeBaseSchema = z.object({
   visibleAt: z.date(),
   status: z.enum(ChallengeStatus).default(ChallengeStatus.Scheduled),
   source: z.enum(ChallengeSource).default(ChallengeSource.System),
+  eventId: z.number().optional().nullable(),
 });
 
 // Refined schema with cross-field validation (used by tRPC router)
@@ -286,3 +298,49 @@ export const updateChallengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
 });
 export type UpdateChallengeConfigInput = z.infer<typeof updateChallengeConfigSchema>;
+
+// --- Challenge Events ---
+
+export type ChallengeEventListItem = {
+  id: number;
+  title: string;
+  description: string | null;
+  titleColor: string | null;
+  startDate: Date;
+  endDate: Date;
+  challenges: ChallengeListItem[];
+};
+
+// Valid title colors for challenge events (maps to Tailwind color classes)
+export const challengeEventTitleColors = [
+  'blue',
+  'purple',
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'pink',
+] as const;
+
+// Moderator: Create/Update challenge event
+export const upsertChallengeEventBaseSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().min(3).max(200),
+  description: z.string().optional().nullable(),
+  titleColor: z.enum(challengeEventTitleColors).optional().nullable(),
+  startDate: z.date(),
+  endDate: z.date(),
+  active: z.boolean().default(true),
+});
+
+export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(
+  (data) => data.endDate > data.startDate,
+  { message: 'End date must be after start date', path: ['endDate'] }
+);
+export type UpsertChallengeEventInput = z.infer<typeof upsertChallengeEventSchema>;
+
+// Moderator: Get events list
+export type GetChallengeEventsInput = z.infer<typeof getChallengeEventsSchema>;
+export const getChallengeEventsSchema = z.object({
+  activeOnly: z.boolean().default(false),
+});

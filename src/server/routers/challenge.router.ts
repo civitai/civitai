@@ -2,15 +2,18 @@ import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
   deleteChallengeSchema,
+  getChallengeEventsSchema,
   getChallengeWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   upsertChallengeSchema,
+  upsertChallengeEventSchema,
   updateChallengeConfigSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { z } from 'zod';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -21,19 +24,24 @@ import {
 import {
   checkImageEligibility,
   deleteChallenge,
+  deleteChallengeEvent,
   endChallengeAndPickWinners,
+  getActiveEvents,
   getChallengeDetail,
+  getChallengeEvents,
   getChallengeWinners,
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
   getUserEntryCount,
   upsertChallenge,
+  upsertChallengeEvent,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
   updateChallengeSystemConfig,
 } from '~/server/services/challenge.service';
+import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 
 // Router definition
 export const challengeRouter = router({
@@ -118,4 +126,33 @@ export const challengeRouter = router({
     .input(deleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => deleteChallenge(input.id)),
+
+  // Public: Get active challenge events for featured section
+  getActiveEvents: publicProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getActiveEvents()),
+
+  // Moderator: Get all challenge events
+  getEvents: moderatorProcedure
+    .input(getChallengeEventsSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getChallengeEvents(input)),
+
+  // Moderator: Create or update a challenge event
+  upsertEvent: moderatorProcedure
+    .input(upsertChallengeEventSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => upsertChallengeEvent({ ...input, userId: ctx.user.id })),
+
+  // Moderator: Delete a challenge event
+  deleteEvent: moderatorProcedure
+    .input(deleteChallengeSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => deleteChallengeEvent(input.id)),
+
+  // Public: Get judge's comment on a specific image
+  getJudgeComment: publicProcedure
+    .input(z.object({ imageId: z.number(), judgeUserId: z.number() }))
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getJudgeCommentForImage(input)),
 });

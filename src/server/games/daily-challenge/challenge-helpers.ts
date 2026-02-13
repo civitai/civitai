@@ -3,7 +3,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
-import type { Prize } from './daily-challenge.utils';
+import {
+  deriveChallengeNsfwLevel,
+  parseJudgeScore,
+  type JudgeScore,
+  type Prize,
+} from './daily-challenge.utils';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
@@ -297,7 +302,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       theme: input.theme,
       invitation: input.invitation,
       coverImageId: input.coverImageId,
-      nsfwLevel: input.nsfwLevel ?? 1,
+      nsfwLevel: input.nsfwLevel ?? deriveChallengeNsfwLevel(input.allowedNsfwLevel ?? 1),
       allowedNsfwLevel: input.allowedNsfwLevel ?? 1,
       modelVersionIds: input.modelVersionIds ?? [],
       judgingPrompt: input.judgingPrompt,
@@ -379,9 +384,23 @@ export async function getChallengeWinners(challengeId: number): Promise<
     buzzAwarded: number;
     pointsAwarded: number;
     reason: string | null;
+    judgeScore: JudgeScore | null;
   }>
 > {
-  return dbRead.$queryRaw`
+  const rows = await dbRead.$queryRaw<
+    Array<{
+      id: number;
+      userId: number;
+      username: string;
+      imageId: number;
+      imageUrl: string;
+      place: number;
+      buzzAwarded: number;
+      pointsAwarded: number;
+      reason: string | null;
+      collectionItemNote: string | null;
+    }>
+  >`
     SELECT
       cw.id,
       cw."userId",
@@ -391,13 +410,22 @@ export async function getChallengeWinners(challengeId: number): Promise<
       cw.place,
       cw."buzzAwarded",
       cw."pointsAwarded",
-      cw.reason
+      cw.reason,
+      ci.note as "collectionItemNote"
     FROM "ChallengeWinner" cw
     JOIN "User" u ON u.id = cw."userId"
     JOIN "Image" i ON i.id = cw."imageId"
+    JOIN "Challenge" c ON c.id = cw."challengeId"
+    LEFT JOIN "CollectionItem" ci ON ci."collectionId" = c."collectionId"
+      AND ci."imageId" = cw."imageId"
     WHERE cw."challengeId" = ${challengeId}
     ORDER BY cw.place ASC
   `;
+
+  return rows.map(({ collectionItemNote, ...row }) => ({
+    ...row,
+    judgeScore: parseJudgeScore(collectionItemNote),
+  }));
 }
 
 // =============================================================================

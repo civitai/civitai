@@ -665,10 +665,12 @@ export const REDIS_SYS_KEYS = {
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
     HISTORY_DOWNLOADS: 'limits:history-downloads',
+    CHAT_MESSAGES: 'limits:chat-messages',
   },
   COUNTERS: {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
     HISTORY_DOWNLOADS: 'counters:history-downloads',
+    CHAT_MESSAGES: 'counters:chat-messages',
   },
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',

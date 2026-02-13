@@ -384,6 +384,7 @@ model User {
   challengesCreated          Challenge[]
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
+  challengeEventsCreated     ChallengeEvent[]
 
   // Comics
   comicProjects              ComicProject[]
@@ -2134,6 +2135,8 @@ model Thread {
   comicProjectId       Int?
   comicChapterPosition Int?
   comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
+  challengeId   Int?            @unique
+  challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -2149,6 +2152,7 @@ model Thread {
   @@index([imageId], type: Hash)
   @@index([articleId], type: Hash)
   @@index([rootThreadId], type: Hash)
+  @@index([challengeId], type: Hash)
 }
 
 model QuestionReaction {
@@ -3814,6 +3818,11 @@ model Challenge {
 
   // Relations
   winners ChallengeWinner[]
+  threads Thread[]
+
+  // Event grouping
+  eventId Int?
+  event   ChallengeEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   // Compound indexes for efficient feed queries
   @@index([status, endsAt]) // "Ending Soon" feed
@@ -3821,6 +3830,7 @@ model Challenge {
   @@index([status, visibleAt]) // "Upcoming" feed
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
+  @@index([eventId])
 }
 
 model ChallengeJudge {
@@ -3867,6 +3877,25 @@ model ChallengeWinner {
   @@unique([challengeId, userId])
   @@index([challengeId])
   @@index([userId])
+  @@index([createdAt])
+}
+
+model ChallengeEvent {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?  @db.Text
+  titleColor  String?
+  startDate   DateTime
+  endDate     DateTime
+  active      Boolean  @default(true)
+  createdById Int?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  challenges Challenge[]
+
+  @@index([active, endDate])
 }
 
 /// @view

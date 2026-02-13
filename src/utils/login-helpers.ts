@@ -38,6 +38,7 @@ export const loginRedirectReasons = {
   shop: 'You need to be logged in to preview and purchase cosmetics',
   'knights-new-order': 'You need to be logged in to join Knights of the New Order',
   'report-comic': 'You need to be logged in to report this comic',
+  'submit-challenge': 'You need to be logged in to submit entries to a challenge',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

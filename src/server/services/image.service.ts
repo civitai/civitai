@@ -30,6 +30,10 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import {
+  parseJudgeScore,
+  type JudgeScore,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -918,6 +922,7 @@ type GetAllImagesRaw = {
   poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
+  collectionItemNote?: string | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1236,10 +1241,11 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", "sortKey"
+          SELECT "imageId", note, "sortKey"
           FROM (
             SELECT
               ci."imageId",
+              ci.note,
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -1501,6 +1507,7 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote"' : '')}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -1617,8 +1624,10 @@ export const getAllImages = async (
       hasPositivePrompt?: boolean;
       poi?: boolean;
       minor?: boolean;
+      judgeScore?: JudgeScore | null;
     }
-  > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, ...i }) => {
+  > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
+    const judgeScore = parseJudgeScore(collectionItemNote ?? null);
     const match = imageMetrics[i.id];
     const thumbnail = thumbnails[i.id];
     const userData = userBasicData[creatorId];
@@ -1660,6 +1669,7 @@ export const getAllImages = async (
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: cosmetics?.[i.id] ?? null,
       thumbnailUrl: thumbnail?.url,
+      judgeScore,
     };
   });
 

@@ -30,6 +30,24 @@ export type Comment = CommentV2Model & {
   // childThread?: { id: number; _count?: { comments: number } } | null;
 };
 
+export async function getJudgeCommentForImage({
+  imageId,
+  judgeUserId,
+}: {
+  imageId: number;
+  judgeUserId: number;
+}) {
+  const result = await dbRead.$queryRaw<[{ content: string }?]>`
+    SELECT c.content
+    FROM "Thread" t
+    JOIN "CommentV2" c ON c."threadId" = t.id AND c."userId" = ${judgeUserId}
+    WHERE t."imageId" = ${imageId}
+    ORDER BY c."createdAt" ASC
+    LIMIT 1
+  `;
+  return result[0]?.content ?? null;
+}
+
 export const upsertComment = async ({
   userId,
   entityType,

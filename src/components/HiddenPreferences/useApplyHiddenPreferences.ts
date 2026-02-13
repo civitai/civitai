@@ -636,6 +636,17 @@ function filterPreferences<
     case 'comics':
       // No need to apply hidden preferences to comics
       return { items: value, hidden };
+    case 'challenges':
+      const challenges = value.filter((challenge) => {
+        const isOwner = challenge.createdBy.id === currentUser?.id;
+        if ((isOwner || isModerator) && challenge.nsfwLevel === 0) return true;
+        if (!Flags.intersects(challenge.nsfwLevel, browsingLevel)) {
+          hidden.browsingLevel++;
+          return false;
+        }
+        return true;
+      });
+      return { items: challenges, hidden };
     default:
       throw new Error('unhandled hidden user preferences filter type');
   }
@@ -762,6 +773,12 @@ type BaseTool = {
 
 type BaseComic = {
   id: number;
+}
+
+type BaseChallenge = {
+  id: number;
+  nsfwLevel: number;
+  createdBy: { id: number };
 };
 
 export type BaseDataTypeMap = {
@@ -775,4 +792,5 @@ export type BaseDataTypeMap = {
   tags: BaseTag[];
   tools: BaseTool[];
   comics: BaseComic[];
+  challenges: BaseChallenge[];
 };
