@@ -105,6 +105,15 @@ export function secondsAsMinutes(seconds: number) {
   return `${min}m ${sec}s`;
 }
 
+// UTC display helpers: Mantine's DateTimePicker only works in local time.
+// We shift dates so the picker *displays* UTC values, then reverse on submit.
+export function toDisplayUTC(date: Date): Date {
+  return new Date(date.getTime() + date.getTimezoneOffset() * 60_000);
+}
+export function fromDisplayUTC(date: Date): Date {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+}
+
 export function dateWithoutTimezone(date: Date) {
   const withoutTimezone = new Date(date.valueOf()).toISOString().slice(0, -1);
   return new Date(withoutTimezone);
