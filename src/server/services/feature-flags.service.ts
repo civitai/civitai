@@ -290,10 +290,19 @@ const hasFeature = (
   const feature = featureFlags[key];
   const { availability } = feature;
 
-  // Check environment availability
-  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
+  // Region restrictions always apply — Flipt cannot override them.
+  // Mods and granted users bypass region restrictions as before.
+  const isMod = user?.isModerator;
+  const hasGrantedPermission = availability.includes('granted')
+    ? !!user?.permissions?.includes(key)
+    : false;
 
-  // Check server availability
+  if (!(isMod || hasGrantedPermission)) {
+    const regionAccess = checkRegionAccess(feature, availability, req);
+    if (!regionAccess) return false;
+  }
+
+  // Server/domain restrictions always apply — Flipt cannot override them
   let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
@@ -315,9 +324,30 @@ const hasFeature = (
       return host === domain;
     });
 
-    // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;
   }
+
+  // Flipt overrides role checks (both enable AND disable) — but not ENV, region, or domain.
+  // When Flipt is unavailable, fall through to static evaluation.
+  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
+    const fliptResult = _fliptModule.isFliptSync(
+      feature.fliptKey,
+      user ? String(user.id) : 'anonymous',
+      buildFliptContext(user)
+    );
+    if (fliptResult !== null) {
+      if (isDev) {
+        console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
+      }
+      return fliptResult;
+    }
+    // Flipt unavailable — fall through to static evaluation below
+  }
+
+  // --- Static evaluation (used when no Flipt override or Flipt unavailable) ---
+
+  // Check environment availability
+  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
 
   // Check granted access
   const grantedAccess = availability.includes('granted')
@@ -336,39 +366,9 @@ const hasFeature = (
     }
   }
 
-  // Check basic access (env, server, roles) before region checks
+  // Check basic access (env, server, roles)
   const hasBasicAccess = envRequirement && serverMatch && (grantedAccess || roleAccess);
   if (!hasBasicAccess) return false;
-
-  // Mod and granted users bypass region restrictions
-  const isMod = user?.isModerator;
-  const hasGrantedPermission = grantedAccess;
-
-  if (isMod || hasGrantedPermission) {
-    // Avoids the double region check for mods/granted users
-    // Flipt can still disable for mods — check below
-  } else {
-    // Check region access for regular users
-    const regionAccess = checkRegionAccess(feature, availability, req);
-    if (!regionAccess) return false;
-  }
-
-  // Flipt override: can only DISABLE features, never grant access beyond static checks.
-  // Priority: ENV override > Flipt > static availability
-  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
-    const fliptResult = _fliptModule.isFliptSync(
-      feature.fliptKey,
-      user ? String(user.id) : 'anonymous',
-      buildFliptContext(user)
-    );
-    if (fliptResult !== null) {
-      if (isDev) {
-        console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
-      }
-      return fliptResult;
-    }
-    // Flipt unavailable — fall through to static result (already computed as true)
-  }
 
   return true;
 };
