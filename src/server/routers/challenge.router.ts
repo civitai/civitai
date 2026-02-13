@@ -8,6 +8,8 @@ import {
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
+  getUserUnjudgedEntriesSchema,
+  requestReviewSchema,
   upsertChallengeSchema,
   upsertChallengeEventSchema,
   updateChallengeConfigSchema,
@@ -34,6 +36,8 @@ import {
   getModeratorChallenges,
   getUpcomingThemes,
   getUserEntryCount,
+  getUserUnjudgedEntries,
+  requestReview,
   upsertChallenge,
   upsertChallengeEvent,
   voidChallenge,
@@ -74,6 +78,20 @@ export const challengeRouter = router({
     .input(getUserEntryCountSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getUserEntryCount(input.challengeId, ctx.user.id)),
+
+  // Pay to guarantee entries get reviewed by the AI judge
+  requestReview: protectedProcedure
+    .input(requestReviewSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) =>
+      requestReview(input.challengeId, input.imageIds, ctx.user.id)
+    ),
+
+  // Get user's unjudged entries for paid review selection
+  getUserUnjudgedEntries: protectedProcedure
+    .input(getUserUnjudgedEntriesSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input, ctx }) => getUserUnjudgedEntries(input.challengeId, ctx.user.id)),
 
   // Check image eligibility for a challenge
   checkEntryEligibility: protectedProcedure

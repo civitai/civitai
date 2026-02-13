@@ -3744,6 +3744,12 @@ enum PoolTrigger {
   User
 }
 
+enum ChallengeReviewCostType {
+  None     // No paid review
+  PerEntry // Cost per individual entry
+  Flat     // Single flat rate for all entries
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -3790,6 +3796,8 @@ model Challenge {
   prizeDistribution   Json?        // null for Fixed mode; e.g. [50, 30, 20]
   operationBudget Int  @default(0) // Budget for AI review costs
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
+  reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
+  reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
 
   // Ownership & Source
   createdById Int

@@ -6,6 +6,7 @@ import {
   Group,
   Paper,
   SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -36,6 +37,7 @@ import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import {
+  ChallengeReviewCostType,
   ChallengeSource,
   ChallengeStatus,
   Currency,
@@ -105,6 +107,8 @@ type ChallengeForEdit = {
   entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   startsAt: Date;
   endsAt: Date;
   visibleAt: Date;
@@ -165,6 +169,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
+      reviewCostType: challenge?.reviewCostType ?? ChallengeReviewCostType.None,
+      reviewCost: challenge?.reviewCost ?? 0,
       startsAt: challenge?.startsAt ? toDisplayUTC(challenge.startsAt) : defaultStartsAt,
       endsAt: challenge?.endsAt ? toDisplayUTC(challenge.endsAt) : defaultEndsAt,
       visibleAt: challenge?.visibleAt ? toDisplayUTC(challenge.visibleAt) : defaultVisibleAt,
@@ -227,6 +233,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       maxEntriesPerUser: data.maxEntriesPerUser,
       entryPrizeRequirement: data.entryPrizeRequirement,
       operationBudget: data.operationBudget,
+      reviewCostType: data.reviewCostType,
+      reviewCost: data.reviewCost,
       startsAt,
       endsAt,
       visibleAt,
@@ -294,6 +302,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrize,
     });
   };
+
+  const reviewCostType = form.watch('reviewCostType') ?? ChallengeReviewCostType.None;
 
   // Watch prize values for total calculation
   const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
@@ -617,6 +627,52 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 disabled={isActive || isTerminal}
               />
             </SimpleGrid>
+
+            <Divider />
+
+            {/* Paid Review */}
+            <Select
+              label="Paid Reviews"
+              description="Allow users to pay Buzz to guarantee their entries get judged."
+              value={reviewCostType}
+              onChange={(val) => {
+                const type = (val as ChallengeReviewCostType) ?? ChallengeReviewCostType.None;
+                form.setValue('reviewCostType', type);
+                if (type === ChallengeReviewCostType.None) {
+                  form.setValue('reviewCost', 0);
+                }
+              }}
+              data={[
+                { value: ChallengeReviewCostType.None, label: 'None' },
+                { value: ChallengeReviewCostType.PerEntry, label: 'Per Entry' },
+                { value: ChallengeReviewCostType.Flat, label: 'Flat Rate (all entries)' },
+              ]}
+              disabled={isTerminal}
+            />
+            {reviewCostType === ChallengeReviewCostType.PerEntry && (
+              <InputNumberWrapper
+                name="reviewCost"
+                label="Cost Per Entry"
+                description="Buzz charged for each entry the user wants reviewed."
+                leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={1}
+                disabled={isTerminal}
+              />
+            )}
+            {reviewCostType === ChallengeReviewCostType.Flat && (
+              <InputNumberWrapper
+                name="reviewCost"
+                label="Flat Rate"
+                description="One-time Buzz charge to review all of the user's entries."
+                leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={1}
+                disabled={isTerminal}
+              />
+            )}
           </Stack>
         </Paper>
 

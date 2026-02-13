@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
+  ChallengeReviewCostType,
   ChallengeSource,
   ChallengeStatus,
   CollectionMode,
@@ -61,6 +62,8 @@ export type ChallengeDetails = {
   prizeDistribution: number[] | null;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   createdById: number;
   source: ChallengeSource;
   status: ChallengeStatus;
@@ -130,6 +133,8 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."prizeDistribution",
       c."operationBudget",
       c."operationSpent",
+      c."reviewCostType",
+      c."reviewCost",
       c."createdById",
       c.source,
       c.status,
@@ -290,6 +295,8 @@ export type CreateChallengeInput = {
   maxPrizePool?: number | null;
   prizeDistribution?: number[] | null;
   operationBudget?: number;
+  reviewCostType?: ChallengeReviewCostType;
+  reviewCost?: number;
   createdById: number;
   source?: ChallengeSource;
   status?: ChallengeStatus;
@@ -360,6 +367,8 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
         ? (input.prizeDistribution as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull,
       operationBudget: input.operationBudget ?? 0,
+      reviewCostType: input.reviewCostType ?? ChallengeReviewCostType.None,
+      reviewCost: input.reviewCost ?? 0,
       createdById: input.createdById,
       source: input.source ?? ChallengeSource.System,
       status: input.status ?? ChallengeStatus.Scheduled,

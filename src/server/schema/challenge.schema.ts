@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
+  ChallengeReviewCostType,
   ChallengeSource,
   ChallengeStatus,
   MetricTimeframe,
@@ -140,6 +141,8 @@ export type ChallengeDetail = {
   maxPrizePool: number | null;
   prizeDistribution: number[] | null;
   operationBudget: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   entryCount: number;
   commentCount: number;
   createdBy: {
@@ -177,6 +180,8 @@ export type ModeratorChallengeListItem = {
   status: ChallengeStatus;
   source: ChallengeSource;
   prizePool: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   entryCount: number;
   collectionId: number;
   createdById: number;
@@ -286,6 +291,8 @@ export const upsertChallengeBaseSchema = z.object({
   poolTrigger: z.nativeEnum(PoolTrigger).optional().nullable(),
   maxPrizePool: z.number().min(0).optional().nullable(),
   prizeDistribution: prizeDistributionSchema.optional().nullable(),
+  reviewCostType: z.enum(ChallengeReviewCostType).default(ChallengeReviewCostType.None),
+  reviewCost: z.number().min(0).default(0),
   startsAt: z.date(),
   endsAt: z.date(),
   visibleAt: z.date(),
@@ -336,6 +343,33 @@ export const updateChallengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
 });
 export type UpdateChallengeConfigInput = z.infer<typeof updateChallengeConfigSchema>;
+
+// --- Paid Review ---
+
+// Request paid review for entries
+export type RequestReviewInput = z.infer<typeof requestReviewSchema>;
+export const requestReviewSchema = z.object({
+  challengeId: z.number(),
+  imageIds: z.array(z.number()).min(1).max(20).optional(),
+});
+
+// Get user's unjudged entries for a challenge
+export type GetUserUnjudgedEntriesInput = z.infer<typeof getUserUnjudgedEntriesSchema>;
+export const getUserUnjudgedEntriesSchema = z.object({
+  challengeId: z.number(),
+});
+
+export type UserChallengeEntry = {
+  imageId: number;
+  url: string;
+  tagId: number | null;
+  reviewStatus: 'pending' | 'queued' | 'reviewed';
+};
+
+export type UserChallengeEntriesResult = {
+  entries: UserChallengeEntry[];
+  hasFlatRatePurchase: boolean;
+};
 
 // --- Challenge Events ---
 
