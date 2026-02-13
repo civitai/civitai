@@ -49,7 +49,7 @@ export const challengeRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getInfiniteChallenges(input)),
+    .query(({ input, ctx }) => getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id })),
 
   // Get single challenge by ID (moderators bypass visibility filters)
   getById: publicProcedure
