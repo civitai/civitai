@@ -391,8 +391,7 @@ export function getWorkflowsWithCompatibility(ecosystemId: number): {
       .filter((w) => w.category === category)
       .map((w) => ({
         ...w,
-        compatible:
-          w.ecosystemIds.length === 0 || w.ecosystemIds.includes(ecosystemId),
+        compatible: w.ecosystemIds.length === 0 || w.ecosystemIds.includes(ecosystemId),
       })),
   }));
 }
@@ -463,10 +462,7 @@ export function isEnhancementWorkflow(workflowId: string): boolean {
  * Returns the alias label when the ecosystem matches an alias entry,
  * otherwise returns the primary config label.
  */
-export function getWorkflowLabelForEcosystem(
-  graphKey: string,
-  ecosystemId?: number
-): string {
+export function getWorkflowLabelForEcosystem(graphKey: string, ecosystemId?: number): string {
   if (ecosystemId !== undefined) {
     const match = workflowOptions.find(
       (o) => o.graphKey === graphKey && o.ecosystemIds.includes(ecosystemId)

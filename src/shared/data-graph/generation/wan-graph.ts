@@ -97,12 +97,42 @@ const ecosystemToVersionDef = new Map(
   })
 );
 
-/** Wan aspect ratio options */
+/** Wan aspect ratio options (basic 3 — used by v2.2-5b) */
 const wanAspectRatios = [
   { label: '16:9', value: '16:9', width: 1280, height: 720 },
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
   { label: '9:16', value: '9:16', width: 720, height: 1280 },
 ];
+
+/** Wan 2.2 aspect ratios (expanded — API supports 7 ratios) */
+const wan22AspectRatios = [
+  { label: '16:9', value: '16:9', width: 1280, height: 720 },
+  { label: '4:3', value: '4:3', width: 960, height: 720 },
+  { label: '1:1', value: '1:1', width: 720, height: 720 },
+  { label: '3:4', value: '3:4', width: 720, height: 960 },
+  { label: '9:16', value: '9:16', width: 720, height: 1280 },
+  { label: '5:4', value: '5:4', width: 900, height: 720 },
+  { label: '4:5', value: '4:5', width: 720, height: 900 },
+];
+
+/** Wan 2.5 resolution-dependent aspect ratios */
+const wan25AspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
+  '480p': [
+    { label: '16:9', value: '16:9', width: 848, height: 480 },
+    { label: '1:1', value: '1:1', width: 480, height: 480 },
+    { label: '9:16', value: '9:16', width: 480, height: 848 },
+  ],
+  '720p': [
+    { label: '16:9', value: '16:9', width: 1280, height: 720 },
+    { label: '1:1', value: '1:1', width: 720, height: 720 },
+    { label: '9:16', value: '9:16', width: 720, height: 1280 },
+  ],
+  '1080p': [
+    { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+    { label: '1:1', value: '1:1', width: 1080, height: 1080 },
+    { label: '9:16', value: '9:16', width: 1080, height: 1920 },
+  ],
+};
 
 /** Wan 2.1 aspect ratios (more options for Civitai provider) */
 const wan21AspectRatios = [
@@ -146,7 +176,7 @@ const wan25Durations = [
   { label: '10 seconds', value: 10 },
 ];
 
-/** Wan interpolator models (v2.2 only) */
+/** Wan interpolator models (v2.2 and v2.2-5b) */
 const wanInterpolatorModels = [
   { label: 'None', value: 'none' },
   { label: 'FILM', value: 'film' },
@@ -227,7 +257,7 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   .node(
     'aspectRatio',
     (ctx) => ({
-      ...aspectRatioNode({ options: wanAspectRatios, defaultValue: '1:1' }),
+      ...aspectRatioNode({ options: wan22AspectRatios, defaultValue: '1:1' }),
       when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
     }),
     ['images']
@@ -267,7 +297,7 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   );
 
 /**
- * Wan 2.2-5b subgraph - smaller model with draft mode
+ * Wan 2.2-5b subgraph - smaller 5B model variant
  */
 const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
   .node(
@@ -285,17 +315,18 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: '580p' as const,
     meta: { options: wan225bResolutions },
   })
-  .node('draft', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: false,
-  })
   .node('steps', stepsNode({ min: 20, max: 60, defaultValue: 40 }))
   .node('shift', {
     input: z.coerce.number().min(1).max(20).optional(),
     output: z.number().min(1).max(20),
     defaultValue: 8,
     meta: { min: 1, max: 20, step: 1 },
+  })
+  .node('interpolatorModel', {
+    input: z.enum(['none', 'film', 'rife']).optional(),
+    output: z.enum(['none', 'film', 'rife']),
+    defaultValue: 'none' as const,
+    meta: { options: wanInterpolatorModels },
   })
   .node(
     'resources',
@@ -309,16 +340,11 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
 
 /**
  * Wan 2.5 subgraph - latest version with extended durations
+ *
+ * Resolution is defined before aspectRatio so that aspect ratio dimensions
+ * can update based on the selected resolution (480p/720p/1080p).
  */
 const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
-  .node(
-    'aspectRatio',
-    (ctx) => ({
-      ...aspectRatioNode({ options: wanAspectRatios, defaultValue: '1:1' }),
-      when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
-    }),
-    ['images']
-  )
   .node('negativePrompt', negativePromptNode())
   .node('resolution', {
     input: z.enum(['480p', '720p', '1080p']).optional(),
@@ -326,6 +352,19 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: '480p' as const,
     meta: { options: wan25Resolutions },
   })
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '480p';
+      const options =
+        wan25AspectRatiosByResolution[resolution] ?? wan25AspectRatiosByResolution['480p'];
+      return {
+        ...aspectRatioNode({ options, defaultValue: '1:1' }),
+        when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
+      };
+    },
+    ['images', 'resolution']
+  )
   .node('duration', enumNode({ options: wan25Durations, defaultValue: 5 }))
   .node(
     'resources',
@@ -445,6 +484,8 @@ export {
   ecosystemToVersionDef,
   wanAspectRatios,
   wan21AspectRatios,
+  wan22AspectRatios,
+  wan25AspectRatiosByResolution,
   wan21Resolutions,
   wan22Resolutions,
   wan225bResolutions,

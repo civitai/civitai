@@ -44,9 +44,14 @@ import {
   wanVersionDefs,
 } from '~/shared/data-graph/generation';
 import { getWorkflowModes } from '~/shared/data-graph/generation/config';
-import { getOutputTypeForWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import {
+  getOutputTypeForWorkflow,
+  isEnhancementWorkflow,
+} from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemById } from '~/shared/constants/basemodel.constants';
 
+import { useWorkflowHistoryStore } from '~/store/workflow-history.store';
+import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
@@ -78,6 +83,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
+  const workflowHistory = useWorkflowHistoryStore();
   const currentUser = useCurrentUser();
   const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
@@ -104,6 +110,32 @@ export function GenerationForm() {
   // Use ref to store the graph instance for callbacks (avoids stale closure)
   const graphRef = useRef(graph);
   graphRef.current = graph;
+
+  // Push workflow/ecosystem changes to navigation history on every render where they change.
+  // Uses getState() to avoid adding workflowHistory as a dependency.
+  const isNavigatingRef = useRef(false);
+  useEffect(() => {
+    if (snapshot.workflow && !isNavigatingRef.current) {
+      useWorkflowHistoryStore
+        .getState()
+        .push({ workflow: snapshot.workflow, ecosystem: snapshot.ecosystem ?? '' });
+    }
+  }, [snapshot.workflow, snapshot.ecosystem]);
+
+  // Navigate back in workflow history (falls back to last-used non-enhancement workflow)
+  const handleNavigationBack = useCallback(() => {
+    const prev = workflowHistory.back() ?? workflowPreferences.getLastUsedWorkflow();
+    if (!prev) return;
+    isNavigatingRef.current = true;
+    graph.set({
+      workflow: prev.workflow,
+      ecosystem: prev.ecosystem,
+    } as Parameters<typeof graph.set>[0]);
+    // Reset on next render (after snapshot has updated and the push effect has run)
+    requestAnimationFrame(() => {
+      isNavigatingRef.current = false;
+    });
+  }, [graph, workflowHistory]);
 
   // Handle workflow selection with compatibility check
   // Receives (graphKey, ecosystemIds, optionId) from WorkflowInput — ecosystemIds are per-entry (not aggregated)
@@ -133,8 +165,7 @@ export function GenerationForm() {
               optionId,
               currentEcosystem: compatibility.currentEcosystemKey,
               compatibleEcosystemIds: ecosystemIds,
-              defaultEcosystemKey:
-                defaultKey ?? ecosystemById.get(ecosystemIds[0]!)?.key ?? '',
+              defaultEcosystemKey: defaultKey ?? ecosystemById.get(ecosystemIds[0]!)?.key ?? '',
             },
             onConfirm: (selectedEcosystemKey) => {
               if (selectedEcosystemKey) {
@@ -162,7 +193,10 @@ export function GenerationForm() {
         // Cross-output-type changes (video → image or image → video) are intentional
         // mode switches — apply directly without a confirmation modal
         const targetOutputType = getOutputTypeForWorkflow(target.id);
-        if (compatibility.currentOutputType && targetOutputType !== compatibility.currentOutputType) {
+        if (
+          compatibility.currentOutputType &&
+          targetOutputType !== compatibility.currentOutputType
+        ) {
           graphRef.current.set({
             workflow: target.id,
             ecosystem: newBaseModel,
@@ -246,16 +280,23 @@ export function GenerationForm() {
 
               return (
                 <>
-                <SelectedWorkflowDisplay
-                  workflowId={value as string}
-                  ecosystemId={compatibility.currentEcosystemId}
-                />
-                {modes.length > 0 && <SegmentedControlWrapper
-                    value={value as string}
-                    onChange={(v) => graph.set({ workflow: v } as Parameters<typeof graph.set>[0])}
-                    data={modes}
-                    fullWidth
-                  />}
+                  <SelectedWorkflowDisplay
+                    workflowId={value as string}
+                    ecosystemId={compatibility.currentEcosystemId}
+                    onBack={
+                      isEnhancementWorkflow(value as string) ? handleNavigationBack : undefined
+                    }
+                  />
+                  {modes.length > 0 && (
+                    <SegmentedControlWrapper
+                      value={value as string}
+                      onChange={(v) =>
+                        graph.set({ workflow: v } as Parameters<typeof graph.set>[0])
+                      }
+                      data={modes}
+                      fullWidth
+                    />
+                  )}
                 </>
               );
             }}
@@ -572,9 +613,7 @@ export function GenerationForm() {
                   <SegmentedControlWrapper
                     value={value}
                     onChange={(v) => onChange(v)}
-                    data={
-                      options?.map((o) => ({ label: o.label, value: o.value })) ?? []
-                    }
+                    data={options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
                     disabled={disabled}
                   />
                 </div>
@@ -929,7 +968,7 @@ export function GenerationForm() {
             />
 
             {/* Wan: Draft mode toggle (v2.2-5b) */}
-            <Controller
+            {/* <Controller
               graph={graph}
               name="draft"
               render={({ value, onChange }) => (
@@ -940,7 +979,7 @@ export function GenerationForm() {
                   description="Generate faster at lower quality"
                 />
               )}
-            />
+            /> */}
 
             {/* Wan: Shift parameter (v2.2, v2.2-5b) */}
             <Controller
@@ -1012,11 +1051,16 @@ export function GenerationForm() {
           </AccordionLayout>
         </Stack>
       </div>
-      <FormFooter />
+      <FormFooter
+        onSubmitSuccess={
+          snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
+            ? handleNavigationBack
+            : undefined
+        }
+      />
     </div>
   );
 }
-
 
 function ControllerLabel({ label, info }: { label: React.ReactNode; info?: string }) {
   if (!info) return <Input.Label>{label}</Input.Label>;

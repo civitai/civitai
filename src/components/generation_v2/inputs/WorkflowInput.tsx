@@ -9,6 +9,7 @@
 import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
+  IconArrowLeft,
   IconChevronDown,
   IconCheck,
   IconPhoto,
@@ -339,6 +340,8 @@ export interface SelectedWorkflowDisplayProps {
   ecosystemId?: number;
   /** Additional class name */
   className?: string;
+  /** When provided, renders a back arrow button (used for enhancement workflows) */
+  onBack?: () => void;
 }
 
 /**
@@ -349,6 +352,7 @@ export function SelectedWorkflowDisplay({
   workflowId,
   ecosystemId,
   className,
+  onBack,
 }: SelectedWorkflowDisplayProps) {
   const workflow = workflowId ? workflowOptionById.get(workflowId) : undefined;
   if (!workflow) return null;
@@ -362,14 +366,27 @@ export function SelectedWorkflowDisplay({
         className
       )}
     >
-      <Text size="md" fw={600} className="leading-tight">
-        {label}
-      </Text>
-      {workflow.description && (
-        <Text size="sm" c="dimmed" className="mt-0.5">
-          {workflow.description}
-        </Text>
-      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1">
+          {onBack && (
+            <UnstyledButton
+              onClick={onBack}
+              className="flex shrink-0 items-center rounded p-0.5 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-dark-0"
+              aria-label="Back to previous workflow"
+            >
+              <IconArrowLeft size={18} />
+            </UnstyledButton>
+          )}
+          <Text size="md" fw={600} className="leading-tight">
+            {label}
+          </Text>
+        </div>
+        {workflow.description && (
+          <Text size="sm" c="dimmed" className="mt-0.5">
+            {workflow.description}
+          </Text>
+        )}
+      </div>
     </div>
   );
 }
@@ -421,7 +438,8 @@ export function WorkflowInput({
         title: 'Select Image Workflow',
         categories: imageCategories,
         selectedValue: selected?.workflow.id,
-        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) => onChange?.(graphKey, ecosystemIds, optionId),
+        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
+          onChange?.(graphKey, ecosystemIds, optionId),
         isCompatible,
         isMember,
       },
@@ -436,7 +454,8 @@ export function WorkflowInput({
         title: 'Select Video Workflow',
         categories: videoCategories,
         selectedValue: selected?.workflow.id,
-        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) => onChange?.(graphKey, ecosystemIds, optionId),
+        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
+          onChange?.(graphKey, ecosystemIds, optionId),
         isCompatible,
         isMember,
       },

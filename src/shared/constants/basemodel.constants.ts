@@ -174,6 +174,7 @@ export const ECO = {
   Haiper: 50,
   Lightricks: 51,
   Seedance: 52,
+  Seedance2: 54,
   Anima: 59,
 
   // Child ecosystems of SDXL
@@ -632,6 +633,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Seedance',
     sortOrder: 215,
   },
+  {
+    id: ECO.Seedance2,
+    key: 'Seedance2',
+    name: 'seedance2',
+    displayName: 'Seedance 2',
+    sortOrder: 216,
+  },
   { id: ECO.ODOR, key: 'ODOR', name: 'odor', displayName: 'ODOR', sortOrder: 208 },
   {
     id: ECO.PlaygroundV2,
@@ -908,7 +916,8 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Qwen,
     defaults: {
-      model: { id: 2113658 },
+      model: { id: 2552908 },
+      modelLocked: true,
     },
   },
   {
@@ -1105,6 +1114,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Seedance,
     defaults: {
       model: { id: 2623856 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Seedance2,
+    defaults: {
       modelLocked: true,
     },
   },
@@ -1454,6 +1469,7 @@ export const BM = {
   MiniMax: 68,
   Kling: 69,
   Seedance: 70,
+  Seedance2: 72,
   Anima: 77,
 } as const;
 
@@ -2426,6 +2442,17 @@ export const baseModels: BaseModelRecord[] = [
     description: "ByteDance's video generation model",
     type: 'video',
     ecosystemId: ECO.Seedance,
+    hidden: true,
+    licenseId: 23,
+  },
+
+  // Seedance 2
+  {
+    id: BM.Seedance2,
+    name: 'Seedance 2',
+    description: "ByteDance's next-generation video generation model",
+    type: 'video',
+    ecosystemId: ECO.Seedance2,
     hidden: true,
     licenseId: 23,
   },

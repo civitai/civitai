@@ -15,6 +15,7 @@ import type {
   Wan25FalImageToVideoInput,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { ecosystemToVersionDef } from '~/shared/data-graph/generation/wan-graph';
@@ -50,6 +51,22 @@ type WanInput =
 
 // Wan version type
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5';
+
+// Supported aspect ratios per version (from @civitai/client types)
+const v21AspectRatios = ['1:1', '16:9', '9:16'] as const;
+const v22AspectRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5', '5:4'] as const;
+const v225bAspectRatios = ['1:1', '16:9', '9:16'] as const;
+const v25AspectRatios = ['16:9', '9:16', '1:1'] as const;
+
+/** Derive aspect ratio from source image dimensions for img2vid */
+function getImageAspectRatio<T extends `${number}:${number}`>(
+  images: { width: number; height: number }[] | undefined,
+  supportedRatios: readonly T[]
+): T | undefined {
+  const img = images?.[0];
+  if (!img?.width || !img?.height) return undefined;
+  return findClosestAspectRatio({ width: img.width, height: img.height }, [...supportedRatios]);
+}
 
 /**
  * Creates videoGen input for Wan ecosystem.
@@ -91,7 +108,9 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
     case 'v2.1': {
       return removeEmpty({
         ...baseInput,
-        aspectRatio: data.aspectRatio?.value as Wan21FalVideoGenInput['aspectRatio'],
+        aspectRatio: (hasImages
+          ? getImageAspectRatio(data.images, v21AspectRatios)
+          : data.aspectRatio?.value) as Wan21FalVideoGenInput['aspectRatio'],
         enablePromptExpansion: false,
         sourceImage: hasImages ? data.images?.[0]?.url : undefined,
       }) as Wan21FalVideoGenInput;
@@ -104,7 +123,9 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
         operation,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
-        aspectRatio: data.aspectRatio?.value as Wan22FalTextToVideoInput['aspectRatio'],
+        aspectRatio: (hasImages
+          ? getImageAspectRatio(data.images, v22AspectRatios)
+          : data.aspectRatio?.value) as Wan22FalTextToVideoInput['aspectRatio'],
         enablePromptExpansion: false,
         shift: 'shift' in data ? data.shift : undefined,
         interpolatorModel: 'interpolatorModel' in data ? data.interpolatorModel : undefined,
@@ -127,10 +148,13 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
         operation,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
-        aspectRatio: data.aspectRatio?.value as Wan225bFalTextToVideoInput['aspectRatio'],
+        aspectRatio: (hasImages
+          ? getImageAspectRatio(data.images, v225bAspectRatios)
+          : data.aspectRatio?.value) as Wan225bFalTextToVideoInput['aspectRatio'],
         enablePromptExpansion: false,
         shift: 'shift' in data ? data.shift : undefined,
         numInferenceSteps: 'steps' in data ? data.steps : undefined,
+        interpolatorModel: 'interpolatorModel' in data ? data.interpolatorModel : undefined,
       };
 
       if (hasImages) {
@@ -149,7 +173,9 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
         operation,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
-        aspectRatio: data.aspectRatio?.value as Wan25FalTextToVideoInput['aspectRatio'],
+        aspectRatio: (hasImages
+          ? getImageAspectRatio(data.images, v25AspectRatios)
+          : data.aspectRatio?.value) as Wan25FalTextToVideoInput['aspectRatio'],
         enablePromptExpansion: false,
       };
 

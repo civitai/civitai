@@ -23,6 +23,7 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import type { GenerationHandlerCtx } from '.';
 import { createComfyInput } from './comfy-input';
 import { defineHandler } from './handler-factory';
+import { removeEmpty } from '~/utils/object-helpers';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -161,7 +162,7 @@ function createTextToImageInput(
 export const createStableDiffusionInput = defineHandler<
   SDFamilyCtx,
   TextToImageStepTemplate | ComfyStepTemplate
->((data, ctx) => {
+>(async (data, ctx) => {
   if (!data.model) throw new Error('Model is required for SD family workflows');
   if (!data.aspectRatio && !data.images?.length)
     throw new Error('Aspect ratio is required for SD family workflows');
@@ -238,7 +239,7 @@ export const createStableDiffusionInput = defineHandler<
       workflowData.upscaleHeight = Math.round((workflowData.height as number) * 1.5);
     }
 
-    return createComfyInput(
+    const comfyInput = await createComfyInput(
       {
         key: comfyKey,
         quantity,
@@ -247,6 +248,16 @@ export const createStableDiffusionInput = defineHandler<
       },
       ctx
     );
+
+    return {
+      ...comfyInput,
+      metadata: {
+        params: removeEmpty({
+          upscaleWidth: workflowData.upscaleWidth,
+          upscaleHeight: workflowData.upscaleHeight,
+        }),
+      },
+    };
   }
 
   return createTextToImageInput(

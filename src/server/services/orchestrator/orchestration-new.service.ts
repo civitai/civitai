@@ -10,7 +10,7 @@
  * 1. WORKFLOW DISCRIMINATOR (first level):
  *    - vid2vid:interpolate → videoInterpolation step
  *    - vid2vid:upscale → videoUpscaler step
- *    - img2img:upscale → comfy step
+ *    - img2img:upscale → imageUpscaler step
  *    - img2img:remove-background → comfy step
  *    - All other workflows → ecosystem discriminator
  *
@@ -438,26 +438,21 @@ function createVideoUpscaleInput(
 /**
  * Handle img2img:upscale workflow
  */
-async function createImageUpscaleInput(
+function createImageUpscaleInput(
   data: Extract<GenerationGraphOutput, { workflow: 'img2img:upscale' }>
-): Promise<StepInput> {
+): StepInput {
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
     throw new Error('Image URL is required for image upscaling');
   }
 
-  const upscaleWidth = sourceImage.width * data.scaleFactor;
-  const upscaleHeight = sourceImage.height * data.scaleFactor;
-
-  return createComfyInput({
-    key: 'img2img-upscale',
-    params: {
+  return {
+    $type: 'imageUpscaler',
+    input: {
       image: sourceImage.url,
-      upscaleWidth,
-      upscaleHeight,
-      outputFormat: data.outputFormat,
+      scaleFactor: data.scaleFactor,
     },
-  });
+  };
 }
 
 /**
@@ -564,7 +559,7 @@ export async function createWorkflowStepFromGraph({
   const airs = new StrictAirMap(enrichedResources.map((r) => [r.id, r.air]));
   const handlerCtx: GenerationHandlerCtx = { airs };
 
-  const { $type, input } = await createStepInput(data, handlerCtx);
+  const { $type, input, metadata: additionalMetadata } = await createStepInput(data, handlerCtx);
 
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
   const timeSpan = new TimeSpan(0, 20, 0);
@@ -580,6 +575,17 @@ export async function createWorkflowStepFromGraph({
       vae?: { id: number; model: { type: string } };
     }
   );
+
+  if (
+    additionalMetadata &&
+    'params' in additionalMetadata &&
+    typeof additionalMetadata.params === 'object'
+  ) {
+    stepMetadata.params = {
+      ...stepMetadata.params,
+      ...additionalMetadata.params,
+    };
+  }
 
   const metadata: Record<string, unknown> = isWhatIf
     ? {}
@@ -968,8 +974,7 @@ function getResourcesFromStep(
       const enriched =
         allResources.find(
           (r) =>
-            r.id === ref.id &&
-            (r.epochDetails?.epochNumber ?? r.epochNumber) === ref.epochNumber
+            r.id === ref.id && (r.epochDetails?.epochNumber ?? r.epochNumber) === ref.epochNumber
         ) ?? allResources.find((r) => r.id === ref.id);
       if (!enriched) return null;
       return {
@@ -995,6 +1000,7 @@ type StepWithOutput = WorkflowStep & {
     images?: ImageBlob[];
     video?: VideoBlob;
     blobs?: ImageBlob[];
+    blob?: ImageBlob;
     errors?: string[];
     externalTOSViolation?: boolean;
     message?: string;
@@ -1014,6 +1020,8 @@ function normalizeStepOutput(step: StepWithOutput): Array<ImageBlob | VideoBlob>
     case 'imageGen':
     case 'textToImage':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
+    case 'imageUpscaler':
+      return output.blob ? [{ ...output.blob, type: 'image' as const }] : [];
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':
@@ -1071,6 +1079,11 @@ export function formatStepOutputs(
             break;
           }
         }
+      }
+
+      if (!width || !height) {
+        width = params.upscaleWidth as number | undefined;
+        height = params.upscaleHeight as number | undefined;
       }
 
       // Fall back to main params if not found in transformations

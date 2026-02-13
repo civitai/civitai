@@ -143,6 +143,7 @@ const baseModelConfig = [
     group: 'SDXLDistilled',
     hidden: true,
   },
+  { name: 'Seedance 2', type: 'video', group: 'Seedance2', hidden: true, engine: 'seedance2' },
   { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
@@ -159,8 +160,7 @@ const baseModelConfig = [
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
-  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' }, 
-  
+  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 type BaseModelGroupConfigEntry = {
@@ -366,6 +366,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'SDXL Distilled',
     family: 'StableDiffusion',
     description: 'Faster SDXL variants with reduced inference steps',
+  },
+  Seedance2: {
+    name: 'Seedance 2',
+    description: "ByteDance's next-generation video generation model",
   },
   Seedream: {
     name: 'Seedream',

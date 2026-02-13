@@ -4,6 +4,11 @@
  * Controls for Qwen ecosystem.
  * Meta contains only dynamic props - static props defined in components.
  *
+ * Supports txt2img and img2img:edit workflows with model version selection.
+ * Model versions differ per workflow:
+ * - txt2img: v2509, v2512 (default)
+ * - img2img:edit: v2509, v2511
+ *
  * Note: Qwen doesn't use negative prompts, samplers, or CLIP skip.
  */
 
@@ -19,6 +24,42 @@ import {
   seedNode,
   stepsNode,
 } from './common';
+
+// =============================================================================
+// Model Versions
+// =============================================================================
+
+/** Qwen model version IDs */
+const qwenVersionIds = {
+  txt2img_v2509: 2110043,
+  txt2img_v2512: 2552908,
+  img2img_v2509: 2133258,
+  img2img_v2511: 2558804,
+} as const;
+
+/** Version options for txt2img workflow */
+const qwenTxt2ImgVersionOptions = [
+  { label: 'v2509', value: qwenVersionIds.txt2img_v2509 },
+  { label: 'v2512', value: qwenVersionIds.txt2img_v2512 },
+];
+
+/** Version options for img2img:edit workflow */
+const qwenImg2ImgVersionOptions = [
+  { label: 'v2509', value: qwenVersionIds.img2img_v2509 },
+  { label: 'v2511', value: qwenVersionIds.img2img_v2511 },
+];
+
+/** Workflow-specific version configuration */
+const qwenWorkflowVersions = {
+  txt2img: {
+    versions: qwenTxt2ImgVersionOptions,
+    defaultModelId: qwenVersionIds.txt2img_v2512,
+  },
+  'img2img:edit': {
+    versions: qwenImg2ImgVersionOptions,
+    defaultModelId: qwenVersionIds.img2img_v2511,
+  },
+};
 
 // =============================================================================
 // Aspect Ratios
@@ -42,8 +83,18 @@ const qwenAspectRatios = [
  * Note: Qwen doesn't use negative prompts, samplers, or CLIP skip.
  */
 export const qwenGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
-  // Merge checkpoint graph (includes model node and baseModel sync effect)
-  .merge(createCheckpointGraph())
+  // Merge checkpoint graph with workflow-specific versions
+  // modelLocked: true ensures stale stored values are forced to valid version IDs
+  // Automatically syncs model version when workflow changes (txt2img ↔ img2img:edit)
+  .merge(
+    (ctx) =>
+      createCheckpointGraph({
+        workflowVersions: qwenWorkflowVersions,
+        currentWorkflow: ctx.workflow,
+        modelLocked: true,
+      }),
+    ['workflow']
+  )
   // Images node - shown for img2img variants, hidden for txt2img
   .node(
     'images',

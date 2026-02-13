@@ -218,7 +218,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 // FormFooter Component
 // =============================================================================
 
-export function FormFooter() {
+export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void } = {}) {
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
@@ -337,6 +337,7 @@ export function FormFooter() {
         civitaiTip,
         ...(sourceMetadata ? { sourceMetadata } : {}),
       });
+      onSubmitSuccess?.();
     };
 
     conditionalPerformTransaction(totalCost, performTransaction);
