@@ -19,6 +19,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     review: `/reviews/${threadParentId}?${queryString}`,
     bounty: `/bounties/${threadParentId}?${queryString}#comments`,
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}#comments`,
+    challenge: `/challenges/${threadParentId}?${queryString}#comments`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
@@ -164,7 +165,8 @@ export const commentNotifications = createNotificationProcessor({
                 root."reviewId",
                 root."articleId",
                 root."bountyId",
-                root."bountyEntryId"
+                root."bountyEntryId",
+                root."challengeId"
              ),
             'threadType', CASE
                 WHEN root."imageId" IS NOT NULL THEN 'image'
@@ -176,6 +178,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."articleId" IS NOT NULL THEN 'article'
                 WHEN root."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                WHEN root."challengeId" IS NOT NULL THEN 'challenge'
                 ELSE 'comment'
                 END,
              'commentParentId', t."commentId",
@@ -253,6 +256,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."articleId",
                 root."bountyId",
                 root."bountyEntryId",
+                root."challengeId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -261,7 +265,8 @@ export const commentNotifications = createNotificationProcessor({
                 t."reviewId",
                 t."articleId",
                 t."bountyId",
-                t."bountyEntryId"
+                t."bountyEntryId",
+                t."challengeId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -273,6 +278,7 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
+              WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               ELSE 'comment'
             END,
              'commentParentId', COALESCE(
@@ -285,6 +291,7 @@ export const commentNotifications = createNotificationProcessor({
                 t."articleId",
                 t."bountyId",
                 t."bountyEntryId",
+                t."challengeId",
                 t."commentId"
              ),
              'commentParentType', CASE
@@ -297,6 +304,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN t."articleId" IS NOT NULL THEN 'article'
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                WHEN t."challengeId" IS NOT NULL THEN 'challenge'
                 ELSE 'comment'
               END,
             'username', u.username
@@ -511,6 +519,42 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_bounty_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');
+    `,
+  },
+  'new-challenge-comment': {
+    displayName: 'New comments on your challenges',
+    category: NotificationCategory.Comment,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your challenge: "${details.challengeTitle}"`,
+      url: `/challenges/${details.challengeId}?highlight=${details.commentId}#comments`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_challenge_comment AS (
+        SELECT DISTINCT
+          ch."createdById" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'challengeId', ch.id,
+            'challengeTitle', ch.title,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."challengeId" IS NOT NULL
+        JOIN "Challenge" ch ON ch.id = t."challengeId"
+        WHERE ch."createdById" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != ch."createdById"
+      )
+      SELECT
+        concat('new-comment-challenge:owner:v2:', details->>'commentId') "key",
+        "ownerId" "userId",
+        'new-challenge-comment' "type",
+        details
+      FROM new_challenge_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-challenge-comment');
     `,
   },
 });

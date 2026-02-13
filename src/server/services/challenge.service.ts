@@ -38,6 +38,7 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
+  deriveChallengeNsfwLevel,
   getChallengeConfig,
   setChallengeConfig,
   getJudgingConfig,
@@ -140,6 +141,7 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     modelVersionId,
     includeEnded,
     excludeEventChallenges,
+    browsingLevel,
     limit,
     cursor,
   } = input;
@@ -185,6 +187,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   // Exclude challenges that belong to an event (shown in featured section instead)
   if (excludeEventChallenges) {
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
+  }
+
+  // Content level filter - only show challenges whose nsfwLevel is within the browsing level
+  if (browsingLevel) {
+    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
   }
 
   // Composite cursor for stable keyset pagination across all sort types
@@ -293,9 +300,12 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
+      commentCount: bigint;
       modelVersionIds: number[] | null;
       modelId: number | null;
       modelName: string | null;
+      nsfwLevel: number;
+      allowedNsfwLevel: number;
       collectionId: number | null;
       createdById: number;
       creatorUsername: string | null;
@@ -319,6 +329,9 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.source,
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
+      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      c."nsfwLevel",
+      c."allowedNsfwLevel",
       c."modelVersionIds",
       (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
@@ -382,8 +395,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       status: item.status,
       source: item.source,
       prizePool: item.prizePool,
+      nsfwLevel: item.nsfwLevel,
+      allowedNsfwLevel: item.allowedNsfwLevel,
       collectionId: item.collectionId,
       entryCount: Number(item.entryCount),
+      commentCount: Number(item.commentCount),
       coverImage: coverImage
         ? {
             id: coverImage.id,
@@ -452,6 +468,13 @@ export async function getChallengeDetail(
     entryCount = Number(countResult.count);
   }
 
+  // Get comment count from the challenge's thread
+  const commentThread = await dbRead.thread.findUnique({
+    where: { challengeId: id },
+    select: { commentCount: true },
+  });
+  const commentCount = commentThread?.commentCount ?? 0;
+
   // Get creator info with profile picture and cosmetics
   const [creator] = await dbRead.$queryRaw<
     [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
@@ -475,6 +498,7 @@ export async function getChallengeDetail(
       select: {
         id: true,
         name: true,
+        baseModel: true,
         model: { select: { id: true, name: true } },
       },
     });
@@ -489,6 +513,7 @@ export async function getChallengeDetail(
         name: v.model.name,
         versionId: v.id,
         versionName: v.name,
+        baseModel: v.baseModel,
         image: img
           ? {
               id: img.id,
@@ -588,6 +613,9 @@ export async function getChallengeDetail(
   const completionSummary =
     (metadata?.completionSummary as ChallengeCompletionSummary | undefined) ?? null;
 
+  // Get challenge config for judgedTagId
+  const challengeConfig = await getChallengeConfig();
+
   return {
     id: challenge.id,
     title: challenge.title,
@@ -631,6 +659,7 @@ export async function getChallengeDetail(
     prizeDistribution: challenge.prizeDistribution,
     operationBudget: challenge.operationBudget,
     entryCount,
+    commentCount,
     createdBy: {
       ...displayUser,
       profilePicture: displayProfilePics[displayUserId] ?? null,
@@ -639,6 +668,7 @@ export async function getChallengeDetail(
     judge,
     winners,
     completionSummary,
+    judgedTagId: challengeConfig.judgedTagId ?? null,
   };
 }
 
@@ -849,6 +879,7 @@ export async function upsertChallenge({
         where: { id },
         data: {
           ...data,
+          nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
           coverImageId,
           judgeId: judgeId ?? null,
           eventId: eventId ?? null,
@@ -920,6 +951,7 @@ export async function upsertChallenge({
         data: {
           ...data,
           status,
+          nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
           coverImageId,
           judgeId: judgeId ?? null,
           eventId: eventId ?? null,
@@ -1432,6 +1464,8 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
           endsAt: true,
           status: true,
           source: true,
+          nsfwLevel: true,
+          allowedNsfwLevel: true,
           prizePool: true,
           modelVersionIds: true,
           collectionId: true,
@@ -1498,6 +1532,18 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     for (const row of counts) entryCounts.set(row.collectionId, Number(row.count));
   }
 
+  // Get comment counts for all challenges
+  const allChallengeIds = allChallenges.map((c) => c.id);
+  const commentCounts = new Map<number, number>();
+  if (allChallengeIds.length > 0) {
+    const counts = await dbRead.$queryRaw<
+      Array<{ challengeId: number; commentCount: number }>
+    >`SELECT "challengeId", "commentCount" FROM "Thread" WHERE "challengeId" IN (${Prisma.join(
+      allChallengeIds
+    )})`;
+    for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
+  }
+
   return events.map((event) => ({
     id: event.id,
     title: event.title,
@@ -1519,9 +1565,12 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
         endsAt: c.endsAt,
         status: c.status,
         source: c.source,
+        nsfwLevel: c.nsfwLevel,
+        allowedNsfwLevel: c.allowedNsfwLevel,
         prizePool: c.prizePool,
         collectionId: c.collectionId,
         entryCount: c.collectionId ? entryCounts.get(c.collectionId) ?? 0 : 0,
+        commentCount: commentCounts.get(c.id) ?? 0,
         coverImage: coverImage
           ? {
               id: coverImage.id,

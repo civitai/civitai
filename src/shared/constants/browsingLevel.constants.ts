@@ -141,6 +141,14 @@ export const getNsfwLevelDeprecatedReverseMapping = (level: number) => {
   return nsfwLevelReverseMapDeprecated[level as NsfwLevel] ?? NsfwLevelDeprecated.None;
 };
 
+export const nsfwLevelColors: Record<number, string> = {
+  [NsfwLevel.PG]: 'green',
+  [NsfwLevel.PG13]: 'yellow',
+  [NsfwLevel.R]: 'orange',
+  [NsfwLevel.X]: 'red',
+  [NsfwLevel.XXX]: 'grape',
+};
+
 export const votableTagColors = {
   [0]: { dark: { color: 'gray', shade: 5 }, light: { color: 'gray', shade: 3 } },
   [NsfwLevel.PG]: { dark: { color: 'gray', shade: 5 }, light: { color: 'gray', shade: 3 } },

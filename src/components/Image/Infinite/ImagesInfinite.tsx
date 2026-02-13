@@ -29,7 +29,7 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
   useIndex?: boolean;
   disableStoreFilters?: boolean;
-} & Pick<ImagesContextState, 'collectionId'>;
+} & Pick<ImagesContextState, 'collectionId' | 'judgeInfo'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
   return (

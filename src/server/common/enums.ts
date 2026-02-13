@@ -357,6 +357,7 @@ export enum OrchEngineTypes {
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
   LinkDomain = 'LinkDomain',
+  MessagePattern = 'MessagePattern',
 }
 
 export enum ToolSort {
