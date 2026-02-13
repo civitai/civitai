@@ -29,7 +29,8 @@ import styles from './CreateComic.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, features }) => {
+    if (!features?.comicCreator) return { notFound: true };
     if (!session?.user) {
       return {
         redirect: {

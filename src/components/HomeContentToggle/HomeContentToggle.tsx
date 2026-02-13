@@ -119,6 +119,7 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === 'articles' && !features.articles,
         key === 'tools' && !features.toolSearch,
         key === 'challenges' && !features.challengePlatform,
+        key === 'comics' && !features.comicCreator,
       ].some((b) => b)
   );
 }

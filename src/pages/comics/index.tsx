@@ -6,6 +6,14 @@ import { ComicGenreScroller } from '~/components/Comics/ComicGenreScroller';
 import { ComicsInfinite } from '~/components/Comics/ComicsInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.comicCreator) return { notFound: true };
+    return { props: {} };
+  },
+});
 
 function ComicsBrowse() {
   const router = useRouter();

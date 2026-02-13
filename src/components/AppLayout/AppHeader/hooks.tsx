@@ -294,7 +294,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/comics/create',
-      visible: !isMuted && canCreate,
+      visible: !isMuted && canCreate && features.comicCreator,
       redirectReason: 'post-images',
       rel: 'nofollow',
       icon: IconBook,

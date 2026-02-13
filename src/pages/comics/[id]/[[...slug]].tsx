@@ -36,7 +36,15 @@ import { formatRelativeDate } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import styles from '../Comics.module.scss';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.comicCreator) return { notFound: true };
+    return { props: {} };
+  },
+});
 
 function PublicComicReader() {
   const router = useRouter();

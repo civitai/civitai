@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { SessionUser } from 'next-auth';
-import { router, protectedProcedure, publicProcedure, middleware } from '~/server/trpc';
+import {
+  router,
+  protectedProcedure,
+  publicProcedure,
+  middleware,
+  isFlagProtected,
+} from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
@@ -34,6 +40,11 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { comicsSearchIndex } from '~/server/search-index';
+
+// Feature flag gate — all procedures require the comicCreator flag
+const comicFlag = isFlagProtected('comicCreator');
+const comicProtectedProcedure = protectedProcedure.use(comicFlag);
+const comicPublicProcedure = publicProcedure.use(comicFlag);
 
 // Constants
 const NANOBANANA_VERSION_ID = 2154472;
@@ -421,7 +432,7 @@ async function createSinglePanel(args: {
 
 export const comicsRouter = router({
   // Projects
-  getMyProjects: protectedProcedure.query(async ({ ctx }) => {
+  getMyProjects: comicProtectedProcedure.query(async ({ ctx }) => {
     const projects = await dbRead.comicProject.findMany({
       where: {
         userId: ctx.user.id,
@@ -463,7 +474,7 @@ export const comicsRouter = router({
     });
   }),
 
-  getProject: protectedProcedure.input(getProjectSchema).query(async ({ ctx, input }) => {
+  getProject: comicProtectedProcedure.input(getProjectSchema).query(async ({ ctx, input }) => {
     const project = await dbRead.comicProject.findUnique({
       where: { id: input.id },
       include: {
@@ -507,7 +518,7 @@ export const comicsRouter = router({
     };
   }),
 
-  getProjectForReader: protectedProcedure.input(getProjectSchema).query(async ({ ctx, input }) => {
+  getProjectForReader: comicProtectedProcedure.input(getProjectSchema).query(async ({ ctx, input }) => {
     const project = await dbRead.comicProject.findUnique({
       where: { id: input.id },
       select: {
@@ -550,7 +561,7 @@ export const comicsRouter = router({
   }),
 
   // Public queries — no auth required
-  getPublicProjects: publicProcedure
+  getPublicProjects: comicPublicProcedure
     .input(
       z.object({
         limit: z.number().int().min(1).max(50).default(20),
@@ -733,7 +744,7 @@ export const comicsRouter = router({
       return { items, nextCursor };
     }),
 
-  getPublicProjectForReader: publicProcedure
+  getPublicProjectForReader: comicPublicProcedure
     .input(z.object({ id: z.number().int() }))
     .query(async ({ input }) => {
       const project = await dbRead.comicProject.findUnique({
@@ -806,7 +817,7 @@ export const comicsRouter = router({
     }),
 
   // Dynamic pricing — whatIf cost estimate for panel generation
-  getPanelCostEstimate: protectedProcedure.query(async ({ ctx }) => {
+  getPanelCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
       const token = await getOrchestratorToken(ctx.user.id, ctx);
 
@@ -854,7 +865,7 @@ export const comicsRouter = router({
     }
   }),
 
-  getPromptEnhanceCostEstimate: protectedProcedure.query(async ({ ctx }) => {
+  getPromptEnhanceCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
       const token = await getOrchestratorToken(ctx.user.id, ctx);
       return orchestratorChatCompletionCost({
@@ -872,7 +883,7 @@ export const comicsRouter = router({
     }
   }),
 
-  getPlanChapterCostEstimate: protectedProcedure.query(async ({ ctx }) => {
+  getPlanChapterCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
       const token = await getOrchestratorToken(ctx.user.id, ctx);
       return orchestratorChatCompletionCost({
@@ -890,7 +901,7 @@ export const comicsRouter = router({
     }
   }),
 
-  createProject: protectedProcedure.input(createProjectSchema).mutation(async ({ ctx, input }) => {
+  createProject: comicProtectedProcedure.input(createProjectSchema).mutation(async ({ ctx, input }) => {
     const project = await dbWrite.comicProject.create({
       data: {
         userId: ctx.user.id,
@@ -957,7 +968,7 @@ export const comicsRouter = router({
     return project;
   }),
 
-  deleteProject: protectedProcedure.input(getProjectSchema).mutation(async ({ ctx, input }) => {
+  deleteProject: comicProtectedProcedure.input(getProjectSchema).mutation(async ({ ctx, input }) => {
     const project = await dbRead.comicProject.findUnique({
       where: { id: input.id },
       select: { userId: true },
@@ -978,7 +989,7 @@ export const comicsRouter = router({
     return { success: true };
   }),
 
-  updateProject: protectedProcedure.input(updateProjectSchema).mutation(async ({ ctx, input }) => {
+  updateProject: comicProtectedProcedure.input(updateProjectSchema).mutation(async ({ ctx, input }) => {
     const project = await dbRead.comicProject.findUnique({
       where: { id: input.id },
       select: { userId: true },
@@ -1058,7 +1069,7 @@ export const comicsRouter = router({
   }),
 
   // Chapters
-  createChapter: protectedProcedure
+  createChapter: comicProtectedProcedure
     .input(createChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ input }) => {
@@ -1081,7 +1092,7 @@ export const comicsRouter = router({
       return chapter;
     }),
 
-  updateChapter: protectedProcedure.input(updateChapterSchema).mutation(async ({ ctx, input }) => {
+  updateChapter: comicProtectedProcedure.input(updateChapterSchema).mutation(async ({ ctx, input }) => {
     const chapter = await dbRead.comicChapter.findUnique({
       where: {
         projectId_position: { projectId: input.projectId, position: input.chapterPosition },
@@ -1102,7 +1113,7 @@ export const comicsRouter = router({
     return updated;
   }),
 
-  deleteChapter: protectedProcedure.input(deleteChapterSchema).mutation(async ({ ctx, input }) => {
+  deleteChapter: comicProtectedProcedure.input(deleteChapterSchema).mutation(async ({ ctx, input }) => {
     const chapter = await dbRead.comicChapter.findUnique({
       where: {
         projectId_position: { projectId: input.projectId, position: input.chapterPosition },
@@ -1127,7 +1138,7 @@ export const comicsRouter = router({
     return { success: true };
   }),
 
-  reorderChapters: protectedProcedure
+  reorderChapters: comicProtectedProcedure
     .input(reorderChaptersSchema)
     .use(isProjectOwner)
     .mutation(async ({ input }) => {
@@ -1161,7 +1172,7 @@ export const comicsRouter = router({
 
   // References — single creation path (images added separately)
 
-  createReference: protectedProcedure
+  createReference: comicProtectedProcedure
     .input(createReferenceSchema)
     .mutation(async ({ ctx, input }) => {
       const reference = await dbWrite.comicReference.create({
@@ -1178,7 +1189,7 @@ export const comicsRouter = router({
     }),
 
   // Add reference images — creates Image records + join rows + triggers ingestion
-  addReferenceImages: protectedProcedure
+  addReferenceImages: comicProtectedProcedure
     .input(addReferenceImagesSchema)
     .mutation(async ({ ctx, input }) => {
       const reference = await dbRead.comicReference.findUnique({
@@ -1241,7 +1252,7 @@ export const comicsRouter = router({
     }),
 
   // Poll reference status — just return current status + images
-  pollReferenceStatus: protectedProcedure
+  pollReferenceStatus: comicProtectedProcedure
     .input(z.object({ referenceId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const reference = await dbRead.comicReference.findUnique({
@@ -1270,7 +1281,7 @@ export const comicsRouter = router({
     }),
 
   // Panels — NanoBanana generation via createImageGen
-  createPanel: protectedProcedure
+  createPanel: comicProtectedProcedure
     .input(createPanelSchema)
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
@@ -1517,7 +1528,7 @@ export const comicsRouter = router({
       }
     }),
 
-  updatePanel: protectedProcedure.input(updatePanelSchema).mutation(async ({ ctx, input }) => {
+  updatePanel: comicProtectedProcedure.input(updatePanelSchema).mutation(async ({ ctx, input }) => {
     // Verify ownership via chapter -> project
     const panel = await dbRead.comicPanel.findUnique({
       where: { id: input.panelId },
@@ -1541,7 +1552,7 @@ export const comicsRouter = router({
     return updated;
   }),
 
-  deletePanel: protectedProcedure.input(deletePanelSchema).mutation(async ({ ctx, input }) => {
+  deletePanel: comicProtectedProcedure.input(deletePanelSchema).mutation(async ({ ctx, input }) => {
     // Verify ownership via chapter -> project
     const panel = await dbRead.comicPanel.findUnique({
       where: { id: input.panelId },
@@ -1567,7 +1578,7 @@ export const comicsRouter = router({
     return { success: true };
   }),
 
-  reorderPanels: protectedProcedure
+  reorderPanels: comicProtectedProcedure
     .input(reorderPanelsSchema)
     .use(isChapterOwner)
     .mutation(async ({ input }) => {
@@ -1597,7 +1608,7 @@ export const comicsRouter = router({
     }),
 
   // Debug info for a panel's generation workflow
-  getPanelDebugInfo: protectedProcedure
+  getPanelDebugInfo: comicProtectedProcedure
     .input(z.object({ panelId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
@@ -1704,7 +1715,7 @@ export const comicsRouter = router({
     }),
 
   // Poll panel generation status
-  pollPanelStatus: protectedProcedure
+  pollPanelStatus: comicProtectedProcedure
     .input(z.object({ panelId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
@@ -1816,7 +1827,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Plan chapter panels via GPT
-  planChapterPanels: protectedProcedure
+  planChapterPanels: comicProtectedProcedure
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
@@ -1836,7 +1847,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Create chapter with all panels at once
-  smartCreateChapter: protectedProcedure
+  smartCreateChapter: comicProtectedProcedure
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
@@ -1944,7 +1955,7 @@ export const comicsRouter = router({
 
   // ──── Phase 3: Publish/Unpublish ────
 
-  publishChapter: protectedProcedure
+  publishChapter: comicProtectedProcedure
     .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
@@ -2019,7 +2030,7 @@ export const comicsRouter = router({
       return updated;
     }),
 
-  unpublishChapter: protectedProcedure
+  unpublishChapter: comicProtectedProcedure
     .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
@@ -2050,7 +2061,7 @@ export const comicsRouter = router({
 
   // ──── Phase 3: Comic Engagement (Follow/Hide) ────
 
-  toggleComicEngagement: protectedProcedure
+  toggleComicEngagement: comicProtectedProcedure
     .input(
       z.object({
         projectId: z.number().int(),
@@ -2096,7 +2107,7 @@ export const comicsRouter = router({
       return true;
     }),
 
-  getComicEngagement: protectedProcedure
+  getComicEngagement: comicProtectedProcedure
     .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const engagement = await dbRead.comicProjectEngagement.findUnique({
@@ -2108,7 +2119,7 @@ export const comicsRouter = router({
 
   // ──── Phase 3: Chapter Read Tracking (via engagement readChapters) ────
 
-  markChapterRead: protectedProcedure
+  markChapterRead: comicProtectedProcedure
     .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .mutation(async ({ ctx, input }) => {
       const { projectId, chapterPosition } = input;
@@ -2125,7 +2136,7 @@ export const comicsRouter = router({
       return { success: true };
     }),
 
-  getChapterReadStatus: protectedProcedure
+  getChapterReadStatus: comicProtectedProcedure
     .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const engagement = await dbRead.comicProjectEngagement.findUnique({
@@ -2135,7 +2146,7 @@ export const comicsRouter = router({
       return engagement?.readChapters ?? [];
     }),
 
-  markChapterUnread: protectedProcedure
+  markChapterUnread: comicProtectedProcedure
     .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .mutation(async ({ ctx, input }) => {
       const { projectId, chapterPosition } = input;
@@ -2150,7 +2161,7 @@ export const comicsRouter = router({
 
   // ──── Enhance Panel: create from existing image, optionally with img2img ────
 
-  enhancePanel: protectedProcedure
+  enhancePanel: comicProtectedProcedure
     .input(enhancePanelSchema)
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
@@ -2404,7 +2415,7 @@ export const comicsRouter = router({
 
   // ──── Bulk Create Panels ────
 
-  bulkCreatePanels: protectedProcedure
+  bulkCreatePanels: comicProtectedProcedure
     .input(bulkCreatePanelsSchema)
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
@@ -2736,7 +2747,7 @@ export const comicsRouter = router({
 
   // ──── Phase 2: Create panel from existing Image (manual mode) ────
 
-  createPanelFromImage: protectedProcedure
+  createPanelFromImage: comicProtectedProcedure
     .input(
       z.object({
         projectId: z.number().int(),
@@ -2803,7 +2814,7 @@ export const comicsRouter = router({
 
   // ──── Phase 4: Reference aliases ────
 
-  getReference: protectedProcedure
+  getReference: comicProtectedProcedure
     .input(z.object({ referenceId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       const reference = await dbRead.comicReference.findUnique({
@@ -2821,7 +2832,7 @@ export const comicsRouter = router({
       return reference;
     }),
 
-  deleteReference: protectedProcedure
+  deleteReference: comicProtectedProcedure
     .input(deleteReferenceSchema)
     .mutation(async ({ ctx, input }) => {
       const reference = await dbRead.comicReference.findUnique({
@@ -2837,7 +2848,7 @@ export const comicsRouter = router({
       return { success: true };
     }),
 
-  getUserReferences: protectedProcedure
+  getUserReferences: comicProtectedProcedure
     .input(
       z
         .object({
@@ -2863,7 +2874,7 @@ export const comicsRouter = router({
 
   // ──── Phase 7: Chapter Comments ────
 
-  getChapterThread: publicProcedure
+  getChapterThread: comicPublicProcedure
     .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
     .query(async ({ input }) => {
       const thread = await dbRead.thread.findUnique({
@@ -2892,7 +2903,7 @@ export const comicsRouter = router({
       return thread;
     }),
 
-  createChapterComment: protectedProcedure
+  createChapterComment: comicProtectedProcedure
     .input(
       z.object({
         projectId: z.number().int(),
