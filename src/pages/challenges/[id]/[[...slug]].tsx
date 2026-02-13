@@ -579,11 +579,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm a')}</Text>,
+      value: (
+        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+      ),
     },
     {
       label: 'Ends',
-      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm a')}</Text>,
+      value: (
+        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+      ),
     },
     {
       label: 'Max Entries',

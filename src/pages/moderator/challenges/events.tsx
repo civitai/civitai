@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconCalendarEvent, IconDots, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
+import dayjs from '~/shared/utils/dayjs';
 import { useState } from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -36,7 +37,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, fromDisplayUTC, toDisplayUTC } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -72,7 +73,7 @@ const eventFormSchema = z.object({
   titleColor: z.string().optional(),
   startDate: z.date({ error: 'Start date is required' }),
   endDate: z.date({ error: 'End date is required' }),
-  active: z.boolean().default(true),
+  active: z.boolean().default(false),
 });
 
 type ChallengeEventItem = {
@@ -97,6 +98,9 @@ function EventFormModal({
 }) {
   const queryUtils = trpc.useUtils();
   const editingId = event?.id;
+  // Default dates (in UTC, shifted for display)
+  const defaultStartDate = toDisplayUTC(dayjs.utc().add(1, 'day').startOf('day').toDate());
+  const defaultEndDate = toDisplayUTC(dayjs.utc().add(2, 'day').startOf('day').toDate());
 
   const form = useForm({
     schema: eventFormSchema,
@@ -104,9 +108,9 @@ function EventFormModal({
       title: event?.title ?? '',
       description: event?.description ?? '',
       titleColor: event?.titleColor ?? '',
-      startDate: event?.startDate ?? (undefined as unknown as Date),
-      endDate: event?.endDate ?? (undefined as unknown as Date),
-      active: event?.active ?? true,
+      startDate: event?.startDate ? toDisplayUTC(event.startDate) : defaultStartDate,
+      endDate: event?.endDate ? toDisplayUTC(event.endDate) : defaultEndDate,
+      active: event?.active ?? false,
     },
   });
 
@@ -130,13 +134,17 @@ function EventFormModal({
       form.setError('endDate', { message: 'End date must be after start date' });
       return;
     }
+
+    const startDate = fromDisplayUTC(data.startDate);
+    const endDate = fromDisplayUTC(data.endDate);
+
     upsertMutation.mutate({
       id: editingId,
       title: data.title,
       description: data.description || undefined,
       titleColor: (data.titleColor as (typeof challengeEventTitleColors)[number]) || undefined,
-      startDate: data.startDate,
-      endDate: data.endDate,
+      startDate,
+      endDate,
       active: data.active,
     });
   };
@@ -145,7 +153,7 @@ function EventFormModal({
     <Modal
       opened={opened}
       onClose={onClose}
-      title={<Title order={3}>{editingId ? 'Edit Event' : 'Create Event'}</Title>}
+      title={editingId ? 'Edit Event' : 'Create Event'}
       size="md"
       centered
     >
@@ -315,7 +323,8 @@ export default function ModeratorChallengeEventsPage() {
                           </Text>
                         )}
                         <Text size="xs" c="dimmed">
-                          {formatDate(event.startDate)} &mdash; {formatDate(event.endDate)}
+                          {formatDate(event.startDate, 'lll [UTC]', true)} &mdash;{' '}
+                          {formatDate(event.endDate, 'lll [UTC]', true)}
                         </Text>
                       </Stack>
                       <Menu position="bottom-end" withinPortal>

@@ -135,10 +135,7 @@ export function ChallengeFiltersDropdown() {
       {currentUser && (
         <Stack gap={0}>
           <Divider label="My Challenges" className="text-sm font-bold" mb={4} />
-          <Chip.Group
-            value={participationFilter ?? ''}
-            onChange={handleParticipationChange}
-          >
+          <Chip.Group value={participationFilter ?? ''} onChange={handleParticipationChange}>
             <Group gap={8} mb={4}>
               {participationFilters.map((option) => (
                 <FilterChip key={option.value} value={option.value}>
