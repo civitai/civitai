@@ -174,14 +174,6 @@ export function isFliptSync(
   } catch (e) {
     const err = e as Error;
     // Log unexpected errors (not just "flag not found") for observability
-    logToAxiom(
-      {
-        type: 'flipt-sync-eval-error',
-        flag,
-        error: err.message,
-      },
-      'temp-search'
-    ).catch();
     return null;
   }
 }
