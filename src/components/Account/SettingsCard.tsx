@@ -129,6 +129,30 @@ export function SettingsCard() {
             disabled={isLoading}
           />
         </Group>
+        {user.filePreferences?.format === 'GGUF' && (
+          <Tooltip
+            label="Quant type determines the quality/size tradeoff. Q8_0 has the best quality but largest size, Q4_K_M provides a good balance, Q2_K is smallest but lower quality."
+            multiline
+            w={300}
+          >
+            <Select
+              label="Preferred Quant Type"
+              name="quantType"
+              data={constants.modelFileQuantTypes}
+              value={user.filePreferences?.quantType ?? 'Q4_K_M'}
+              onChange={(value: string | null) =>
+                mutate({
+                  id: user.id,
+                  filePreferences: {
+                    ...user.filePreferences,
+                    quantType: value as ModelFileQuantType,
+                  },
+                })
+              }
+              disabled={isLoading}
+            />
+          </Tooltip>
+        )}
 
         {!!assistantToggleableFeatures && (
           <>

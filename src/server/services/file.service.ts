@@ -137,6 +137,7 @@ export const getFileForModelVersion = async ({
   format,
   size,
   fp,
+  quantType,
   user,
   noAuth,
 }: {
@@ -145,6 +146,7 @@ export const getFileForModelVersion = async ({
   format?: ModelFileFormat;
   size?: ModelFileSize;
   fp?: ModelFileFp;
+  quantType?: ModelFileQuantType;
   user?: {
     isModerator?: boolean | null;
     id?: number;
@@ -261,7 +263,7 @@ export const getFileForModelVersion = async ({
     });
     const metadata: FileMetadata = {
       ...user?.filePreferences,
-      ...removeEmpty({ format, size, fp }),
+      ...removeEmpty({ format, size, fp, quantType }),
     };
     const castedFiles = files as Array<Omit<FileResult, 'metadata'> & { metadata: FileMetadata }>;
     file = getPrimaryFile(castedFiles, { metadata });

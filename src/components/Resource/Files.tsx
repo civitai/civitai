@@ -11,6 +11,8 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
+  Badge,
+  Title,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { useViewportSize } from '@mantine/hooks';
@@ -21,12 +23,16 @@ import {
   IconCircleCheck,
   IconCloudUpload,
   IconFileUpload,
+  IconLink,
   IconRefresh,
   IconTrash,
   IconX,
+  IconFile3d,
+  IconPuzzle,
+  IconFileSettings,
 } from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
-import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
+import { useContainerPosition, usePositioner } from 'masonic';
 import { useRef, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -45,15 +51,27 @@ import { trpc } from '~/utils/trpc';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
+import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
+import { openLinkComponentModal } from '~/components/Resource/LinkComponentModal';
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
-  const { files, onDrop, startUpload, hasPending, fileExtensions, maxFiles } = useFilesContext();
+  const {
+    files,
+    linkedComponents,
+    onDrop,
+    startUpload,
+    hasPending,
+    fileExtensions,
+    maxFiles,
+    addLinkedComponent,
+    removeLinkedComponent,
+  } = useFilesContext();
 
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
-  const { offset, width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
-  const positioner = usePositioner(
+  const { width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
+  usePositioner(
     {
       width: containerWidth,
       maxColumnCount: 2,
@@ -61,7 +79,16 @@ export function Files() {
     },
     [files.length]
   );
-  const resizeObserver = useResizeObserver(positioner);
+
+  // Get existing component types to avoid duplicates
+  const existingComponentTypes = linkedComponents.map((c) => c.componentType);
+
+  // Categorize files by type
+  const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type ?? ''));
+  const requiredComponents = files.filter((f) => ['VAE', 'Text Encoder'].includes(f.type ?? ''));
+  const optionalFiles = files.filter(
+    (f) => !['Model', 'Pruned Model', 'VAE', 'Text Encoder'].includes(f.type ?? '')
+  );
 
   return (
     <Stack>
@@ -130,15 +157,112 @@ export function Files() {
           Start Upload
         </Button>
       ) : null}
-      <MasonryScroller
-        containerRef={masonryRef}
-        positioner={positioner}
-        resizeObserver={resizeObserver}
-        offset={offset}
-        height={height}
-        items={files}
-        render={FileCard}
-      />
+
+      {/* Model Files Section */}
+      {modelFiles.length > 0 && (
+        <Stack gap="md">
+          <Group gap="xs">
+            <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
+            <Title order={4}>Model Files</Title>
+          </Group>
+          <Text size="sm" c="dimmed">
+            The main model files users will download. We&apos;ll show the best match based on their
+            preferences.
+          </Text>
+          <Stack gap="md">
+            {modelFiles.map((file) => (
+              <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+            ))}
+          </Stack>
+        </Stack>
+      )}
+
+      {/* Required Components Section */}
+      {(requiredComponents.length > 0 || linkedComponents.length > 0) && (
+        <Card
+          withBorder
+          style={{
+            borderColor: 'var(--mantine-color-yellow-6)',
+            backgroundColor: 'rgba(250, 176, 5, 0.03)',
+          }}
+        >
+          <Stack gap="md">
+            <Group gap="xs" justify="space-between" wrap="nowrap">
+              <Group gap="xs">
+                <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-6)' }} />
+                <Title order={4}>Required Components</Title>
+                <Badge color="yellow" variant="light">
+                  Users must download
+                </Badge>
+              </Group>
+              <Button
+                variant="light"
+                size="xs"
+                leftSection={<IconLink size={14} />}
+                onClick={() =>
+                  openLinkComponentModal({
+                    onSave: addLinkedComponent,
+                    existingComponentTypes,
+                  })
+                }
+              >
+                Link Existing
+              </Button>
+            </Group>
+            <Text size="sm" c="dimmed">
+              Additional files users need to run this model. Upload files or link to existing models
+              on Civitai.
+            </Text>
+            <Stack gap="md">
+              {requiredComponents.map((file) => (
+                <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+              ))}
+              {linkedComponents.map((component) => (
+                <LinkedComponentCard
+                  key={component.componentType}
+                  component={component}
+                  onRemove={removeLinkedComponent}
+                />
+              ))}
+            </Stack>
+          </Stack>
+        </Card>
+      )}
+
+      {/* Link Component Button - shown when no required components yet */}
+      {requiredComponents.length === 0 && linkedComponents.length === 0 && (
+        <Button
+          variant="light"
+          color="yellow"
+          leftSection={<IconLink size={16} />}
+          onClick={() =>
+            openLinkComponentModal({
+              onSave: addLinkedComponent,
+              existingComponentTypes,
+            })
+          }
+        >
+          Link Required Component from Civitai
+        </Button>
+      )}
+
+      {/* Optional Files Section */}
+      {optionalFiles.length > 0 && (
+        <Stack gap="md">
+          <Group gap="xs">
+            <IconFileSettings size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
+            <Title order={4}>Optional Files</Title>
+          </Group>
+          <Text size="sm" c="dimmed">
+            Workflows, configs, and other helpful files. Not required to use the model.
+          </Text>
+          <Stack gap="md">
+            {optionalFiles.map((file) => (
+              <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+            ))}
+          </Stack>
+        </Stack>
+      )}
     </Stack>
   );
 }
@@ -148,6 +272,62 @@ export function Files() {
 //   version?: Partial<ModelVersionById>;
 //   onStartUploadClick?: VoidFunction;
 // };
+
+// Card for displaying a linked component from another Civitai model
+function LinkedComponentCard({
+  component,
+  onRemove,
+}: {
+  component: LinkedComponent;
+  onRemove: (componentType: ModelFileComponentType) => void;
+}) {
+  return (
+    <Card withBorder style={{ borderColor: 'var(--mantine-color-blue-4)' }}>
+      <Stack gap={4} pb="xs">
+        <Group justify="space-between" gap={4} wrap="nowrap">
+          <Group gap="xs">
+            <IconLink size={16} style={{ color: 'var(--mantine-color-blue-4)' }} />
+            <Text lineClamp={1} style={{ display: 'inline-block' }}>
+              {component.modelName}
+            </Text>
+            <Badge size="xs" color="blue" variant="light">
+              Linked
+            </Badge>
+          </Group>
+          <Tooltip label="Remove linked component" position="left">
+            <LegacyActionIcon color="red" onClick={() => onRemove(component.componentType)}>
+              <IconTrash />
+            </LegacyActionIcon>
+          </Tooltip>
+        </Group>
+        <Stack gap={0}>
+          <Text size="sm" fw="bold">
+            Component Type
+          </Text>
+          <Text size="sm" c="dimmed">
+            {component.componentType}
+          </Text>
+        </Stack>
+        <Stack gap={0}>
+          <Text size="sm" fw="bold">
+            Version
+          </Text>
+          <Text size="sm" c="dimmed">
+            {component.versionName}
+          </Text>
+        </Stack>
+        <Stack gap={0}>
+          <Text size="sm" fw="bold">
+            File
+          </Text>
+          <Text size="sm" c="dimmed">
+            {component.fileName}
+          </Text>
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
 
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
@@ -423,6 +603,8 @@ function FileEditForm({
           fp: versionFile.fp ?? undefined,
           size: versionFile.size ?? undefined,
           format: versionFile.format ?? undefined,
+          quantType: versionFile.quantType ?? undefined,
+          componentType: versionFile.componentType ?? undefined,
         },
       });
     }
@@ -456,6 +638,8 @@ function FileEditForm({
       type: initialFile.type,
       size: initialFile.size,
       fp: initialFile.fp,
+      quantType: initialFile.quantType,
+      componentType: initialFile.componentType,
     });
   };
 
@@ -472,15 +656,45 @@ function FileEditForm({
           value: x,
         }))}
         value={versionFile.type ?? null}
-        onChange={(value) =>
+        onChange={(value) => {
+          const newType = value as ModelFileType | null;
+          // Auto-suggest componentType based on file type
+          let suggestedComponentType: ModelFileComponentType | null = null;
+          if (newType === 'VAE') suggestedComponentType = 'VAE';
+          else if (newType === 'Text Encoder') suggestedComponentType = 'TextEncoder';
+          else if (newType === 'Config') suggestedComponentType = 'Config';
+
           updateFile(versionFile.uuid, {
-            type: value as ModelFileType | null,
+            type: newType,
             size: null,
             fp: null,
-          })
-        }
+            componentType: suggestedComponentType,
+          });
+        }}
         withAsterisk
       />
+
+      {versionFile.type && !['Model', 'Pruned Model'].includes(versionFile.type) && (
+        <Tooltip
+          label="Specify what type of component this file is for users who need to download it separately."
+          multiline
+          w={300}
+        >
+          <Select
+            label="Component Type"
+            placeholder="VAE, Text Encoder, UNet..."
+            data={constants.modelFileComponentTypes}
+            error={error?.componentType?._errors[0]}
+            value={versionFile.componentType ?? null}
+            onChange={(value) => {
+              updateFile(versionFile.uuid, {
+                componentType: value as ModelFileComponentType | null,
+              });
+            }}
+          />
+        </Tooltip>
+      )}
+
       {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' && (
         <>
           <Select
@@ -509,6 +723,26 @@ function FileEditForm({
             }}
             withAsterisk
           />
+
+          {versionFile.name.endsWith('.gguf') && (
+            <Tooltip
+              label="Quantization level - Q8 offers best quality, Q4/Q2 are smaller. Users with GGUF preference will auto-select their preferred quant."
+              multiline
+              w={300}
+            >
+              <Select
+                label="Quant Type"
+                placeholder="Q8_0, Q6_K, Q4_K_M..."
+                data={constants.modelFileQuantTypes}
+                error={error?.quantType?._errors[0]}
+                value={versionFile.quantType ?? null}
+                onChange={(value) => {
+                  updateFile(versionFile.uuid, { quantType: value as ModelFileQuantType | null });
+                }}
+                withAsterisk
+              />
+            </Tooltip>
+          )}
 
           {versionFile.name.endsWith('.zip') && (
             <Select

@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model Side Panel - V9 Components Grouped</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background-color: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    .panel-container { max-width: 380px; margin: 0 auto; }
+    .card { background-color: #25262b; border-radius: 8px; border: 1px solid #373a40; }
+    .btn-generate {
+      background: linear-gradient(135deg, #228be6 0%, #1c7ed6 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+    .btn-generate:hover { filter: brightness(1.1); }
+    .btn-download {
+      background-color: rgba(34, 139, 230, 0.15);
+      color: #74c0fc;
+      border: 1px solid rgba(34, 139, 230, 0.3);
+      border-radius: 8px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .btn-download:hover {
+      background-color: rgba(34, 139, 230, 0.25);
+      border-color: rgba(34, 139, 230, 0.5);
+    }
+    .btn-icon {
+      background-color: #373a40;
+      color: #c1c2c5;
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-icon:hover { background-color: #4a4d54; }
+    .btn-icon-sm {
+      background-color: #373a40;
+      color: #c1c2c5;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-icon-sm:hover { background-color: #4a4d54; }
+    .badge { background-color: #373a40; color: #909296; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; }
+    .badge-blue { background-color: rgba(34, 139, 230, 0.2); color: #74c0fc; }
+    .badge-green { background-color: rgba(64, 192, 87, 0.2); color: #69db7c; }
+    .badge-yellow { background-color: rgba(250, 176, 5, 0.2); color: #ffd43b; }
+    .badge-teal { background-color: rgba(32, 201, 151, 0.2); color: #63e6be; }
+    .badge-cyan { background-color: rgba(34, 184, 207, 0.2); color: #66d9e8; }
+    .text-muted { color: #909296; }
+
+    /* Dropdown styles */
+    .dropdown { position: relative; }
+    .dropdown-trigger {
+      background-color: #2c2e33;
+      border: 1px solid #4a4d54;
+      border-radius: 8px;
+      padding: 12px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      transition: all 0.15s;
+    }
+    .dropdown-trigger:hover { border-color: #5c5f66; }
+    .dropdown-trigger.open { border-radius: 8px 8px 0 0; border-bottom-color: transparent; background-color: #343a40; }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background-color: #2c2e33;
+      border: 1px solid #4a4d54;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      z-index: 100;
+      max-height: 350px;
+      overflow-y: auto;
+    }
+    .dropdown-menu.open { display: block; }
+    .dropdown-section { padding: 8px 0; }
+    .dropdown-section:not(:last-child) { border-bottom: 1px solid #373a40; }
+    .dropdown-header { padding: 8px 12px 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: #909296; letter-spacing: 0.5px; }
+    .dropdown-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; cursor: pointer; transition: background-color 0.1s; }
+    .dropdown-item:hover { background-color: #373a40; }
+    .dropdown-item.selected { background-color: rgba(34, 139, 230, 0.15); }
+
+    /* Accordion styles */
+    .accordion { border-radius: 8px; overflow: hidden; }
+    .accordion-item { border-bottom: 1px solid #373a40; }
+    .accordion-item:last-child { border-bottom: none; }
+    .accordion-header {
+      padding: 12px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: #25262b;
+      transition: background-color 0.15s;
+      user-select: none;
+    }
+    .accordion-header:hover { background-color: #2c2e33; }
+    .accordion-content { display: none; background-color: #1f2023; border-top: 1px solid #373a40; }
+    .accordion-content.open { display: block; }
+    .accordion-chevron { transition: transform 0.2s; }
+    .accordion-chevron.open { transform: rotate(180deg); }
+
+    /* Detail row */
+    .detail-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 10px 16px; border-bottom: 1px solid #2c2e33; }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { color: #909296; font-size: 13px; min-width: 30%; }
+    .detail-value { color: #c1c2c5; font-size: 13px; text-align: right; flex: 1; }
+
+    /* Component item with variant dropdown */
+    .component-group { border-bottom: 1px solid #2c2e33; }
+    .component-group:last-child { border-bottom: none; }
+    .component-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: background-color 0.1s;
+    }
+    .component-header:hover { background-color: rgba(255,255,255,0.03); }
+    .component-variants {
+      display: none;
+      background-color: #1a1b1e;
+      border-top: 1px solid #2c2e33;
+    }
+    .component-variants.open { display: block; }
+    .component-variant {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px 10px 56px;
+      border-bottom: 1px solid #252628;
+    }
+    .component-variant:last-child { border-bottom: none; }
+    .component-variant:hover { background-color: rgba(255,255,255,0.02); }
+    .component-variant.selected { background-color: rgba(34, 139, 230, 0.1); }
+
+    /* Component item (single variant - no dropdown) */
+    .component-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #2c2e33;
+    }
+    .component-item:last-child { border-bottom: none; }
+
+    /* Creator card */
+    .creator-card { display: flex; align-items: center; gap: 12px; padding: 12px; }
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel-container">
+    <!-- PRIMARY ACTIONS -->
+    <div class="card p-4 mb-4">
+      <button class="btn-generate w-full flex items-center justify-center gap-2 mb-3">
+        <i class="ti ti-brush text-lg"></i>
+        <span>Generate</span>
+      </button>
+      <div class="flex gap-2 flex-wrap">
+        <button class="btn-icon flex-1 min-w-0" title="Share"><i class="ti ti-share-3 text-lg"></i></button>
+        <button class="btn-icon flex-1 min-w-0" title="Like"><i class="ti ti-heart text-lg"></i></button>
+        <button class="btn-icon flex-1 min-w-0" title="Add to Vault"><i class="ti ti-cloud-upload text-lg"></i></button>
+        <button class="btn-icon flex-1 min-w-0" title="Save to Collection"><i class="ti ti-bookmark text-lg"></i></button>
+        <button class="btn-icon flex-1 min-w-0" title="Place Bid"><i class="ti ti-gavel text-lg"></i></button>
+        <button class="btn-icon flex-1 min-w-0" title="Report"><i class="ti ti-flag text-lg"></i></button>
+      </div>
+    </div>
+
+    <!-- DOWNLOAD SECTION -->
+    <div class="card mb-4">
+      <div class="p-4 pb-3">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-sm font-medium text-white">Download</span>
+          <span class="text-xs text-muted">6 variants available</span>
+        </div>
+
+        <div class="dropdown" id="downloadDropdown">
+          <div class="dropdown-trigger" onclick="toggleDropdown('downloadDropdown')">
+            <div class="flex items-center gap-3">
+              <i class="ti ti-download text-blue-400"></i>
+              <div>
+                <div class="text-white text-sm font-medium">fp16 SafeTensor</div>
+                <div class="text-muted text-xs">Recommended • Half precision</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-muted text-sm">2.1 GB</span>
+              <i class="ti ti-chevron-down text-muted accordion-chevron" id="downloadChevron"></i>
+            </div>
+          </div>
+
+          <div class="dropdown-menu" id="downloadMenu">
+            <div class="dropdown-section">
+              <div class="dropdown-header">SafeTensor</div>
+              <div class="dropdown-item selected">
+                <div class="flex items-center gap-3">
+                  <i class="ti ti-check text-green-400" style="width: 16px;"></i>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-white text-sm font-medium">fp16</span>
+                      <span class="badge badge-green text-xs">Recommended</span>
+                    </div>
+                    <div class="text-muted text-xs">Half precision, best balance</div>
+                  </div>
+                </div>
+                <span class="text-muted text-sm">2.1 GB</span>
+              </div>
+              <div class="dropdown-item">
+                <div class="flex items-center gap-3">
+                  <div style="width: 16px;"></div>
+                  <div>
+                    <span class="text-white text-sm font-medium">fp8</span>
+                    <div class="text-muted text-xs">8-bit, smaller file</div>
+                  </div>
+                </div>
+                <span class="text-muted text-sm">1.1 GB</span>
+              </div>
+            </div>
+            <div class="dropdown-section">
+              <div class="dropdown-header">GGUF (Quantized)</div>
+              <div class="dropdown-item">
+                <div class="flex items-center gap-3">
+                  <div style="width: 16px;"></div>
+                  <div>
+                    <span class="text-white text-sm font-medium">Q8_0</span>
+                    <div class="text-muted text-xs">8-bit GGUF quantization</div>
+                  </div>
+                </div>
+                <span class="text-muted text-sm">1.2 GB</span>
+              </div>
+              <div class="dropdown-item">
+                <div class="flex items-center gap-3">
+                  <div style="width: 16px;"></div>
+                  <div>
+                    <span class="text-white text-sm font-medium">Q4_K_M</span>
+                    <div class="text-muted text-xs">4-bit, very compact</div>
+                  </div>
+                </div>
+                <span class="text-muted text-sm">800 MB</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="px-4 pb-4">
+        <button class="btn-download w-full flex items-center justify-center gap-2">
+          <i class="ti ti-download"></i>
+          <span>Download Selected</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- REQUIRED COMPONENTS - Now with grouped variants -->
+    <div class="card accordion mb-4">
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="toggleAccordion(this)">
+          <div class="flex items-center gap-2">
+            <i class="ti ti-alert-triangle text-yellow-500"></i>
+            <span class="text-white font-medium">Required Components</span>
+            <span class="badge badge-yellow">3</span>
+          </div>
+          <i class="ti ti-chevron-down accordion-chevron"></i>
+        </div>
+        <div class="accordion-content">
+          <div class="p-3 bg-yellow-500/5 border-b border-yellow-500/20">
+            <p class="text-xs text-yellow-200/80">You need these files to run this model. We'll show the best match for your preferences.</p>
+          </div>
+
+          <!-- VAE - Single variant (no dropdown needed) -->
+          <div class="component-item">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded bg-purple-500/20 flex items-center justify-center">
+                <i class="ti ti-photo-scan text-purple-400"></i>
+              </div>
+              <div>
+                <div class="text-white text-sm font-medium">VAE</div>
+                <div class="text-muted text-xs">Wan 2.1 VAE • fp16 • 335 MB</div>
+              </div>
+            </div>
+            <button class="btn-icon-sm">
+              <i class="ti ti-download text-sm"></i>
+            </button>
+          </div>
+
+          <!-- Text Encoder - Multiple variants (grouped with dropdown) -->
+          <div class="component-group">
+            <div class="component-header" onclick="toggleComponentVariants(this)">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded bg-blue-500/20 flex items-center justify-center">
+                  <i class="ti ti-typography text-blue-400"></i>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-white text-sm font-medium">Text Encoder</span>
+                    <span class="badge text-xs">2 variants</span>
+                  </div>
+                  <div class="text-muted text-xs">T5-XXL • fp8 selected • 4.9 GB</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <i class="ti ti-chevron-down text-muted accordion-chevron"></i>
+              </div>
+            </div>
+            <div class="component-variants">
+              <div class="component-variant">
+                <div class="flex items-center gap-2">
+                  <div style="width: 16px;"></div>
+                  <div>
+                    <div class="text-white text-sm">fp16</div>
+                    <div class="text-muted text-xs">Full precision</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted text-xs">9.5 GB</span>
+                  <button class="btn-icon-sm">
+                    <i class="ti ti-download text-sm"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="component-variant selected">
+                <div class="flex items-center gap-2">
+                  <i class="ti ti-check text-green-400" style="width: 16px;"></i>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-white text-sm">fp8</span>
+                      <span class="badge badge-green text-xs">Best match</span>
+                    </div>
+                    <div class="text-muted text-xs">8-bit quantized</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted text-xs">4.9 GB</span>
+                  <button class="btn-icon-sm">
+                    <i class="ti ti-download text-sm"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- UNet - Multiple variants including GGUF -->
+          <div class="component-group">
+            <div class="component-header" onclick="toggleComponentVariants(this)">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded bg-orange-500/20 flex items-center justify-center">
+                  <i class="ti ti-brain text-orange-400"></i>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-white text-sm font-medium">UNet</span>
+                    <span class="badge text-xs">3 variants</span>
+                  </div>
+                  <div class="text-muted text-xs">Wan UNet • fp8 selected • 4.2 GB</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <i class="ti ti-chevron-down text-muted accordion-chevron"></i>
+              </div>
+            </div>
+            <div class="component-variants">
+              <div class="component-variant">
+                <div class="flex items-center gap-2">
+                  <div style="width: 16px;"></div>
+                  <div>
+                    <div class="text-white text-sm">fp16 SafeTensor</div>
+                    <div class="text-muted text-xs">Full precision</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted text-xs">8.2 GB</span>
+                  <button class="btn-icon-sm">
+                    <i class="ti ti-download text-sm"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="component-variant selected">
+                <div class="flex items-center gap-2">
+                  <i class="ti ti-check text-green-400" style="width: 16px;"></i>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-white text-sm">fp8 SafeTensor</span>
+                      <span class="badge badge-green text-xs">Best match</span>
+                    </div>
+                    <div class="text-muted text-xs">8-bit quantized</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted text-xs">4.2 GB</span>
+                  <button class="btn-icon-sm">
+                    <i class="ti ti-download text-sm"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="component-variant">
+                <div class="flex items-center gap-2">
+                  <div style="width: 16px;"></div>
+                  <div>
+                    <div class="text-white text-sm">Q8_0 GGUF</div>
+                    <div class="text-muted text-xs">8-bit GGUF</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted text-xs">4.5 GB</span>
+                  <button class="btn-icon-sm">
+                    <i class="ti ti-download text-sm"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-3 border-t border-gray-700">
+            <button class="btn-download w-full flex items-center justify-center gap-2">
+              <i class="ti ti-package"></i>
+              <span>Download All Components</span>
+              <span class="text-blue-300/70">(9.4 GB)</span>
+            </button>
+            <p class="text-xs text-muted text-center mt-2">Downloads your preferred variants</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPTIONAL FILES -->
+    <div class="card accordion mb-4">
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="toggleAccordion(this)">
+          <div class="flex items-center gap-2">
+            <i class="ti ti-file-settings text-muted"></i>
+            <span class="text-white font-medium">Optional Files</span>
+            <span class="badge">2</span>
+          </div>
+          <i class="ti ti-chevron-down accordion-chevron"></i>
+        </div>
+        <div class="accordion-content">
+          <div class="component-item">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded bg-gray-600/50 flex items-center justify-center">
+                <i class="ti ti-sitemap text-gray-400"></i>
+              </div>
+              <div>
+                <div class="text-white text-sm font-medium">ComfyUI Workflow</div>
+                <div class="text-muted text-xs">.json • 12 KB</div>
+              </div>
+            </div>
+            <button class="btn-icon-sm">
+              <i class="ti ti-download text-sm"></i>
+            </button>
+          </div>
+          <div class="component-item">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded bg-gray-600/50 flex items-center justify-center">
+                <i class="ti ti-settings text-gray-400"></i>
+              </div>
+              <div>
+                <div class="text-white text-sm font-medium">Config</div>
+                <div class="text-muted text-xs">.yaml • 2 KB</div>
+              </div>
+            </div>
+            <button class="btn-icon-sm">
+              <i class="ti ti-download text-sm"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VERSION DETAILS -->
+    <div class="card accordion mb-4">
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="toggleAccordion(this)">
+          <div class="flex items-center gap-2">
+            <span class="text-white font-medium">Details</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <a href="#" class="text-blue-400 text-sm" onclick="event.stopPropagation()">Edit</a>
+            <i class="ti ti-chevron-down accordion-chevron open"></i>
+          </div>
+        </div>
+        <div class="accordion-content open">
+          <div class="detail-row">
+            <span class="detail-label">Type</span>
+            <div class="detail-value flex items-center justify-end gap-2">
+              <span class="badge">Checkpoint</span>
+              <span class="badge badge-teal">Trained</span>
+            </div>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Stats</span>
+            <div class="detail-value flex items-center justify-end gap-2">
+              <span class="flex items-center gap-1 text-xs"><i class="ti ti-download text-xs"></i> 124.5K</span>
+              <span class="flex items-center gap-1 text-xs"><i class="ti ti-brush text-xs"></i> 45.2K</span>
+            </div>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Published</span>
+            <span class="detail-value">Jan 10, 2026</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Base Model</span>
+            <span class="detail-value">Wan Video 14B</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Hash</span>
+            <span class="detail-value font-mono text-xs">ae34f8c2...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CREATOR CARD -->
+    <div class="card mb-4">
+      <div class="creator-card">
+        <div class="avatar">W</div>
+        <div class="flex-1">
+          <div class="text-white font-medium">Wan AI Team</div>
+          <div class="text-muted text-xs">Official Creator • 12 Models</div>
+        </div>
+        <button class="btn-icon flex items-center gap-2" style="padding: 8px 12px;">
+          <i class="ti ti-bolt text-yellow-400"></i>
+          <span class="text-sm">Tip</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- LICENSE -->
+    <div class="flex items-start justify-between gap-4 px-1">
+      <div class="flex items-start gap-2">
+        <i class="ti ti-license text-muted text-sm mt-0.5"></i>
+        <div>
+          <span class="text-xs text-muted">License:</span>
+          <a href="#" class="text-xs text-muted underline block">CreativeML Open RAIL-M</a>
+        </div>
+      </div>
+      <div class="flex gap-1">
+        <div class="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center" title="Sell OK">
+          <i class="ti ti-currency-dollar text-green-400 text-xs"></i>
+        </div>
+        <div class="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center" title="Generation OK">
+          <i class="ti ti-brush text-green-400 text-xs"></i>
+        </div>
+        <div class="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center" title="Credit Required">
+          <i class="ti ti-user text-green-400 text-xs"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Annotation -->
+    <div class="mt-6 p-3 border border-dashed border-gray-600 rounded-lg">
+      <div class="text-xs text-muted">
+        <strong class="text-white">V9: Components Grouped with Variants</strong>
+        <ul class="list-disc ml-4 mt-1 space-y-1">
+          <li><strong>Component variants grouped:</strong> Text Encoder and UNet show expandable variant lists</li>
+          <li><strong>Best match auto-selected:</strong> Based on user preferences (fp8 in this example)</li>
+          <li><strong>Single-variant components:</strong> VAE shows without dropdown (only one variant)</li>
+          <li><strong>Mixed formats:</strong> UNet shows SafeTensor and GGUF variants together</li>
+          <li><strong>"Download All" uses preferences:</strong> Downloads the user's preferred variant of each component</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleDropdown(id) {
+      const dropdown = document.getElementById(id);
+      const trigger = dropdown.querySelector('.dropdown-trigger');
+      const menu = dropdown.querySelector('.dropdown-menu');
+      const chevron = document.getElementById('downloadChevron');
+      trigger.classList.toggle('open');
+      menu.classList.toggle('open');
+      chevron.classList.toggle('open');
+    }
+
+    function toggleAccordion(header) {
+      const content = header.nextElementSibling;
+      const chevron = header.querySelector('.accordion-chevron');
+      content.classList.toggle('open');
+      chevron.classList.toggle('open');
+    }
+
+    function toggleComponentVariants(header) {
+      const variants = header.nextElementSibling;
+      const chevron = header.querySelector('.accordion-chevron');
+      variants.classList.toggle('open');
+      chevron.classList.toggle('open');
+    }
+
+    document.addEventListener('click', function(e) {
+      const dropdown = document.getElementById('downloadDropdown');
+      if (dropdown && !dropdown.contains(e.target)) {
+        dropdown.querySelector('.dropdown-trigger').classList.remove('open');
+        dropdown.querySelector('.dropdown-menu').classList.remove('open');
+        document.getElementById('downloadChevron').classList.remove('open');
+      }
+    });
+  </script>
+</body>
+</html>

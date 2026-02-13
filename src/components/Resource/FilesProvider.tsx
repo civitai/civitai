@@ -4,6 +4,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useState } from 'react';
 import * as z from 'zod';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
 import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
@@ -24,6 +25,8 @@ type SchemaError = {
   size?: ZodErrorSchema;
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
+  quantType?: ZodErrorSchema;
+  componentType?: ZodErrorSchema;
 };
 
 export type FileFromContextProps = {
@@ -35,6 +38,8 @@ export type FileFromContextProps = {
   size?: 'full' | 'pruned' | null;
   fp?: ModelFileFp | null;
   format?: ModelFileFormat | null;
+  quantType?: ModelFileQuantType | null;
+  componentType?: ModelFileComponentType | null;
   versionId?: number;
   file?: File;
   uuid: string;
@@ -47,6 +52,7 @@ type FilesContextState = {
   hasPending: boolean;
   errors: SchemaError[] | null;
   files: FileFromContextProps[];
+  linkedComponents: LinkedComponent[];
   modelId?: number;
   fileExtensions: string[];
   fileTypes: ModelFileType[];
@@ -57,6 +63,8 @@ type FilesContextState = {
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
   validationCheck: () => boolean;
+  addLinkedComponent: (component: LinkedComponent) => void;
+  removeLinkedComponent: (componentType: ModelFileComponentType) => void;
 };
 
 type FilesProviderProps = {
@@ -87,6 +95,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       size: file.metadata?.size,
       fp: file.metadata?.fp,
       format: file.metadata?.format,
+      quantType: file.metadata?.quantType,
+      componentType: file.metadata?.componentType,
       versionId: version.id,
       uuid: randomId(),
       modelType: model?.type ?? null,
@@ -120,6 +130,17 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const removeFile = (uuid: string) => {
     setFiles((state) => state.filter((x) => x.uuid !== uuid));
+  };
+
+  // Linked components state (components from other models on Civitai)
+  const [linkedComponents, setLinkedComponents] = useState<LinkedComponent[]>([]);
+
+  const addLinkedComponent = (component: LinkedComponent) => {
+    setLinkedComponents((prev) => [...prev, component]);
+  };
+
+  const removeLinkedComponent = (componentType: ModelFileComponentType) => {
+    setLinkedComponents((prev) => prev.filter((c) => c.componentType !== componentType));
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
@@ -324,6 +345,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     size,
     fp,
     format,
+    quantType,
+    componentType,
     versionId,
     file,
     uuid,
@@ -342,7 +365,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
-          meta: { versionId, type, size, fp, format, uuid },
+          meta: { versionId, type, size, fp, format, quantType, componentType, uuid },
         },
         async ({ meta, size, backend, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {
@@ -366,7 +389,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 state[index] = { ...state[index], id: saved.id, isUploading: false };
                 return [...state];
               });
-            } catch (e: unknown) {}
+            } catch (e: unknown) {
+              showErrorNotification({
+                title: 'Failed to save file',
+                error: e as Error,
+              });
+            }
           }
         }
       );
@@ -410,6 +438,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     <FilesContext.Provider
       value={{
         files,
+        linkedComponents,
         onDrop,
         startUpload,
         errors: errors,
@@ -422,6 +451,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         modelId: model?.id,
         maxFiles,
         validationCheck: checkValidation,
+        addLinkedComponent,
+        removeLinkedComponent,
       }}
     >
       {children}
@@ -434,6 +465,7 @@ const metadataSchema = modelFileMetadataSchema
     versionId: z.number(),
     type: z.enum(constants.modelFileTypes),
     modelType: z.enum(ModelType),
+    name: z.string(),
   })
   .refine(
     (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
@@ -446,14 +478,43 @@ const metadataSchema = modelFileMetadataSchema
     error: 'Floating point is required for model files',
     path: ['fp'],
   })
-  .array();
+  .refine((data) => (data.name.endsWith('.gguf') ? !!data.quantType : true), {
+    error: 'Quant type is required for GGUF files',
+    path: ['quantType'],
+  })
+  .array()
+  .refine(
+    (files) => {
+      // Check if this is a component-only model (no Model type files)
+      const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type));
+      const requiredComponentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
+      const requiredComponents = files.filter((f) => requiredComponentTypes.includes(f.type));
+
+      // If no model files, must have at least 2 required components
+      if (modelFiles.length === 0 && requiredComponents.length < 2) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message:
+        'Component-only models (without a main model file) require at least 2 required components',
+    }
+  );
 
 // TODO.manuel: This is a hacky way to check for duplicates
 export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   const conflictCount: Record<string, number> = {};
 
   files.forEach((item) => {
-    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name)]
+    const key = [
+      item.size,
+      item.type,
+      item.fp,
+      getModelFileFormat(item.name),
+      item.quantType,
+      item.componentType,
+    ]
       .filter(Boolean)
       .join('-');
     if (conflictCount[key]) conflictCount[key] += 1;
