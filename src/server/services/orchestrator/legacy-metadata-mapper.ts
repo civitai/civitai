@@ -26,7 +26,11 @@ import { getBaseModelFromResources } from '~/shared/constants/generation.constan
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
 import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
-import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
+import {
+  isWorkflowAvailable,
+  isEnhancementWorkflow,
+  getOutputTypeForWorkflow,
+} from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -161,18 +165,83 @@ function resolveImg2VidWorkflow(baseModel: string | undefined, imageCount: numbe
   return 'img2vid';
 }
 
+// =============================================================================
+// Ecosystem Compatibility
+// =============================================================================
+
+/**
+ * Ensures a resolved workflow is compatible with the given ecosystem.
+ * When the workflow's category (image/video) doesn't match what the ecosystem
+ * supports, crosses over to the equivalent workflow in the other category.
+ *
+ * e.g. img2img + Kling → img2vid, txt2img + Kling → txt2vid
+ */
+function ensureEcosystemCompatible(
+  workflow: string,
+  baseModel: string | undefined,
+  imageCount: number
+): string {
+  if (!baseModel || ecosystemSupportsWorkflow(baseModel, workflow)) return workflow;
+  if (isEnhancementWorkflow(workflow)) return workflow;
+
+  const category = getOutputTypeForWorkflow(workflow);
+  const hasImages = imageCount > 0;
+
+  // Cross to the other category
+  const fallbacks =
+    category === 'image'
+      ? hasImages
+        ? ['img2vid', 'txt2vid']
+        : ['txt2vid']
+      : hasImages
+      ? ['img2img', 'txt2img']
+      : ['txt2img'];
+
+  for (const fallback of fallbacks) {
+    if (ecosystemSupportsWorkflow(baseModel, fallback)) {
+      if (fallback === 'img2vid') return resolveImg2VidWorkflow(baseModel, imageCount);
+      return fallback;
+    }
+  }
+
+  return workflow;
+}
+
+// =============================================================================
+// Workflow Resolution
+// =============================================================================
+
 /**
  * Determines the workflow key from legacy params, step type, and ecosystem context.
+ * Resolves from params first, then validates against the ecosystem via
+ * ensureEcosystemCompatible.
  *
  * Priority:
  * 1. Comfy workflow key from params.workflow (if $type is 'comfy')
  * 2. Draft detection from params.draft
  * 3. params.workflow if already in new format (contains variant separator)
  * 4. params.process refined by ecosystem context
- * 5. Source image detection → img2img refined by ecosystem
- * 6. Fallback → txt2img
+ * 5. Source image detection → img2img
+ * 6. Engine detection → video workflow
+ * 7. Fallback → txt2img
+ *
+ * After resolution, ensureEcosystemCompatible corrects any mismatch
+ * (e.g. img2img + Kling ecosystem → img2vid).
  */
 export function resolveWorkflow(
+  stepType: string | undefined,
+  params: GeneratedImageStepMetadata['params'],
+  baseModel: string | undefined,
+  imageCount: number
+): string {
+  const resolved = resolveWorkflowFromParams(stepType, params, baseModel, imageCount);
+  return ensureEcosystemCompatible(resolved, baseModel, imageCount);
+}
+
+/**
+ * Raw workflow resolution from params — no ecosystem validation.
+ */
+function resolveWorkflowFromParams(
   stepType: string | undefined,
   params: GeneratedImageStepMetadata['params'],
   baseModel: string | undefined,
@@ -192,6 +261,7 @@ export function resolveWorkflow(
   }
 
   // 3. If workflow already uses new format (image:*/video:*), migrate to old format
+  // TODO - remove this after 1 month
   if (params.workflow?.startsWith('image:') || params.workflow?.startsWith('video:')) {
     const NEW_TO_OLD: Record<string, string> = {
       'image:create': 'txt2img',
@@ -211,7 +281,7 @@ export function resolveWorkflow(
     return NEW_TO_OLD[params.workflow] ?? 'txt2img';
   }
 
-  // 4. Determine base process and refine with ecosystem context
+  // 4. Determine base process and refine
   const process = params.process ?? params.workflow;
   if (process) {
     switch (process) {
@@ -237,9 +307,7 @@ export function resolveWorkflow(
   }
 
   // 6. Detect video workflow from engine parameter
-  // Video workflows typically have an engine but may not have process/workflow set
   if (params.engine && ENGINE_TO_BASE_MODEL[params.engine]) {
-    // If there are source images, it's img2vid; otherwise txt2vid
     if (imageCount > 0) {
       return resolveImg2VidWorkflow(baseModel, imageCount);
     }
@@ -624,8 +692,7 @@ export function mapGraphToLegacyParams(
 
   // Restore 'engine' from ecosystem for video workflows.
   // mapDataToGraphInput strips 'engine', but legacy video schemas need it.
-  const engine =
-    typeof ecosystem === 'string' ? getEngineFromEcosystem(ecosystem) : undefined;
+  const engine = typeof ecosystem === 'string' ? getEngineFromEcosystem(ecosystem) : undefined;
 
   // Map wanVersion → version for legacy Wan form compatibility.
   // The v2 DataGraph stores 'wanVersion', but the legacy form expects 'version'.
