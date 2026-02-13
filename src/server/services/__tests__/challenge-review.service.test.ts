@@ -103,6 +103,7 @@ const makeMockChallenge = (overrides = {}) => ({
   id: 1,
   title: 'Test Challenge',
   status: 'Active' as const,
+  reviewCostType: 'PerEntry' as const,
   reviewCost: 50,
   collectionId: 100,
   startsAt: new Date(),
@@ -173,8 +174,8 @@ describe('requestReview', () => {
     await expect(requestReview(1, [1], 42)).rejects.toThrow('not active');
   });
 
-  it('should throw if reviewCost is 0', async () => {
-    mockGetChallengeById.mockResolvedValue(makeMockChallenge({ reviewCost: 0 }));
+  it('should throw if reviewCostType is None', async () => {
+    mockGetChallengeById.mockResolvedValue(makeMockChallenge({ reviewCostType: 'None', reviewCost: 0 }));
 
     await expect(requestReview(1, [1], 42)).rejects.toThrow('not available');
   });
@@ -194,7 +195,7 @@ describe('requestReview', () => {
   });
 
   it('should calculate cost as reviewCost * entry count', async () => {
-    mockGetChallengeById.mockResolvedValue(makeMockChallenge({ reviewCost: 25 }));
+    mockGetChallengeById.mockResolvedValue(makeMockChallenge({ reviewCostType: 'PerEntry', reviewCost: 25 }));
     mockDbRead.$queryRaw.mockResolvedValue([{ imageId: 1 }, { imageId: 2 }, { imageId: 3 }]);
     mockCreateBuzzTransaction.mockResolvedValue(undefined);
     mockDbWrite.$executeRaw.mockResolvedValue(3);
@@ -214,29 +215,32 @@ describe('getUserUnjudgedEntries', () => {
     mockGetChallengeConfig.mockResolvedValue(mockConfig);
   });
 
-  it('should return empty array if reviewCost is 0', async () => {
+  it('should return empty entries if reviewCostType is None', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue({
       collectionId: 100,
+      reviewCostType: 'None',
       reviewCost: 0,
     });
 
     const result = await getUserUnjudgedEntries(1, 42);
-    expect(result).toEqual([]);
+    expect(result).toEqual({ entries: [], hasFlatRatePurchase: false });
   });
 
-  it('should return empty array if no collection', async () => {
+  it('should return empty entries if no collection', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue({
       collectionId: null,
+      reviewCostType: 'PerEntry',
       reviewCost: 50,
     });
 
     const result = await getUserUnjudgedEntries(1, 42);
-    expect(result).toEqual([]);
+    expect(result).toEqual({ entries: [], hasFlatRatePurchase: false });
   });
 
   it('should return unjudged entries', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue({
       collectionId: 100,
+      reviewCostType: 'PerEntry',
       reviewCost: 50,
     });
     mockDbRead.$queryRaw.mockResolvedValue([
@@ -245,14 +249,15 @@ describe('getUserUnjudgedEntries', () => {
     ]);
 
     const result = await getUserUnjudgedEntries(1, 42);
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({ imageId: 10, url: 'img10.jpg' });
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[0]).toMatchObject({ imageId: 10, url: 'img10.jpg' });
+    expect(result.hasFlatRatePurchase).toBe(false);
   });
 
-  it('should return empty array if challenge not found', async () => {
+  it('should return empty entries if challenge not found', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue(null);
 
     const result = await getUserUnjudgedEntries(999, 42);
-    expect(result).toEqual([]);
+    expect(result).toEqual({ entries: [], hasFlatRatePurchase: false });
   });
 });

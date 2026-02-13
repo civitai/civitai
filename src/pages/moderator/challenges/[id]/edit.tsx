@@ -63,6 +63,7 @@ export default function EditChallengePage() {
     entryPrizeRequirement: challenge.entryPrizeRequirement ?? 10,
     prizePool: challenge.prizePool,
     operationBudget: challenge.operationBudget ?? 0,
+    reviewCostType: challenge.reviewCostType ?? 'None',
     reviewCost: challenge.reviewCost ?? 0,
     startsAt: new Date(challenge.startsAt),
     endsAt: new Date(challenge.endsAt),

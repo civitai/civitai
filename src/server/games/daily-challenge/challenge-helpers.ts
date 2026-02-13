@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
+import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
 import { deriveChallengeNsfwLevel, type Prize } from './daily-challenge.utils';
 
 // =============================================================================
@@ -40,6 +40,7 @@ export type ChallengeDetails = {
   prizePool: number;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   createdById: number;
   source: ChallengeSource;
@@ -102,6 +103,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."prizePool",
       c."operationBudget",
       c."operationSpent",
+      c."reviewCostType",
       c."reviewCost",
       c."createdById",
       c.source,
@@ -251,6 +253,7 @@ export type CreateChallengeInput = {
   entryPrizeRequirement?: number; // Min entries for participation prize
   prizePool?: number;
   operationBudget?: number;
+  reviewCostType?: ChallengeReviewCostType;
   reviewCost?: number;
   createdById: number;
   source?: ChallengeSource;
@@ -314,6 +317,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       entryPrizeRequirement: input.entryPrizeRequirement ?? 10,
       prizePool: input.prizePool ?? 0,
       operationBudget: input.operationBudget ?? 0,
+      reviewCostType: input.reviewCostType ?? ChallengeReviewCostType.None,
       reviewCost: input.reviewCost ?? 0,
       createdById: input.createdById,
       source: input.source ?? ChallengeSource.System,

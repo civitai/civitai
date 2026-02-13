@@ -23,10 +23,11 @@ import {
   type UpsertChallengeInput,
   type UpsertChallengeEventInput,
   type UpdateChallengeConfigInput,
-  type UnjudgedEntry,
+  type UserChallengeEntriesResult,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
+  ChallengeReviewCostType,
   ChallengeStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -54,6 +55,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
   createBuzzTransactionMany,
+  getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
@@ -653,6 +655,7 @@ export async function getChallengeDetail(
     entryPrizeRequirement: challenge.entryPrizeRequirement,
     prizePool: challenge.prizePool,
     operationBudget: challenge.operationBudget,
+    reviewCostType: challenge.reviewCostType,
     reviewCost: challenge.reviewCost,
     entryCount,
     commentCount,
@@ -741,6 +744,8 @@ export async function getModeratorChallenges(input: GetModeratorChallengesInput)
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
+      reviewCostType: ChallengeReviewCostType;
+      reviewCost: number;
       collectionId: number;
       createdById: number;
       creatorUsername: string | null;
@@ -756,6 +761,8 @@ export async function getModeratorChallenges(input: GetModeratorChallengesInput)
       c.status,
       c.source,
       c."prizePool",
+      c."reviewCostType",
+      c."reviewCost",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       c."collectionId",
       c."createdById",
@@ -1029,10 +1036,10 @@ export async function getUserEntryCount(challengeId: number, userId: number) {
  */
 export async function requestReview(
   challengeId: number,
-  imageIds: number[],
+  imageIds: number[] | undefined,
   userId: number
 ) {
-  // 1. Get challenge with reviewCost
+  // 1. Get challenge with reviewCostType + reviewCost
   const challenge = await getChallengeById(challengeId);
   if (!challenge) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
@@ -1043,7 +1050,8 @@ export async function requestReview(
       message: 'Challenge is not active',
     });
   }
-  if (challenge.reviewCost <= 0) {
+  const isFlat = challenge.reviewCostType === ChallengeReviewCostType.Flat;
+  if (challenge.reviewCostType === ChallengeReviewCostType.None || challenge.reviewCost <= 0) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: 'Paid review is not available for this challenge',
@@ -1056,21 +1064,20 @@ export async function requestReview(
     });
   }
 
-  // 2. Verify all images belong to this user and are eligible
-  //    (in the challenge collection, ACCEPTED, not already queued/judged)
+  // 2. Find eligible entries (not already queued/judged)
   const config = await getChallengeConfig();
   const eligibleEntries = await dbRead.$queryRaw<{ imageId: number }[]>`
     SELECT ci."imageId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${challenge.collectionId}
-      AND ci.status = 'ACCEPTED'
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
       AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
       AND i."userId" = ${userId}
-      AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])
+      ${imageIds?.length ? Prisma.sql`AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])` : Prisma.empty}
   `;
 
-  if (eligibleEntries.length !== imageIds.length) {
+  if (!isFlat && imageIds?.length && eligibleEntries.length !== imageIds.length) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: 'Some entries are not eligible for review (already judged, queued, or not yours)',
@@ -1078,24 +1085,52 @@ export async function requestReview(
   }
 
   // 3. Charge buzz
-  const totalCost = challenge.reviewCost * eligibleEntries.length;
-  await createBuzzTransaction({
-    fromAccountId: userId,
-    toAccountId: 0,
-    type: TransactionType.Purchase,
-    amount: totalCost,
-    description: `Challenge review: ${eligibleEntries.length} entries`,
-    externalTransactionId: `challenge-review-${challengeId}-${userId}-${Date.now()}`,
-  });
-
-  // 4. Tag entries with reviewMeTagId
   const eligibleImageIds = eligibleEntries.map((e) => e.imageId);
-  await dbWrite.$executeRaw`
-    UPDATE "CollectionItem"
-    SET "tagId" = ${config.reviewMeTagId}
-    WHERE "collectionId" = ${challenge.collectionId}
-      AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
-  `;
+  let totalCost: number;
+
+  if (isFlat) {
+    // Flat rate: single transaction for all entries (covers future entries too)
+    totalCost = challenge.reviewCost;
+    await createBuzzTransaction({
+      fromAccountId: userId,
+      toAccountId: 0,
+      type: TransactionType.Purchase,
+      amount: totalCost,
+      description: `Challenge review: all entries (flat rate)`,
+      externalTransactionId: `challenge-review-flat-${challengeId}-${userId}`,
+    });
+  } else {
+    if (eligibleEntries.length === 0) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'No eligible entries to review',
+      });
+    }
+    // Per-entry: individual transactions for refund tracking
+    totalCost = challenge.reviewCost * eligibleEntries.length;
+    await createBuzzTransactionMany(
+      eligibleEntries.map((e) => ({
+        fromAccountId: userId,
+        toAccountId: 0,
+        type: TransactionType.Purchase,
+        amount: challenge.reviewCost,
+        description: `Challenge review: entry ${e.imageId}`,
+        externalTransactionId: `challenge-review-${challengeId}-${e.imageId}`,
+      }))
+    );
+  }
+
+  // 4. Tag eligible entries with reviewMeTagId and store note for tracking
+  if (eligibleImageIds.length > 0) {
+    const notePrefix = isFlat ? 'challenge-review-flat' : 'challenge-review';
+    await dbWrite.$executeRaw`
+      UPDATE "CollectionItem"
+      SET "tagId" = ${config.reviewMeTagId},
+          "note" = ${notePrefix} || '-' || ${String(challengeId)} || '-' || "imageId"
+      WHERE "collectionId" = ${challenge.collectionId}
+        AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
+    `;
+  }
 
   return { queued: eligibleEntries.length, totalCost };
 }
@@ -1106,28 +1141,47 @@ export async function requestReview(
 export async function getUserUnjudgedEntries(
   challengeId: number,
   userId: number
-): Promise<UnjudgedEntry[]> {
+): Promise<UserChallengeEntriesResult> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { collectionId: true, reviewCost: true },
+    select: { collectionId: true, reviewCostType: true, reviewCost: true },
   });
 
-  if (!challenge?.collectionId) return [];
-  if (challenge.reviewCost <= 0) return [];
+  if (!challenge?.collectionId) return { entries: [], hasFlatRatePurchase: false };
 
   const config = await getChallengeConfig();
-  const entries = await dbRead.$queryRaw<UnjudgedEntry[]>`
-    SELECT ci."imageId", i.url
+  const entries = await dbRead.$queryRaw<
+    { imageId: number; url: string; tagId: number | null }[]
+  >`
+    SELECT ci."imageId", i.url, ci."tagId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${challenge.collectionId}
-      AND ci.status = 'ACCEPTED'
-      AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
       AND i."userId" = ${userId}
     ORDER BY ci."createdAt" DESC
   `;
 
-  return entries;
+  // Check if user has already purchased flat rate review
+  let hasFlatRatePurchase = false;
+  if (challenge.reviewCostType === ChallengeReviewCostType.Flat) {
+    const txId = `challenge-review-flat-${challengeId}-${userId}`;
+    const tx = await getTransactionByExternalId(txId);
+    hasFlatRatePurchase = !!tx;
+  }
+
+  return {
+    entries: entries.map((e) => ({
+      ...e,
+      reviewStatus:
+        e.tagId === config.judgedTagId
+          ? ('reviewed' as const)
+          : e.tagId === config.reviewMeTagId
+          ? ('queued' as const)
+          : ('pending' as const),
+    })),
+    hasFlatRatePurchase,
+  };
 }
 
 const log = createLogger('challenge-service', 'blue');

@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -34,7 +35,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
+import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
 import { upsertChallengeBaseSchema, type Prize } from '~/server/schema/challenge.schema';
 import type { GetActiveJudgesItem } from '~/types/router';
 import { IconCheck } from '@tabler/icons-react';
@@ -80,6 +81,7 @@ type ChallengeForEdit = {
   entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
+  reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   startsAt: Date;
   endsAt: Date;
@@ -135,6 +137,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
+      reviewCostType: challenge?.reviewCostType ?? ChallengeReviewCostType.None,
       reviewCost: challenge?.reviewCost ?? 0,
       startsAt: challenge?.startsAt ?? defaultStartsAt,
       endsAt: challenge?.endsAt ?? defaultEndsAt,
@@ -198,6 +201,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: data.entryPrizeRequirement,
       prizePool: totalPrizePool,
       operationBudget: data.operationBudget,
+      reviewCostType: data.reviewCostType,
       reviewCost: data.reviewCost,
       startsAt: data.startsAt,
       endsAt: data.endsAt,
@@ -207,6 +211,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrize,
     });
   };
+
+  const reviewCostType = form.watch('reviewCostType') ?? ChallengeReviewCostType.None;
 
   // Watch prize values for total calculation
   const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
@@ -431,16 +437,48 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Divider />
 
             {/* Paid Review */}
-            <InputNumberWrapper
-              name="reviewCost"
-              label="Paid Review Cost (per entry)"
-              description="Buzz cost for users to guarantee their entry gets judged. Set to 0 to disable."
-              leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-              currency={Currency.BUZZ}
-              min={0}
-              step={10}
+            <Select
+              label="Paid Reviews"
+              description="Allow users to pay Buzz to guarantee their entries get judged."
+              value={reviewCostType}
+              onChange={(val) => {
+                const type = (val as ChallengeReviewCostType) ?? ChallengeReviewCostType.None;
+                form.setValue('reviewCostType', type);
+                if (type === ChallengeReviewCostType.None) {
+                  form.setValue('reviewCost', 0);
+                }
+              }}
+              data={[
+                { value: ChallengeReviewCostType.None, label: 'None' },
+                { value: ChallengeReviewCostType.PerEntry, label: 'Per Entry' },
+                { value: ChallengeReviewCostType.Flat, label: 'Flat Rate (all entries)' },
+              ]}
               disabled={isTerminal}
             />
+            {reviewCostType === ChallengeReviewCostType.PerEntry && (
+              <InputNumberWrapper
+                name="reviewCost"
+                label="Cost Per Entry"
+                description="Buzz charged for each entry the user wants reviewed."
+                leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={1}
+                disabled={isTerminal}
+              />
+            )}
+            {reviewCostType === ChallengeReviewCostType.Flat && (
+              <InputNumberWrapper
+                name="reviewCost"
+                label="Flat Rate"
+                description="One-time Buzz charge to review all of the user's entries."
+                leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={1}
+                disabled={isTerminal}
+              />
+            )}
           </Stack>
         </Paper>
 

@@ -37,7 +37,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -521,6 +521,19 @@ export default function ModeratorChallengesPage() {
                             unitAmount={challenge.prizePool}
                             size="sm"
                           />
+                          {challenge.reviewCostType === ChallengeReviewCostType.Flat ? (
+                            <Tooltip label="Flat rate for all entries">
+                              <Badge variant="light" color="yellow" size="sm">
+                                Review: {challenge.reviewCost} Buzz (flat)
+                              </Badge>
+                            </Tooltip>
+                          ) : challenge.reviewCostType === ChallengeReviewCostType.PerEntry ? (
+                            <Tooltip label="Paid review cost per entry">
+                              <Badge variant="light" color="yellow" size="sm">
+                                Review: {challenge.reviewCost} Buzz/entry
+                              </Badge>
+                            </Tooltip>
+                          ) : null}
                           <Text size="sm" c="dimmed">
                             {challenge.entryCount}{' '}
                             {challenge.entryCount === 1 ? 'entry' : 'entries'}

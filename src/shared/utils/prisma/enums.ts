@@ -834,6 +834,14 @@ export const ChallengeStatus = {
 
 export type ChallengeStatus = (typeof ChallengeStatus)[keyof typeof ChallengeStatus];
 
+export const ChallengeReviewCostType = {
+  None: 'None',
+  PerEntry: 'PerEntry',
+  Flat: 'Flat',
+} as const;
+
+export type ChallengeReviewCostType = (typeof ChallengeReviewCostType)[keyof typeof ChallengeReviewCostType];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

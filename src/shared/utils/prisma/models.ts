@@ -174,6 +174,8 @@ export type ChallengeSource = "System" | "Mod" | "User";
 
 export type ChallengeStatus = "Scheduled" | "Active" | "Completed" | "Cancelled";
 
+export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -2827,6 +2829,7 @@ export interface Challenge {
   prizePool: number;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   createdById: number;
   createdBy?: User;
