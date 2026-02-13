@@ -496,7 +496,11 @@ export const comicsRouter = router({
       },
     });
 
-    if (!project || project.userId !== ctx.user.id) {
+    if (!project) {
+      throw throwNotFoundError();
+    }
+
+    if (project.userId !== ctx.user.id) {
       throw throwAuthorizationError();
     }
 
