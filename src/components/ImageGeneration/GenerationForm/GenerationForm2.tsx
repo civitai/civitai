@@ -146,7 +146,10 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useTipStore } from '~/store/tip.store';
-import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import {
+  mapDataToGraphInput,
+  splitResourcesByType,
+} from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -361,6 +364,29 @@ export function GenerationFormContent() {
         resources as GenerationResource[],
         { stepType: workflowDefinition?.type }
       );
+
+      // Add resource data for graph validation
+      // The graph uses model.id for mode switching (e.g., NanoBanana standard vs pro)
+      const split = splitResourcesByType(resources as GenerationResource[]);
+      const toGraphResource = (r: GenerationResource) => {
+        const epochNumber = r.epochDetails?.epochNumber ?? r.epochNumber;
+        return {
+          id: r.id,
+          baseModel: r.baseModel,
+          model: { type: r.model.type },
+          strength: r.strength,
+          ...(epochNumber != null ? { epochDetails: { epochNumber } } : {}),
+        };
+      };
+      if (split.model) {
+        graphInput.model = toGraphResource(split.model);
+      }
+      if (split.resources.length) {
+        graphInput.resources = split.resources.map(toGraphResource);
+      }
+      if (split.vae) {
+        graphInput.vae = toGraphResource(split.vae);
+      }
 
       await mutateAsync({
         input: graphInput,
