@@ -13,12 +13,32 @@ export type JudgeDraft = {
   winnerSelectionPrompt?: string | null;
 };
 
+type GenerateContentInputs = {
+  modelVersionIds: number[];
+  userMessage: string;
+};
+
+type ReviewImageInputs = {
+  imageInput: string;
+  theme: string;
+  creator: string;
+  userMessage: string;
+};
+
+type PickWinnersInputs = {
+  challengeId: string | null;
+  userMessage: string;
+};
+
 type PlaygroundState = {
   selectedJudgeId: number | null;
   activityTab: ActivityTab;
   aiModel: string;
   customModelId: string;
   drafts: Record<number, JudgeDraft>;
+  generateContentInputs: GenerateContentInputs;
+  reviewImageInputs: ReviewImageInputs;
+  pickWinnersInputs: PickWinnersInputs;
 };
 
 type PlaygroundActions = {
@@ -28,6 +48,9 @@ type PlaygroundActions = {
   setCustomModelId: (id: string) => void;
   updateDraft: (judgeId: number, updates: Partial<JudgeDraft>) => void;
   clearDraft: (judgeId: number) => void;
+  updateGenerateContentInputs: (updates: Partial<GenerateContentInputs>) => void;
+  updateReviewImageInputs: (updates: Partial<ReviewImageInputs>) => void;
+  updatePickWinnersInputs: (updates: Partial<PickWinnersInputs>) => void;
 };
 
 export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
@@ -38,6 +61,9 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
       aiModel: 'x-ai/grok-4.1-fast',
       customModelId: '',
       drafts: {},
+      generateContentInputs: { modelVersionIds: [], userMessage: '' },
+      reviewImageInputs: { imageInput: '', theme: '', creator: '', userMessage: '' },
+      pickWinnersInputs: { challengeId: null, userMessage: '' },
 
       setSelectedJudgeId: (id) =>
         set((state) => {
@@ -68,6 +94,21 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
         set((state) => {
           delete state.drafts[judgeId];
         }),
+
+      updateGenerateContentInputs: (updates) =>
+        set((state) => {
+          Object.assign(state.generateContentInputs, updates);
+        }),
+
+      updateReviewImageInputs: (updates) =>
+        set((state) => {
+          Object.assign(state.reviewImageInputs, updates);
+        }),
+
+      updatePickWinnersInputs: (updates) =>
+        set((state) => {
+          Object.assign(state.pickWinnersInputs, updates);
+        }),
     })),
     {
       name: 'judge-playground',
@@ -77,6 +118,9 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
         aiModel: state.aiModel,
         customModelId: state.customModelId,
         drafts: state.drafts,
+        generateContentInputs: state.generateContentInputs,
+        reviewImageInputs: state.reviewImageInputs,
+        pickWinnersInputs: state.pickWinnersInputs,
       }),
     }
   )

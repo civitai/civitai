@@ -54,11 +54,11 @@ export function ReviewImageActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
+  const { imageInput, theme, creator, userMessage } = usePlaygroundStore(
+    (s) => s.reviewImageInputs
+  );
+  const updateInputs = usePlaygroundStore((s) => s.updateReviewImageInputs);
 
-  const [imageInput, setImageInput] = useState('');
-  const [theme, setTheme] = useState('');
-  const [creator, setCreator] = useState('');
-  const [userMessage, setUserMessage] = useState('');
   const [result, setResult] = useState<ReviewResult | null>(null);
 
   const draft =
@@ -94,13 +94,13 @@ export function ReviewImageActivity() {
   };
 
   return (
-    <Stack gap="sm" h="100%">
+    <Stack gap="sm">
       <TextInput
         label="Image"
         placeholder="Image ID or civitai.com/images/12345 URL"
         description="Enter a Civitai image ID or full image URL"
         value={imageInput}
-        onChange={(e) => setImageInput(e.currentTarget.value)}
+        onChange={(e) => updateInputs({ imageInput: e.currentTarget.value })}
         error={
           imageInput && !parsedImageId ? 'Enter a valid image ID or civitai image URL' : undefined
         }
@@ -110,14 +110,14 @@ export function ReviewImageActivity() {
         label="Theme"
         placeholder="e.g. Cyberpunk"
         value={theme}
-        onChange={(e) => setTheme(e.currentTarget.value)}
+        onChange={(e) => updateInputs({ theme: e.currentTarget.value })}
         required
       />
       <TextInput
         label="Creator"
         placeholder="Username (optional — auto-detected from image if empty)"
         value={creator}
-        onChange={(e) => setCreator(e.currentTarget.value)}
+        onChange={(e) => updateInputs({ creator: e.currentTarget.value })}
       />
       <Textarea
         label="Review Prompt (override)"
@@ -138,7 +138,7 @@ export function ReviewImageActivity() {
         minRows={2}
         maxRows={6}
         value={userMessage}
-        onChange={(e) => setUserMessage(e.currentTarget.value)}
+        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
       />
       <Button
         leftSection={<IconPlayerPlay size={16} />}

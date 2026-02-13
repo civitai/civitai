@@ -357,6 +357,7 @@ export const getJudgeByIdSchema = z.object({
 export type UpsertJudgeInput = z.infer<typeof upsertJudgeSchema>;
 export const upsertJudgeSchema = z.object({
   id: z.number().optional(),
+  userId: z.number().optional(),
   name: z.string().min(1).max(255),
   bio: z.string().optional().nullable(),
   sourceCollectionId: z.number().optional().nullable(),

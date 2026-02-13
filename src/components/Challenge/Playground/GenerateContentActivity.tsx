@@ -28,9 +28,9 @@ export function GenerateContentActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
+  const { modelVersionIds, userMessage } = usePlaygroundStore((s) => s.generateContentInputs);
+  const updateInputs = usePlaygroundStore((s) => s.updateGenerateContentInputs);
 
-  const [modelVersionIds, setModelVersionIds] = useState<number[]>([]);
-  const [userMessage, setUserMessage] = useState('');
   const [result, setResult] = useState<GenerateResult | null>(null);
 
   const draft =
@@ -62,12 +62,15 @@ export function GenerateContentActivity() {
     });
   };
 
-  const handleModelVersionChange = useCallback((ids: number[]) => {
-    setModelVersionIds(ids);
-  }, []);
+  const handleModelVersionChange = useCallback(
+    (ids: number[]) => {
+      updateInputs({ modelVersionIds: ids });
+    },
+    [updateInputs]
+  );
 
   return (
-    <Stack gap="sm" h="100%">
+    <Stack gap="sm">
       <ModelVersionMultiSelect
         label="Model Version"
         description="Select a model version to generate content for"
@@ -94,7 +97,7 @@ export function GenerateContentActivity() {
         minRows={2}
         maxRows={6}
         value={userMessage}
-        onChange={(e) => setUserMessage(e.currentTarget.value)}
+        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
       />
       <Button
         leftSection={<IconPlayerPlay size={16} />}

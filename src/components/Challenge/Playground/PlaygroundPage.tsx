@@ -23,19 +23,41 @@ export function PlaygroundPage() {
   }
 
   return (
-    <Flex h="calc(100vh - 60px)" gap={0}>
+    <Flex
+      h="calc(100vh - var(--header-height) - var(--footer-height) - 68px)"
+      gap={0}
+      style={{ overflow: 'hidden' }}
+    >
       {/* Left panel: Judge list */}
-      <Card withBorder radius={0} p={0} style={{ width: 250, minWidth: 250, borderRight: 0 }}>
+      <Card
+        withBorder
+        radius={0}
+        p={0}
+        h="100%"
+        style={{ width: 250, minWidth: 250, borderRight: 0, overflow: 'hidden' }}
+      >
         <JudgeListPanel />
       </Card>
 
       {/* Center panel: Activity */}
-      <Card withBorder radius={0} p={0} style={{ flex: 1, minWidth: 0 }}>
+      <Card
+        withBorder
+        radius={0}
+        p={0}
+        h="100%"
+        style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}
+      >
         <ActivityPanel />
       </Card>
 
       {/* Right panel: Judge settings */}
-      <Card withBorder radius={0} p={0} style={{ width: 350, minWidth: 350, borderLeft: 0 }}>
+      <Card
+        withBorder
+        radius={0}
+        p={0}
+        h="100%"
+        style={{ width: 350, minWidth: 350, borderLeft: 0, overflow: 'hidden' }}
+      >
         <JudgeSettingsPanel />
       </Card>
     </Flex>

@@ -37,9 +37,9 @@ export function PickWinnersActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
+  const { challengeId, userMessage } = usePlaygroundStore((s) => s.pickWinnersInputs);
+  const updateInputs = usePlaygroundStore((s) => s.updatePickWinnersInputs);
 
-  const [challengeId, setChallengeId] = useState<string | null>(null);
-  const [userMessage, setUserMessage] = useState('');
   const [result, setResult] = useState<PickWinnersResult | null>(null);
 
   const draft =
@@ -85,14 +85,14 @@ export function PickWinnersActivity() {
   };
 
   return (
-    <Stack gap="sm" h="100%">
+    <Stack gap="sm">
       <Select
         label="Challenge"
         placeholder="Select a challenge..."
         description="Pick a completed or active challenge to test winner selection"
         data={challengeOptions}
         value={challengeId}
-        onChange={setChallengeId}
+        onChange={(val) => updateInputs({ challengeId: val })}
         searchable
         nothingFoundMessage={challengesLoading ? 'Loading...' : 'No challenges found'}
         rightSection={challengesLoading ? <Loader size="xs" /> : undefined}
@@ -116,7 +116,7 @@ export function PickWinnersActivity() {
         minRows={2}
         maxRows={6}
         value={userMessage}
-        onChange={(e) => setUserMessage(e.currentTarget.value)}
+        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
       />
       <Button
         leftSection={<IconPlayerPlay size={16} />}

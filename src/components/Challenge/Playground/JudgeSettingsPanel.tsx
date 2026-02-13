@@ -10,19 +10,17 @@ export function JudgeSettingsPanel() {
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
   const clearDraft = usePlaygroundStore((s) => s.clearDraft);
-  const setSelectedJudgeId = usePlaygroundStore((s) => s.setSelectedJudgeId);
 
   const { data: judge, isLoading } = trpc.challenge.getJudgeById.useQuery(
     { id: selectedJudgeId! },
-    { enabled: selectedJudgeId != null }
+    { enabled: selectedJudgeId != null && selectedJudgeId > 0 }
   );
 
   const queryUtils = trpc.useUtils();
   const upsertMutation = trpc.challenge.upsertJudge.useMutation({
-    onSuccess: (data) => {
+    onSuccess: () => {
       showSuccessNotification({ message: 'Judge saved' });
       if (selectedJudgeId != null) clearDraft(selectedJudgeId);
-      else setSelectedJudgeId(data.id);
       queryUtils.challenge.getJudges.invalidate();
       if (selectedJudgeId != null)
         queryUtils.challenge.getJudgeById.invalidate({ id: selectedJudgeId });
@@ -32,30 +30,18 @@ export function JudgeSettingsPanel() {
     },
   });
 
-  const isNewJudge = selectedJudgeId === -1;
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
 
   // Derive current values: draft overrides server data
-  const currentName = isNewJudge ? drafts[-1]?.name ?? '' : draft?.name ?? judge?.name ?? '';
-  const currentBio = isNewJudge ? drafts[-1]?.bio ?? '' : draft?.bio ?? judge?.bio ?? '';
-  const currentSystemPrompt = isNewJudge
-    ? drafts[-1]?.systemPrompt ?? ''
-    : draft?.systemPrompt ?? judge?.systemPrompt ?? '';
+  const currentName = draft?.name ?? judge?.name ?? '';
+  const currentBio = draft?.bio ?? judge?.bio ?? '';
+  const currentSystemPrompt = draft?.systemPrompt ?? judge?.systemPrompt ?? '';
+  const currentContentPrompt = draft?.contentPrompt ?? judge?.contentPrompt ?? '';
+  const currentReviewPrompt = draft?.reviewPrompt ?? judge?.reviewPrompt ?? '';
+  const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
 
   const handleSave = () => {
-    if (isNewJudge) {
-      upsertMutation.mutate({
-        name: currentName,
-        bio: currentBio || null,
-        systemPrompt: currentSystemPrompt || null,
-        contentPrompt: drafts[-1]?.contentPrompt ?? null,
-        reviewPrompt: drafts[-1]?.reviewPrompt ?? null,
-        winnerSelectionPrompt: drafts[-1]?.winnerSelectionPrompt ?? null,
-      });
-      return;
-    }
-
     if (!judge || selectedJudgeId == null) return;
 
     upsertMutation.mutate({
@@ -69,7 +55,7 @@ export function JudgeSettingsPanel() {
     });
   };
 
-  if (selectedJudgeId == null) {
+  if (selectedJudgeId == null || selectedJudgeId < 0) {
     return (
       <Stack p="sm" align="center" justify="center" h="100%">
         <Text c="dimmed" size="sm" ta="center">
@@ -79,7 +65,7 @@ export function JudgeSettingsPanel() {
     );
   }
 
-  if (!isNewJudge && isLoading) {
+  if (isLoading) {
     return (
       <Stack align="center" py="xl">
         <Loader size="sm" />
@@ -87,12 +73,10 @@ export function JudgeSettingsPanel() {
     );
   }
 
-  const activeDraft = isNewJudge ? drafts[-1] : draft;
-
   return (
     <Stack gap={0} h="100%">
       <Text fw={600} size="sm" p="sm" pb="xs">
-        {isNewJudge ? 'New Judge' : 'Judge Settings'}
+        Judge Settings
       </Text>
       <ScrollArea flex={1} px="sm">
         <Stack gap="sm">
@@ -100,8 +84,8 @@ export function JudgeSettingsPanel() {
             label="Name"
             value={currentName}
             onChange={(e) => {
-              const id = isNewJudge ? -1 : selectedJudgeId;
-              if (id != null) updateDraft(id, { name: e.currentTarget.value });
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { name: e.currentTarget.value });
             }}
           />
           <Textarea
@@ -111,8 +95,8 @@ export function JudgeSettingsPanel() {
             maxRows={4}
             value={currentBio ?? ''}
             onChange={(e) => {
-              const id = isNewJudge ? -1 : selectedJudgeId;
-              if (id != null) updateDraft(id, { bio: e.currentTarget.value || null });
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { bio: e.currentTarget.value || null });
             }}
           />
           <Textarea
@@ -122,8 +106,46 @@ export function JudgeSettingsPanel() {
             maxRows={12}
             value={currentSystemPrompt ?? ''}
             onChange={(e) => {
-              const id = isNewJudge ? -1 : selectedJudgeId;
-              if (id != null) updateDraft(id, { systemPrompt: e.currentTarget.value || null });
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { systemPrompt: e.currentTarget.value || null });
+            }}
+          />
+          <Textarea
+            label="Content Prompt"
+            description="Used for challenge content generation"
+            autosize
+            minRows={3}
+            maxRows={10}
+            value={currentContentPrompt ?? ''}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { contentPrompt: e.currentTarget.value || null });
+            }}
+          />
+          <Textarea
+            label="Review Prompt"
+            description="Used for image review scoring"
+            autosize
+            minRows={3}
+            maxRows={10}
+            value={currentReviewPrompt ?? ''}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { reviewPrompt: e.currentTarget.value || null });
+            }}
+          />
+          <Textarea
+            label="Winner Selection Prompt"
+            description="Used for picking challenge winners"
+            autosize
+            minRows={3}
+            maxRows={10}
+            value={currentWinnerPrompt ?? ''}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, {
+                  winnerSelectionPrompt: e.currentTarget.value || null,
+                });
             }}
           />
           <ModelSelector />
@@ -136,7 +158,7 @@ export function JudgeSettingsPanel() {
         loading={upsertMutation.isLoading}
         disabled={!currentName}
       >
-        {isNewJudge ? 'Create Judge' : 'Save Judge'}
+        Save Judge
       </Button>
     </Stack>
   );
