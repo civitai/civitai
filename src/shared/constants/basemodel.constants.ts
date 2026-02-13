@@ -174,6 +174,7 @@ export const ECO = {
   Haiper: 50,
   Lightricks: 51,
   Seedance: 52,
+  Seedance15: 53,
   Seedance2: 54,
   Anima: 59,
 
@@ -634,11 +635,18 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 215,
   },
   {
+    id: ECO.Seedance15,
+    key: 'Seedance15',
+    name: 'seedance15',
+    displayName: 'Seedance 1.5',
+    sortOrder: 216,
+  },
+  {
     id: ECO.Seedance2,
     key: 'Seedance2',
     name: 'seedance2',
-    displayName: 'Seedance 2',
-    sortOrder: 216,
+    displayName: 'Seedance 2.0',
+    sortOrder: 217,
   },
   { id: ECO.ODOR, key: 'ODOR', name: 'odor', displayName: 'ODOR', sortOrder: 208 },
   {
@@ -1118,6 +1126,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.Seedance15,
+    defaults: {
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.Seedance2,
     defaults: {
       modelLocked: true,
@@ -1469,6 +1483,7 @@ export const BM = {
   MiniMax: 68,
   Kling: 69,
   Seedance: 70,
+  Seedance15: 73,
   Seedance2: 72,
   Anima: 77,
 } as const;
@@ -2446,10 +2461,21 @@ export const baseModels: BaseModelRecord[] = [
     licenseId: 23,
   },
 
-  // Seedance 2
+  // Seedance 1.5
+  {
+    id: BM.Seedance15,
+    name: 'Seedance 1.5',
+    description: "ByteDance's video generation model",
+    type: 'video',
+    ecosystemId: ECO.Seedance15,
+    hidden: true,
+    licenseId: 23,
+  },
+
+  // Seedance 2.0
   {
     id: BM.Seedance2,
-    name: 'Seedance 2',
+    name: 'Seedance 2.0',
     description: "ByteDance's next-generation video generation model",
     type: 'video',
     ecosystemId: ECO.Seedance2,
@@ -2937,6 +2963,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ],
     defaultEcosystemId: ECO.Flux2Klein_9B,
     sortOrder: 22,
+  },
+  {
+    id: 'Seedance',
+    displayName: 'Seedance',
+    ecosystemIds: [ECO.Seedance, ECO.Seedance15, ECO.Seedance2],
+    defaultEcosystemId: ECO.Seedance2,
+    sortOrder: 215,
   },
   {
     id: 'ZImage',

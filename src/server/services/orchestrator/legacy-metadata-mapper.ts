@@ -184,6 +184,13 @@ function ensureEcosystemCompatible(
   if (!baseModel || ecosystemSupportsWorkflow(baseModel, workflow)) return workflow;
   if (isEnhancementWorkflow(workflow)) return workflow;
 
+  // Try the base workflow (strip variant) before crossing categories.
+  // e.g. txt2img:draft → txt2img when ecosystem doesn't support draft
+  const [base] = workflow.split(':');
+  if (base !== workflow && ecosystemSupportsWorkflow(baseModel, base)) {
+    return base;
+  }
+
   const category = getOutputTypeForWorkflow(workflow);
   const hasImages = imageCount > 0;
 
@@ -520,6 +527,7 @@ export function mapDataToGraphInput(
     process: _process,
     engine: _engine,
     fluxMode: _fluxMode,
+    draft: _draft, // Consumed by resolveWorkflow → txt2img:draft variant
     // Legacy field names that map to different graph node keys
     openAITransparentBackground,
     openAIQuality,
