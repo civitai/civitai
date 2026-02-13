@@ -24,7 +24,7 @@ import {
   workflowHasNode,
 } from '~/shared/data-graph/generation/generation-graph';
 import { openCompatibilityConfirmModal } from '~/components/generation_v2/CompatibilityConfirmModal';
-import { generationGraphStore } from '~/store/generation-graph.store';
+import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type {
@@ -183,6 +183,7 @@ function applyWorkflowToForm({
   clearResources,
 }: ApplyWorkflowOptions & { ecosystem?: string; clearResources: boolean }) {
   dialogStore.closeById('generated-image');
+  generationGraphPanel.setView('generate');
 
   const inputType = getInputTypeForWorkflow(workflowId);
   const stepParams = step.params;

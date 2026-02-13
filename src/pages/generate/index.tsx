@@ -1,6 +1,6 @@
 import { Group, Tabs } from '@mantine/core';
 import { IconClockHour9, IconGridDots } from '@tabler/icons-react';
-import React from 'react';
+import React, { useRef } from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { GenerationMutedNotice } from '~/components/Generation/GenerationMutedNotice';
 import { Feed } from '~/components/ImageGeneration/Feed';
@@ -38,6 +38,14 @@ function GeneratePage() {
   const view = useGenerationPanelStore((state) => state.view);
   const setView = generationGraphPanel.setView;
 
+  // On this page the generate form lives in the sidebar, so the tabs only
+  // switch between queue and feed. Ignore transient 'generate' values
+  // (e.g. from workflow menu items) to avoid unmounting content and losing
+  // scroll position.
+  const tabViewRef = useRef<'queue' | 'feed'>(view !== 'generate' ? view : 'queue');
+  if (view !== 'generate') tabViewRef.current = view as 'queue' | 'feed';
+  const tabView = view === 'generate' ? tabViewRef.current : view;
+
   if (currentUser?.muted) return <GenerationMutedNotice />;
 
   // desktop view
@@ -47,7 +55,7 @@ function GeneratePage() {
 
       <Tabs
         variant="pills"
-        value={view}
+        value={tabView}
         onChange={(view) => {
           // tab can be null
           if (view) setView(view as 'generate' | 'queue' | 'feed');
@@ -74,7 +82,7 @@ function GeneratePage() {
             <GeneratedImageActions />
           </Group>
         </Tabs.List>
-        <ScrollArea scrollRestore={{ key: view }}>
+        <ScrollArea scrollRestore={{ key: tabView }}>
           <Tabs.Panel value="queue">
             <Queue />
           </Tabs.Panel>
