@@ -113,7 +113,9 @@ function useInjectKeyframes() {
   100% { background-position: 0% 0; opacity: 1; }
 }`;
     document.head.appendChild(style);
-    return () => { style.remove(); };
+    return () => {
+      style.remove();
+    };
   }, []);
 }
 
@@ -388,7 +390,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   </IconBadge>
                 </>
               )}
-
             </Group>
           </Stack>
 
@@ -449,7 +450,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         <Container size="xl" id="comments" py={32}>
           <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
         </Container>
-
 
         {/* Entries Section */}
         <ChallengeEntries challenge={challenge} />
@@ -552,14 +552,14 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const userEntries = userEntryData2?.entries;
   const hasFlatRatePurchase = userEntryData2?.hasFlatRatePurchase ?? false;
   const reviewedCount = userEntries?.filter((e) => e.reviewStatus === 'reviewed').length ?? 0;
+  const pendingCount = userEntries?.filter((e) => e.reviewStatus === 'pending').length ?? 0;
   const unreviewedCount = userEntries?.filter((e) => e.reviewStatus !== 'reviewed').length ?? 0;
   const totalEntries = userEntries?.length ?? 0;
   const totalPrizes = challenge.prizePool;
   const isFlatRate = challenge.reviewCostType === ChallengeReviewCostType.Flat;
-  const guaranteeCost = isFlatRate
-    ? challenge.reviewCost
-    : unreviewedCount * challenge.reviewCost;
-  const hasPaidReview = challenge.reviewCostType !== ChallengeReviewCostType.None && challenge.reviewCost > 0;
+  const guaranteeCost = isFlatRate ? challenge.reviewCost : pendingCount * challenge.reviewCost;
+  const hasPaidReview =
+    challenge.reviewCostType !== ChallengeReviewCostType.None && challenge.reviewCost > 0;
   const [buyHover, setBuyHover] = useState(false);
   const remainingSlots = challenge.maxEntriesPerUser - userEntryCount;
   const reviewedPct = (reviewedCount / challenge.maxEntriesPerUser) * 100;
@@ -747,8 +747,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       </Group>
 
       {/* Guarantee Reviews CTA */}
-      {currentUser && isActive && userEntryCount > 0 && userEntries && totalEntries > 0 && (
-        unreviewedCount > 0 && !hasFlatRatePurchase ? (
+      {currentUser &&
+        isActive &&
+        userEntryCount > 0 &&
+        userEntries &&
+        totalEntries > 0 &&
+        (unreviewedCount > 0 && !hasFlatRatePurchase ? (
           <SpotlightCard
             borderColor={colorScheme === 'dark' ? 'rgba(250,176,5,0.30)' : 'rgba(250,176,5,0.40)'}
             bg={
@@ -766,13 +770,20 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   </Text>
                   <Popover width={280} shadow="md" withArrow>
                     <Popover.Target>
-                      <ActionIcon variant="subtle" size="xs" color="dimmed" aria-label="How it works">
+                      <ActionIcon
+                        variant="subtle"
+                        size="xs"
+                        color="dimmed"
+                        aria-label="How it works"
+                      >
                         <IconInfoCircle size={14} />
                       </ActionIcon>
                     </Popover.Target>
                     <Popover.Dropdown>
                       <Stack gap="xs">
-                        <Text size="sm" fw={600}>How judging works</Text>
+                        <Text size="sm" fw={600}>
+                          How judging works
+                        </Text>
                         <Text size="xs">
                           Winners are chosen by an AI judge that scores every reviewed entry on
                           theme, creativity, humor, and aesthetics. Only reviewed entries are
@@ -783,11 +794,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                     </Popover.Dropdown>
                   </Popover>
                 </Group>
-                <Badge
-                  size="sm"
-                  variant="light"
-                  color={reviewedCount > 0 ? 'yellow' : 'gray'}
-                >
+                <Badge size="sm" variant="light" color={reviewedCount > 0 ? 'yellow' : 'gray'}>
                   {reviewedCount}/{totalEntries} reviewed
                 </Badge>
               </Group>
@@ -805,32 +812,54 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   )}
                 </Group>
                 <Progress.Root size="sm" radius="xl">
-                  {reviewedCount > 0 && (
-                    <Progress.Section value={reviewedPct} color="green" />
-                  )}
+                  {reviewedCount > 0 && <Progress.Section value={reviewedPct} color="green" />}
                   {unreviewedCount > 0 && (
                     <Progress.Section
                       value={unreviewedPct}
                       color={buyHover ? undefined : 'orange'}
-                      style={buyHover ? {
-                        background: 'linear-gradient(to right, var(--mantine-color-green-6) 50%, var(--mantine-color-orange-6) 50%)',
-                        backgroundSize: '200% 100%',
-                        animation: 'sweep-fill-pulse 2s ease-in-out infinite',
-                      } : undefined}
+                      style={
+                        buyHover
+                          ? {
+                              background:
+                                'linear-gradient(to right, var(--mantine-color-green-6) 50%, var(--mantine-color-orange-6) 50%)',
+                              backgroundSize: '200% 100%',
+                              animation: 'sweep-fill-pulse 2s ease-in-out infinite',
+                            }
+                          : undefined
+                      }
                     />
                   )}
                 </Progress.Root>
                 <Group gap={8}>
                   {reviewedCount > 0 && (
                     <Group gap={4}>
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--mantine-color-green-6)' }} />
-                      <Text size="xs" c="dimmed">{reviewedCount} reviewed</Text>
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: 'var(--mantine-color-green-6)',
+                        }}
+                      />
+                      <Text size="xs" c="dimmed">
+                        {reviewedCount} reviewed
+                      </Text>
                     </Group>
                   )}
                   {unreviewedCount > 0 && (
                     <Group gap={4}>
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: `var(--mantine-color-${buyHover ? 'green' : 'orange'}-6)`, transition: 'background-color 0.3s ease' }} />
-                      <Text size="xs" c="dimmed">{unreviewedCount} {buyHover ? 'could be reviewed' : 'pending'}</Text>
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: `var(--mantine-color-${buyHover ? 'green' : 'orange'}-6)`,
+                          transition: 'background-color 0.3s ease',
+                        }}
+                      />
+                      <Text size="xs" c="dimmed">
+                        {unreviewedCount} {buyHover ? 'could be reviewed' : 'pending'}
+                      </Text>
                     </Group>
                   )}
                 </Group>
@@ -845,16 +874,19 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                         {totalPrizes.toLocaleString()} Buzz
                       </Text>
                     )}
-                    {totalPrizes > 0 ? ' prize pool' : 'prizes'}. Don't leave it to chance.
+                    {totalPrizes > 0 ? ' prize pool' : 'prizes'}. Don&apos;t leave it to chance.
                     Guarantee all your entries get reviewed!
                   </>
                 ) : reviewedCount === 0 ? (
                   <>
-                    Your {totalEntries === 1 ? 'entry hasn\'t' : `${totalEntries} entries haven't`}{' '}
-                    been judged yet. Without a review, {totalEntries === 1 ? 'it' : 'they'} can't win!
+                    Your {totalEntries === 1 ? "entry hasn't" : `${totalEntries} entries haven't`}{' '}
+                    been judged yet. Without a review, {totalEntries === 1 ? 'it' : 'they'}{' '}
+                    can&apos;t win!
                     {totalPrizes > 0 && (
                       <>
-                        {' '}Guarantee {totalEntries === 1 ? 'a review' : 'all reviews'} for your chance at{' '}
+                        {' '}
+                        Guarantee {totalEntries === 1 ? 'a review' : 'all reviews'} for your chance
+                        at{' '}
                         <Text span fw={700} c="yellow.5">
                           {totalPrizes.toLocaleString()} Buzz
                         </Text>{' '}
@@ -865,14 +897,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 ) : (
                   <>
                     Only {reviewedCount} of your {totalEntries}{' '}
-                    {totalEntries === 1 ? 'entry has' : 'entries have'} been judged.
-                    {' '}Guarantee {unreviewedCount} more to increase your odds by{' '}
+                    {totalEntries === 1 ? 'entry has' : 'entries have'} been judged. Guarantee{' '}
+                    {unreviewedCount} more to increase your odds by{' '}
                     <Text span fw={700} c="yellow.5">
                       {Math.round((unreviewedCount / reviewedCount) * 100)}%
                     </Text>
                     {totalPrizes > 0 && (
                       <>
-                        {' '}for your chance at{' '}
+                        {' '}
+                        for your chance at{' '}
                         <Text span fw={700} c="yellow.5">
                           {totalPrizes.toLocaleString()} Buzz
                         </Text>{' '}
@@ -912,7 +945,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                         }
                       }}
                       loading={requestReviewMutation.isPending}
-                      label={isFlatRate ? 'Review All My Entries' : `Guarantee ${unreviewedCount === 1 ? '1 Review' : `All ${unreviewedCount} Reviews`}`}
+                      label={
+                        isFlatRate
+                          ? 'Review All My Entries'
+                          : `Guarantee ${
+                              pendingCount === 1 ? '1 Review' : `All ${pendingCount} Reviews`
+                            }`
+                      }
                       showPurchaseModal
                       color="yellow.6"
                       fullWidth
@@ -938,7 +977,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                     <IconCheck size={14} />
                   </ThemeIcon>
                   <Text size="sm" fw={700}>
-                    {isFlatRate ? 'All Entries Guaranteed!' : `All ${reviewedCount} ${reviewedCount === 1 ? 'Entry' : 'Entries'} Guaranteed!`}
+                    {isFlatRate
+                      ? 'All Entries Guaranteed!'
+                      : `All ${reviewedCount} ${
+                          reviewedCount === 1 ? 'Entry' : 'Entries'
+                        } Guaranteed!`}
                   </Text>
                 </Group>
               </Group>
@@ -959,8 +1002,17 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   <Progress.Section value={submittedPct} color="green" />
                 </Progress.Root>
                 <Group gap={4}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--mantine-color-green-6)' }} />
-                  <Text size="xs" c="dimmed">{totalEntries} reviewed</Text>
+                  <div
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: 'var(--mantine-color-green-6)',
+                    }}
+                  />
+                  <Text size="xs" c="dimmed">
+                    {totalEntries} reviewed
+                  </Text>
                 </Group>
               </Stack>
 
@@ -983,8 +1035,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               )}
             </Stack>
           </SpotlightCard>
-        )
-      )}
+        ))}
 
       <Accordion
         variant="separated"

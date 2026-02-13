@@ -6,6 +6,7 @@ const {
   mockDbRead,
   mockDbWrite,
   mockCreateBuzzTransaction,
+  mockCreateBuzzTransactionMany,
   mockGetChallengeConfig,
   mockGetChallengeById,
 } = vi.hoisted(() => {
@@ -18,6 +19,7 @@ const {
       $executeRaw: vi.fn(),
     },
     mockCreateBuzzTransaction: vi.fn(),
+    mockCreateBuzzTransactionMany: vi.fn(),
     mockGetChallengeConfig: vi.fn(),
     mockGetChallengeById: vi.fn(),
   };
@@ -30,7 +32,7 @@ vi.mock('~/server/db/client', () => ({
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
-  createBuzzTransactionMany: vi.fn(),
+  createBuzzTransactionMany: mockCreateBuzzTransactionMany,
 }));
 
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
@@ -146,19 +148,22 @@ describe('requestReview', () => {
   it('should charge buzz and tag entries with reviewMeTagId', async () => {
     mockGetChallengeById.mockResolvedValue(makeMockChallenge());
     mockDbRead.$queryRaw.mockResolvedValue([{ imageId: 10 }, { imageId: 11 }]);
-    mockCreateBuzzTransaction.mockResolvedValue(undefined);
+    mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
     mockDbWrite.$executeRaw.mockResolvedValue(2);
 
     const result = await requestReview(1, [10, 11], 42);
 
     expect(result).toEqual({ queued: 2, totalCost: 100 });
-    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fromAccountId: 42,
-        toAccountId: 0,
-        amount: 100,
-      })
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fromAccountId: 42,
+          toAccountId: 0,
+          amount: 50,
+        }),
+      ])
     );
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith(expect.any(Array));
     expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
   });
 
@@ -175,7 +180,9 @@ describe('requestReview', () => {
   });
 
   it('should throw if reviewCostType is None', async () => {
-    mockGetChallengeById.mockResolvedValue(makeMockChallenge({ reviewCostType: 'None', reviewCost: 0 }));
+    mockGetChallengeById.mockResolvedValue(
+      makeMockChallenge({ reviewCostType: 'None', reviewCost: 0 })
+    );
 
     await expect(requestReview(1, [1], 42)).rejects.toThrow('not available');
   });
@@ -195,17 +202,20 @@ describe('requestReview', () => {
   });
 
   it('should calculate cost as reviewCost * entry count', async () => {
-    mockGetChallengeById.mockResolvedValue(makeMockChallenge({ reviewCostType: 'PerEntry', reviewCost: 25 }));
+    mockGetChallengeById.mockResolvedValue(
+      makeMockChallenge({ reviewCostType: 'PerEntry', reviewCost: 25 })
+    );
     mockDbRead.$queryRaw.mockResolvedValue([{ imageId: 1 }, { imageId: 2 }, { imageId: 3 }]);
-    mockCreateBuzzTransaction.mockResolvedValue(undefined);
+    mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
     mockDbWrite.$executeRaw.mockResolvedValue(3);
 
     const result = await requestReview(1, [1, 2, 3], 42);
 
     expect(result.totalCost).toBe(75); // 25 * 3
-    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 75 })
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ fromAccountId: 42, amount: 25 })])
     );
+    expect(mockCreateBuzzTransactionMany.mock.calls[0][0]).toHaveLength(3);
   });
 });
 

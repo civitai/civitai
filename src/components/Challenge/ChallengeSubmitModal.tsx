@@ -219,6 +219,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     await queryUtils.image.getInfinite.invalidate();
     await queryUtils.collection.getById.invalidate({ id: collectionId });
     await queryUtils.challenge.getUserEntryCount.invalidate({ challengeId });
+    await queryUtils.challenge.getUserUnjudgedEntries.invalidate({ challengeId });
     await queryUtils.challenge.getById.invalidate({ id: challengeId });
   };
 
