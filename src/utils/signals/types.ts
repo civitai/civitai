@@ -19,11 +19,35 @@ type SignalWorkerState = {
   type: 'connection:state';
 } & SignalConnectionState;
 
+// Debug types
+export type SignalLogEntry = {
+  ts: number;
+  type: string;
+  detail?: string;
+};
+
+export type SignalWorkerStatus = {
+  connectionState: SignalStatus | null;
+  connectedUserId: number | null;
+  portCount: number;
+  registeredEvents: string[];
+  lastEventReceivedAt: number | null;
+  lastServerPongAt: number | null;
+  logEntries: SignalLogEntry[];
+  uptime: number;
+};
+
+type SignalWorkerDebugDump = {
+  type: 'debug:dump';
+  data: SignalWorkerStatus;
+};
+
 export type WorkerOutgoingMessage =
   | SignalWorkerReady
   | SignalEventReceived
   | SignalWorkerPong
-  | SignalWorkerState;
+  | SignalWorkerState
+  | SignalWorkerDebugDump;
 
 export type WorkerIncomingMessage =
   | { type: 'connection:init'; token: string; userId: number }
@@ -33,4 +57,6 @@ export type WorkerIncomingMessage =
   | { type: 'send'; target: string; args: Record<string, unknown> }
   | { type: 'topic:register'; topic: string }
   | { type: 'topic:registerNotify'; topic: string }
-  | { type: 'topic:unsubscribe'; topic: string };
+  | { type: 'topic:unsubscribe'; topic: string }
+  | { type: 'debug:dump' }
+  | { type: 'debug:toggle-verbose' };
