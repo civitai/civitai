@@ -42,7 +42,7 @@ const featureFlags = createFeatureFlags({
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
-  stripe: ['mod'],
+  stripe: ['mod'], 
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
   videoTraining: { availability: ['public'], fliptKey: 'video-training' },
   aiToolkitTraining: { availability: ['mod'], fliptKey: 'ai-toolkit-training' },
@@ -50,7 +50,7 @@ const featureFlags = createFeatureFlags({
   flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
   zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
-  flux2kleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
+  fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
   sdxlGeneration: ['public'],
@@ -148,6 +148,7 @@ const featureFlags = createFeatureFlags({
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
+  challengePlatform: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

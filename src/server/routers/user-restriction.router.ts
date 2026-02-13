@@ -197,6 +197,34 @@ export const userRestrictionRouter = router({
     return debugAuditPrompt(prompt, negativePrompt);
   }),
 
+  /** Get today's prohibited request counts per user from ClickHouse. */
+  getTodaysUserCounts: moderatorProcedure.query(async () => {
+    if (!clickhouse) return { userCounts: [] };
+
+    const queryResult = await clickhouse.query({
+      query: `
+        SELECT userId, count() AS count
+        FROM prohibitedRequests
+        WHERE toDate(createdDate) = today()
+        GROUP BY userId
+        ORDER BY count DESC
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const userCounts = (await queryResult.json()) as Array<{
+      userId: number;
+      count: string;
+    }>;
+
+    return {
+      userCounts: userCounts.map((row) => ({
+        userId: row.userId,
+        count: Number(row.count),
+      })),
+    };
+  }),
+
   /** Get today's prohibited prompts from ClickHouse and run them through audit. */
   getTodaysAuditResults: moderatorProcedure.query(async () => {
     if (!clickhouse) return { results: [] };

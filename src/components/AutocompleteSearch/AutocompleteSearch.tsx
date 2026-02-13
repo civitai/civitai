@@ -531,7 +531,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           value={search}
           data={items}
           onChange={(value) => {
-            if (!value || value === 'View more results') return;
+            if (value == null || value === 'View more results') return;
             setSearch(value);
           }}
           onBlur={handleClear}
