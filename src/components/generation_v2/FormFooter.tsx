@@ -38,7 +38,11 @@ import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useTipStore } from '~/store/tip.store';
 import { hashify } from '~/utils/string-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useGenerateFromGraph,
+  useInvalidateWhatIf,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
@@ -227,6 +231,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const remixOfId = useRemixOfId();
+  const { resources: resourceData } = useResourceDataContext();
+  const invalidateWhatIf = useInvalidateWhatIf();
 
   // Get validation state from whatIf context
   const { canEstimateCost } = useWhatIfContext();
@@ -325,6 +331,9 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
     const totalCost = (whatIfData?.cost?.total ?? 0) + totalTip;
 
+    // Check if any resources have early access
+    const hasEarlyAccess = resourceData.some((x) => x.earlyAccessConfig);
+
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
@@ -337,6 +346,11 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         civitaiTip,
         ...(sourceMetadata ? { sourceMetadata } : {}),
       });
+
+      if (hasEarlyAccess) {
+        invalidateWhatIf();
+      }
+
       onSubmitSuccess?.();
     };
 
