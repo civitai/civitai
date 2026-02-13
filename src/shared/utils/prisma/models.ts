@@ -174,6 +174,12 @@ export type ChallengeSource = "System" | "Mod" | "User";
 
 export type ChallengeStatus = "Scheduled" | "Active" | "Completed" | "Cancelled";
 
+export type PrizeMode = "Fixed" | "Dynamic";
+
+export type PoolTrigger = "Entry" | "User";
+
+export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -448,6 +454,7 @@ export interface User {
   challengesCreated?: Challenge[];
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
+  challengeEventsCreated?: ChallengeEvent[];
 }
 
 export interface CustomerSubscription {
@@ -1657,6 +1664,8 @@ export interface Thread {
   bountyEntry?: BountyEntry | null;
   clubPostId: number | null;
   clubPost?: ClubPost | null;
+  challengeId: number | null;
+  challenge?: Challenge | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -2822,8 +2831,16 @@ export interface Challenge {
   entryPrize: JsonValue | null;
   entryPrizeRequirement: number;
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: JsonValue | null;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   createdById: number;
   createdBy?: User;
   source: ChallengeSource;
@@ -2834,6 +2851,9 @@ export interface Challenge {
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
+  threads?: Thread[];
+  eventId: number | null;
+  event?: ChallengeEvent | null;
 }
 
 export interface ChallengeJudge {
@@ -2867,6 +2887,21 @@ export interface ChallengeWinner {
   pointsAwarded: number;
   reason: string | null;
   createdAt: Date;
+}
+
+export interface ChallengeEvent {
+  id: number;
+  title: string;
+  description: string | null;
+  titleColor: string | null;
+  startDate: Date;
+  endDate: Date;
+  active: boolean;
+  createdById: number | null;
+  createdBy?: User | null;
+  createdAt: Date;
+  updatedAt: Date;
+  challenges?: Challenge[];
 }
 
 export interface QuestionRank {

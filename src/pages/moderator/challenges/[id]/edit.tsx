@@ -56,12 +56,15 @@ export default function EditChallengePage() {
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel ?? 1,
     judgeId: challenge.judge?.id ?? null,
+    eventId: challenge.eventId ?? null,
     judgingPrompt: challenge.judgingPrompt,
     reviewPercentage: challenge.reviewPercentage,
     maxEntriesPerUser: challenge.maxEntriesPerUser,
     entryPrizeRequirement: challenge.entryPrizeRequirement ?? 10,
     prizePool: challenge.prizePool,
     operationBudget: challenge.operationBudget ?? 0,
+    reviewCostType: challenge.reviewCostType ?? 'None',
+    reviewCost: challenge.reviewCost ?? 0,
     startsAt: new Date(challenge.startsAt),
     endsAt: new Date(challenge.endsAt),
     visibleAt: new Date(challenge.visibleAt),
@@ -69,6 +72,12 @@ export default function EditChallengePage() {
     source: challenge.source,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
+    prizeMode: challenge.prizeMode,
+    basePrizePool: challenge.basePrizePool,
+    buzzPerAction: challenge.buzzPerAction,
+    poolTrigger: challenge.poolTrigger,
+    maxPrizePool: challenge.maxPrizePool,
+    prizeDistribution: challenge.prizeDistribution,
   };
 
   return (

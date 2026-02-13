@@ -1,4 +1,14 @@
-import { Stack, Title, Group, Text, Button, ThemeIcon, ActionIcon, Modal } from '@mantine/core';
+import {
+  Stack,
+  Title,
+  Group,
+  Text,
+  Button,
+  ThemeIcon,
+  ActionIcon,
+  Modal,
+  Divider,
+} from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -6,10 +16,14 @@ import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
+import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
-import { parseStatusQuery } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
+import {
+  parseStatusQuery,
+  parseParticipationQuery,
+} from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -40,6 +54,7 @@ function ChallengesPage() {
     .map((s) => statusMap[s])
     .filter((s): s is ChallengeStatus => s != null);
   const includeEnded = statusFilters.includes('completed');
+  const participation = parseParticipationQuery(router.query.participation);
 
   return (
     <>
@@ -136,12 +151,19 @@ function ChallengesPage() {
             )}
           </Group>
 
-          {/* Challenge Feed */}
+          {/* Featured Challenge Events */}
+          <FeaturedChallengeEvents />
+
+          {/* Daily Challenges */}
+          <Divider />
+          <Title order={3}>Daily Challenges</Title>
           <ChallengesInfinite
             filters={{
               sort,
               status: statusArray.length > 0 ? statusArray : undefined,
               includeEnded,
+              excludeEventChallenges: true,
+              participation,
             }}
           />
         </Stack>

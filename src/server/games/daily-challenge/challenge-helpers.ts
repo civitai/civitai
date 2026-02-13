@@ -1,9 +1,25 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
-import type { Prize } from './daily-challenge.utils';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  CollectionMode,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
+import {
+    deriveChallengeNsfwLevel,
+    parseJudgeScore,
+    type JudgeScore,
+    type Prize,
+} from './daily-challenge.utils';
+
+// Re-export pure pool computation (lives in separate file to avoid pulling
+// DB/Redis into client bundles)
+export { computeDynamicPool } from './challenge-pool';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
@@ -38,8 +54,16 @@ export type ChallengeDetails = {
   entryPrize: Prize | null;
   entryPrizeRequirement: number; // Min entries for participation prize
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: number[] | null;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   createdById: number;
   source: ChallengeSource;
   status: ChallengeStatus;
@@ -56,6 +80,7 @@ type ChallengeDbRow = Omit<
   | 'coverImageHeight'
   | 'prizes'
   | 'entryPrize'
+  | 'prizeDistribution'
   | 'judgeId'
 > & {
   modelVersionIds: number[] | null; // Can be null from DB
@@ -66,6 +91,7 @@ type ChallengeDbRow = Omit<
   coverImageHeight: number | null;
   prizes: Prize[] | string; // JSON comes as string or parsed
   entryPrize: Prize | string | null;
+  prizeDistribution: number[] | string | null; // JSON comes as string or parsed; null for Fixed mode
   judgeId: number | null;
 };
 
@@ -99,8 +125,16 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."entryPrize",
       c."entryPrizeRequirement",
       c."prizePool",
+      c."prizeMode",
+      c."basePrizePool",
+      c."buzzPerAction",
+      c."poolTrigger",
+      c."maxPrizePool",
+      c."prizeDistribution",
       c."operationBudget",
       c."operationSpent",
+      c."reviewCostType",
+      c."reviewCost",
       c."createdById",
       c.source,
       c.status,
@@ -118,6 +152,12 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
     prizes: typeof result.prizes === 'string' ? JSON.parse(result.prizes) : result.prizes,
     entryPrize:
       typeof result.entryPrize === 'string' ? JSON.parse(result.entryPrize) : result.entryPrize,
+    prizeDistribution:
+      result.prizeDistribution == null
+        ? null
+        : typeof result.prizeDistribution === 'string'
+          ? JSON.parse(result.prizeDistribution)
+          : result.prizeDistribution,
   };
 }
 
@@ -248,7 +288,15 @@ export type CreateChallengeInput = {
   entryPrize?: Prize;
   entryPrizeRequirement?: number; // Min entries for participation prize
   prizePool?: number;
+  prizeMode?: PrizeMode;
+  basePrizePool?: number;
+  buzzPerAction?: number;
+  poolTrigger?: PoolTrigger | null;
+  maxPrizePool?: number | null;
+  prizeDistribution?: number[] | null;
   operationBudget?: number;
+  reviewCostType?: ChallengeReviewCostType;
+  reviewCost?: number;
   createdById: number;
   source?: ChallengeSource;
   status?: ChallengeStatus;
@@ -297,7 +345,7 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       theme: input.theme,
       invitation: input.invitation,
       coverImageId: input.coverImageId,
-      nsfwLevel: input.nsfwLevel ?? 1,
+      nsfwLevel: input.nsfwLevel ?? deriveChallengeNsfwLevel(input.allowedNsfwLevel ?? 1),
       allowedNsfwLevel: input.allowedNsfwLevel ?? 1,
       modelVersionIds: input.modelVersionIds ?? [],
       judgingPrompt: input.judgingPrompt,
@@ -310,7 +358,17 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       entryPrize: input.entryPrize as unknown as Prisma.InputJsonValue,
       entryPrizeRequirement: input.entryPrizeRequirement ?? 10,
       prizePool: input.prizePool ?? 0,
+      prizeMode: input.prizeMode ?? PrizeMode.Fixed,
+      basePrizePool: input.basePrizePool ?? 0,
+      buzzPerAction: input.buzzPerAction ?? 0,
+      poolTrigger: input.poolTrigger ?? null,
+      maxPrizePool: input.maxPrizePool ?? null,
+      prizeDistribution: input.prizeDistribution
+        ? (input.prizeDistribution as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       operationBudget: input.operationBudget ?? 0,
+      reviewCostType: input.reviewCostType ?? ChallengeReviewCostType.None,
+      reviewCost: input.reviewCost ?? 0,
       createdById: input.createdById,
       source: input.source ?? ChallengeSource.System,
       status: input.status ?? ChallengeStatus.Scheduled,
@@ -379,9 +437,23 @@ export async function getChallengeWinners(challengeId: number): Promise<
     buzzAwarded: number;
     pointsAwarded: number;
     reason: string | null;
+    judgeScore: JudgeScore | null;
   }>
 > {
-  return dbRead.$queryRaw`
+  const rows = await dbRead.$queryRaw<
+    Array<{
+      id: number;
+      userId: number;
+      username: string;
+      imageId: number;
+      imageUrl: string;
+      place: number;
+      buzzAwarded: number;
+      pointsAwarded: number;
+      reason: string | null;
+      collectionItemNote: string | null;
+    }>
+  >`
     SELECT
       cw.id,
       cw."userId",
@@ -391,13 +463,22 @@ export async function getChallengeWinners(challengeId: number): Promise<
       cw.place,
       cw."buzzAwarded",
       cw."pointsAwarded",
-      cw.reason
+      cw.reason,
+      ci.note as "collectionItemNote"
     FROM "ChallengeWinner" cw
     JOIN "User" u ON u.id = cw."userId"
     JOIN "Image" i ON i.id = cw."imageId"
+    JOIN "Challenge" c ON c.id = cw."challengeId"
+    LEFT JOIN "CollectionItem" ci ON ci."collectionId" = c."collectionId"
+      AND ci."imageId" = cw."imageId"
     WHERE cw."challengeId" = ${challengeId}
     ORDER BY cw.place ASC
   `;
+
+  return rows.map(({ collectionItemNote, ...row }) => ({
+    ...row,
+    judgeScore: parseJudgeScore(collectionItemNote),
+  }));
 }
 
 // =============================================================================

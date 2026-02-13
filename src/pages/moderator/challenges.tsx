@@ -18,6 +18,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import {
+  IconCalendarEvent,
   IconDots,
   IconFilter,
   IconPencil,
@@ -36,7 +37,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -156,14 +157,45 @@ function SystemSettingsPopover() {
   );
 }
 
+const STORAGE_KEY = 'mod-challenges-filters';
+
+function getStoredFilters(): { status: string; source: string } {
+  if (typeof window === 'undefined') return { status: 'all', source: 'all' };
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return { status: 'all', source: 'all' };
+}
+
+function storeFilters(filters: { status: string; source: string }) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  } catch {}
+}
+
 export default function ModeratorChallengesPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
+
+  const stored = getStoredFilters();
   const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 500);
-  const [status, setStatus] = useState<string>('all');
-  const [source, setSource] = useState<string>('all');
+  const [status, setStatusState] = useState<string>(stored.status);
+  const [source, setSourceState] = useState<string>(stored.source);
+
+  const setStatus = (value: string) => {
+    const v = value ?? 'all';
+    setStatusState(v);
+    storeFilters({ status: v, source });
+  };
+
+  const setSource = (value: string) => {
+    const v = value ?? 'all';
+    setSourceState(v);
+    storeFilters({ status, source: v });
+  };
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.challenge.getModeratorList.useInfiniteQuery(
@@ -220,8 +252,9 @@ export default function ModeratorChallengesPage() {
 
   const handleClearFilters = () => {
     setQuery('');
-    setStatus('all');
-    setSource('all');
+    setStatusState('all');
+    setSourceState('all');
+    storeFilters({ status: 'all', source: 'all' });
   };
 
   const handleEndAndPickWinners = (challengeId: number, title: string) => {
@@ -313,6 +346,14 @@ export default function ModeratorChallengesPage() {
               </Group>
               <Group gap="sm">
                 <SystemSettingsPopover />
+                <Button
+                  component={Link}
+                  href="/moderator/challenges/events"
+                  leftSection={<IconCalendarEvent size={16} />}
+                  variant="light"
+                >
+                  Events
+                </Button>
                 <Button
                   component={Link}
                   href="/moderator/challenges/create"
@@ -493,10 +534,10 @@ export default function ModeratorChallengesPage() {
                         </Group>
                         <Group gap="md" wrap="wrap">
                           <Text size="xs" c="dimmed">
-                            Starts: {formatDate(challenge.startsAt)}
+                            Starts: {formatDate(challenge.startsAt, 'MMM D, YYYY h:mm A [UTC]', true)}
                           </Text>
                           <Text size="xs" c="dimmed">
-                            Ends: {formatDate(challenge.endsAt)}
+                            Ends: {formatDate(challenge.endsAt, 'MMM D, YYYY h:mm A [UTC]', true)}
                           </Text>
                         </Group>
 
@@ -512,6 +553,19 @@ export default function ModeratorChallengesPage() {
                             unitAmount={challenge.prizePool}
                             size="sm"
                           />
+                          {challenge.reviewCostType === ChallengeReviewCostType.Flat ? (
+                            <Tooltip label="Flat rate for all entries">
+                              <Badge variant="light" color="yellow" size="sm">
+                                Review: {challenge.reviewCost} Buzz (flat)
+                              </Badge>
+                            </Tooltip>
+                          ) : challenge.reviewCostType === ChallengeReviewCostType.PerEntry ? (
+                            <Tooltip label="Paid review cost per entry">
+                              <Badge variant="light" color="yellow" size="sm">
+                                Review: {challenge.reviewCost} Buzz/entry
+                              </Badge>
+                            </Tooltip>
+                          ) : null}
                           <Text size="sm" c="dimmed">
                             {challenge.entryCount}{' '}
                             {challenge.entryCount === 1 ? 'entry' : 'entries'}

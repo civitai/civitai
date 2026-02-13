@@ -16,12 +16,20 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { ChallengeParticipation } from '~/server/schema/challenge.schema';
 
 const statusFilters = [
   { value: 'active', label: 'Active' },
   { value: 'upcoming', label: 'Upcoming' },
   { value: 'completed', label: 'Completed' },
+];
+
+const participationFilters = [
+  { value: ChallengeParticipation.Entered, label: 'Entered' },
+  { value: ChallengeParticipation.NotEntered, label: 'Not Entered' },
+  { value: ChallengeParticipation.Won, label: 'Won' },
 ];
 
 const defaultStatus = ['active', 'upcoming'];
@@ -31,13 +39,29 @@ export function parseStatusQuery(raw: string | string[] | undefined): string[] {
   return Array.isArray(raw) ? raw : raw.split(',');
 }
 
+export function parseParticipationQuery(
+  raw: string | string[] | undefined
+): ChallengeParticipation | undefined {
+  if (!raw) return undefined;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (
+    value === ChallengeParticipation.Entered ||
+    value === ChallengeParticipation.NotEntered ||
+    value === ChallengeParticipation.Won
+  )
+    return value;
+  return undefined;
+}
+
 export function ChallengeFiltersDropdown() {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const [opened, setOpened] = useState(false);
 
   const statusFilter = parseStatusQuery(router.query.status);
+  const participationFilter = parseParticipationQuery(router.query.participation);
 
   const handleStatusChange = (value: string[]) => {
     // Prevent deselecting all options
@@ -49,19 +73,34 @@ export function ChallengeFiltersDropdown() {
     );
   };
 
+  const handleParticipationChange = (value: string | string[]) => {
+    const selected = Array.isArray(value) ? value[0] : value;
+    // Toggle: clicking the same chip deselects it
+    const newValue = selected === participationFilter ? undefined : selected;
+    router.replace(
+      { pathname: '/challenges', query: { ...router.query, participation: newValue || undefined } },
+      undefined,
+      { shallow: true }
+    );
+  };
+
   const clearFilters = () => {
     router.replace(
-      { pathname: '/challenges', query: { ...router.query, status: undefined } },
+      {
+        pathname: '/challenges',
+        query: { ...router.query, status: undefined, participation: undefined },
+      },
       undefined,
       { shallow: true }
     );
   };
 
   // Count active filters (excluding defaults)
-  const isDefault =
+  const hasStatusDefault =
     statusFilter.length === defaultStatus.length &&
     defaultStatus.every((s) => statusFilter.includes(s));
-  const filterLength = isDefault ? 0 : 1;
+  const hasParticipation = !!participationFilter;
+  const filterLength = (hasStatusDefault ? 0 : 1) + (hasParticipation ? 1 : 0);
 
   const target = (
     <Indicator
@@ -92,6 +131,24 @@ export function ChallengeFiltersDropdown() {
           </Group>
         </Chip.Group>
       </Stack>
+
+      {currentUser && (
+        <Stack gap={0}>
+          <Divider label="My Challenges" className="text-sm font-bold" mb={4} />
+          <Chip.Group
+            value={participationFilter ?? ''}
+            onChange={handleParticipationChange}
+          >
+            <Group gap={8} mb={4}>
+              {participationFilters.map((option) => (
+                <FilterChip key={option.value} value={option.value}>
+                  <span>{option.label}</span>
+                </FilterChip>
+              ))}
+            </Group>
+          </Chip.Group>
+        </Stack>
+      )}
 
       {filterLength > 0 && (
         <Button

@@ -384,6 +384,7 @@ model User {
   challengesCreated          Challenge[]
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
+  challengeEventsCreated     ChallengeEvent[]
 
   @@index([deletedAt])
 }
@@ -2111,6 +2112,8 @@ model Thread {
   bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
   clubPostId    Int?            @unique
   clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
+  challengeId   Int?            @unique
+  challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -2125,6 +2128,7 @@ model Thread {
   @@index([imageId], type: Hash)
   @@index([articleId], type: Hash)
   @@index([rootThreadId], type: Hash)
+  @@index([challengeId], type: Hash)
 }
 
 model QuestionReaction {
@@ -3730,6 +3734,22 @@ enum ChallengeStatus {
   Cancelled // Cancelled before completion
 }
 
+enum PrizeMode {
+  Fixed
+  Dynamic
+}
+
+enum PoolTrigger {
+  Entry
+  User
+}
+
+enum ChallengeReviewCostType {
+  None     // No paid review
+  PerEntry // Cost per individual entry
+  Flat     // Single flat rate for all entries
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -3767,9 +3787,17 @@ model Challenge {
   prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
   entryPrize           Json? // {buzz: 200, points: 10} for participation
   entryPrizeRequirement Int  @default(10) // Min entries to qualify for entry prize
-  prizePool       Int  @default(0) // Total buzz for prizes
+  prizePool           Int          @default(0) // Total buzz for prizes
+  prizeMode           PrizeMode    @default(Fixed)
+  basePrizePool       Int          @default(0)
+  buzzPerAction       Int          @default(0)
+  poolTrigger         PoolTrigger? // null for Fixed mode
+  maxPrizePool        Int?
+  prizeDistribution   Json?        // null for Fixed mode; e.g. [50, 30, 20]
   operationBudget Int  @default(0) // Budget for AI review costs
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
+  reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
+  reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
 
   // Ownership & Source
   createdById Int
@@ -3790,6 +3818,11 @@ model Challenge {
 
   // Relations
   winners ChallengeWinner[]
+  threads Thread[]
+
+  // Event grouping
+  eventId Int?
+  event   ChallengeEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   // Compound indexes for efficient feed queries
   @@index([status, endsAt]) // "Ending Soon" feed
@@ -3797,6 +3830,7 @@ model Challenge {
   @@index([status, visibleAt]) // "Upcoming" feed
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
+  @@index([eventId])
 }
 
 model ChallengeJudge {
@@ -3843,6 +3877,25 @@ model ChallengeWinner {
   @@unique([challengeId, userId])
   @@index([challengeId])
   @@index([userId])
+  @@index([createdAt])
+}
+
+model ChallengeEvent {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?  @db.Text
+  titleColor  String?
+  startDate   DateTime
+  endDate     DateTime
+  active      Boolean  @default(true)
+  createdById Int?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  challenges Challenge[]
+
+  @@index([active, endDate])
 }
 
 /// @view
