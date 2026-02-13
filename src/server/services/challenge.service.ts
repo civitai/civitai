@@ -10,6 +10,7 @@ import {
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import {
+  ChallengeParticipation,
   ChallengeSort,
   type ChallengeCompletionSummary,
   type ChallengeDetail,
@@ -137,7 +138,9 @@ function buildChallengeCursor(
 }
 
 // Service functions
-export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
+export async function getInfiniteChallenges(
+  input: GetInfiniteChallengesInput & { currentUserId?: number }
+) {
   const {
     query,
     status,
@@ -145,11 +148,13 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     sort,
     userId,
     modelVersionId,
+    participation,
     includeEnded,
     excludeEventChallenges,
     browsingLevel,
     limit,
     cursor,
+    currentUserId,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -198,6 +203,41 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   // Content level filter - only show challenges whose nsfwLevel is within the browsing level
   if (browsingLevel) {
     conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+  }
+
+  // User participation filter (requires logged-in user)
+  if (participation && currentUserId) {
+    switch (participation) {
+      case ChallengeParticipation.Entered:
+        conditions.push(
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "CollectionItem" ci
+            WHERE ci."collectionId" = c."collectionId"
+              AND ci.status = 'ACCEPTED'
+              AND ci."addedById" = ${currentUserId}
+          )`
+        );
+        break;
+      case ChallengeParticipation.NotEntered:
+        conditions.push(
+          Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "CollectionItem" ci
+            WHERE ci."collectionId" = c."collectionId"
+              AND ci.status = 'ACCEPTED'
+              AND ci."addedById" = ${currentUserId}
+          )`
+        );
+        break;
+      case ChallengeParticipation.Won:
+        conditions.push(
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "ChallengeWinner" cw
+            WHERE cw."challengeId" = c.id
+              AND cw."userId" = ${currentUserId}
+          )`
+        );
+        break;
+    }
   }
 
   // Composite cursor for stable keyset pagination across all sort types

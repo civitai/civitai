@@ -199,6 +199,15 @@ export type UpcomingTheme = {
 // Format: "sortValue:id" where sortValue depends on sort type
 export const challengeCursorSchema = z.string().optional();
 
+// Participation filter for user-centric challenge filtering
+export const ChallengeParticipation = {
+  Entered: 'entered',
+  NotEntered: 'not_entered',
+  Won: 'won',
+} as const;
+export type ChallengeParticipation =
+  (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
+
 // Query schema for infinite challenge list
 export type GetInfiniteChallengesInput = z.infer<typeof getInfiniteChallengesSchema>;
 export const getInfiniteChallengesSchema = z.object({
@@ -219,6 +228,9 @@ export const getInfiniteChallengesSchema = z.object({
     .default(ChallengeSort.Newest),
   userId: z.number().optional(),
   modelVersionId: z.number().optional(),
+  participation: z
+    .enum([ChallengeParticipation.Entered, ChallengeParticipation.NotEntered, ChallengeParticipation.Won])
+    .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
   browsingLevel: z.number().optional(),
