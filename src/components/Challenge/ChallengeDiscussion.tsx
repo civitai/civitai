@@ -21,6 +21,7 @@ export function ChallengeDiscussion({ challengeId, userId }: Props) {
       entityType="challenge"
       entityId={challengeId}
       limit={10}
+      hideWhenLocked
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
       {({

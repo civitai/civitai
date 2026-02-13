@@ -83,9 +83,7 @@ export const challengeRouter = router({
   requestReview: protectedProcedure
     .input(requestReviewSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input, ctx }) =>
-      requestReview(input.challengeId, input.imageIds, ctx.user.id)
-    ),
+    .mutation(({ input, ctx }) => requestReview(input.challengeId, input.imageIds, ctx.user.id)),
 
   // Get user's unjudged entries for paid review selection
   getUserUnjudgedEntries: protectedProcedure

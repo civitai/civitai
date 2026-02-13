@@ -30,6 +30,7 @@ import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
   ChallengeStatus,
+  CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
@@ -213,7 +214,7 @@ export async function getInfiniteChallenges(
           Prisma.sql`EXISTS (
             SELECT 1 FROM "CollectionItem" ci
             WHERE ci."collectionId" = c."collectionId"
-              AND ci.status = 'ACCEPTED'
+              AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
               AND ci."addedById" = ${currentUserId}
           )`
         );
@@ -223,7 +224,7 @@ export async function getInfiniteChallenges(
           Prisma.sql`NOT EXISTS (
             SELECT 1 FROM "CollectionItem" ci
             WHERE ci."collectionId" = c."collectionId"
-              AND ci.status = 'ACCEPTED'
+              AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
               AND ci."addedById" = ${currentUserId}
           )`
         );
@@ -1142,7 +1143,11 @@ export async function requestReview(
       AND ci.status IN ('ACCEPTED', 'REVIEW')
       AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
       AND i."userId" = ${userId}
-      ${imageIds?.length ? Prisma.sql`AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])` : Prisma.empty}
+      ${
+        imageIds?.length
+          ? Prisma.sql`AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])`
+          : Prisma.empty
+      }
   `;
 
   if (!isFlat && imageIds?.length && eligibleEntries.length !== imageIds.length) {
@@ -1218,9 +1223,7 @@ export async function getUserUnjudgedEntries(
   if (!challenge?.collectionId) return { entries: [], hasFlatRatePurchase: false };
 
   const config = await getChallengeConfig();
-  const entries = await dbRead.$queryRaw<
-    { imageId: number; url: string; tagId: number | null }[]
-  >`
+  const entries = await dbRead.$queryRaw<{ imageId: number; url: string; tagId: number | null }[]>`
     SELECT ci."imageId", i.url, ci."tagId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"

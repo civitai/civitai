@@ -3,9 +3,13 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Chip,
   Container,
   Divider,
+  Drawer,
   Group,
+  Indicator,
+  Loader,
   Menu,
   Paper,
   ScrollArea,
@@ -16,7 +20,6 @@ import {
   Progress,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -25,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
 import { Page } from '~/components/AppLayout/Page';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
@@ -48,13 +52,14 @@ import {
   IconCrown,
   IconCube,
   IconDotsVertical,
+  IconFilter,
   IconGift,
   IconInfoCircle,
   IconPencil,
   IconPhoto,
   IconShare3,
   IconSparkles,
-  IconStarFilled,
+  IconLock,
   IconTrash,
   IconTrophy,
   IconX,
@@ -97,6 +102,10 @@ import { constants as appConstants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ChallengeDiscussion } from '~/components/Challenge/ChallengeDiscussion';
+import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
+import { IsClient } from '~/components/IsClient/IsClient';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 function useInjectKeyframes() {
   useEffect(() => {
@@ -293,6 +302,20 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                     >
                       Edit Challenge
                     </Menu.Item>
+                    <ToggleLockComments entityId={challenge.id} entityType="challenge">
+                      {({ toggle, locked, isLoading }) => (
+                        <Menu.Item
+                          leftSection={
+                            isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                          }
+                          onClick={toggle}
+                          disabled={isLoading}
+                          closeMenuOnClick={false}
+                        >
+                          {locked ? 'Unlock' : 'Lock'} Comments
+                        </Menu.Item>
+                      )}
+                    </ToggleLockComments>
 
                     {isActive && (
                       <>
@@ -1460,11 +1483,16 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
+  const mobile = useIsMobile();
 
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
+  const [myEntriesOnly, setMyEntriesOnly] = useState(false);
+  const [opened, setOpened] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
+
+  const filterCount = (judgeReviewedOnly ? 1 : 0) + (myEntriesOnly ? 1 : 0);
 
   const judgeInfo = useMemo(
     () =>
@@ -1487,6 +1515,97 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
     }
   };
 
+  const hasAnyFilter = !!challenge.judgedTagId || !!currentUser;
+
+  const filterTarget = hasAnyFilter ? (
+    <Indicator
+      offset={4}
+      label={filterCount ? filterCount : undefined}
+      size={14}
+      zIndex={10}
+      disabled={!filterCount}
+      inline
+    >
+      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+        Filters
+      </FilterButton>
+    </Indicator>
+  ) : null;
+
+  const filterDropdown = (
+    <Stack gap={8} p="md">
+      <Stack gap={0}>
+        <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
+        <Group gap={8} mb={4}>
+          <FilterChip checked={judgeReviewedOnly} onChange={() => setJudgeReviewedOnly((v) => !v)}>
+            <span>Judge Reviewed</span>
+          </FilterChip>
+          <FilterChip checked={myEntriesOnly} onChange={() => setMyEntriesOnly((v) => !v)}>
+            <span>My Entries</span>
+          </FilterChip>
+        </Group>
+      </Stack>
+
+      {filterCount > 0 && (
+        <Button
+          color="gray"
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          onClick={() => {
+            setJudgeReviewedOnly(false);
+            setMyEntriesOnly(false);
+          }}
+          fullWidth
+        >
+          Clear all filters
+        </Button>
+      )}
+    </Stack>
+  );
+
+  const filterMenu = hasAnyFilter ? (
+    <IsClient>
+      {mobile ? (
+        <>
+          {filterTarget}
+          <Drawer
+            opened={opened}
+            onClose={() => setOpened(false)}
+            size="90%"
+            position="bottom"
+            styles={{
+              content: {
+                height: 'auto',
+                maxHeight: 'calc(100dvh - var(--header-height))',
+              },
+              body: { padding: 0, overflowY: 'auto' },
+              header: { padding: '4px 8px' },
+              close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            }}
+          >
+            {filterDropdown}
+          </Drawer>
+        </>
+      ) : (
+        <Popover
+          zIndex={200}
+          position="bottom-end"
+          shadow="md"
+          onClose={() => setOpened(false)}
+          middlewares={{ flip: true, shift: true }}
+          withinPortal
+          withArrow
+        >
+          <Popover.Target>{filterTarget}</Popover.Target>
+          <Popover.Dropdown maw={468} p={0} w="100%">
+            <ScrollArea.Autosize mah="calc(90vh - var(--header-height) - 56px)" type="hover">
+              {filterDropdown}
+            </ScrollArea.Autosize>
+          </Popover.Dropdown>
+        </Popover>
+      )}
+    </IsClient>
+  ) : null;
+
   return (
     <Container
       fluid
@@ -1505,56 +1624,32 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                   {challenge.entryCount.toLocaleString()} total{' '}
                   {challenge.entryCount === 1 ? 'entry' : 'entries'}
                 </Text>
-                {challenge.judgedTagId && (
-                  <Tooltip
-                    label={
-                      judgeReviewedOnly
-                        ? 'Showing only judge-reviewed entries. Click to show all.'
-                        : 'Filter to entries scored by the judge'
-                    }
-                    withArrow
-                  >
-                    <Button
-                      size="compact-sm"
-                      radius="xl"
-                      px="lg"
-                      variant={judgeReviewedOnly ? 'filled' : 'light'}
-                      color={judgeReviewedOnly ? 'green' : 'gray'}
-                      leftSection={<IconStarFilled size={14} />}
-                      onClick={() => setJudgeReviewedOnly((v) => !v)}
-                      styles={{
-                        root: {
-                          fontWeight: judgeReviewedOnly ? 600 : 500,
-                        },
-                      }}
-                    >
-                      Judge Reviewed
-                    </Button>
-                  </Tooltip>
-                )}
               </Group>
-              {displaySubmitAction && (
-                <Group gap="xs">
-                  <Button
-                    size="sm"
-                    variant="filled"
-                    onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
-                    leftSection={<IconBrush size={16} />}
-                  >
-                    Generate Entries
-                  </Button>
-                  <LoginRedirect reason="submit-challenge">
+              <Group gap="xs">
+                {filterMenu}
+                {displaySubmitAction && (
+                  <>
                     <Button
                       size="sm"
-                      variant="light"
-                      onClick={handleOpenSubmitModal}
-                      leftSection={<IconPhoto size={16} />}
+                      variant="filled"
+                      onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
+                      leftSection={<IconBrush size={16} />}
                     >
-                      Submit Entries
+                      Generate Entries
                     </Button>
-                  </LoginRedirect>
-                </Group>
-              )}
+                    <LoginRedirect reason="submit-challenge">
+                      <Button
+                        size="sm"
+                        variant="light"
+                        onClick={handleOpenSubmitModal}
+                        leftSection={<IconPhoto size={16} />}
+                      >
+                        Submit Entries
+                      </Button>
+                    </LoginRedirect>
+                  </>
+                )}
+              </Group>
             </Group>
 
             {challenge.entryCount === 0 || !hasCollection ? (
@@ -1572,6 +1667,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                   collectionTagId: judgeReviewedOnly
                     ? challenge.judgedTagId ?? undefined
                     : undefined,
+                  userId: myEntriesOnly ? currentUser?.id : undefined,
                   period: 'AllTime',
                   sort: ImageSort.Random,
                 }}

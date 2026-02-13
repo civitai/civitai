@@ -62,6 +62,8 @@ export const upsertComment = async ({
     select: { id: true, locked: true },
   });
 
+  if (thread?.locked) throw throwBadRequestError('comment thread locked');
+
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {
       if (!thread) {
@@ -88,7 +90,6 @@ export const upsertComment = async ({
       });
     });
   }
-  if (thread?.locked) throw throwBadRequestError('comment thread locked');
   return await dbWrite.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
 };
 
