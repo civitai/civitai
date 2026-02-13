@@ -174,6 +174,12 @@ export type ChallengeSource = "System" | "Mod" | "User";
 
 export type ChallengeStatus = "Scheduled" | "Active" | "Completed" | "Cancelled";
 
+export type PrizeMode = "Fixed" | "Dynamic";
+
+export type PoolTrigger = "Entry" | "User";
+
+export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -2825,8 +2831,16 @@ export interface Challenge {
   entryPrize: JsonValue | null;
   entryPrizeRequirement: number;
   prizePool: number;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: JsonValue | null;
   operationBudget: number;
   operationSpent: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   createdById: number;
   createdBy?: User;
   source: ChallengeSource;

@@ -52,6 +52,7 @@ yarn-error.log*
 # browser automation (local session/profile data)
 .browser/sessions/
 .browser/profiles/
+.browser/storage/
 /clickhouse*
 /undefined
 /.docker
@@ -90,6 +91,9 @@ trace/types.json
 /tests/auth/*.json
 src/pages/api/dev-local/*
 /.playwright-mcp/
+
+# Ladle (local dev artifacts)
+.ladle/stubs/
 
 # LLM
 /.serena/

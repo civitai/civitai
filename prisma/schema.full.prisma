@@ -3734,6 +3734,22 @@ enum ChallengeStatus {
   Cancelled // Cancelled before completion
 }
 
+enum PrizeMode {
+  Fixed
+  Dynamic
+}
+
+enum PoolTrigger {
+  Entry
+  User
+}
+
+enum ChallengeReviewCostType {
+  None     // No paid review
+  PerEntry // Cost per individual entry
+  Flat     // Single flat rate for all entries
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -3771,9 +3787,17 @@ model Challenge {
   prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
   entryPrize           Json? // {buzz: 200, points: 10} for participation
   entryPrizeRequirement Int  @default(10) // Min entries to qualify for entry prize
-  prizePool       Int  @default(0) // Total buzz for prizes
+  prizePool           Int          @default(0) // Total buzz for prizes
+  prizeMode           PrizeMode    @default(Fixed)
+  basePrizePool       Int          @default(0)
+  buzzPerAction       Int          @default(0)
+  poolTrigger         PoolTrigger? // null for Fixed mode
+  maxPrizePool        Int?
+  prizeDistribution   Json?        // null for Fixed mode; e.g. [50, 30, 20]
   operationBudget Int  @default(0) // Budget for AI review costs
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
+  reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
+  reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
 
   // Ownership & Source
   createdById Int
@@ -3853,6 +3877,7 @@ model ChallengeWinner {
   @@unique([challengeId, userId])
   @@index([challengeId])
   @@index([userId])
+  @@index([createdAt])
 }
 
 model ChallengeEvent {

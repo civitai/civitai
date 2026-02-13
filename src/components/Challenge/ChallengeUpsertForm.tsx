@@ -5,6 +5,8 @@ import {
   Divider,
   Group,
   Paper,
+  SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -34,8 +36,16 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  Currency,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import { upsertChallengeBaseSchema, type Prize } from '~/server/schema/challenge.schema';
+import { computeDynamicPool } from '~/server/games/daily-challenge/challenge-pool';
 import type { GetActiveJudgesItem } from '~/types/router';
 import { IconCheck } from '@tabler/icons-react';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -44,6 +54,15 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
 const InputNumberWrapper = withController(NumberInputWrapper);
+
+// UTC display helpers: Mantine's DateTimePicker only works in local time.
+// We shift dates so the picker *displays* UTC values, then reverse on submit.
+function toDisplayUTC(date: Date): Date {
+  return new Date(date.getTime() + date.getTimezoneOffset() * 60_000);
+}
+function fromDisplayUTC(date: Date): Date {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+}
 
 // Form schema - extends server schema with flattened prize fields for UI
 // judgeId is overridden to string|null because Mantine Select uses string values
@@ -60,6 +79,14 @@ const schema = upsertChallengeBaseSchema
     prize2Buzz: z.number().min(0).default(2500),
     prize3Buzz: z.number().min(0).default(1000),
     entryPrizeBuzz: z.number().min(0).default(0),
+    prizeMode: z.nativeEnum(PrizeMode).default(PrizeMode.Fixed),
+    basePrizePool: z.number().min(0).default(2500),
+    buzzPerAction: z.number().min(0).default(1),
+    poolTrigger: z.nativeEnum(PoolTrigger).default(PoolTrigger.Entry),
+    maxPrizePool: z.number().min(0).optional().nullable(),
+    dist1: z.number().min(0).max(100).default(50),
+    dist2: z.number().min(0).max(100).default(30),
+    dist3: z.number().min(0).max(100).default(20),
   });
 
 type ChallengeForEdit = {
@@ -80,6 +107,8 @@ type ChallengeForEdit = {
   entryPrizeRequirement: number;
   prizePool: number;
   operationBudget: number;
+  reviewCostType: ChallengeReviewCostType;
+  reviewCost: number;
   startsAt: Date;
   endsAt: Date;
   visibleAt: Date;
@@ -87,6 +116,12 @@ type ChallengeForEdit = {
   source: ChallengeSource;
   prizes: Prize[];
   entryPrize: Prize | null;
+  prizeMode: PrizeMode;
+  basePrizePool: number;
+  buzzPerAction: number;
+  poolTrigger: PoolTrigger | null;
+  maxPrizePool: number | null;
+  prizeDistribution: number[] | null;
 };
 
 type Props = {
@@ -106,10 +141,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
   const { data: events = [] } = trpc.challenge.getEvents.useQuery({ activeOnly: false });
 
-  // Default dates
-  const defaultStartsAt = dayjs().add(1, 'day').startOf('day').toDate();
-  const defaultEndsAt = dayjs().add(2, 'day').startOf('day').toDate();
-  const defaultVisibleAt = dayjs().startOf('day').toDate();
+  // Default dates (in UTC, shifted for display)
+  const defaultStartsAt = toDisplayUTC(dayjs.utc().add(1, 'day').startOf('day').toDate());
+  const defaultEndsAt = toDisplayUTC(dayjs.utc().add(2, 'day').startOf('day').toDate());
+  const defaultVisibleAt = toDisplayUTC(dayjs.utc().startOf('day').toDate());
 
   // Parse existing prizes
   const existingPrizes = challenge?.prizes ?? [];
@@ -134,14 +169,24 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
-      startsAt: challenge?.startsAt ?? defaultStartsAt,
-      endsAt: challenge?.endsAt ?? defaultEndsAt,
-      visibleAt: challenge?.visibleAt ?? defaultVisibleAt,
+      reviewCostType: challenge?.reviewCostType ?? ChallengeReviewCostType.None,
+      reviewCost: challenge?.reviewCost ?? 0,
+      startsAt: challenge?.startsAt ? toDisplayUTC(challenge.startsAt) : defaultStartsAt,
+      endsAt: challenge?.endsAt ? toDisplayUTC(challenge.endsAt) : defaultEndsAt,
+      visibleAt: challenge?.visibleAt ? toDisplayUTC(challenge.visibleAt) : defaultVisibleAt,
       source: challenge?.source ?? ChallengeSource.Mod,
       prize1Buzz: existingPrizes[0]?.buzz ?? 5000,
       prize2Buzz: existingPrizes[1]?.buzz ?? 2500,
       prize3Buzz: existingPrizes[2]?.buzz ?? 1000,
       entryPrizeBuzz: existingEntryPrize?.buzz ?? 0,
+      prizeMode: challenge?.prizeMode ?? PrizeMode.Fixed,
+      basePrizePool: challenge?.basePrizePool ?? 2500,
+      buzzPerAction: challenge?.buzzPerAction ?? 1,
+      poolTrigger: challenge?.poolTrigger || PoolTrigger.Entry,
+      maxPrizePool: challenge?.maxPrizePool ?? undefined,
+      dist1: challenge?.prizeDistribution?.[0] ?? 50,
+      dist2: challenge?.prizeDistribution?.[1] ?? 30,
+      dist3: challenge?.prizeDistribution?.[2] ?? 20,
     },
   });
 
@@ -159,26 +204,19 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
+    // Convert display dates back to real UTC before validation and submission
+    const startsAt = fromDisplayUTC(data.startsAt);
+    const endsAt = fromDisplayUTC(data.endsAt);
+    const visibleAt = fromDisplayUTC(data.visibleAt);
+
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
-    if (data.endsAt <= data.startsAt) {
+    if (endsAt <= startsAt) {
       form.setError('endsAt', { message: 'End date must be after start date' });
       return;
     }
 
-    // Build prizes array
-    const prizes: Prize[] = [
-      { buzz: data.prize1Buzz, points: 150 },
-      { buzz: data.prize2Buzz, points: 100 },
-      { buzz: data.prize3Buzz, points: 50 },
-    ].filter((p) => p.buzz > 0);
-
-    const entryPrize: Prize | null =
-      data.entryPrizeBuzz > 0 ? { buzz: data.entryPrizeBuzz, points: 10 } : null;
-
-    // Calculate total prize pool
-    const totalPrizePool = prizes.reduce((sum, p) => sum + p.buzz, 0);
-
-    upsertMutation.mutate({
+    // Shared fields for both modes
+    const sharedFields = {
       id: challenge?.id,
       title: data.title,
       description: data.description || undefined,
@@ -194,20 +232,92 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
       entryPrizeRequirement: data.entryPrizeRequirement,
-      prizePool: totalPrizePool,
       operationBudget: data.operationBudget,
-      startsAt: data.startsAt,
-      endsAt: data.endsAt,
-      visibleAt: data.visibleAt,
+      reviewCostType: data.reviewCostType,
+      reviewCost: data.reviewCost,
+      startsAt,
+      endsAt,
+      visibleAt,
       source: data.source,
+    };
+
+    if (data.prizeMode === PrizeMode.Dynamic) {
+      // Validate distribution sums to 100
+      const distTotal = (data.dist1 ?? 0) + (data.dist2 ?? 0) + (data.dist3 ?? 0);
+      if (distTotal !== 100) {
+        form.setError('dist1', { message: 'Distribution must sum to 100%' });
+        return;
+      }
+      // Validate cap >= base if set
+      if (data.maxPrizePool != null && data.maxPrizePool < data.basePrizePool) {
+        form.setError('maxPrizePool', { message: 'Cap must be >= base prize pool' });
+        return;
+      }
+
+      const distribution = [data.dist1, data.dist2, data.dist3];
+      const { totalPool, prizes } = computeDynamicPool({
+        basePrizePool: data.basePrizePool,
+        buzzPerAction: 0, // At creation time, no entries yet — pool starts at base
+        actionCount: 0,
+        maxPrizePool: data.maxPrizePool ?? null,
+        prizeDistribution: distribution,
+      });
+      const entryPrize: Prize | null =
+        data.entryPrizeBuzz > 0 ? { buzz: data.entryPrizeBuzz, points: 10 } : null;
+
+      upsertMutation.mutate({
+        ...sharedFields,
+        prizeMode: data.prizeMode,
+        basePrizePool: data.basePrizePool,
+        buzzPerAction: data.buzzPerAction,
+        poolTrigger: data.poolTrigger,
+        maxPrizePool: data.maxPrizePool ?? null,
+        prizeDistribution: distribution,
+        prizePool: totalPool,
+        prizes,
+        entryPrize,
+      });
+      return;
+    }
+
+    // Fixed mode (original logic)
+    const prizes: Prize[] = [
+      { buzz: data.prize1Buzz, points: 150 },
+      { buzz: data.prize2Buzz, points: 100 },
+      { buzz: data.prize3Buzz, points: 50 },
+    ].filter((p) => p.buzz > 0);
+
+    const entryPrize: Prize | null =
+      data.entryPrizeBuzz > 0 ? { buzz: data.entryPrizeBuzz, points: 10 } : null;
+
+    const fixedPrizePool = prizes.reduce((sum, p) => sum + p.buzz, 0);
+
+    upsertMutation.mutate({
+      ...sharedFields,
+      prizeMode: PrizeMode.Fixed,
+      poolTrigger: null,
+      prizeDistribution: null,
+      prizePool: fixedPrizePool,
       prizes,
       entryPrize,
     });
   };
 
+  const reviewCostType = form.watch('reviewCostType') ?? ChallengeReviewCostType.None;
+
   // Watch prize values for total calculation
   const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
-  const totalPrizePool = (prize1 || 0) + (prize2 || 0) + (prize3 || 0);
+  const prizeMode = form.watch('prizeMode') ?? PrizeMode.Fixed;
+  const [dist1, dist2, dist3] = form.watch(['dist1', 'dist2', 'dist3']);
+  const basePrizePool = form.watch('basePrizePool') ?? 0;
+  const maxPrizePool = form.watch('maxPrizePool');
+  const totalPct = (dist1 || 0) + (dist2 || 0) + (dist3 || 0);
+  // For Dynamic mode: show max pool if set (assume we'll hit it), otherwise base
+  const dynamicDisplayPool = maxPrizePool != null && maxPrizePool > 0 ? maxPrizePool : basePrizePool;
+  const totalPrizePool =
+    prizeMode === PrizeMode.Dynamic
+      ? dynamicDisplayPool
+      : (prize1 || 0) + (prize2 || 0) + (prize3 || 0);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -305,10 +415,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Title order={4}>Schedule</Title>
 
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
-              {/* Date locale is handled by DateLocaleProvider via DatesProvider */}
               <InputDateTimePicker
                 name="visibleAt"
-                label="Visible From"
+                label="Visible From (UTC)"
                 placeholder="When challenge appears in feed"
                 valueFormat="lll"
                 disabled={isTerminal}
@@ -316,7 +425,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
               <InputDateTimePicker
                 name="startsAt"
-                label="Starts At"
+                label="Starts At (UTC)"
                 placeholder="When submissions open"
                 valueFormat="lll"
                 disabled={isActive || isTerminal}
@@ -324,20 +433,12 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
               <InputDateTimePicker
                 name="endsAt"
-                label="Ends At"
+                label="Ends At (UTC)"
                 placeholder="When submissions close"
                 valueFormat="lll"
                 disabled={isTerminal}
               />
             </SimpleGrid>
-
-            <Text size="sm" c="dimmed">
-              All times are in{' '}
-              <Text fw="bold" c="red.5" span>
-                UTC
-              </Text>
-              . Make sure to convert from your local timezone when setting dates.
-            </Text>
           </Stack>
         </Paper>
 
@@ -349,38 +450,140 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={totalPrizePool} size="lg" />
             </Group>
 
-            <SimpleGrid cols={{ base: 1, xs: 3 }}>
-              <InputNumberWrapper
-                name="prize1Buzz"
-                label="1st Place"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                currency={Currency.BUZZ}
-                min={0}
-                step={100}
-                disabled={isTerminal}
-              />
-              <InputNumberWrapper
-                name="prize2Buzz"
-                label="2nd Place"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                currency={Currency.BUZZ}
-                min={0}
-                step={100}
-                disabled={isTerminal}
-              />
-              <InputNumberWrapper
-                name="prize3Buzz"
-                label="3rd Place"
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                currency={Currency.BUZZ}
-                min={0}
-                step={100}
-                disabled={isTerminal}
-              />
-            </SimpleGrid>
+            {/* Prize Mode Toggle */}
+            <SegmentedControl
+              value={prizeMode}
+              onChange={(val) => form.setValue('prizeMode', val as PrizeMode)}
+              data={[
+                { label: 'Fixed Prizes', value: PrizeMode.Fixed },
+                { label: 'Dynamic Pool', value: PrizeMode.Dynamic },
+              ]}
+              disabled={isActive || isTerminal}
+            />
+
+            <div className={prizeMode === PrizeMode.Fixed ? '' : 'hidden'}>
+              <SimpleGrid cols={{ base: 1, xs: 3 }}>
+                <InputNumberWrapper
+                  name="prize1Buzz"
+                  label="1st Place"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isTerminal}
+                />
+                <InputNumberWrapper
+                  name="prize2Buzz"
+                  label="2nd Place"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isTerminal}
+                />
+                <InputNumberWrapper
+                  name="prize3Buzz"
+                  label="3rd Place"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isTerminal}
+                />
+              </SimpleGrid>
+            </div>
+
+            <div className={prizeMode === PrizeMode.Dynamic ? '' : 'hidden'}>
+              <Stack gap="md">
+                {/* Base Prize Pool */}
+                <InputNumberWrapper
+                  name="basePrizePool"
+                  label="Base Prize Pool"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isActive || isTerminal}
+                />
+
+                {/* Growth Rule */}
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <InputNumberWrapper
+                    name="buzzPerAction"
+                    label="Buzz Per Trigger"
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    currency={Currency.BUZZ}
+                    min={0}
+                    step={1}
+                    disabled={isActive || isTerminal}
+                  />
+                  <InputSelect
+                    name="poolTrigger"
+                    label="Growth Trigger"
+                    data={[
+                      { value: PoolTrigger.Entry, label: 'Per Entry' },
+                      { value: PoolTrigger.User, label: 'Per Unique User' },
+                    ]}
+                    disabled={isActive || isTerminal}
+                  />
+                </SimpleGrid>
+
+                {/* Pool Cap */}
+                <InputNumberWrapper
+                  name="maxPrizePool"
+                  label="Max Prize Pool (optional)"
+                  description="Leave empty for unlimited growth"
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={100}
+                  disabled={isActive || isTerminal}
+                />
+
+                {/* Distribution */}
+                <SimpleGrid cols={3}>
+                  <InputNumber
+                    name="dist1"
+                    label="1st Place %"
+                    min={0}
+                    max={100}
+                    disabled={isActive || isTerminal}
+                  />
+                  <InputNumber
+                    name="dist2"
+                    label="2nd Place %"
+                    min={0}
+                    max={100}
+                    disabled={isActive || isTerminal}
+                  />
+                  <InputNumber
+                    name="dist3"
+                    label="3rd Place %"
+                    min={0}
+                    max={100}
+                    disabled={isActive || isTerminal}
+                  />
+                </SimpleGrid>
+                <Group gap="md" wrap="wrap">
+                  <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
+                    {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
+                    {totalPct === 100 ? ' \u2713' : ' (must equal 100%)'}
+                  </Text>
+                  {totalPct === 100 && dynamicDisplayPool > 0 && (
+                    <Text size="sm" c="dimmed">
+                      1st: {Math.floor(dynamicDisplayPool * (dist1 || 0) / 100).toLocaleString()}
+                      {' / '}2nd: {Math.floor(dynamicDisplayPool * (dist2 || 0) / 100).toLocaleString()}
+                      {' / '}3rd: {Math.floor(dynamicDisplayPool * (dist3 || 0) / 100).toLocaleString()}
+                      {' buzz'}
+                    </Text>
+                  )}
+                </Group>
+              </Stack>
+            </div>
 
             <Divider />
 
+            {/* Participation Prize - both modes */}
             <InputNumberWrapper
               name="entryPrizeBuzz"
               label="Participation Prize (per valid entry)"
@@ -424,6 +627,52 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 disabled={isActive || isTerminal}
               />
             </SimpleGrid>
+
+            <Divider />
+
+            {/* Paid Review */}
+            <Select
+              label="Paid Reviews"
+              description="Allow users to pay Buzz to guarantee their entries get judged."
+              value={reviewCostType}
+              onChange={(val) => {
+                const type = (val as ChallengeReviewCostType) ?? ChallengeReviewCostType.None;
+                form.setValue('reviewCostType', type);
+                if (type === ChallengeReviewCostType.None) {
+                  form.setValue('reviewCost', 0);
+                }
+              }}
+              data={[
+                { value: ChallengeReviewCostType.None, label: 'None' },
+                { value: ChallengeReviewCostType.PerEntry, label: 'Per Entry' },
+                { value: ChallengeReviewCostType.Flat, label: 'Flat Rate (all entries)' },
+              ]}
+              disabled={isTerminal}
+            />
+            {reviewCostType === ChallengeReviewCostType.PerEntry && (
+              <InputNumberWrapper
+                name="reviewCost"
+                label="Cost Per Entry"
+                description="Buzz charged for each entry the user wants reviewed."
+                leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={1}
+                disabled={isTerminal}
+              />
+            )}
+            {reviewCostType === ChallengeReviewCostType.Flat && (
+              <InputNumberWrapper
+                name="reviewCost"
+                label="Flat Rate"
+                description="One-time Buzz charge to review all of the user's entries."
+                leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                currency={Currency.BUZZ}
+                min={0}
+                step={1}
+                disabled={isTerminal}
+              />
+            )}
           </Stack>
         </Paper>
 
