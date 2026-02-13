@@ -552,12 +552,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const userEntries = userEntryData2?.entries;
   const hasFlatRatePurchase = userEntryData2?.hasFlatRatePurchase ?? false;
   const reviewedCount = userEntries?.filter((e) => e.reviewStatus === 'reviewed').length ?? 0;
-  const pendingCount = userEntries?.filter((e) => e.reviewStatus === 'pending').length ?? 0;
   const unreviewedCount = userEntries?.filter((e) => e.reviewStatus !== 'reviewed').length ?? 0;
   const totalEntries = userEntries?.length ?? 0;
   const totalPrizes = challenge.prizePool;
   const isFlatRate = challenge.reviewCostType === ChallengeReviewCostType.Flat;
-  const guaranteeCost = isFlatRate ? challenge.reviewCost : pendingCount * challenge.reviewCost;
+  const guaranteeCost = isFlatRate ? challenge.reviewCost : unreviewedCount * challenge.reviewCost;
   const hasPaidReview =
     challenge.reviewCostType !== ChallengeReviewCostType.None && challenge.reviewCost > 0;
   const [buyHover, setBuyHover] = useState(false);
@@ -949,7 +948,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                         isFlatRate
                           ? 'Review All My Entries'
                           : `Guarantee ${
-                              pendingCount === 1 ? '1 Review' : `All ${pendingCount} Reviews`
+                              unreviewedCount === 1 ? '1 Review' : `All ${unreviewedCount} Reviews`
                             }`
                       }
                       showPurchaseModal
