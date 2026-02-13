@@ -10,8 +10,7 @@ export function JudgeListPanel() {
   const drafts = usePlaygroundStore((s) => s.drafts);
 
   const handleNewJudge = () => {
-    // Select null to indicate "new judge" mode
-    setSelectedJudgeId(null);
+    setSelectedJudgeId(-1);
   };
 
   if (isLoading) {

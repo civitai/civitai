@@ -357,7 +357,6 @@ export const getJudgeByIdSchema = z.object({
 export type UpsertJudgeInput = z.infer<typeof upsertJudgeSchema>;
 export const upsertJudgeSchema = z.object({
   id: z.number().optional(),
-  userId: z.number(),
   name: z.string().min(1).max(255),
   bio: z.string().optional().nullable(),
   sourceCollectionId: z.number().optional().nullable(),
@@ -381,13 +380,13 @@ export const playgroundGenerateContentSchema = z.object({
     })
     .optional(),
   userMessage: z.string().optional(),
-  aiModel: z.string().optional(),
+  aiModel: z.string().min(1).optional(),
 });
 
 // Playground: Review an image
 export type PlaygroundReviewImageInput = z.infer<typeof playgroundReviewImageSchema>;
 export const playgroundReviewImageSchema = z.object({
-  imageUrl: z.string().url(),
+  imageId: z.number(),
   theme: z.string(),
   creator: z.string().optional(),
   judgeId: z.number().optional(),
@@ -398,7 +397,7 @@ export const playgroundReviewImageSchema = z.object({
     })
     .optional(),
   userMessage: z.string().optional(),
-  aiModel: z.string().optional(),
+  aiModel: z.string().min(1).optional(),
 });
 
 // Playground: Pick winners from a challenge
@@ -413,5 +412,5 @@ export const playgroundPickWinnersSchema = z.object({
     })
     .optional(),
   userMessage: z.string().optional(),
-  aiModel: z.string().optional(),
+  aiModel: z.string().min(1).optional(),
 });

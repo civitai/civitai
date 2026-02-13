@@ -1679,13 +1679,13 @@ export async function getJudgeById(id: number) {
  * Create or update a ChallengeJudge.
  * If the saved judge is the current default, refresh the cached config in Redis.
  */
-export async function upsertJudge(input: UpsertJudgeInput) {
-  const { id, ...data } = input;
+export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) {
+  const { id, userId, ...data } = input;
 
   const judge = await dbWrite.challengeJudge.upsert({
     where: { id: id ?? -1 },
     create: {
-      userId: data.userId,
+      userId,
       name: data.name,
       bio: data.bio ?? null,
       sourceCollectionId: data.sourceCollectionId ?? null,
@@ -1780,7 +1780,7 @@ export async function playgroundGenerateContent(input: PlaygroundGenerateContent
     entryPrize: config.entryPrize,
     allowedNsfwLevel: 1,
     config: judgingConfig,
-    model: (input.aiModel as AIModel) ?? undefined,
+    model: (input.aiModel || undefined) as AIModel | undefined,
     userMessageOverride: input.userMessage,
   });
 
@@ -1797,12 +1797,21 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
 
   judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
 
+  // Resolve imageId to an image URL
+  const image = await dbRead.image.findUnique({
+    where: { id: input.imageId },
+    select: { url: true, user: { select: { username: true } } },
+  });
+  if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image' });
+
   const result = await generateReview({
     theme: input.theme,
-    creator: input.creator ?? 'Unknown',
-    imageUrl: input.imageUrl,
+    creator: input.creator ?? image.user?.username ?? 'Unknown',
+    imageUrl,
     config: judgingConfig,
-    model: (input.aiModel as AIModel) ?? undefined,
+    model: (input.aiModel || undefined) as AIModel | undefined,
     userMessageOverride: input.userMessage,
   });
 
@@ -1840,7 +1849,7 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
     })),
     theme: challenge.theme ?? 'Unknown',
     config: judgingConfig,
-    model: (input.aiModel as AIModel) ?? undefined,
+    model: (input.aiModel || undefined) as AIModel | undefined,
     userMessageOverride: input.userMessage,
   });
 

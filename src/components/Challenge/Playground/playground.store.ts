@@ -28,12 +28,11 @@ type PlaygroundActions = {
   setCustomModelId: (id: string) => void;
   updateDraft: (judgeId: number, updates: Partial<JudgeDraft>) => void;
   clearDraft: (judgeId: number) => void;
-  hasDraft: (judgeId: number) => boolean;
 };
 
 export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
   persist(
-    immer((set, get) => ({
+    immer((set) => ({
       selectedJudgeId: null,
       activityTab: 'generateContent' as ActivityTab,
       aiModel: 'x-ai/grok-4.1-fast',
@@ -69,11 +68,6 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
         set((state) => {
           delete state.drafts[judgeId];
         }),
-
-      hasDraft: (judgeId) => {
-        const draft = get().drafts[judgeId];
-        return draft !== undefined && Object.keys(draft).length > 0;
-      },
     })),
     {
       name: 'judge-playground',

@@ -1,9 +1,36 @@
-import { Button, Card, Code, NumberInput, ScrollArea, Stack, Text, Textarea } from '@mantine/core';
-import { IconPlayerPlay } from '@tabler/icons-react';
-import { useState } from 'react';
+import {
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  ScrollArea,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+  TypographyStylesProvider,
+} from '@mantine/core';
+import { IconPlayerPlay, IconTrophy } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
+
+type Winner = {
+  creatorId: number;
+  creator: string;
+  reason: string;
+};
+
+type PickWinnersResult = {
+  winners: Winner[];
+  process: string;
+  outcome: string;
+};
+
+const PLACE_COLORS = ['yellow', 'gray', 'orange'] as const;
+const PLACE_LABELS = ['1st Place', '2nd Place', '3rd Place'] as const;
 
 export function PickWinnersActivity() {
   const selectedJudgeId = usePlaygroundStore((s) => s.selectedJudgeId);
@@ -11,24 +38,39 @@ export function PickWinnersActivity() {
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
 
-  const [challengeId, setChallengeId] = useState<number | undefined>();
+  const [challengeId, setChallengeId] = useState<string | null>(null);
   const [userMessage, setUserMessage] = useState('');
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [result, setResult] = useState<PickWinnersResult | null>(null);
 
-  const draft = selectedJudgeId != null ? drafts[selectedJudgeId] : undefined;
+  const draft = selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const winnerPrompt = draft?.winnerSelectionPrompt ?? '';
 
+  // Load recent challenges for the select dropdown
+  const { data: challengeData, isLoading: challengesLoading } =
+    trpc.challenge.getModeratorList.useQuery({
+      limit: 50,
+    });
+
+  const challengeOptions = useMemo(() => {
+    if (!challengeData?.items) return [];
+    return challengeData.items.map((c) => ({
+      value: String(c.id),
+      label: `#${c.id} — ${c.title}${c.theme ? ` (${c.theme})` : ''} [${c.status}]`,
+    }));
+  }, [challengeData]);
+
   const mutation = trpc.challenge.playgroundPickWinners.useMutation({
-    onSuccess: (data) => setResult(data as Record<string, unknown>),
+    onSuccess: (data) => setResult(data as PickWinnersResult),
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleRun = () => {
     if (!challengeId) return;
 
+    setResult(null);
     mutation.mutate({
-      challengeId,
-      judgeId: selectedJudgeId ?? undefined,
+      challengeId: parseInt(challengeId, 10),
+      judgeId: selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : undefined,
       promptOverrides:
         draft?.systemPrompt || draft?.winnerSelectionPrompt
           ? {
@@ -43,11 +85,16 @@ export function PickWinnersActivity() {
 
   return (
     <Stack gap="sm" h="100%">
-      <NumberInput
-        label="Challenge ID"
-        placeholder="Enter a challenge ID"
+      <Select
+        label="Challenge"
+        placeholder="Select a challenge..."
+        description="Pick a completed or active challenge to test winner selection"
+        data={challengeOptions}
         value={challengeId}
-        onChange={(val) => setChallengeId(typeof val === 'number' ? val : undefined)}
+        onChange={setChallengeId}
+        searchable
+        nothingFoundMessage={challengesLoading ? 'Loading...' : 'No challenges found'}
+        rightSection={challengesLoading ? <Loader size="xs" /> : undefined}
       />
       <Textarea
         label="Winner Selection Prompt (override)"
@@ -56,16 +103,15 @@ export function PickWinnersActivity() {
         minRows={3}
         maxRows={8}
         value={winnerPrompt}
-        onChange={(e) =>
-          selectedJudgeId != null &&
-          updateDraft(selectedJudgeId, {
-            winnerSelectionPrompt: e.currentTarget.value || null,
-          })
-        }
+        onChange={(e) => {
+          const id = selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : null;
+          if (id != null)
+            updateDraft(id, { winnerSelectionPrompt: e.currentTarget.value || null });
+        }}
       />
       <Textarea
         label="User Message (override)"
-        placeholder="Leave empty to use default"
+        placeholder="Leave empty to use default (Theme + Entries JSON)"
         autosize
         minRows={2}
         maxRows={6}
@@ -83,12 +129,53 @@ export function PickWinnersActivity() {
 
       {result && (
         <Card withBorder>
-          <Text fw={600} size="sm" mb="xs">
-            Result
-          </Text>
-          <ScrollArea mah={400}>
-            <Code block>{JSON.stringify(result, null, 2)}</Code>
-          </ScrollArea>
+          <Stack gap="md">
+            <Text fw={600} size="sm">
+              Winners
+            </Text>
+            {result.winners.map((winner, i) => (
+              <Card key={winner.creatorId} withBorder p="sm">
+                <Group gap="sm" mb="xs">
+                  <IconTrophy size={16} color={`var(--mantine-color-${PLACE_COLORS[i] ?? 'gray'}-6)`} />
+                  <Badge color={PLACE_COLORS[i] ?? 'gray'} variant="light" size="sm">
+                    {PLACE_LABELS[i] ?? `${i + 1}th`}
+                  </Badge>
+                  <Text fw={600} size="sm">
+                    {winner.creator}
+                  </Text>
+                </Group>
+                <Text size="sm" c="dimmed">
+                  {winner.reason}
+                </Text>
+              </Card>
+            ))}
+
+            {result.process && (
+              <div>
+                <Text fw={600} size="sm" mb="xs">
+                  Judging Process
+                </Text>
+                <ScrollArea mah={200}>
+                  <TypographyStylesProvider>
+                    <div dangerouslySetInnerHTML={{ __html: result.process }} />
+                  </TypographyStylesProvider>
+                </ScrollArea>
+              </div>
+            )}
+
+            {result.outcome && (
+              <div>
+                <Text fw={600} size="sm" mb="xs">
+                  Outcome
+                </Text>
+                <ScrollArea mah={200}>
+                  <TypographyStylesProvider>
+                    <div dangerouslySetInnerHTML={{ __html: result.outcome }} />
+                  </TypographyStylesProvider>
+                </ScrollArea>
+              </div>
+            )}
+          </Stack>
         </Card>
       )}
     </Stack>

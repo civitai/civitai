@@ -1,9 +1,27 @@
-import { Button, Card, Code, NumberInput, ScrollArea, Stack, Text, Textarea } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Card,
+  Group,
+  ScrollArea,
+  Stack,
+  Text,
+  Textarea,
+  TypographyStylesProvider,
+} from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
+
+type GenerateResult = {
+  title: string;
+  content: string;
+  invitation: string;
+  theme: string;
+};
 
 export function GenerateContentActivity() {
   const selectedJudgeId = usePlaygroundStore((s) => s.selectedJudgeId);
@@ -11,24 +29,26 @@ export function GenerateContentActivity() {
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
 
-  const [modelVersionId, setModelVersionId] = useState<number | undefined>();
+  const [modelVersionIds, setModelVersionIds] = useState<number[]>([]);
   const [userMessage, setUserMessage] = useState('');
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [result, setResult] = useState<GenerateResult | null>(null);
 
-  const draft = selectedJudgeId != null ? drafts[selectedJudgeId] : undefined;
+  const draft = selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const contentPrompt = draft?.contentPrompt ?? '';
 
   const mutation = trpc.challenge.playgroundGenerateContent.useMutation({
-    onSuccess: (data) => setResult(data as Record<string, unknown>),
+    onSuccess: (data) => setResult(data as GenerateResult),
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleRun = () => {
-    if (!modelVersionId) return;
+    const mvId = modelVersionIds[0];
+    if (!mvId) return;
 
+    setResult(null);
     mutation.mutate({
-      modelVersionId,
-      judgeId: selectedJudgeId ?? undefined,
+      modelVersionId: mvId,
+      judgeId: selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : undefined,
       promptOverrides:
         draft?.systemPrompt || draft?.contentPrompt
           ? {
@@ -41,13 +61,18 @@ export function GenerateContentActivity() {
     });
   };
 
+  const handleModelVersionChange = useCallback((ids: number[]) => {
+    setModelVersionIds(ids);
+  }, []);
+
   return (
     <Stack gap="sm" h="100%">
-      <NumberInput
-        label="Model Version ID"
-        placeholder="Enter a model version ID"
-        value={modelVersionId}
-        onChange={(val) => setModelVersionId(typeof val === 'number' ? val : undefined)}
+      <ModelVersionMultiSelect
+        label="Model Version"
+        description="Select a model version to generate content for"
+        value={modelVersionIds}
+        onChange={handleModelVersionChange}
+        maxSelections={1}
       />
       <Textarea
         label="Content Prompt (override)"
@@ -56,14 +81,14 @@ export function GenerateContentActivity() {
         minRows={3}
         maxRows={8}
         value={contentPrompt}
-        onChange={(e) =>
-          selectedJudgeId != null &&
-          updateDraft(selectedJudgeId, { contentPrompt: e.currentTarget.value || null })
-        }
+        onChange={(e) => {
+          const id = selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : null;
+          if (id != null) updateDraft(id, { contentPrompt: e.currentTarget.value || null });
+        }}
       />
       <Textarea
         label="User Message (override)"
-        placeholder="Leave empty to use default"
+        placeholder="Leave empty to use default (auto-generated from model info)"
         autosize
         minRows={2}
         maxRows={6}
@@ -74,19 +99,29 @@ export function GenerateContentActivity() {
         leftSection={<IconPlayerPlay size={16} />}
         onClick={handleRun}
         loading={mutation.isLoading}
-        disabled={!modelVersionId}
+        disabled={modelVersionIds.length === 0}
       >
         Generate Content
       </Button>
 
       {result && (
         <Card withBorder>
-          <Text fw={600} size="sm" mb="xs">
-            Result
-          </Text>
-          <ScrollArea mah={400}>
-            <Code block>{JSON.stringify(result, null, 2)}</Code>
-          </ScrollArea>
+          <Stack gap="sm">
+            <Group justify="space-between">
+              <Text fw={600} size="lg">
+                {result.title}
+              </Text>
+              <Badge variant="light">{result.theme}</Badge>
+            </Group>
+            <Text size="sm" fs="italic" c="dimmed">
+              {result.invitation}
+            </Text>
+            <ScrollArea mah={400}>
+              <TypographyStylesProvider>
+                <div dangerouslySetInnerHTML={{ __html: result.content }} />
+              </TypographyStylesProvider>
+            </ScrollArea>
+          </Stack>
         </Card>
       )}
     </Stack>
