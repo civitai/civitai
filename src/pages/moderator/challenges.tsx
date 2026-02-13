@@ -30,7 +30,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useRouter } from 'next/router';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -158,26 +157,44 @@ function SystemSettingsPopover() {
   );
 }
 
+const STORAGE_KEY = 'mod-challenges-filters';
+
+function getStoredFilters(): { status: string; source: string } {
+  if (typeof window === 'undefined') return { status: 'all', source: 'all' };
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return { status: 'all', source: 'all' };
+}
+
+function storeFilters(filters: { status: string; source: string }) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  } catch {}
+}
+
 export default function ModeratorChallengesPage() {
-  const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
-  // Read filter state from URL query params (persists across refreshes)
-  const status = (router.query.status as string) || 'all';
-  const source = (router.query.source as string) || 'all';
-  const [query, setQuery] = useState((router.query.q as string) || '');
+  const stored = getStoredFilters();
+  const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 500);
+  const [status, setStatusState] = useState<string>(stored.status);
+  const [source, setSourceState] = useState<string>(stored.source);
 
   const setStatus = (value: string) => {
-    const newQuery = { ...router.query, status: value === 'all' ? undefined : value };
-    router.replace({ pathname: router.pathname, query: newQuery }, undefined, { shallow: true });
+    const v = value ?? 'all';
+    setStatusState(v);
+    storeFilters({ status: v, source });
   };
 
   const setSource = (value: string) => {
-    const newQuery = { ...router.query, source: value === 'all' ? undefined : value };
-    router.replace({ pathname: router.pathname, query: newQuery }, undefined, { shallow: true });
+    const v = value ?? 'all';
+    setSourceState(v);
+    storeFilters({ status, source: v });
   };
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -235,7 +252,9 @@ export default function ModeratorChallengesPage() {
 
   const handleClearFilters = () => {
     setQuery('');
-    router.replace({ pathname: router.pathname }, undefined, { shallow: true });
+    setStatusState('all');
+    setSourceState('all');
+    storeFilters({ status: 'all', source: 'all' });
   };
 
   const handleEndAndPickWinners = (challengeId: number, title: string) => {
