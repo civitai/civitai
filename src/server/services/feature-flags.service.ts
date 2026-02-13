@@ -255,12 +255,17 @@ function loadFliptModule(): Promise<FliptModule | null> {
         _fliptModule = mod;
         return mod;
       })
-      .catch(() => null);
+      .catch((err) => {
+        console.error('[Flipt] Module load failed:', err?.message ?? err);
+        // Allow retry on next call by clearing the cached promise
+        _fliptLoading = null;
+        return null;
+      });
   }
   return _fliptLoading;
 }
 
-// Kick off loading immediately on server
+// Kick off loading immediately on server (non-blocking, just warms the import)
 if (typeof window === 'undefined') {
   loadFliptModule();
 }
@@ -272,7 +277,6 @@ function buildFliptContext(user?: SessionUser): Record<string, string> {
     ctx.isModerator = String(!!user.isModerator);
     ctx.tier = user.tier ?? 'free';
     ctx.isLoggedIn = 'true';
-    if (user.permissions) ctx.permissions = user.permissions.join(',');
   } else {
     ctx.isLoggedIn = 'false';
   }
@@ -285,22 +289,6 @@ const hasFeature = (
 ) => {
   const feature = featureFlags[key];
   const { availability } = feature;
-
-  // Priority: ENV override > Flipt > static availability
-  // Check Flipt if flag has a fliptKey and is not env-overridden
-  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
-    const fliptResult = _fliptModule.isFliptSync(
-      feature.fliptKey,
-      user ? String(user.id) : 'anonymous',
-      buildFliptContext(user)
-    );
-    if (fliptResult !== null) {
-      console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult} [from Flipt]`);
-      return fliptResult;
-    }
-    console.log(`[Flipt] ${key} (${feature.fliptKey}) => null [falling back to static]`);
-    // Fall through to static evaluation as fallback
-  }
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
@@ -358,12 +346,29 @@ const hasFeature = (
 
   if (isMod || hasGrantedPermission) {
     // Avoids the double region check for mods/granted users
-    return true;
+    // Flipt can still disable for mods — check below
+  } else {
+    // Check region access for regular users
+    const regionAccess = checkRegionAccess(feature, availability, req);
+    if (!regionAccess) return false;
   }
 
-  // Check region access for regular users
-  const regionAccess = checkRegionAccess(feature, availability, req);
-  if (!regionAccess) return false;
+  // Flipt override: can only DISABLE features, never grant access beyond static checks.
+  // Priority: ENV override > Flipt > static availability
+  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
+    const fliptResult = _fliptModule.isFliptSync(
+      feature.fliptKey,
+      user ? String(user.id) : 'anonymous',
+      buildFliptContext(user)
+    );
+    if (fliptResult !== null) {
+      if (isDev) {
+        console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
+      }
+      return fliptResult;
+    }
+    // Flipt unavailable — fall through to static result (already computed as true)
+  }
 
   return true;
 };
@@ -395,10 +400,10 @@ export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
 }
 
 export async function getFeatureFlagsAsync(ctx: FeatureAccessContext) {
+  // Ensure Flipt module is loaded and initialized (timeout + circuit breaker in FliptSingleton)
   const flipt = await loadFliptModule();
   if (flipt) {
     await flipt.ensureFliptInitialized();
-    console.log('[Flipt] getFeatureFlagsAsync — Flipt initialized, evaluating flags');
   }
   return getFeatureFlags(ctx);
 }
@@ -433,7 +438,7 @@ type FeatureFlag = {
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties
 type FeatureFlagInput =
   | FeatureAvailability[] // Legacy format: ['public']
-  | (Partial<FeatureFlag> & { availability: FeatureAvailability[] } & { fliptKey?: string }); // Object with at least availability
+  | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
 
 function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };

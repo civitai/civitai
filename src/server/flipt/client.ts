@@ -23,9 +23,13 @@ export enum FLIPT_FEATURE_FLAGS {
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
 }
 
+const FLIPT_INIT_TIMEOUT_MS = 5000;
+const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
+
 class FliptSingleton {
   private static instance: FliptClient | null = null;
   private static initializing: Promise<FliptClient | null> | null = null;
+  private static lastFailureTime = 0;
 
   private constructor() {
     // Prevent direct construction
@@ -40,6 +44,11 @@ class FliptSingleton {
       return this.instance;
     }
 
+    // Circuit breaker: skip re-init during cooldown after a failure
+    if (Date.now() - this.lastFailureTime < FLIPT_FAILURE_COOLDOWN_MS) {
+      return null;
+    }
+
     if (this.initializing) {
       // If initialization is already in progress, wait for it
       return this.initializing;
@@ -49,16 +58,28 @@ class FliptSingleton {
       try {
         const internalAuthHeader = env.FLIPT_FETCHER_SECRET;
 
-        const fliptClient = await FliptClient.init({
-          environment: 'civitai-app',
-          url: env.FLIPT_URL,
-          authentication: {
-            clientToken: internalAuthHeader,
-          },
-          updateInterval: 60, // Fetch feature flag updates (default: 120 seconds)
-        });
+        const initPromise = (async () => {
+          const fliptClient = await FliptClient.init({
+            environment: 'civitai-app',
+            url: env.FLIPT_URL,
+            authentication: {
+              clientToken: internalAuthHeader,
+            },
+            updateInterval: 60, // Fetch feature flag updates (default: 120 seconds)
+          });
+          await fliptClient.refresh();
+          return fliptClient;
+        })();
 
-        await fliptClient.refresh();
+        // Attach a no-op catch to prevent unhandled rejection if timeout wins
+        // but initPromise later rejects
+        initPromise.catch(() => {});
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Flipt init timeout')), FLIPT_INIT_TIMEOUT_MS)
+        );
+
+        const fliptClient = await Promise.race([initPromise, timeoutPromise]);
         this.instance = fliptClient;
         return this.instance;
       } catch (e) {
@@ -75,6 +96,7 @@ class FliptSingleton {
         ).catch();
 
         this.instance = null;
+        this.lastFailureTime = Date.now();
         return null;
       } finally {
         this.initializing = null;
@@ -150,7 +172,16 @@ export function isFliptSync(
 
     return evaluation.enabled;
   } catch (e) {
-    // Flag may not exist in Flipt — return null so caller falls back
+    const err = e as Error;
+    // Log unexpected errors (not just "flag not found") for observability
+    logToAxiom(
+      {
+        type: 'flipt-sync-eval-error',
+        flag,
+        error: err.message,
+      },
+      'temp-search'
+    ).catch();
     return null;
   }
 }
@@ -158,14 +189,5 @@ export function isFliptSync(
 export async function ensureFliptInitialized(): Promise<void> {
   await FliptSingleton.getInstance();
 }
-
-// Eagerly start Flipt initialization when this module is first imported
-FliptSingleton.getInstance()
-  .then((client) => {
-    console.log(`[Flipt] Eager init complete — client ${client ? 'READY' : 'UNAVAILABLE'}`);
-  })
-  .catch(() => {
-    console.log('[Flipt] Eager init failed');
-  });
 
 export default FliptSingleton;
