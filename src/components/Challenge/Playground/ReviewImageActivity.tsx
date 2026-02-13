@@ -61,7 +61,8 @@ export function ReviewImageActivity() {
   const [userMessage, setUserMessage] = useState('');
   const [result, setResult] = useState<ReviewResult | null>(null);
 
-  const draft = selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
+  const draft =
+    selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const reviewPrompt = draft?.reviewPrompt ?? '';
 
   const parsedImageId = parseImageInput(imageInput);
@@ -100,7 +101,9 @@ export function ReviewImageActivity() {
         description="Enter a Civitai image ID or full image URL"
         value={imageInput}
         onChange={(e) => setImageInput(e.currentTarget.value)}
-        error={imageInput && !parsedImageId ? 'Enter a valid image ID or civitai image URL' : undefined}
+        error={
+          imageInput && !parsedImageId ? 'Enter a valid image ID or civitai image URL' : undefined
+        }
         required
       />
       <TextInput
@@ -162,11 +165,7 @@ export function ReviewImageActivity() {
                     {value}/10
                   </Text>
                 </Group>
-                <Progress
-                  value={value * 10}
-                  color={SCORE_COLORS[key] ?? 'blue'}
-                  size="sm"
-                />
+                <Progress value={value * 10} color={SCORE_COLORS[key] ?? 'blue'} size="sm" />
               </div>
             ))}
             <Group gap="xs">

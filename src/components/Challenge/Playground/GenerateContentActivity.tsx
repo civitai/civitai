@@ -33,7 +33,8 @@ export function GenerateContentActivity() {
   const [userMessage, setUserMessage] = useState('');
   const [result, setResult] = useState<GenerateResult | null>(null);
 
-  const draft = selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
+  const draft =
+    selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const contentPrompt = draft?.contentPrompt ?? '';
 
   const mutation = trpc.challenge.playgroundGenerateContent.useMutation({

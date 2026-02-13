@@ -42,7 +42,8 @@ export function PickWinnersActivity() {
   const [userMessage, setUserMessage] = useState('');
   const [result, setResult] = useState<PickWinnersResult | null>(null);
 
-  const draft = selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
+  const draft =
+    selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const winnerPrompt = draft?.winnerSelectionPrompt ?? '';
 
   // Load recent challenges for the select dropdown
@@ -105,8 +106,7 @@ export function PickWinnersActivity() {
         value={winnerPrompt}
         onChange={(e) => {
           const id = selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : null;
-          if (id != null)
-            updateDraft(id, { winnerSelectionPrompt: e.currentTarget.value || null });
+          if (id != null) updateDraft(id, { winnerSelectionPrompt: e.currentTarget.value || null });
         }}
       />
       <Textarea
@@ -136,7 +136,10 @@ export function PickWinnersActivity() {
             {result.winners.map((winner, i) => (
               <Card key={winner.creatorId} withBorder p="sm">
                 <Group gap="sm" mb="xs">
-                  <IconTrophy size={16} color={`var(--mantine-color-${PLACE_COLORS[i] ?? 'gray'}-6)`} />
+                  <IconTrophy
+                    size={16}
+                    color={`var(--mantine-color-${PLACE_COLORS[i] ?? 'gray'}-6)`}
+                  />
                   <Badge color={PLACE_COLORS[i] ?? 'gray'} variant="light" size="sm">
                     {PLACE_LABELS[i] ?? `${i + 1}th`}
                   </Badge>

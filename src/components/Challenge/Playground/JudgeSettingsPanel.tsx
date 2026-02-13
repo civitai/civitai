@@ -33,14 +33,15 @@ export function JudgeSettingsPanel() {
   });
 
   const isNewJudge = selectedJudgeId === -1;
-  const draft = selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
+  const draft =
+    selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
 
   // Derive current values: draft overrides server data
-  const currentName = isNewJudge ? drafts[-1]?.name ?? '' : (draft?.name ?? judge?.name ?? '');
-  const currentBio = isNewJudge ? drafts[-1]?.bio ?? '' : (draft?.bio ?? judge?.bio ?? '');
+  const currentName = isNewJudge ? drafts[-1]?.name ?? '' : draft?.name ?? judge?.name ?? '';
+  const currentBio = isNewJudge ? drafts[-1]?.bio ?? '' : draft?.bio ?? judge?.bio ?? '';
   const currentSystemPrompt = isNewJudge
     ? drafts[-1]?.systemPrompt ?? ''
-    : (draft?.systemPrompt ?? judge?.systemPrompt ?? '');
+    : draft?.systemPrompt ?? judge?.systemPrompt ?? '';
 
   const handleSave = () => {
     if (isNewJudge) {
