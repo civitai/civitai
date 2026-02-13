@@ -502,10 +502,10 @@ export default function ModeratorChallengesPage() {
                         </Group>
                         <Group gap="md" wrap="wrap">
                           <Text size="xs" c="dimmed">
-                            Starts: {formatDate(challenge.startsAt)}
+                            Starts: {formatDate(challenge.startsAt, 'MMM D, YYYY h:mm A [UTC]', true)}
                           </Text>
                           <Text size="xs" c="dimmed">
-                            Ends: {formatDate(challenge.endsAt)}
+                            Ends: {formatDate(challenge.endsAt, 'MMM D, YYYY h:mm A [UTC]', true)}
                           </Text>
                         </Group>
 
