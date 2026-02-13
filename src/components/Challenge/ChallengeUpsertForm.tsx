@@ -53,6 +53,15 @@ const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
 const InputNumberWrapper = withController(NumberInputWrapper);
 
+// UTC display helpers: Mantine's DateTimePicker only works in local time.
+// We shift dates so the picker *displays* UTC values, then reverse on submit.
+function toDisplayUTC(date: Date): Date {
+  return new Date(date.getTime() + date.getTimezoneOffset() * 60_000);
+}
+function fromDisplayUTC(date: Date): Date {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+}
+
 // Form schema - extends server schema with flattened prize fields for UI
 // judgeId is overridden to string|null because Mantine Select uses string values
 // Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
@@ -128,10 +137,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
   const { data: events = [] } = trpc.challenge.getEvents.useQuery({ activeOnly: false });
 
-  // Default dates
-  const defaultStartsAt = dayjs().add(1, 'day').startOf('day').toDate();
-  const defaultEndsAt = dayjs().add(2, 'day').startOf('day').toDate();
-  const defaultVisibleAt = dayjs().startOf('day').toDate();
+  // Default dates (in UTC, shifted for display)
+  const defaultStartsAt = toDisplayUTC(dayjs.utc().add(1, 'day').startOf('day').toDate());
+  const defaultEndsAt = toDisplayUTC(dayjs.utc().add(2, 'day').startOf('day').toDate());
+  const defaultVisibleAt = toDisplayUTC(dayjs.utc().startOf('day').toDate());
 
   // Parse existing prizes
   const existingPrizes = challenge?.prizes ?? [];
@@ -156,9 +165,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
-      startsAt: challenge?.startsAt ?? defaultStartsAt,
-      endsAt: challenge?.endsAt ?? defaultEndsAt,
-      visibleAt: challenge?.visibleAt ?? defaultVisibleAt,
+      startsAt: challenge?.startsAt ? toDisplayUTC(challenge.startsAt) : defaultStartsAt,
+      endsAt: challenge?.endsAt ? toDisplayUTC(challenge.endsAt) : defaultEndsAt,
+      visibleAt: challenge?.visibleAt ? toDisplayUTC(challenge.visibleAt) : defaultVisibleAt,
       source: challenge?.source ?? ChallengeSource.Mod,
       prize1Buzz: existingPrizes[0]?.buzz ?? 5000,
       prize2Buzz: existingPrizes[1]?.buzz ?? 2500,
@@ -189,8 +198,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
+    // Convert display dates back to real UTC before validation and submission
+    const startsAt = fromDisplayUTC(data.startsAt);
+    const endsAt = fromDisplayUTC(data.endsAt);
+    const visibleAt = fromDisplayUTC(data.visibleAt);
+
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
-    if (data.endsAt <= data.startsAt) {
+    if (endsAt <= startsAt) {
       form.setError('endsAt', { message: 'End date must be after start date' });
       return;
     }
@@ -213,9 +227,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       maxEntriesPerUser: data.maxEntriesPerUser,
       entryPrizeRequirement: data.entryPrizeRequirement,
       operationBudget: data.operationBudget,
-      startsAt: data.startsAt,
-      endsAt: data.endsAt,
-      visibleAt: data.visibleAt,
+      startsAt,
+      endsAt,
+      visibleAt,
       source: data.source,
     };
 
@@ -391,10 +405,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Title order={4}>Schedule</Title>
 
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
-              {/* Date locale is handled by DateLocaleProvider via DatesProvider */}
               <InputDateTimePicker
                 name="visibleAt"
-                label="Visible From"
+                label="Visible From (UTC)"
                 placeholder="When challenge appears in feed"
                 valueFormat="lll"
                 disabled={isTerminal}
@@ -402,7 +415,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
               <InputDateTimePicker
                 name="startsAt"
-                label="Starts At"
+                label="Starts At (UTC)"
                 placeholder="When submissions open"
                 valueFormat="lll"
                 disabled={isActive || isTerminal}
@@ -410,20 +423,12 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
               <InputDateTimePicker
                 name="endsAt"
-                label="Ends At"
+                label="Ends At (UTC)"
                 placeholder="When submissions close"
                 valueFormat="lll"
                 disabled={isTerminal}
               />
             </SimpleGrid>
-
-            <Text size="sm" c="dimmed">
-              All times are in{' '}
-              <Text fw="bold" c="red.5" span>
-                UTC
-              </Text>
-              . Make sure to convert from your local timezone when setting dates.
-            </Text>
           </Stack>
         </Paper>
 
