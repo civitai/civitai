@@ -70,6 +70,12 @@ export default function EditChallengePage() {
     source: challenge.source,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
+    prizeMode: challenge.prizeMode,
+    basePrizePool: challenge.basePrizePool,
+    buzzPerAction: challenge.buzzPerAction,
+    poolTrigger: challenge.poolTrigger,
+    maxPrizePool: challenge.maxPrizePool,
+    prizeDistribution: challenge.prizeDistribution,
   };
 
   return (
