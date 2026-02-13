@@ -3,6 +3,7 @@ import {
   type Icon,
   type IconProps,
   IconBarbell,
+  IconBook,
   IconBookmark,
   IconBookmarkEdit,
   IconBrush,
@@ -290,6 +291,15 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       icon: IconWriting,
       color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Write an Article',
+    },
+    {
+      href: '/comics/create',
+      visible: !isMuted && canCreate,
+      redirectReason: 'post-images',
+      rel: 'nofollow',
+      icon: IconBook,
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+      label: 'Create a Comic',
     },
     {
       href: '/bounties/create',

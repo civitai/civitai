@@ -1,4 +1,4 @@
-import { openai } from '~/server/services/ai/openai';
+import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
 
 const SYSTEM_PROMPT = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
 
@@ -15,13 +15,10 @@ Rules:
 - Output JSON: { "panels": [{ "prompt": "..." }, ...] }`;
 
 export async function planChapterPanels(input: {
+  token: string;
   storyDescription: string;
   characterNames: string[];
 }): Promise<{ panels: { prompt: string }[] }> {
-  if (!openai) {
-    throw new Error('OpenAI client not configured — cannot plan chapter panels');
-  }
-
   const userMessage = [
     input.characterNames.length > 0
       ? `Characters: ${input.characterNames.map((n) => `@${n}`).join(', ')}`
@@ -31,20 +28,37 @@ export async function planChapterPanels(input: {
     .filter(Boolean)
     .join('\n');
 
-  const result = await openai.getJsonCompletion<{ panels: { prompt: string }[] }>({
+  const result = await orchestratorChatCompletion({
+    token: input.token,
     model: 'gpt-4o-mini',
     temperature: 0.7,
-    max_tokens: 2048,
-    retries: 2,
+    maxTokens: 2048,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userMessage },
     ],
   });
 
-  if (!result?.panels || !Array.isArray(result.panels) || result.panels.length === 0) {
-    throw new Error('GPT returned invalid panel breakdown');
+  const parsed = parseJsonBlock<{ panels: { prompt: string }[] }>(result.content);
+
+  if (!parsed?.panels || !Array.isArray(parsed.panels) || parsed.panels.length === 0) {
+    throw new Error('LLM returned invalid panel breakdown');
   }
 
-  return result;
+  return parsed;
+}
+
+/** Extract JSON from a response that may contain markdown code fences. */
+function parseJsonBlock<T>(text: string): T | null {
+  if (!text) return null;
+
+  // Try to extract from ```json ... ``` block first
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const jsonStr = fenceMatch ? fenceMatch[1].trim() : text.trim();
+
+  try {
+    return JSON.parse(jsonStr) as T;
+  } catch {
+    return null;
+  }
 }

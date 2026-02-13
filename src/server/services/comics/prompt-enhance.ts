@@ -1,4 +1,4 @@
-import { openai } from '~/server/services/ai/openai';
+import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 
 const SYSTEM_PROMPT = `You enhance user prompts for AI comic panel generation. The generation model receives separate reference images of the main character, so you do NOT need to describe physical appearance.
@@ -19,6 +19,7 @@ Rules:
 - Output ONLY the enhanced prompt, no explanation`;
 
 export async function enhanceComicPrompt(input: {
+  token: string;
   userPrompt: string;
   characterName: string;
   characterNames?: string[];
@@ -33,8 +34,15 @@ export async function enhanceComicPrompt(input: {
     previousPanelPrompts: string[];
   };
 }): Promise<string> {
-  const { userPrompt, characterName, characterNames, trainedWords, previousPanel, storyContext } =
-    input;
+  const {
+    token,
+    userPrompt,
+    characterName,
+    characterNames,
+    trainedWords,
+    previousPanel,
+    storyContext,
+  } = input;
 
   // Resolve @mentions: replace @ReferenceName with the exact name
   const names =
@@ -53,11 +61,6 @@ export async function enhanceComicPrompt(input: {
     trainedWords && trainedWords.length > 0
       ? `${trainedWords.join(', ')}, ${resolvedPrompt}`
       : resolvedPrompt;
-
-  if (!openai) {
-    console.warn('OpenAI client not configured — skipping prompt enhancement');
-    return fallback;
-  }
 
   try {
     const textParts = [
@@ -93,17 +96,18 @@ export async function enhanceComicPrompt(input: {
     }
     content.push({ type: 'text', text: textParts });
 
-    const completion = await openai.chat.completions.create({
+    const result = await orchestratorChatCompletion({
+      token,
       model: 'gpt-4o-mini',
       temperature: 0.4,
-      max_tokens: 512,
+      maxTokens: 512,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content },
       ],
     });
 
-    const enhanced = completion.choices[0]?.message?.content?.trim();
+    const enhanced = result.content;
     if (!enhanced) {
       console.warn('Empty response from prompt enhancement — using fallback');
       return fallback;

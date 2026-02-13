@@ -21,6 +21,7 @@ import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen
 import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import {
   updateComicChapterNsfwLevels,
@@ -300,10 +301,13 @@ async function createSinglePanel(args: {
     storyContext,
   } = args;
 
+  const token = await getOrchestratorToken(userId, ctx);
+
   // Build prompt — optionally enhance via LLM
   let fullPrompt: string;
   if (enhance) {
     fullPrompt = await enhanceComicPrompt({
+      token,
       userPrompt: prompt,
       characterName: primaryReferenceName,
       characterNames: allReferenceNames,
@@ -354,7 +358,6 @@ async function createSinglePanel(args: {
   }
 
   try {
-    const token = await getOrchestratorToken(userId, ctx);
     const result = await createImageGen({
       params: {
         prompt: fullPrompt,
@@ -851,6 +854,42 @@ export const comicsRouter = router({
     }
   }),
 
+  getPromptEnhanceCostEstimate: protectedProcedure.query(async ({ ctx }) => {
+    try {
+      const token = await getOrchestratorToken(ctx.user.id, ctx);
+      return orchestratorChatCompletionCost({
+        token,
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You enhance prompts.' },
+          { role: 'user', content: 'A sample prompt for cost estimation.' },
+        ],
+        maxTokens: 512,
+      });
+    } catch (error) {
+      console.error('Comics getPromptEnhanceCostEstimate failed:', error);
+      return { cost: 0, ready: false };
+    }
+  }),
+
+  getPlanChapterCostEstimate: protectedProcedure.query(async ({ ctx }) => {
+    try {
+      const token = await getOrchestratorToken(ctx.user.id, ctx);
+      return orchestratorChatCompletionCost({
+        token,
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You plan comic panels.' },
+          { role: 'user', content: 'A sample story for cost estimation.' },
+        ],
+        maxTokens: 2048,
+      });
+    } catch (error) {
+      console.error('Comics getPlanChapterCostEstimate failed:', error);
+      return { cost: 0, ready: false };
+    }
+  }),
+
   createProject: protectedProcedure.input(createProjectSchema).mutation(async ({ ctx, input }) => {
     const project = await dbWrite.comicProject.create({
       data: {
@@ -1341,10 +1380,13 @@ export const comicsRouter = router({
       // Conditionally use previous panel context for prompt enhancement
       const effectiveContext = input.useContext ? contextPanel : null;
 
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+
       // Build prompt — optionally enhance via LLM
       let fullPrompt: string;
       if (input.enhance) {
         fullPrompt = await enhanceComicPrompt({
+          token,
           userPrompt: input.prompt,
           characterName: primaryReferenceName,
           characterNames: allReferenceNames,
@@ -1408,7 +1450,6 @@ export const comicsRouter = router({
 
       // Submit NanoBanana generation workflow
       try {
-        const token = await getOrchestratorToken(ctx.user!.id, ctx);
         const result = await createImageGen({
           params: {
             prompt: fullPrompt,
@@ -1779,6 +1820,8 @@ export const comicsRouter = router({
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+
       // Get all user's reference names for story planning
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
@@ -1786,6 +1829,7 @@ export const comicsRouter = router({
       });
 
       return planChapterPanels({
+        token,
         storyDescription: input.storyDescription,
         characterNames: allUserRefs.map((r) => r.name),
       });
@@ -2242,10 +2286,13 @@ export const comicsRouter = router({
         allImages.push({ url: prevEdgeUrl, width: PANEL_WIDTH, height: PANEL_HEIGHT });
       }
 
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+
       // Build prompt — optionally enhance
       let fullPrompt = input.prompt;
       if (input.enhance) {
         fullPrompt = await enhanceComicPrompt({
+          token,
           userPrompt: input.prompt,
           characterName: primaryReferenceName,
           characterNames: allReferenceNames,
@@ -2294,7 +2341,6 @@ export const comicsRouter = router({
       }
 
       try {
-        const token = await getOrchestratorToken(ctx.user!.id, ctx);
         const result = await createImageGen({
           params: {
             prompt: fullPrompt,
@@ -2396,6 +2442,8 @@ export const comicsRouter = router({
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
         combinedRefImages.push(...imgs);
       }
+
+      const batchToken = await getOrchestratorToken(ctx.user!.id, ctx);
 
       const createdPanels: any[] = [];
       let contextPanel: {
@@ -2512,6 +2560,7 @@ export const comicsRouter = router({
           let fullPrompt = panelDef.prompt;
           if (panelDef.enhance) {
             fullPrompt = await enhanceComicPrompt({
+              token: batchToken,
               userPrompt: panelDef.prompt,
               characterName: primaryReferenceName,
               characterNames: allReferenceNames,
@@ -2568,7 +2617,6 @@ export const comicsRouter = router({
           }
 
           try {
-            const token = await getOrchestratorToken(ctx.user!.id, ctx);
             const result = await createImageGen({
               params: {
                 prompt: fullPrompt,
@@ -2591,7 +2639,7 @@ export const comicsRouter = router({
               tags: ['comics'],
               tips: { creators: 0, civitai: 0 },
               user: ctx.user! as SessionUser,
-              token,
+              token: batchToken,
               currencies: ['yellow'],
             });
 

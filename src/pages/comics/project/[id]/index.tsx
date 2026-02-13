@@ -22,6 +22,7 @@ import {
   IconArrowLeft,
   IconBook,
   IconBug,
+  IconGripVertical,
   IconPencil,
   IconPhoto,
   IconPhotoUp,
@@ -44,7 +45,8 @@ import { slugit } from '~/utils/string-helpers';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { arrayMove, SortableContext } from '@dnd-kit/sortable';
+import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
@@ -86,6 +88,96 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+function SortableBulkItem({
+  item,
+  index,
+  onUpdatePrompt,
+  onRemove,
+}: {
+  item: { id: string; sourceImage?: { preview: string }; prompt: string };
+  index: number;
+  onUpdatePrompt: (id: string, prompt: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className="flex items-start gap-2 rounded-md p-2"
+      style={{
+        background: 'var(--mantine-color-dark-6)',
+        border: '1px solid var(--mantine-color-dark-4)',
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+      }}
+    >
+      {/* Drag handle */}
+      <div
+        {...attributes}
+        {...listeners}
+        className="flex-shrink-0 flex items-center cursor-grab"
+        style={{ marginTop: 18, touchAction: 'none', color: '#909296' }}
+      >
+        <IconGripVertical size={16} />
+      </div>
+
+      {/* Thumbnail or icon */}
+      <div
+        className="flex-shrink-0 flex items-center justify-center overflow-hidden rounded"
+        style={{
+          width: 56,
+          height: 56,
+          background: 'var(--mantine-color-dark-5)',
+        }}
+      >
+        {item.sourceImage ? (
+          <img
+            src={item.sourceImage.preview}
+            alt={`Item ${index + 1}`}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          <IconSparkles size={20} style={{ color: '#fab005' }} />
+        )}
+      </div>
+
+      {/* Prompt input */}
+      <div className="flex-1 min-w-0">
+        <Text size="xs" c="dimmed" mb={2}>
+          {item.sourceImage
+            ? item.prompt.trim()
+              ? 'Enhance (costs buzz)'
+              : 'Upload only (free)'
+            : 'Text-to-image (costs buzz)'}
+        </Text>
+        <TextInput
+          size="xs"
+          placeholder={
+            item.sourceImage ? 'Optional prompt for enhancement...' : 'Describe the scene...'
+          }
+          value={item.prompt}
+          onChange={(e) => onUpdatePrompt(item.id, e.target.value)}
+        />
+      </div>
+
+      {/* Remove button */}
+      <ActionIcon
+        variant="subtle"
+        color="gray"
+        size="sm"
+        onClick={() => onRemove(item.id)}
+        style={{ flexShrink: 0, marginTop: 2 }}
+      >
+        <IconX size={14} />
+      </ActionIcon>
+    </div>
+  );
+}
+
 function ProjectWorkspace() {
   const router = useRouter();
   const { id } = router.query;
@@ -125,6 +217,7 @@ function ProjectWorkspace() {
     prompt: string;
   };
   const [bulkItems, setBulkItems] = useState<BulkPanelItem[]>([]);
+  const [bulkEnhance, setBulkEnhance] = useState(true);
   const [bulkUploading, setBulkUploading] = useState(false);
   const { uploadToCF: uploadBulkToCF, resetFiles: resetBulkFiles } = useCFImageUpload();
 
@@ -177,6 +270,17 @@ function ProjectWorkspace() {
     staleTime: 5 * 60 * 1000, // cache for 5 minutes
   });
   const panelCost = costEstimate?.cost ?? 25; // fallback to 25 if unavailable
+
+  const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
+    undefined,
+    { staleTime: 5 * 60 * 1000 }
+  );
+  const enhanceCost = enhanceCostEstimate?.cost ?? 0;
+
+  const { data: planCostEstimate } = trpc.comics.getPlanChapterCostEstimate.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
+  const planCost = planCostEstimate?.cost ?? 0;
 
   // Set active chapter to first chapter on load
   useEffect(() => {
@@ -446,6 +550,7 @@ function ProjectWorkspace() {
     setIncludePreviousImage(false);
     resetEnhanceFiles();
     setBulkItems([]);
+    setBulkEnhance(true);
     resetBulkFiles();
   };
 
@@ -624,6 +729,63 @@ function ProjectWorkspace() {
     );
   };
 
+  const handleBulkFromGenerator = () => {
+    dialogStore.trigger({
+      component: ImageSelectModal,
+      props: {
+        title: 'Select from Generator',
+        selectSource: 'generation' as const,
+        videoAllowed: false,
+        importedUrls: [],
+        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
+          if (selected.length === 0) return;
+          setBulkUploading(true);
+          try {
+            const newItems: BulkPanelItem[] = [];
+            for (const img of selected) {
+              const width = (img.meta?.width as number) ?? 512;
+              const height = (img.meta?.height as number) ?? 512;
+              try {
+                const edgeUrl = getEdgeUrl(img.url, { original: true }) ?? img.url;
+                const response = await fetch(edgeUrl);
+                const blob = await response.blob();
+                const file = new File([blob], `bulk_gen_${Date.now()}.jpg`, { type: blob.type });
+                const result = await uploadBulkToCF(file);
+                newItems.push({
+                  id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                  sourceImage: {
+                    url: result.id,
+                    cfId: result.id,
+                    width,
+                    height,
+                    preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
+                  },
+                  prompt: '',
+                });
+              } catch (err) {
+                console.error('Failed to upload generator image:', err);
+                newItems.push({
+                  id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                  sourceImage: {
+                    url: img.url,
+                    cfId: img.url,
+                    width,
+                    height,
+                    preview: img.url,
+                  },
+                  prompt: '',
+                });
+              }
+            }
+            setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
+          } finally {
+            setBulkUploading(false);
+          }
+        },
+      },
+    });
+  };
+
   const handleBulkRemoveItem = (itemId: string) => {
     setBulkItems((prev) => prev.filter((item) => item.id !== itemId));
   };
@@ -632,6 +794,17 @@ function ProjectWorkspace() {
     setBulkItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, prompt: newPrompt } : item))
     );
+  };
+
+  const handleBulkDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setBulkItems((prev) => {
+      const oldIndex = prev.findIndex((item) => item.id === active.id);
+      const newIndex = prev.findIndex((item) => item.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
   };
 
   const handleBulkSubmit = async () => {
@@ -643,7 +816,7 @@ function ProjectWorkspace() {
         chapterPosition: activeChapter.position,
         panels: bulkItems.map((item) => ({
           prompt: item.prompt?.trim() || undefined,
-          enhance: true,
+          enhance: bulkEnhance,
           sourceImageUrl: item.sourceImage?.url,
           sourceImageWidth: item.sourceImage?.width,
           sourceImageHeight: item.sourceImage?.height,
@@ -655,7 +828,7 @@ function ProjectWorkspace() {
   };
 
   const bulkGenerationCount = bulkItems.filter((item) => item.prompt.trim() !== '').length;
-  const bulkTotalCost = bulkGenerationCount * panelCost;
+  const bulkTotalCost = bulkGenerationCount * (panelCost + (bulkEnhance ? enhanceCost : 0));
 
   const handleSaveChapterName = () => {
     if (editingChapterPosition == null || !editChapterName.trim()) {
@@ -1427,7 +1600,7 @@ function ProjectWorkspace() {
                 Cancel
               </Button>
               <BuzzTransactionButton
-                buzzAmount={panelCost}
+                buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
                 label={insertAtPosition != null ? 'Insert' : 'Generate'}
                 loading={isSubmitting || createPanelMutation.isPending}
                 disabled={!prompt.trim()}
@@ -1579,7 +1752,7 @@ function ProjectWorkspace() {
                 </Button>
               ) : (
                 <BuzzTransactionButton
-                  buzzAmount={panelCost}
+                  buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
                   label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
                   loading={isSubmitting || enhancePanelMutation.isPending}
                   disabled={!enhanceSourceImage}
@@ -1617,87 +1790,57 @@ function ProjectWorkspace() {
               </Stack>
             </Dropzone>
 
-            <Button
-              variant="light"
-              leftSection={<IconPlus size={14} />}
-              onClick={handleBulkAddPrompt}
-              disabled={bulkItems.length >= 20}
-              size="xs"
-            >
-              Add text-to-image prompt
-            </Button>
+            <Group gap="xs">
+              <Button
+                variant="light"
+                leftSection={<IconPlus size={14} />}
+                onClick={handleBulkAddPrompt}
+                disabled={bulkItems.length >= 20}
+                size="xs"
+              >
+                Add text-to-image prompt
+              </Button>
+              <Button
+                variant="light"
+                leftSection={<IconWand size={14} />}
+                onClick={handleBulkFromGenerator}
+                disabled={bulkItems.length >= 20 || bulkUploading}
+                size="xs"
+              >
+                From Generator
+              </Button>
+            </Group>
+
+            <Switch
+              label="Enhance prompts"
+              description="Use AI to add detail and composition to prompts"
+              checked={bulkEnhance}
+              onChange={(e) => setBulkEnhance(e.currentTarget.checked)}
+              color="yellow"
+            />
 
             {bulkItems.length > 0 && (
-              <ScrollArea.Autosize mah={320}>
-                <Stack gap="xs">
-                  {bulkItems.map((item, idx) => (
-                    <div
-                      key={item.id}
-                      className="flex items-start gap-3 rounded-md p-2"
-                      style={{
-                        background: 'var(--mantine-color-dark-6)',
-                        border: '1px solid var(--mantine-color-dark-4)',
-                      }}
-                    >
-                      {/* Thumbnail or icon */}
-                      <div
-                        className="flex-shrink-0 flex items-center justify-center overflow-hidden rounded"
-                        style={{
-                          width: 56,
-                          height: 56,
-                          background: 'var(--mantine-color-dark-5)',
-                        }}
-                      >
-                        {item.sourceImage ? (
-                          <img
-                            src={item.sourceImage.preview}
-                            alt={`Item ${idx + 1}`}
-                            style={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'cover',
-                            }}
-                          />
-                        ) : (
-                          <IconSparkles size={20} style={{ color: '#fab005' }} />
-                        )}
-                      </div>
-
-                      {/* Prompt input */}
-                      <div className="flex-1 min-w-0">
-                        <Text size="xs" c="dimmed" mb={2}>
-                          {item.sourceImage
-                            ? item.prompt.trim()
-                              ? 'Enhance (costs buzz)'
-                              : 'Upload only (free)'
-                            : 'Text-to-image (costs buzz)'}
-                        </Text>
-                        <TextInput
-                          size="xs"
-                          placeholder={
-                            item.sourceImage
-                              ? 'Optional prompt for enhancement...'
-                              : 'Describe the scene...'
-                          }
-                          value={item.prompt}
-                          onChange={(e) => handleBulkUpdatePrompt(item.id, e.target.value)}
+              <DndContext
+                sensors={panelSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleBulkDragEnd}
+              >
+                <SortableContext items={bulkItems.map((item) => item.id)}>
+                  <ScrollArea.Autosize mah={320}>
+                    <Stack gap="xs">
+                      {bulkItems.map((item, idx) => (
+                        <SortableBulkItem
+                          key={item.id}
+                          item={item}
+                          index={idx}
+                          onUpdatePrompt={handleBulkUpdatePrompt}
+                          onRemove={handleBulkRemoveItem}
                         />
-                      </div>
-
-                      {/* Remove button */}
-                      <ActionIcon
-                        variant="subtle"
-                        color="gray"
-                        size="sm"
-                        onClick={() => handleBulkRemoveItem(item.id)}
-                        style={{ flexShrink: 0, marginTop: 2 }}
-                      >
-                        <IconX size={14} />
-                      </ActionIcon>
-                    </div>
-                  ))}
-                </Stack>
-              </ScrollArea.Autosize>
+                      ))}
+                    </Stack>
+                  </ScrollArea.Autosize>
+                </SortableContext>
+              </DndContext>
             )}
 
             {bulkItems.length > 0 && (
@@ -1792,18 +1935,14 @@ function ProjectWorkspace() {
               >
                 Cancel
               </Button>
-              <button
-                className={styles.gradientBtn}
-                onClick={handlePlanPanels}
-                disabled={!smartStory.trim() || planPanelsMutation.isPending}
-              >
-                {planPanelsMutation.isPending ? (
-                  <Loader size={14} color="dark" />
-                ) : (
-                  <IconSparkles size={14} />
-                )}
-                {planPanelsMutation.isPending ? 'Planning...' : 'Plan Panels'}
-              </button>
+              <BuzzTransactionButton
+                buzzAmount={planCost}
+                label={planPanelsMutation.isPending ? 'Planning...' : 'Plan Panels'}
+                loading={planPanelsMutation.isPending}
+                disabled={!smartStory.trim()}
+                onPerformTransaction={handlePlanPanels}
+                showPurchaseModal
+              />
             </Group>
 
             {planPanelsMutation.isError && (
@@ -1873,9 +2012,13 @@ function ProjectWorkspace() {
 
             <Text size="sm" c="dimmed">
               Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
-              {panelCost > 0 ? panelCost : '...'} ={' '}
               {panelCost > 0
-                ? smartPanels.filter((p) => p.prompt.trim()).length * panelCost
+                ? panelCost + (smartEnhance ? enhanceCost : 0)
+                : '...'}{' '}
+              ={' '}
+              {panelCost > 0
+                ? smartPanels.filter((p) => p.prompt.trim()).length *
+                  (panelCost + (smartEnhance ? enhanceCost : 0))
                 : 'Estimating...'}{' '}
               Buzz
             </Text>
@@ -1888,17 +2031,17 @@ function ProjectWorkspace() {
               >
                 Back
               </Button>
-              <button
-                className={styles.gradientBtn}
-                onClick={handleSmartCreate}
-                disabled={
-                  smartPanels.filter((p) => p.prompt.trim()).length === 0 ||
-                  smartCreateMutation.isPending
+              <BuzzTransactionButton
+                buzzAmount={
+                  smartPanels.filter((p) => p.prompt.trim()).length *
+                  (panelCost + (smartEnhance ? enhanceCost : 0))
                 }
-              >
-                {smartCreateMutation.isPending ? <Loader size={14} color="dark" /> : null}
-                {smartCreateMutation.isPending ? 'Creating...' : 'Create Chapter'}
-              </button>
+                label={smartCreateMutation.isPending ? 'Creating...' : 'Create Chapter'}
+                loading={smartCreateMutation.isPending}
+                disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0}
+                onPerformTransaction={handleSmartCreate}
+                showPurchaseModal
+              />
             </Group>
 
             {smartCreateMutation.isError && (
