@@ -46,21 +46,21 @@ import {
   ResourceSelectHandler,
   useGenerationStatus,
   useUnstableResources,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+} from './generation.utils';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
-import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { GenerationCostPopover } from './GenerationCostPopover';
+import type { GenerationFormOutput } from './GenerationFormProvider';
+import { useGenerationForm } from './GenerationFormProvider';
+import InputQuantity from './InputQuantity';
+import InputSeed from './InputSeed';
+import InputResourceSelect from './ResourceSelect';
+import InputResourceSelectMultiple from './ResourceSelectMultiple';
+import { useTextToImageWhatIfContext } from './TextToImageWhatIfProvider';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
+  useGenerateFromGraph,
   useInvalidateWhatIf,
-  useSubmitCreateImage,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -143,8 +143,13 @@ import {
   qwenGroupedOptions,
 } from '~/shared/orchestrator/ImageGen/qwen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { useGenerationStore, useRemixStore } from '~/store/generation.store';
+import { useGenerationGraphStore } from '~/store/generation-graph.store';
+import { useRemixStore } from '~/store/remix.store';
 import { useTipStore } from '~/store/tip.store';
+import {
+  mapDataToGraphInput,
+  splitResourcesByType,
+} from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -187,7 +192,7 @@ import {
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
@@ -211,8 +216,8 @@ export function GenerationFormContent() {
     [status.message]
   );
   const { runTour, running, currentStep, helpers, setSteps, activeTour } = useTourContext();
-  const loadingGeneratorData = useGenerationStore((state) => state.loading);
-  const remixOfId = useRemixStore((state) => state.remixOfId);
+  const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.data?.remixOfId);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
     state.hasGeneratedImages,
@@ -259,12 +264,7 @@ export function GenerationFormContent() {
 
   function handleReset() {
     form.reset();
-    useRemixStore.setState({
-      remixOf: undefined,
-      params: undefined,
-      resources: undefined,
-      remixOfId: undefined,
-    });
+    useRemixStore.getState().clearRemix();
     clearWarning();
   }
 
@@ -301,12 +301,11 @@ export function GenerationFormContent() {
     performTransactionOnPurchase: true,
   });
 
-  const { mutateAsync, isLoading } = useSubmitCreateImage();
+  const { mutateAsync, isPending: isLoading } = useGenerateFromGraph();
   const buyBuzz = useBuyBuzz();
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
-    // const { cost = 0 } = useCostStore.getState();
 
     const {
       model,
@@ -351,25 +350,48 @@ export function GenerationFormContent() {
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.canGenerate !== false)
-      .map((r) => ({
-        ...r,
-        epochNumber: r.epochDetails?.epochNumber,
-      }));
+      .filter((x) => x.canGenerate !== false);
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
 
       const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
       setSubmitError(undefined);
+
+      // Convert legacy form data to graph input format
+      const graphInput = mapDataToGraphInput(
+        { ...params, disablePoi: browsingSettingsAddons.settings.disablePoi },
+        resources as GenerationResource[],
+        { stepType: workflowDefinition?.type }
+      );
+
+      // Add resource data for graph validation
+      // The graph uses model.id for mode switching (e.g., NanoBanana standard vs pro)
+      const split = splitResourcesByType(resources as GenerationResource[]);
+      const toGraphResource = (r: GenerationResource) => {
+        const epochNumber = r.epochDetails?.epochNumber ?? r.epochNumber;
+        return {
+          id: r.id,
+          baseModel: r.baseModel,
+          model: { type: r.model.type },
+          strength: r.strength,
+          ...(epochNumber != null ? { epochDetails: { epochNumber } } : {}),
+        };
+      };
+      if (split.model) {
+        graphInput.model = toGraphResource(split.model);
+      }
+      if (split.resources.length) {
+        graphInput.resources = split.resources.map(toGraphResource);
+      }
+      if (split.vae) {
+        graphInput.vae = toGraphResource(split.vae);
+      }
+
       await mutateAsync({
-        resources,
-        params: {
-          ...params,
-          // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-          disablePoi: browsingSettingsAddons.settings.disablePoi,
-        },
-        tips,
+        input: graphInput,
+        civitaiTip: tips.civitai,
+        creatorTip: tips.creators,
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
       }).catch((error: any) => {
         if (
@@ -2032,9 +2054,9 @@ export function GenerationFormContent() {
 
 // #region [ready section]
 function ReadySection() {
-  const { data } = useTextToImageWhatIfContext();
+  const { data, isLoading } = useTextToImageWhatIfContext();
 
-  return data?.ready === false ? (
+  return data?.ready === false && !isLoading ? (
     <Card.Section m={0}>
       <Alert color="yellow" title="Potentially slow generation" radius={0}>
         <Text size="xs">

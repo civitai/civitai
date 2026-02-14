@@ -254,7 +254,7 @@ export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(baseModels),
+  baseModel: z.string(),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],

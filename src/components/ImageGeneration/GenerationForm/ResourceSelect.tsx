@@ -9,7 +9,7 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: GenerationResource | null;

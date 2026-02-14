@@ -1,3 +1,11 @@
+/**
+ * GenerationForm (Legacy)
+ *
+ * Combined image and video generation form with media type switching.
+ * Adapted from civitai GenerationForm.tsx.
+ * Uses generation-graph.store for loading state and generation-form.store for UI preferences.
+ */
+
 import { LoadingOverlay, SegmentedControl } from '@mantine/core';
 import { useEffect } from 'react';
 import GenerationErrorBoundary from '~/components/Generation/Error/ErrorBoundary';
@@ -11,16 +19,13 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 import { useIsClient } from '~/providers/IsClientProvider';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import {
-  generationFormStore,
-  useGenerationFormStore,
-  useGenerationStore,
-} from '~/store/generation.store';
+import { useGenerationGraphStore } from '~/store/generation-graph.store';
+import { generationFormStore, useGenerationFormStore } from '~/store/generation-form.store';
 
 export function GenerationForm() {
   const type = useGenerationFormStore((state) => state.type);
-  const loading = useGenerationStore((state) => state.loading);
-  const counter = useGenerationStore((state) => state.counter);
+  const loading = useGenerationGraphStore((state) => state.loading);
+  const counter = useGenerationGraphStore((state) => state.counter);
   const isClient = useIsClient();
 
   // !important - this is to move the 'tip' values to its own local storage bucket
@@ -48,9 +53,7 @@ export function GenerationForm() {
             pt={0}
             className="flex flex-col gap-2"
           >
-            {/* TODO - image remix component */}
             <div className="flex flex-col gap-2 px-3">
-              {/* <RemixOfControl /> */}
               <SegmentedControl
                 value={type}
                 onChange={(v) => generationFormStore.setType(v as MediaType)}
@@ -70,7 +73,6 @@ export function GenerationForm() {
                 </TextToImageWhatIfProvider>
               </GenerationFormProvider>
             )}
-            {/* {type === 'video' && <VideoGenerationForm key={counter} />} */}
             {type === 'video' && (
               <VideoGenerationProvider>
                 <VideoGenerationFormWrapper />
@@ -82,30 +84,3 @@ export function GenerationForm() {
     </GenerationErrorBoundary>
   );
 }
-
-// function RemixOfControl() {
-//   const remixOf = useRemixStore((state) => state.remixOf);
-//   console.log({ remixOf });
-
-//   if (!remixOf) return null;
-
-//   return (
-//     <TwCard className="border">
-//       <div className="flex">
-//         {remixOf?.url && (
-//           <div className="relative aspect-square w-[100px]">
-//             <EdgeMedia
-//               src={remixOf.url}
-//               type={remixOf.type}
-//               width={DEFAULT_EDGE_IMAGE_WIDTH}
-//               className="absolute object-cover"
-//             />
-//           </div>
-//         )}
-//         <div className="flex flex-1 items-center justify-center p-3">
-//           <Text>Remixing {remixOf.type}</Text>
-//         </div>
-//       </div>
-//     </TwCard>
-//   );
-// }

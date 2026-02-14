@@ -100,7 +100,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { fetchGenerationData } from '~/store/generation.store';
+import { fetchGenerationData } from '~/store/generation-graph.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
@@ -333,7 +333,7 @@ function ResourceSelectModalContent() {
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources?.map((r) => r.model.id))
+          steps.flatMap(({ resources }) => resources?.map((r) => (r.model as { id?: number }).id))
         );
         meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }
@@ -844,11 +844,18 @@ function ResourceSelectCard({
       id,
       generation: selectSource !== 'generation' ? false : undefined,
     }).then((data) => {
-      const resource = data.resources[0];
+      // Find the specific resource that was requested by ID
+      const resource = data.resources.find((r) => r.id === id) ?? data.resources[0];
+      if (!resource) {
+        showErrorNotification({
+          error: new Error('Resource not found'),
+        });
+        return;
+      }
       if (selectSource !== 'generation') {
         onSelect({ ...resource, image });
       } else {
-        if (resource?.canGenerate || resource.substitute?.canGenerate)
+        if (resource?.canGenerate || resource?.substitute?.canGenerate)
           onSelect({ ...resource, image });
         else
           showErrorNotification({

@@ -15,7 +15,7 @@ import {
 import { IconPlus, IconX, IconCube } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 

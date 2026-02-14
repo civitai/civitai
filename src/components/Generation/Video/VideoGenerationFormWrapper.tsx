@@ -1,18 +1,15 @@
-import { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
-import { Button, Alert, Loader, Select, Text, SegmentedControl, Anchor } from '@mantine/core';
+import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
+import { Button, Alert, Loader, Select, Text, Anchor } from '@mantine/core';
 import {
-  useVideoGenerationStore,
   useGenerationEngines,
   useSelectedVideoGenerationEngine,
 } from '~/components/Generation/Video/VideoGenerationProvider';
 import { uniqBy } from 'lodash-es';
 import { VideoGenerationForm } from '~/components/Generation/Video/VideoGenerationForm';
-import { generationFormStore } from '~/store/generation.store';
+import { generationFormStore } from '~/store/generation-form.store';
 
 export function VideoGenerationFormWrapper() {
   const { data, isLoading } = useGenerationEngines();
-  // const setState = useVideoGenerationStore((state) => state.setState);
-  // const engine = useVideoGenerationStore((state) => state.engine);
   const setEngine = generationFormStore.setEngine;
   const engine = useSelectedVideoGenerationEngine();
   const selected = data.find((x) => x.engine === engine) ?? data[0];
@@ -73,7 +70,7 @@ export function VideoGenerationFormWrapper() {
             label="Tool"
             value={engine}
             description={selected?.message && !selected?.disabled ? selected.message : undefined}
-            onChange={(engine) => setEngine(engine!)}
+            onChange={(engine) => setEngine(engine as OrchestratorEngine2)}
             data={data?.map(({ engine, label }) => ({ label, value: engine }))}
           />
 

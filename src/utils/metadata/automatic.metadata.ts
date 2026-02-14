@@ -256,6 +256,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const fineDetails = [];
     if (steps) fineDetails.push(`Steps: ${steps}`);
     for (const [k, v] of Object.entries(other)) {
+      if (v == null || typeof v === 'object') continue;
       const key = automaticSDEncodeMap.get(k) ?? k;
       if (excludedKeys.includes(key)) continue;
       fineDetails.push(`${key}: ${v}`);

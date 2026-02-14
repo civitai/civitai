@@ -2,7 +2,7 @@ import { IconBrush } from '@tabler/icons-react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 
 export function RemixButton({
   canGenerate,
@@ -18,7 +18,7 @@ export function RemixButton({
       variant="filled"
       data-activity="create:model-card"
       onClick={() => {
-        generationPanel.open(props);
+        generationGraphPanel.open(props);
       }}
     >
       <IconBrush stroke={2.5} size={16} />

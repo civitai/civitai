@@ -8,6 +8,7 @@ import {
   getGenerationConfig,
   maxUpscaleSize,
   minDownscaleSize,
+  maxRandomSeed,
 } from '~/server/common/constants';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
@@ -19,9 +20,23 @@ import {
   getBaseModelGroupsByMediaType,
   getBaseModelMediaType,
 } from '~/shared/constants/base-model.constants';
-import type { ModelType } from '~/shared/utils/prisma/enums';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
+
+// =============================================================================
+// Seed Constants
+// =============================================================================
+
+/** Maximum seed value that can be input (unsigned 32-bit integer max) */
+export const MAX_SEED = 4294967295;
+
+/** Maximum seed value for random generation (signed 32-bit integer max) */
+export { maxRandomSeed as MAX_RANDOM_SEED };
+
+// =============================================================================
+// Workflow Tags
+// =============================================================================
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -148,6 +163,20 @@ export const draftInjectableResources = [
   } as InjectableResource,
 ];
 
+const SD1DraftResource = {
+  id: 424706,
+  baseModel: 'SD 1.5',
+  strength: 1,
+  model: { id: 195519, type: ModelType.LORA },
+};
+
+const SDXLDraftResource = {
+  id: 391999,
+  baseModel: 'SDXL 1.0',
+  strength: 1,
+  model: { id: 350450, type: ModelType.LORA },
+};
+
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
 export function getInjectableResources(baseModelSetType: BaseModelGroup) {
@@ -169,6 +198,17 @@ export const whatIfQueryOverrides = {
   cfgScale: generation.defaultValues.cfgScale,
   remixSimilarity: 1,
 };
+
+export const samplers = [
+  'Euler a',
+  'Euler',
+  'Heun',
+  'LMS',
+  'DDIM',
+  'DPM++ 2M Karras',
+  'DPM2',
+  'DPM2 a',
+] as const;
 
 export const samplersToSchedulers = {
   'Euler a': Scheduler.EULER_A,
@@ -375,7 +415,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   if (isSDXL) params.clipSkip = 2;
 
   if (limits) {
-    if (params.steps) params.steps = Math.min(params.steps, limits.steps);
+    if (params.steps) params.steps = Math.min(params.steps, 50);
     if (params.quantity) params.quantity = Math.min(params.quantity, limits.quantity);
   }
   return params;
@@ -473,14 +513,24 @@ export const fluxModeOptions = [
 
 // #region [workflows]
 
+/** Standard Flux aspect ratios (1024px based) */
+export const fluxAspectRatios = [
+  { label: '2:3', width: 832, height: 1216 },
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '3:2', width: 1216, height: 832 },
+  { label: '9:16', width: 768, height: 1344 },
+  { label: '16:9', width: 1344, height: 768 },
+];
+
+/** Ultra mode aspect ratios (higher resolution) */
 export const fluxUltraAspectRatios = [
-  { label: 'Landscape - 21:9', width: 3136, height: 1344 },
-  { label: 'Landscape - 16:9', width: 2752, height: 1536 },
-  { label: 'Landscape - 4:3', width: 2368, height: 1792 },
-  { label: 'Square - 1:1', width: 2048, height: 2048 },
-  { label: 'Portrait - 3:4', width: 1792, height: 2368 },
-  { label: 'Portrait - 9:16', width: 1536, height: 2752 },
-  { label: 'Portrait - 9:21', width: 1344, height: 3136 },
+  { label: '21:9', width: 3136, height: 1344 },
+  { label: '16:9', width: 2752, height: 1536 },
+  { label: '4:3', width: 2368, height: 1792 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1792, height: 2368 },
+  { label: '9:16', width: 1536, height: 2752 },
+  { label: '9:21', width: 1344, height: 3136 },
 ];
 const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspectRatio;
 

@@ -181,12 +181,12 @@ export const defaultsByTier: Record<UserTier, GenerationLimits> = {
   founder: {
     quantity: 8,
     queue: 8,
-    steps: 60,
+    steps: 40,
     resources: 9,
   },
-  bronze: { quantity: 8, queue: 8, steps: 60, resources: 12 },
-  silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
-  gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
+  bronze: { quantity: 8, queue: 8, steps: 40, resources: 12 },
+  silver: { quantity: 10, queue: 10, steps: 40, resources: 12 },
+  gold: { quantity: 12, queue: 10, steps: 40, resources: 12 },
 };
 
 export const generationStatusSchema = z.object({
@@ -304,4 +304,9 @@ export const bulkDeleteGeneratedImagesSchema = z.object({
 export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
 export const prepareModelSchema = z.object({
   id: z.number(),
+});
+
+export type GetResourceDataByIdsInput = z.infer<typeof getResourceDataByIdsSchema>;
+export const getResourceDataByIdsSchema = z.object({
+  ids: z.array(z.number()).min(1).max(20),
 });

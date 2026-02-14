@@ -27,7 +27,7 @@ import clsx from 'clsx';
 import { almostEqual, formatBytes } from '~/utils/number-helpers';
 import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { IconPalette, IconUpload, IconX } from '@tabler/icons-react';
+import { IconPalette, IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
@@ -36,6 +36,8 @@ import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawi
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { extractSourceMetadataFromUrl } from '~/utils/metadata/extract-source-metadata';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -48,10 +50,28 @@ export type ImageAnnotation = {
   lines: DrawingElementSchema[];
 };
 
+/** Configuration for a single image slot */
+export type ImageSlot = {
+  /** Label displayed above the slot */
+  label: string;
+  /** Whether this slot is required */
+  required?: boolean;
+};
+
 type SourceImageUploadProps = {
   value?: SourceImageProps[] | null;
   onChange?: (value: SourceImageProps[] | null) => void;
-  children: (previewItems: ImagePreview[]) => React.ReactNode;
+  /**
+   * Render function for custom layouts (multi-image mode).
+   * If not provided and max=1, uses single-image VideoInput-style layout.
+   */
+  children?: (previewItems: ImagePreview[]) => React.ReactNode;
+  /**
+   * Named slots for fixed-position images (e.g., first/last frame).
+   * When provided, renders side-by-side dropzones with labels.
+   * Value array indices map to slot indices.
+   */
+  slots?: ImageSlot[];
   max?: number;
   warnOnMissingAiMetadata?: boolean;
   aspect?: 'square' | 'video';
@@ -67,6 +87,8 @@ type SourceImageUploadProps = {
   annotations?: ImageAnnotation[] | null;
   /** Called when an image is removed (for annotation cleanup) */
   onRemove?: (removedImage: SourceImageProps, index: number) => void;
+  /** Whether the input is disabled */
+  disabled?: boolean;
 };
 
 type ImageComplete = {
@@ -76,14 +98,23 @@ type ImageComplete = {
   height: number;
   id?: string;
   linkToId?: string;
+  /** Slot index for slots mode */
+  slotIndex?: number;
 };
 
-type ImageCrop = { status: 'cropping'; url: string; id: string };
+type ImageCrop = { status: 'cropping'; url: string; id: string; slotIndex?: number };
 
 type ImagePreview =
   | ImageCrop
-  | { status: 'uploading'; url: string; id: string }
-  | { status: 'error'; url: string; src: string | Blob | File; error: string; id: string }
+  | { status: 'uploading'; url: string; id: string; slotIndex?: number }
+  | {
+      status: 'error';
+      url: string;
+      src: string | Blob | File;
+      error: string;
+      id: string;
+      slotIndex?: number;
+    }
   | ImageComplete;
 
 type SourceImageUploadContext = {
@@ -104,6 +135,12 @@ type SourceImageUploadContext = {
     elements: DrawingElement[]
   ) => Promise<void>;
   annotations?: ImageAnnotation[] | null;
+  disabled?: boolean;
+  slots?: ImageSlot[];
+  /** Upload a file or URL to a specific slot (for slots mode) */
+  handleSlotUpload?: (slotIndex: number, src: File | string) => Promise<void>;
+  /** Remove image from a specific slot */
+  removeSlotItem?: (slotIndex: number) => void;
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -116,6 +153,7 @@ export function SourceImageUploadMultiple({
   value,
   onChange,
   children,
+  slots,
   max = 1,
   warnOnMissingAiMetadata = false,
   aspect = 'square',
@@ -127,7 +165,12 @@ export function SourceImageUploadMultiple({
   onDrawingComplete,
   annotations,
   onRemove,
+  disabled = false,
 }: SourceImageUploadProps) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  const isSlotsMode = !!slots?.length;
+  const isSingleMode = max === 1 && !children && !isSlotsMode;
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
@@ -188,6 +231,8 @@ export function SourceImageUploadMultiple({
     // Call onRemove callback if this is a complete image (for annotation cleanup)
     if (item.status === 'complete') {
       onRemove?.({ url: item.url, width: item.width, height: item.height }, index);
+      // Remove source metadata from store
+      sourceMetadataStore.removeMetadata(item.url);
     }
 
     if (item.id) {
@@ -236,6 +281,24 @@ export function SourceImageUploadMultiple({
       }
     }
   }, [value, warnOnMissingAiMetadata]);
+
+  // Extract and store source metadata for enhancement workflows
+  useEffect(() => {
+    if (!value) return;
+
+    for (const { url } of value) {
+      // Check if metadata already exists in the store
+      const existing = sourceMetadataStore.getMetadata(url);
+      if (existing) continue;
+
+      // Extract metadata from the image
+      extractSourceMetadataFromUrl(url).then((metadata) => {
+        if (metadata) {
+          sourceMetadataStore.setMetadata(url, metadata);
+        }
+      });
+    }
+  }, [value]);
 
   // TODO - better error messaging
 
@@ -341,13 +404,294 @@ export function SourceImageUploadMultiple({
     }
   }
 
+  // Slots mode: upload to a specific slot
+  async function handleSlotUpload(slotIndex: number, src: File | string) {
+    // Check file size (only for File objects)
+    if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
+      setError(`Images should not exceed ${maxSizeFormatted}`);
+      return;
+    }
+
+    setError(null);
+    const previewUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
+    const uploadId = getRandomId();
+
+    // Add uploading state for this slot
+    setUploads((items) => {
+      // Remove any existing upload for this slot
+      const filtered = items.filter((x) => x.slotIndex !== slotIndex);
+      return [...filtered, { status: 'uploading', url: previewUrl, id: uploadId, slotIndex }];
+    });
+
+    try {
+      const response = await uploadOrchestratorImage(src, uploadId);
+
+      if (response.blockedReason || !response.available || !response.url) {
+        setUploads((items) =>
+          items.map((item) =>
+            item.id === uploadId
+              ? {
+                  status: 'error',
+                  url: previewUrl,
+                  src,
+                  error: response.blockedReason ?? 'Upload failed',
+                  id: uploadId,
+                  slotIndex,
+                }
+              : item
+          )
+        );
+        return;
+      }
+
+      // Update value at the slot index
+      const newImage: SourceImageProps = {
+        url: response.url,
+        width: response.width,
+        height: response.height,
+      };
+
+      const newValue = value ? [...value] : [];
+      // Ensure array is large enough
+      while (newValue.length <= slotIndex) {
+        newValue.push(undefined as unknown as SourceImageProps);
+      }
+      newValue[slotIndex] = newImage;
+
+      // Filter out undefined values for sparse arrays, but keep position
+      onChange?.(newValue.filter(Boolean) as SourceImageProps[]);
+
+      // Clear upload state for this slot
+      setUploads((items) => items.filter((x) => x.id !== uploadId));
+    } catch (e) {
+      setError((e as Error).message);
+      setUploads((items) => items.filter((x) => x.id !== uploadId));
+    }
+  }
+
+  // Slots mode: remove image from a specific slot
+  function removeSlotItem(slotIndex: number) {
+    if (!value) return;
+
+    // Get the image at this slot index
+    const imageAtSlot = value[slotIndex];
+    if (imageAtSlot) {
+      onRemove?.(imageAtSlot, slotIndex);
+      // Remove source metadata from store
+      sourceMetadataStore.removeMetadata(imageAtSlot.url);
+    }
+
+    const newValue = [...value];
+    newValue.splice(slotIndex, 1);
+    onChange?.(newValue.length > 0 ? newValue : null);
+
+    // Clear any upload state for this slot
+    setUploads((items) => items.filter((x) => x.slotIndex !== slotIndex));
+  }
+
+  // Single mode render - VideoInput-style layout
+  const renderSingleMode = () => {
+    const firstImage = previewItems.find((item) => item.status === 'complete') as
+      | ImageComplete
+      | undefined;
+    const isUploading = previewItems.some(
+      (item) => item.status === 'uploading' || item.status === 'cropping'
+    );
+
+    if (firstImage) {
+      // Calculate aspect ratio to prevent layout shift during image load
+      const aspectRatio =
+        firstImage.width && firstImage.height ? firstImage.width / firstImage.height : undefined;
+
+      // Show the image preview
+      return (
+        <Card withBorder padding={0} className="relative overflow-hidden">
+          <div
+            className="relative w-full"
+            style={{
+              // Use aspect-ratio to reserve space and prevent layout shift
+              aspectRatio: aspectRatio,
+              maxHeight: 200,
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={firstImage.url} alt="Uploaded image" className="size-full object-contain" />
+          </div>
+
+          <SourceImageUploadMultiple.Dimensions
+            width={firstImage.width}
+            height={firstImage.height}
+          />
+          <SourceImageUploadMultiple.CloseButton
+            onClick={() => removeItem(0)}
+            disabled={disabled}
+          />
+        </Card>
+      );
+    }
+
+    if (isUploading) {
+      // Show loading state
+      return (
+        <div className="flex min-h-[200px] items-center justify-center rounded border border-dashed border-gray-4 dark:border-dark-4">
+          <Loader size="md" />
+        </div>
+      );
+    }
+
+    // Show the dropzone
+    return (
+      <Dropzone
+        onDrop={async (files) => {
+          setError(null);
+          const toUpload = files
+            .filter((file) => {
+              const tooLarge = file.size > maxOrchestratorImageFileSize;
+              if (tooLarge) setError(`Images should not exceed ${maxSizeFormatted}`);
+              return !tooLarge;
+            })
+            .slice(0, 1);
+          if (toUpload.length > 0) await handleChange(toUpload);
+        }}
+        onDropCapture={async (e: DragEvent) => {
+          setError(null);
+          const url = e.dataTransfer.getData('text/uri-list');
+          if (url?.length) await handleChange([url]);
+        }}
+        accept={IMAGE_MIME_TYPE}
+        maxFiles={1}
+        disabled={disabled}
+        className="cursor-pointer"
+        useFsAccessApi={!isAndroidDevice()}
+      >
+        <div className="flex flex-col items-center justify-center gap-2 py-8">
+          <Dropzone.Accept>
+            <IconUpload
+              size={50}
+              stroke={1.5}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
+            />
+          </Dropzone.Accept>
+          <Dropzone.Reject>
+            <IconX
+              size={50}
+              stroke={1.5}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
+            />
+          </Dropzone.Reject>
+          <Dropzone.Idle>
+            <IconPhoto size={50} stroke={1.5} />
+          </Dropzone.Idle>
+          <Text size="sm" c="dimmed" ta="center">
+            Drag an image here or click to select
+          </Text>
+          <Text size="xs" c="dimmed">
+            PNG, JPG, WebP supported (max {maxSizeFormatted})
+          </Text>
+        </div>
+      </Dropzone>
+    );
+  };
+
+  // Slots mode render - side-by-side dropzones with labels
+  const renderSlot = (slot: ImageSlot, slotIndex: number) => {
+    const imageAtSlot = value?.[slotIndex];
+    const uploadForSlot = uploads.find((u) => u.slotIndex === slotIndex);
+    const isUploading = uploadForSlot?.status === 'uploading';
+    const uploadError = uploadForSlot?.status === 'error' ? uploadForSlot.error : null;
+
+    return (
+      <div key={slotIndex} className="flex flex-1 flex-col gap-1">
+        {imageAtSlot ? (
+          // Show image preview
+          <Card withBorder padding={0} className="relative overflow-hidden">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageAtSlot.url}
+              alt={slot.label}
+              className="max-h-[200px] w-full object-contain"
+            />
+            <Text size="xs" c="dimmed" ta="center" className="py-1">
+              {slot.label}
+            </Text>
+            <SourceImageUploadMultiple.Dimensions
+              width={imageAtSlot.width}
+              height={imageAtSlot.height}
+            />
+            <SourceImageUploadMultiple.CloseButton
+              onClick={() => removeSlotItem(slotIndex)}
+              disabled={disabled}
+            />
+          </Card>
+        ) : isUploading ? (
+          // Show loading state
+          <div className="flex min-h-[150px] flex-col items-center justify-center rounded border border-dashed border-gray-4 dark:border-dark-4">
+            <Loader size="md" />
+            <Text size="xs" c="dimmed" ta="center" mt={8}>
+              {slot.label}
+            </Text>
+          </div>
+        ) : (
+          // Show dropzone
+          <Dropzone
+            onDrop={async (files) => {
+              if (files.length > 0) await handleSlotUpload(slotIndex, files[0]);
+            }}
+            onDropCapture={async (e: DragEvent) => {
+              const url = e.dataTransfer.getData('text/uri-list');
+              if (url?.length) await handleSlotUpload(slotIndex, url);
+            }}
+            accept={IMAGE_MIME_TYPE}
+            maxFiles={1}
+            disabled={disabled}
+            className="cursor-pointer"
+            useFsAccessApi={!isAndroidDevice()}
+          >
+            <div className="flex flex-col items-center justify-center gap-2 py-6">
+              <Dropzone.Accept>
+                <IconUpload
+                  size={32}
+                  stroke={1.5}
+                  color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
+                />
+              </Dropzone.Accept>
+              <Dropzone.Reject>
+                <IconX
+                  size={32}
+                  stroke={1.5}
+                  color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
+                />
+              </Dropzone.Reject>
+              <Dropzone.Idle>
+                <IconPhoto size={32} stroke={1.5} />
+              </Dropzone.Idle>
+              <Text size="xs" c="dimmed" ta="center">
+                {slot.label}
+              </Text>
+            </div>
+          </Dropzone>
+        )}
+        {uploadError && (
+          <Text size="xs" c="red" ta="center">
+            {uploadError}
+          </Text>
+        )}
+      </div>
+    );
+  };
+
+  const renderSlotsMode = () => {
+    if (!slots) return null;
+    return <div className="flex gap-2">{slots.map((slot, index) => renderSlot(slot, index))}</div>;
+  };
+
   return (
     <Provider
       value={{
         previewItems,
         setError,
         setUploads,
-        max,
+        max: isSlotsMode ? slots!.length : max,
         missingAiMetadata,
         removeItem,
         aspect,
@@ -357,34 +701,109 @@ export function SourceImageUploadMultiple({
         enableDrawing,
         handleDrawingUpload,
         annotations,
+        disabled,
+        slots,
+        handleSlotUpload,
+        removeSlotItem,
       }}
     >
-      <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
-        {children(previewItems)}
+      {isSlotsMode ? (
+        <div className="flex w-full flex-col gap-2" id={id}>
+          {renderSlotsMode()}
+          {_error && <Alert color="red">{_error}</Alert>}
+          {imagesMissingMetadataCount > 0 && (
+            <Alert color="yellow" title="We couldn't detect valid metadata in one or more images.">
+              Outputs based on these images must be PG, PG-13, or they will be blocked and you will
+              not be refunded.
+            </Alert>
+          )}
+        </div>
+      ) : isSingleMode ? (
+        <div className="flex w-full flex-col gap-2" id={id}>
+          {renderSingleMode()}
+          {_error && <Alert color="red">{_error}</Alert>}
+          {imagesMissingMetadataCount > 0 && (
+            <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
+              Outputs based on this image must be PG, PG-13, or they will be blocked and you will
+              not be refunded.
+            </Alert>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3" id={id}>
+          {children?.(previewItems)}
 
-        {_error && <Alert color="red">{_error}</Alert>}
-        {imagesMissingMetadataCount > 0 && (
-          <Alert
-            color="yellow"
-            title={`We couldn't detect valid metadata in ${
-              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
-            }.`}
-          >
-            {`Outputs based on ${
-              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
-            } must be PG, PG-13, or they will be blocked and you will not be refunded.`}
-          </Alert>
-        )}
-      </div>
+          {_error && <Alert color="red">{_error}</Alert>}
+          {imagesMissingMetadataCount > 0 && (
+            <Alert
+              color="yellow"
+              title={`We couldn't detect valid metadata in ${
+                imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
+              }.`}
+            >
+              {`Outputs based on ${
+                imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
+              } must be PG, PG-13, or they will be blocked and you will not be refunded.`}
+            </Alert>
+          )}
+        </div>
+      )}
     </Provider>
   );
 }
 
-SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
+// =============================================================================
+// Shared Sub-components
+// =============================================================================
+
+/** Shared close button for image cards */
+SourceImageUploadMultiple.CloseButton = function CloseButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <ActionIcon
+      className="absolute right-0 top-0"
+      variant="filled"
+      color="red"
+      size="sm"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <IconX size={16} />
+    </ActionIcon>
+  );
+};
+
+/** Shared dimensions overlay for image cards */
+SourceImageUploadMultiple.Dimensions = function Dimensions({
+  width,
+  height,
+}: {
+  width: number;
+  height: number;
+}) {
+  return (
+    <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/70 px-2 py-0.5 text-xs text-white">
+      {width} x {height}
+    </div>
+  );
+};
+
+SourceImageUploadMultiple.Dropzone = function ImageDropzone({
+  className,
+  children,
+}: {
+  className?: string;
+  children?: React.ReactNode;
+}) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { previewItems, setError, max, aspect, onChange } = useContext();
-  const canAddFiles = previewItems.length < max;
+  const { previewItems, setError, max, aspect, onChange, disabled } = useContext();
+  const canAddFiles = previewItems.length < max && !disabled;
 
   async function handleDrop(files: File[]) {
     setError(null);
@@ -413,8 +832,8 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
       onDrop={handleDrop}
       onDropCapture={handleDropCapture}
       className={clsx(
-        'flex  items-center justify-center',
-        aspect === 'square' ? 'aspect-square' : 'aspect-video',
+        'flex items-center justify-center',
+        !children && (aspect === 'square' ? 'aspect-square' : 'aspect-video'),
         {
           ['bg-gray-0 dark:bg-dark-6 border-gray-2 dark:border-dark-5 cursor-not-allowed [&_*]:text-gray-5 [&_*]:dark:text-dark-3']:
             !canAddFiles,
@@ -423,27 +842,29 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
       )}
       useFsAccessApi={!isAndroidDevice()}
     >
-      <div className="pointer-events-none flex items-center justify-center gap-2">
-        <Dropzone.Accept>
-          <IconUpload
-            size={iconSize}
-            stroke={1.5}
-            color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
-          />
-        </Dropzone.Accept>
-        <Dropzone.Reject>
-          <IconX
-            size={iconSize}
-            stroke={1.5}
-            color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
-          />
-        </Dropzone.Reject>
-        <Dropzone.Idle>
-          <IconUpload size={iconSize} stroke={1.5} />
-        </Dropzone.Idle>
+      {children ?? (
+        <div className="pointer-events-none flex items-center justify-center gap-2">
+          <Dropzone.Accept>
+            <IconUpload
+              size={iconSize}
+              stroke={1.5}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
+            />
+          </Dropzone.Accept>
+          <Dropzone.Reject>
+            <IconX
+              size={iconSize}
+              stroke={1.5}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
+            />
+          </Dropzone.Reject>
+          <Dropzone.Idle>
+            <IconUpload size={iconSize} stroke={1.5} />
+          </Dropzone.Idle>
 
-        <Text>{max === 1 ? 'Image' : 'Images'}</Text>
-      </div>
+          <Text>{max === 1 ? 'Image' : 'Images'}</Text>
+        </div>
+      )}
     </Dropzone>
   );
 };
@@ -461,6 +882,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
     enableDrawing,
     handleDrawingUpload,
     annotations,
+    disabled,
   } = useContext();
   const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
   const isMobile = isMobileDevice();
@@ -518,9 +940,9 @@ SourceImageUploadMultiple.Image = function ImagePreview({
       withBorder
       p={0}
       className={clsx(
-        'relative overflow-visible rounded',
+        'relative overflow-hidden',
         {
-          ['rounded-md border-2 border-solid border-yellow-4 ']: missingAiMetadata[previewItem.url],
+          ['border-2 border-solid border-yellow-4 ']: missingAiMetadata[previewItem.url],
         },
         className
       )}
@@ -544,9 +966,10 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                 alt="image"
                 onError={handleError}
               />
-              <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/50 px-2 text-white">
-                {previewItem.width} x {previewItem.height}
-              </div>
+              <SourceImageUploadMultiple.Dimensions
+                width={previewItem.width}
+                height={previewItem.height}
+              />
               {enableDrawing &&
                 (isMobile ? (
                   // Mobile: Large prominent button bottom-left
@@ -580,15 +1003,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
           )}
         </div>
       </Card.Section>
-      <ActionIcon
-        className="absolute -right-2 -top-2 z-10"
-        variant="filled"
-        color="red"
-        size="sm"
-        onClick={handleRemoveItem}
-      >
-        <IconX size={16} />
-      </ActionIcon>
+      <SourceImageUploadMultiple.CloseButton onClick={handleRemoveItem} disabled={disabled} />
     </Card>
   );
 };

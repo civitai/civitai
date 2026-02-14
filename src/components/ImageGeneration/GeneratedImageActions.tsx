@@ -14,7 +14,7 @@ import {
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
 import { getJSZip } from '~/utils/lazy';
@@ -129,7 +129,7 @@ export function GeneratedImageActions({
             returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
           }),
         });
-        generationPanel.close();
+        generationGraphPanel.close();
       }
       deselect();
     } catch (e) {

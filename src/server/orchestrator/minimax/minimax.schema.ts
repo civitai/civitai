@@ -29,7 +29,7 @@ export const minimaxGenerationConfig = VideoGenerationConfig2({
     if (data.process === 'txt2vid') {
       delete data.sourceImage;
     }
-    return data;
+    return { ...data, baseModel: 'MiniMax' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

@@ -18,9 +18,6 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
-import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
@@ -41,11 +38,10 @@ import {
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
-  getClosestAspectRatio,
-  getResourceGenerationType,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
-import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
@@ -60,6 +56,7 @@ import {
   getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
 import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
+import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 type GenerationResourceSimple = {
   id: number;
@@ -231,12 +228,19 @@ export type RemixOfProps = {
   similarity?: number;
   createdAt: Date;
 };
+/**
+ * Generation data returned from the API.
+ * Uses flat resources array + params format for storage compatibility.
+ * Clients should use splitResourcesByType() to route resources to graph nodes.
+ */
 export type GenerationData = {
   type: MediaType;
   remixOfId?: number;
-  resources: GenerationResource[];
-  params: Partial<TextToImageParams>;
   remixOf?: RemixOfProps;
+  /** Flat array of all resources (checkpoint, LoRAs, VAE, etc.) */
+  resources: GenerationResource[];
+  /** Generation parameters (prompt, seed, steps, etc.) */
+  params: Record<string, unknown>;
 };
 
 export const getGenerationData = async ({
@@ -345,68 +349,23 @@ async function getMediaGenerationData({
         supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
       );
 
-  const common = {
-    prompt: normalized.prompt,
-    negativePrompt: normalized.negativePrompt,
+  // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
+  // Cast to Record for loose field access (normalizeMeta returns a union type)
+  const meta = normalized as Record<string, unknown>;
+  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  if (type === 'audio') throw new Error('not implemented');
+
+  // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
+  return {
+    type,
+    remixOfId: media.id, // TODO - remove
+    remixOf,
+    resources,
+    params,
   };
-
-  switch (type) {
-    case 'image':
-      let aspectRatio = '0';
-      try {
-        if (width && height) {
-          aspectRatio = getClosestAspectRatio(width, height, baseModel);
-        }
-      } catch (e) {}
-
-      const {
-        'Clip skip': legacyClipSkip,
-        clipSkip = legacyClipSkip,
-        cfgScale,
-        steps,
-        seed,
-        sampler,
-        // comfy, // don't return to client
-        // external, // don't return to client
-        // ...meta
-      } = imageGenerationSchema.parse(media.meta);
-
-      return {
-        type: 'image',
-        remixOfId: media.id, // TODO - remove
-        remixOf,
-        resources,
-        params: {
-          ...common,
-          cfgScale: cfgScale !== 0 ? cfgScale : undefined,
-          steps: steps !== 0 ? steps : undefined,
-          seed: seed !== 0 ? seed : undefined,
-          sampler: sampler,
-          width,
-          height,
-          aspectRatio,
-          baseModel,
-          clipSkip,
-          engine,
-        },
-      };
-    case 'video':
-      return {
-        type: 'video',
-        remixOfId: media.id, // TODO - remove,
-        remixOf,
-        resources,
-        params: {
-          ...normalized,
-          ...common,
-          width,
-          height,
-          engine,
-        },
-      };
-    case 'audio':
-      throw new Error('not implemented');
-  }
 }
 
 const getModelVersionGenerationData = async ({
@@ -417,50 +376,30 @@ const getModelVersionGenerationData = async ({
   versionIds: { id: number; epoch?: number }[] | number[];
   user?: SessionUser;
   generation: boolean;
-}) => {
+}): Promise<GenerationData> => {
   if (!versionIds.length) throw new Error('missing version ids');
   const resources = await getResourceData(versionIds, user, generation);
-  const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
+  const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await getResourceData([checkpoint.vaeId], user, generation);
     if (vae) resources.push({ ...vae, vaeId: undefined });
   }
 
   const deduped = uniqBy(resources, 'id');
-  const baseModel = getBaseModelFromResourcesWithDefault(
-    deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+
+  // Build params from checkpoint settings
+  const params = mapDataToGraphInput(
+    {
+      clipSkip: checkpoint?.clipSkip,
+    },
+    deduped
   );
 
-  const engine = getBaseModelEngine(baseModel);
-
-  let version: string | undefined;
-  let process: string | undefined;
-  switch (engine) {
-    case 'wan':
-      version = getWanVersion(baseModel);
-      process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
-      break;
-    case 'hunyuan':
-      process = 'txt2vid';
-      break;
-    case 'veo3':
-      process = getVeo3ProcessFromAir(resources[0].air);
-      break;
-  }
-
-  // TODO - refactor this elsewhere
-
+  // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {
-    type: getResourceGenerationType(baseModel),
+    type: getBaseModelMediaType(params.baseModel as string),
     resources: deduped,
-    params: {
-      baseModel,
-      clipSkip: checkpoint?.clipSkip ?? undefined,
-      engine,
-      process,
-      version,
-      fluxMode: baseModel === 'FluxKrea' ? fluxKreaAir : undefined,
-    },
+    params,
   };
 };
 
@@ -538,47 +477,6 @@ export async function getShouldChargeForResources(
   );
 }
 
-type GenerationResourceBase = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  vaeId?: number;
-  baseModel: string;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig;
-  canGenerate: boolean;
-  hasAccess: boolean;
-  air?: string;
-  // covered: boolean;
-  additionalResourceCost?: boolean;
-  availability?: Availability;
-  epochNumber?: number;
-  // settings
-  clipSkip?: number;
-  minStrength: number;
-  maxStrength: number;
-  strength: number;
-};
-
-export type GenerationResource = GenerationResourceBase & {
-  model: {
-    id: number;
-    name: string;
-    type: ModelType;
-    nsfw?: boolean;
-    poi?: boolean;
-    minor?: boolean;
-    sfwOnly?: boolean;
-    // userId: number;
-  };
-  epochDetails?: {
-    jobId: string;
-    fileName: string;
-    epochNumber: number;
-    isExpired: boolean;
-  };
-  substitute?: GenerationResourceBase;
-};
-
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
@@ -601,10 +499,31 @@ export async function getResourceData(
   ) {
     const isUnavailable = unavailableResources.includes(item.id);
 
-    const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
+    const isOwnedByUser = !!user.id && user.id === item.model.userId;
+    const hasAccess = !!(item.hasAccess || isOwnedByUser || user.isModerator);
     const covered =
       (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-    const canGenerate = covered;
+
+    // Valid statuses for generation: Draft (training epochs), Training, Published
+    // Other statuses (Deleted, Unpublished, etc.) cannot be used for generation
+    const validGenerationStatuses = ['Draft', 'Training', 'Published'];
+    const hasValidStatus = validGenerationStatuses.includes(item.status);
+
+    // Resource is private if:
+    // 1. Availability is explicitly Private, OR
+    // 2. Status is Draft or Training (unpublished/training epochs)
+    const isPrivate =
+      item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
+
+    // canGenerate is the definitive "can this user use this resource" flag
+    // Requires: covered by orchestrator AND valid status AND (not private OR user owns it)
+    const canGenerate = covered && hasValidStatus && (!isPrivate || isOwnedByUser);
+
+    if (!canGenerate) {
+      // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
+      delete item.model.sfwOnly;
+      delete item.model.minor;
+    }
 
     return {
       ...item,
@@ -614,6 +533,8 @@ export async function getResourceData(
       hasAccess,
       canGenerate,
       epochNumber,
+      isOwnedByUser,
+      isPrivate,
     };
   }
 

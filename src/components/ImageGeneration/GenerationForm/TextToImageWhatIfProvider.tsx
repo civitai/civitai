@@ -1,7 +1,15 @@
+/**
+ * TextToImageWhatIfProvider (Legacy)
+ *
+ * Adapted from civitai TextToImageWhatIfProvider.tsx.
+ * Uses whatIfFromGraph instead of getImageWhatIf,
+ * and mapDataToGraphInput to convert form values to graph format.
+ */
+
 import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useWatch } from 'react-hook-form';
-import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import { useGenerationForm } from './GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -22,10 +30,10 @@ import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/ty
 import { parseAIR } from '~/utils/string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
-import { useGenerationStore } from '~/store/generation.store';
+import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useDebouncer } from '~/utils/debouncer';
 import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
-// import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -42,64 +50,10 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const form = useGenerationForm();
   const currentUser = useCurrentUser();
   const watched = useWatch({ control: form.control });
-  const [enabled, setEnabled] = useState(false);
-  const loading = useGenerationStore((state) => state.loading);
+  const loading = useGenerationGraphStore((state) => state.loading);
   const [query, setQuery] = useState<Record<string, any> | null>(null);
   const promptRef = useRef('');
   const promptFocused = usePromptFocusedStore((x) => x.focused);
-
-  // const query = useMemo(() => {
-  //   const values = { ...form.getValues(), ...watched };
-  //   const { model, resources, vae, ...params } = values;
-  //   const defaultModel =
-  //     generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
-  //       ?.checkpoint ?? model;
-
-  //   if (params.aspectRatio) {
-  //     const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
-  //     if (size) {
-  //       (params as Record<string, any>).width = size.width;
-  //       (params as Record<string, any>).height = size.height;
-  //     }
-  //   }
-
-  //   let modelVersionId = model?.id ?? defaultModel.id;
-  //   const isFlux = getIsFlux(params.baseModel);
-  //   const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
-  //   if (isFlux && params.fluxMode && isFluxStandard) {
-  //     const { version } = parseAIR(params.fluxMode);
-  //     modelVersionId = version;
-  //     if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
-  //   }
-
-  //   // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
-  //   // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
-  //   // else params.engine = undefined;
-
-  //   delete params.engine;
-  //   if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
-  //     params.engine = 'flux-pro-raw';
-  //   const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
-  //   if (imageGenEngine) {
-  //     params.engine = imageGenEngine;
-  //   }
-
-  //   const additionalResources =
-  //     resources?.map((x) => {
-  //       if (!x.epochDetails?.epochNumber) return { id: x.id as number };
-  //       return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
-  //     }) ?? [];
-
-  //   const parsed = textToImageParamsSchema.parse({
-  //     ...params,
-  //     ...whatIfQueryOverrides,
-  //   });
-
-  //   return {
-  //     resources: [{ id: modelVersionId }, ...additionalResources],
-  //     params: removeEmpty(parsed),
-  //   };
-  // }, [watched]);
 
   const debouncer = useDebouncer(150);
   useEffect(() => {
@@ -128,10 +82,6 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
           params.priority = 'low';
       }
 
-      // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
-      // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
-      // else params.engine = undefined;
-
       delete params.engine;
       if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
         params.engine = 'flux-pro-raw';
@@ -139,11 +89,6 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       if (imageGenEngine) {
         params.engine = imageGenEngine;
       }
-
-      const additionalResources =
-        resources?.map((x) => {
-          return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber, air: x.air };
-        }) ?? [];
 
       if (!promptFocused && params.prompt !== undefined) {
         promptRef.current = params.prompt!;
@@ -155,21 +100,64 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         prompt: promptRef.current,
       });
 
-      setQuery({
-        resources: [{ id: modelVersionId }, ...additionalResources],
-        params: removeEmpty(parsed),
-      });
+      // Build enriched resources with all needed fields:
+      // - id, epochDetails, air (for whatIfFromGraph resources)
+      // - baseModel, model.type (for mapDataToGraphInput inference)
+      const enrichedResources = [
+        // Main model (checkpoint)
+        removeEmpty({
+          id: modelVersionId,
+          epochDetails: model?.epochDetails?.epochNumber != null
+            ? { epochNumber: model.epochDetails.epochNumber }
+            : undefined,
+          air: model?.air,
+          baseModel: params.baseModel,
+          model: { type: model?.model?.type ?? 'Checkpoint' },
+        }),
+        // Additional resources (LoRAs, embeddings, etc.)
+        ...(resources?.map((r) =>
+          removeEmpty({
+            id: r.id as number,
+            epochDetails: r.epochDetails?.epochNumber != null
+              ? { epochNumber: r.epochDetails.epochNumber }
+              : undefined,
+            air: r.air,
+            baseModel: r.baseModel ?? params.baseModel,
+            model: { type: r.model?.type ?? 'LORA' },
+          })
+        ) ?? []),
+        // VAE
+        ...(vae?.id
+          ? [
+              removeEmpty({
+                id: vae.id,
+                epochDetails: vae.epochDetails?.epochNumber != null
+                  ? { epochNumber: vae.epochDetails.epochNumber }
+                  : undefined,
+                air: vae.air,
+                baseModel: vae.baseModel ?? params.baseModel,
+                model: { type: 'VAE' as const },
+              }),
+            ]
+          : []),
+      ];
+
+      // Convert to graph input format using the mapper
+      // Don't pass stepType - let resolveWorkflow infer it from params and ecosystem
+      const graphInput = mapDataToGraphInput(
+        removeEmpty(parsed),
+        enrichedResources as any
+      );
+
+      // Add resources to graph input (needed for whatIfFromGraph)
+      graphInput.resources = enrichedResources;
+
+      setQuery(graphInput);
     });
   }, [watched, promptFocused]);
 
-  // useEffect(() => {
-  //   // enable after timeout to prevent multiple requests as form data is set
-  //   setTimeout(() => setEnabled(true), 300);
-  // }, []);
-
-  // const [debounced] = useDebouncedValue(query, 150);
-
-  const result = trpc.orchestrator.getImageWhatIf.useQuery(query as any, {
+  // Use whatIfFromGraph instead of getImageWhatIf
+  const result = trpc.orchestrator.whatIfFromGraph.useQuery(query as any, {
     enabled: !!currentUser && !loading && !!query,
   });
 

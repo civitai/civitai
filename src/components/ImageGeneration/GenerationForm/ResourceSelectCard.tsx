@@ -37,7 +37,18 @@ import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
+
+/**
+ * Determine if a link to the model page should be shown for this resource.
+ * Show link if resource is publicly accessible OR user owns it.
+ * Uses optional fields (isPrivate, isOwnedByUser) that may come from newer data sources.
+ */
+function shouldShowModelLink(
+  resource: GenerationResourceSchema & { isPrivate?: boolean; isOwnedByUser?: boolean }
+): boolean {
+  return resource.isOwnedByUser === true || resource.isPrivate !== true;
+}
 
 type Props = {
   resource: GenerationResourceSchema;
@@ -101,6 +112,7 @@ function CheckpointInfo({
   const features = useFeatureFlags();
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
   const { domain } = useAppContext();
+  const showLink = shouldShowModelLink(resource);
 
   return (
     <Group
@@ -137,18 +149,30 @@ function CheckpointInfo({
         ) : null}
         <Stack gap={2}>
           <div className="flex items-center gap-2">
-            <Text
-              component={Link}
-              className="cursor-pointer text-black dark:text-white"
-              style={{ overflowWrap: 'anywhere' }}
-              href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
-              rel="nofollow noindex"
-              lineClamp={1}
-              fw={590}
-              data-testid="selected-gen-resource-name"
-            >
-              {resource.model.name}
-            </Text>
+            {showLink ? (
+              <Text
+                component={Link}
+                className="cursor-pointer text-black dark:text-white"
+                style={{ overflowWrap: 'anywhere' }}
+                href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
+                rel="nofollow noindex"
+                lineClamp={1}
+                fw={590}
+                data-testid="selected-gen-resource-name"
+              >
+                {resource.model.name}
+              </Text>
+            ) : (
+              <Text
+                className="text-black dark:text-white"
+                style={{ overflowWrap: 'anywhere' }}
+                lineClamp={1}
+                fw={590}
+                data-testid="selected-gen-resource-name"
+              >
+                {resource.model.name}
+              </Text>
+            )}
             {!domain.green && (resource.model.sfwOnly || resource.model.minor) && (
               <HoverCard position="bottom" withArrow>
                 <HoverCard.Target>
@@ -219,6 +243,7 @@ function ResourceInfoCard({
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
   const { domain } = useAppContext();
+  const showLink = shouldShowModelLink(resource);
 
   return (
     <Group
@@ -240,18 +265,24 @@ function ResourceInfoCard({
                 </Group>
               </ThemeIcon>
             )}
-            <Text
-              component={Link}
-              style={{ cursor: 'pointer' }}
-              href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
-              onClick={() => generationPanel.close()}
-              rel="nofollow noindex"
-              size="sm"
-              lineClamp={1}
-              fw={590}
-            >
-              {resource.model.name}
-            </Text>
+            {showLink ? (
+              <Text
+                component={Link}
+                style={{ cursor: 'pointer' }}
+                href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
+                onClick={() => generationGraphPanel.close()}
+                rel="nofollow noindex"
+                size="sm"
+                lineClamp={1}
+                fw={590}
+              >
+                {resource.model.name}
+              </Text>
+            ) : (
+              <Text size="sm" lineClamp={1} fw={590}>
+                {resource.model.name}
+              </Text>
+            )}
             {!domain.green && (resource.model.sfwOnly || resource.model.minor) && (
               <HoverCard position="bottom" withArrow>
                 <HoverCard.Target>

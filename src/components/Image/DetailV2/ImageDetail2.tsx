@@ -79,7 +79,7 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
@@ -184,7 +184,7 @@ export function ImageDetail2() {
         <Button
           {...sharedButtonProps}
           color="blue"
-          onClick={() => generationPanel.open({ type: image.type, id: image.id })}
+          onClick={() => generationGraphPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
           <Group gap={4} wrap="nowrap">

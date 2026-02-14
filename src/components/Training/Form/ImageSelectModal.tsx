@@ -187,7 +187,7 @@ export default function ImageSelectModal({
               ...asset,
               params: {
                 ...step.params,
-                seed: asset.seed,
+                seed: asset.seed ?? undefined,
                 completed: step.completedAt ? new Date(step.completedAt) : undefined,
                 stepName: step.name,
               },
@@ -473,7 +473,7 @@ const ImageGridMedia = ({
             url: compareKey,
             label:
               type === 'generation' && 'prompt' in img.params
-                ? img.params.prompt
+                ? (img.params.prompt as string)
                 : type === 'uploaded'
                 ? img.meta?.prompt ?? ''
                 : '',

@@ -1,4 +1,4 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
+import { Tooltip, CloseButton, SegmentedControl } from '@mantine/core';
 import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconArrowsDiagonal,
@@ -6,42 +6,75 @@ import {
   IconGridDots,
   IconClockHour9,
   IconWifiOff,
+  IconToggleLeft,
+  IconToggleRight,
 } from '@tabler/icons-react';
+import { useLocalStorage } from '@mantine/hooks';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
-import type { GenerationPanelView } from '~/store/generation.store';
-import { generationPanel, useGenerationStore, useRemixStore } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { GenerationForm } from '~/components/Generate/GenerationForm';
+import { GenerationFormV2 } from '~/components/generation_v2';
+import { GenerationFormLegacy } from '~/components/ImageGeneration/GenerationForm/GenerationFormLegacy';
+import { GeneratorToggleBanner } from '~/components/ImageGeneration/GeneratorToggle';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
-import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
+
+type GenerationPanelView = 'queue' | 'generate' | 'feed';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { runTour } = useTourContext();
   const features = useFeatureFlags();
+  const useLegacy = useLegacyGeneratorStore((state) => state.useLegacy);
+  const hasExplicitPreference = useLegacyGeneratorStore((state) => state.hasExplicitPreference);
+  const toggleGenerator = useLegacyGeneratorStore((state) => state.toggle);
+  const [bannerDismissed] = useLocalStorage({
+    key: 'dismiss-generator-toggle-banner',
+  });
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
   const view = useGenerationPanelStore((state) => state.view);
-  const setView = useGenerationStore((state) => state.setView);
-  const remixOfId = useRemixStore((state) => state.remixOfId);
+  const showToggle = hasExplicitPreference || bannerDismissed || bannerDismissed === undefined; // Show if dismissed or no value set (new user)
   useEffect(() => {
-    if (isImageFeedSeparate && view === 'generate') setView('queue');
+    if (isImageFeedSeparate && view === 'generate') generationGraphPanel.setView('queue');
   }, [isImageFeedSeparate, view]);
+
+  // Select the appropriate form based on user preference
+  const GenerationFormComponent = useLegacy ? GenerationFormLegacy : GenerationFormV2;
+
+  const tabs = useMemo<Tabs>(
+    () => ({
+      generate: {
+        Icon: IconBrush,
+        label: 'Generate',
+        Component: GenerationFormComponent,
+      },
+      queue: {
+        Icon: IconClockHour9,
+        label: 'Queue',
+        Component: ScrollableQueue,
+      },
+      feed: {
+        Icon: IconGridDots,
+        label: 'Feed',
+        Component: ScrollableFeed,
+      },
+    }),
+    [GenerationFormComponent]
+  );
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
@@ -72,12 +105,12 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
         <div className="flex w-full items-center justify-between gap-2">
           <div className="relative flex flex-1 flex-nowrap items-center gap-2">
             {features.challengePlatform && <ChallengeIndicator />}
-            {features.appTour && (
+            {/* {features.appTour && (
               <HelpButton
                 data-tour="gen:reset"
                 tooltip="Need help? Start the tour!"
                 onClick={async () => {
-                  generationPanel.setView('generate');
+                  generationGraphPanel.setView('generate');
                   runTour({
                     key: remixOfId ? 'remix-content-generation' : 'content-generation',
                     step: 0,
@@ -85,7 +118,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
                   });
                 }}
               />
-            )}
+            )} */}
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl
@@ -104,11 +137,20 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
                 ),
                 value: key,
               }))}
-              onChange={(key) => setView(key as GenerationPanelView)}
+              onChange={(key) => generationGraphPanel.setView(key as GenerationPanelView)}
               value={view}
             />
           )}
           <div className="flex flex-1 justify-end">
+            {showToggle && (
+              <Tooltip
+                label={useLegacy ? 'Switch to new generator' : 'Switch to classic generator'}
+              >
+                <LegacyActionIcon size="lg" onClick={toggleGenerator} variant="transparent">
+                  {useLegacy ? <IconToggleLeft size={20} /> : <IconToggleRight size={20} />}
+                </LegacyActionIcon>
+              </Tooltip>
+            )}
             {!fullScreen && !isGeneratePage && (
               <Tooltip label="Maximize">
                 <LegacyActionIcon
@@ -121,7 +163,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               </Tooltip>
             )}
             <CloseButton
-              onClick={isGeneratePage ? () => history.go(-1) : generationPanel.close}
+              onClick={isGeneratePage ? () => history.go(-1) : generationGraphPanel.close}
               size="lg"
               variant="transparent"
             />
@@ -129,6 +171,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
         </div>
         {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
+      {view === 'generate' && <GeneratorToggleBanner />}
       <View />
     </>
   );
@@ -142,24 +185,6 @@ type Tabs = Record<
     Component: React.FC;
   }
 >;
-
-const tabs: Tabs = {
-  generate: {
-    Icon: IconBrush,
-    label: 'Generate',
-    Component: GenerationForm,
-  },
-  queue: {
-    Icon: IconClockHour9,
-    label: 'Queue',
-    Component: ScrollableQueue,
-  },
-  feed: {
-    Icon: IconGridDots,
-    label: 'Feed',
-    Component: ScrollableFeed,
-  },
-};
 
 function ScrollableQueue() {
   return (

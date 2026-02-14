@@ -1,4 +1,4 @@
-import type { ButtonProps, FloatingPosition } from '@mantine/core';
+import type { ButtonProps, UnstyledButtonProps, FloatingPosition } from '@mantine/core';
 import {
   Button,
   HoverCard,
@@ -7,6 +7,7 @@ import {
   Stack,
   Badge,
   createPolymorphicComponent,
+  UnstyledButton
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps, Icon } from '@tabler/icons-react';
@@ -96,7 +97,6 @@ export const SupportButton = () => {
           className={`${classes.supportButtonMediaQuery}`}
           classVariant={selectedOption.variant}
           variant="filled"
-          size="xs"
           px="xs"
           icon={selectedOption.icon}
         >
@@ -122,8 +122,8 @@ export const SupportButton = () => {
 };
 
 interface SupportButtonBaseProps
-  extends ButtonProps,
-    Omit<React.ComponentPropsWithoutRef<'button'>, keyof ButtonProps> {
+  extends UnstyledButtonProps,
+    Omit<React.ComponentPropsWithoutRef<'button'>, keyof UnstyledButtonProps> {
   icon?: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   position?: FloatingPosition;
   classVariant?: Variant;
@@ -153,17 +153,13 @@ const SupportButtonBase = forwardRef<HTMLButtonElement, SupportButtonBaseProps>(
     return (
       <HoverCard withArrow openDelay={400} closeDelay={100} position={position} withinPortal>
         <HoverCard.Target>
-          <Button
+          <UnstyledButton
             ref={ref}
             className={clsx(
               `${classes.supportButton} ${getVariantStyles(classVariant)}`,
               className
             )}
             {...props}
-            classNames={{
-              inner: 'w-full',
-              label: 'flex gap-1 justify-between w-full',
-            }}
           >
             {children && (
               <Text component="span" size="xs" fw={700} className={classes.supportButtonText}>
@@ -171,7 +167,7 @@ const SupportButtonBase = forwardRef<HTMLButtonElement, SupportButtonBaseProps>(
               </Text>
             )}
             {Icon && <Icon size={16} className={classes.supportButtonIcon} />}
-          </Button>
+          </UnstyledButton>
         </HoverCard.Target>
         <HoverCard.Dropdown className={classes.supportHoverCard}>
           <Stack gap="xs">

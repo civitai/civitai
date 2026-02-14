@@ -84,8 +84,8 @@ export type GenerationResourceDataModel = {
     type: ModelType;
     nsfw: boolean;
     poi: boolean;
-    minor: boolean;
     userId: number;
-    sfwOnly: boolean;
+    minor?: boolean;
+    sfwOnly?: boolean;
   };
 };
