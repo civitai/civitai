@@ -4,7 +4,7 @@ import type {
   Prize,
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { openrouter, AI_MODELS } from '~/server/services/ai/openrouter';
+import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
@@ -20,6 +20,7 @@ type GenerateCollectionDetailsInput = {
     url: string;
   };
   config: JudgingConfig;
+  model?: AIModel;
 };
 type CollectionDetails = {
   name: string;
@@ -30,7 +31,7 @@ export async function generateCollectionDetails(input: GenerateCollectionDetails
 
   const results = await openrouter.getJsonCompletion<CollectionDetails>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: input.model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -77,6 +78,8 @@ type GenerateArticleInput = {
   entryPrize: Prize;
   allowedNsfwLevel: number;
   config: JudgingConfig;
+  model?: AIModel;
+  userMessageOverride?: string;
 };
 type GeneratedArticle = {
   title: string;
@@ -84,12 +87,22 @@ type GeneratedArticle = {
   invitation: string;
   theme: string;
 };
-export async function generateArticle({ resource, image, config }: GenerateArticleInput) {
+export async function generateArticle({
+  resource,
+  image,
+  config,
+  model,
+  userMessageOverride,
+}: GenerateArticleInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
+
+  const userText =
+    userMessageOverride ??
+    `Resource title: ${resource.title}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`;
 
   const result = await openrouter.getJsonCompletion<GeneratedArticle>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         config,
@@ -106,7 +119,7 @@ export async function generateArticle({ resource, image, config }: GenerateArtic
         content: [
           {
             type: 'text' as const,
-            text: `Resource title: ${resource.title}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`,
+            text: userText,
           },
           {
             type: 'image_url' as const,
@@ -137,6 +150,8 @@ type GenerateReviewInput = {
   creator: string;
   imageUrl: string;
   config: JudgingConfig;
+  model?: AIModel;
+  userMessageOverride?: string;
 };
 type GeneratedReview = {
   score: Score;
@@ -147,9 +162,11 @@ type GeneratedReview = {
 export async function generateReview(input: GenerateReviewInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  const userText = input.userMessageOverride ?? `Theme: ${input.theme}\nCreator: ${input.creator}`;
+
   const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: input.model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -171,7 +188,7 @@ export async function generateReview(input: GenerateReviewInput) {
         content: [
           {
             type: 'text' as const,
-            text: `Theme: ${input.theme}\nCreator: ${input.creator}`,
+            text: userText,
           },
           {
             type: 'image_url' as const,
@@ -196,6 +213,8 @@ type GenerateWinnersInput = {
   }>;
   theme: string;
   config: JudgingConfig;
+  model?: AIModel;
+  userMessageOverride?: string;
 };
 type GeneratedWinners = {
   winners: Array<{
@@ -209,9 +228,17 @@ type GeneratedWinners = {
 export async function generateWinners(input: GenerateWinnersInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  const userText =
+    input.userMessageOverride ??
+    `Theme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
+      input.entries,
+      null,
+      2
+    )}\n\`\`\``;
+
   const result = await openrouter.getJsonCompletion<GeneratedWinners>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: input.model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -232,11 +259,7 @@ export async function generateWinners(input: GenerateWinnersInput) {
         content: [
           {
             type: 'text' as const,
-            text: `Theme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
-              input.entries,
-              null,
-              2
-            )}\n\`\`\``,
+            text: userText,
           },
         ],
       },

@@ -13,6 +13,11 @@ import {
   upsertChallengeSchema,
   upsertChallengeEventSchema,
   updateChallengeConfigSchema,
+  getJudgeByIdSchema,
+  upsertJudgeSchema,
+  playgroundGenerateContentSchema,
+  playgroundReviewImageSchema,
+  playgroundPickWinnersSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { z } from 'zod';
@@ -44,6 +49,11 @@ import {
   getActiveJudges,
   getChallengeSystemConfig,
   updateChallengeSystemConfig,
+  getJudgeById,
+  upsertJudge,
+  playgroundGenerateContent,
+  playgroundReviewImage,
+  playgroundPickWinners,
 } from '~/server/services/challenge.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 
@@ -171,4 +181,38 @@ export const challengeRouter = router({
     .input(z.object({ imageId: z.number(), judgeUserId: z.number() }))
     .use(isFlagProtected('challengePlatform'))
     .query(({ input }) => getJudgeCommentForImage(input)),
+
+  // --- Judge Playground ---
+
+  // Moderator: Get a single judge by ID with all prompt fields
+  getJudgeById: moderatorProcedure
+    .input(getJudgeByIdSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getJudgeById(input.id)),
+
+  // Moderator: Create or update a judge
+  upsertJudge: moderatorProcedure
+    .input(upsertJudgeSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) =>
+      upsertJudge({ ...input, userId: input.userId ?? ctx.user.id })
+    ),
+
+  // Moderator: Playground — generate content
+  playgroundGenerateContent: moderatorProcedure
+    .input(playgroundGenerateContentSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundGenerateContent(input)),
+
+  // Moderator: Playground — review image
+  playgroundReviewImage: moderatorProcedure
+    .input(playgroundReviewImageSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundReviewImage(input)),
+
+  // Moderator: Playground — pick winners
+  playgroundPickWinners: moderatorProcedure
+    .input(playgroundPickWinnersSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundPickWinners(input)),
 });

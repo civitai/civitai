@@ -24,6 +24,10 @@ import {
   type UpsertChallengeInput,
   type UpsertChallengeEventInput,
   type UpdateChallengeConfigInput,
+  type UpsertJudgeInput,
+  type PlaygroundGenerateContentInput,
+  type PlaygroundReviewImageInput,
+  type PlaygroundPickWinnersInput,
   type UserChallengeEntriesResult,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
@@ -46,10 +50,16 @@ import {
   getChallengeConfig,
   setChallengeConfig,
   getJudgingConfig,
+  refreshDefaultJudgeCache,
   type JudgingConfig,
+  type ChallengePrompts,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { generateWinners } from '~/server/games/daily-challenge/generative-content';
-import { getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  generateArticle,
+  generateReview,
+  generateWinners,
+} from '~/server/games/daily-challenge/generative-content';
+import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
@@ -61,6 +71,8 @@ import {
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { AIModel } from '~/server/services/ai/openrouter';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 
@@ -1872,4 +1884,211 @@ export async function upsertChallengeEvent({
 export async function deleteChallengeEvent(id: number) {
   await dbWrite.challengeEvent.delete({ where: { id } });
   return { success: true };
+}
+
+// --- Judge Playground ---
+
+/**
+ * Get a single judge by ID with all prompt fields.
+ */
+export async function getJudgeById(id: number) {
+  const judge = await dbRead.challengeJudge.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      bio: true,
+      active: true,
+      sourceCollectionId: true,
+      systemPrompt: true,
+      collectionPrompt: true,
+      contentPrompt: true,
+      reviewPrompt: true,
+      winnerSelectionPrompt: true,
+    },
+  });
+  if (!judge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Judge not found' });
+  return judge;
+}
+
+/**
+ * Create or update a ChallengeJudge.
+ * If the saved judge is the current default, refresh the cached config in Redis.
+ */
+export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) {
+  const { id, userId, ...data } = input;
+
+  const judge = await dbWrite.challengeJudge.upsert({
+    where: { id: id ?? -1 },
+    create: {
+      userId,
+      name: data.name,
+      bio: data.bio ?? null,
+      sourceCollectionId: data.sourceCollectionId ?? null,
+      systemPrompt: data.systemPrompt ?? null,
+      collectionPrompt: data.collectionPrompt ?? null,
+      contentPrompt: data.contentPrompt ?? null,
+      reviewPrompt: data.reviewPrompt ?? null,
+      winnerSelectionPrompt: data.winnerSelectionPrompt ?? null,
+      active: data.active ?? true,
+    },
+    update: {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.bio !== undefined && { bio: data.bio }),
+      ...(data.sourceCollectionId !== undefined && {
+        sourceCollectionId: data.sourceCollectionId,
+      }),
+      ...(data.systemPrompt !== undefined && { systemPrompt: data.systemPrompt }),
+      ...(data.collectionPrompt !== undefined && { collectionPrompt: data.collectionPrompt }),
+      ...(data.contentPrompt !== undefined && { contentPrompt: data.contentPrompt }),
+      ...(data.reviewPrompt !== undefined && { reviewPrompt: data.reviewPrompt }),
+      ...(data.winnerSelectionPrompt !== undefined && {
+        winnerSelectionPrompt: data.winnerSelectionPrompt,
+      }),
+      ...(data.active !== undefined && { active: data.active }),
+    },
+  });
+
+  // Refresh Redis cache if this judge is the current default
+  const config = await getChallengeConfig();
+  if (config.defaultJudgeId === judge.id) {
+    await refreshDefaultJudgeCache();
+  }
+
+  return judge;
+}
+
+/**
+ * Apply prompt overrides to a JudgingConfig, returning a new config.
+ */
+function applyPromptOverrides(
+  config: JudgingConfig,
+  overrides?: Partial<ChallengePrompts>
+): JudgingConfig {
+  if (!overrides) return config;
+  return {
+    ...config,
+    prompts: {
+      ...config.prompts,
+      ...(overrides.systemMessage !== undefined && { systemMessage: overrides.systemMessage }),
+      ...(overrides.collection !== undefined && { collection: overrides.collection }),
+      ...(overrides.content !== undefined && { content: overrides.content }),
+      ...(overrides.review !== undefined && { review: overrides.review }),
+      ...(overrides.winner !== undefined && { winner: overrides.winner }),
+    },
+  };
+}
+
+/**
+ * Playground: Generate challenge content for a model version.
+ */
+export async function playgroundGenerateContent(input: PlaygroundGenerateContentInput) {
+  // Get judge config
+  const config = await getChallengeConfig();
+  const judgeId = input.judgeId ?? config.defaultJudgeId ?? 1;
+  let judgingConfig = await getJudgingConfig(judgeId);
+
+  // Apply prompt overrides
+  judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
+
+  // Get model version info
+  const modelVersion = await dbRead.modelVersion.findUnique({
+    where: { id: input.modelVersionId },
+    select: {
+      id: true,
+      model: { select: { id: true, name: true, user: { select: { username: true } } } },
+    },
+  });
+  if (!modelVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'Model version not found' });
+
+  const coverImage = await getCoverOfModel(modelVersion.model.id);
+
+  const result = await generateArticle({
+    resource: {
+      modelId: modelVersion.model.id,
+      title: modelVersion.model.name,
+      creator: modelVersion.model.user.username ?? 'Unknown',
+    },
+    image: coverImage,
+    challengeDate: new Date(),
+    prizes: config.prizes,
+    entryPrizeRequirement: config.entryPrizeRequirement,
+    entryPrize: config.entryPrize,
+    allowedNsfwLevel: 1,
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+    userMessageOverride: input.userMessage,
+  });
+
+  return result;
+}
+
+/**
+ * Playground: Review an image with a judge.
+ */
+export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
+  const config = await getChallengeConfig();
+  const judgeId = input.judgeId ?? config.defaultJudgeId ?? 1;
+  let judgingConfig = await getJudgingConfig(judgeId);
+
+  judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
+
+  // Resolve imageId to an image URL
+  const image = await dbRead.image.findUnique({
+    where: { id: input.imageId },
+    select: { url: true, user: { select: { username: true } } },
+  });
+  if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image' });
+
+  const result = await generateReview({
+    theme: input.theme,
+    creator: input.creator ?? image.user?.username ?? 'Unknown',
+    imageUrl,
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+    userMessageOverride: input.userMessage,
+  });
+
+  return result;
+}
+
+/**
+ * Playground: Pick winners from a challenge's judged entries.
+ */
+export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
+  const challengeConfig = await getChallengeConfig();
+  const judgeId = input.judgeId ?? challengeConfig.defaultJudgeId ?? 1;
+  let judgingConfig = await getJudgingConfig(judgeId);
+
+  judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
+
+  const challenge = await getChallengeById(input.challengeId);
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  if (!challenge.collectionId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no collection' });
+
+  const entries = await getJudgedEntries(challenge.collectionId, challengeConfig);
+  if (entries.length < 3)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Need at least 3 judged entries, found ${entries.length}`,
+    });
+
+  const result = await generateWinners({
+    entries: entries.map((e) => ({
+      creatorId: e.userId,
+      creator: e.username,
+      summary: e.summary,
+      score: e.score,
+    })),
+    theme: challenge.theme ?? 'Unknown',
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+    userMessageOverride: input.userMessage,
+  });
+
+  return result;
 }
