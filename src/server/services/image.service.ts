@@ -1946,7 +1946,7 @@ export async function getImagesFromFeedSearch(
     }
 
     const feed = new ImagesFeed(
-      ({ apiKey, host }) =>
+      ({ apiKey, host }: { apiKey: string; host: string }) =>
         new MeiliSearch({
           host,
           apiKey,

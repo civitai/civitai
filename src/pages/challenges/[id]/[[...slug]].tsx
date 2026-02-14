@@ -11,6 +11,7 @@ import {
   Loader,
   Menu,
   Paper,
+  type PaperProps,
   ScrollArea,
   Spoiler,
   Stack,
@@ -513,7 +514,7 @@ function SpotlightCard({
   children: React.ReactNode;
   borderColor: string;
   bg: string;
-} & Omit<React.ComponentProps<typeof Paper>, 'children'>) {
+} & Omit<PaperProps, 'children'>) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [spotlight, setSpotlight] = useState({ x: 0, y: 0, opacity: 0 });
 
@@ -975,7 +976,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                           if (isFlatRate) {
                             requestReviewMutation.mutate({ challengeId: challenge.id });
                           } else {
-                            const imageIds = userEntries
+                            const imageIds = (userEntries ?? [])
                               .filter((e) => e.reviewStatus === 'pending')
                               .map((e) => e.imageId);
                             requestReviewMutation.mutate({
