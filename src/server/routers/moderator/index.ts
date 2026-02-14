@@ -32,9 +32,7 @@ const trainingModerationProcedure = protectedProcedure.use(
   isFlagProtected('trainingModelsModeration')
 );
 
-const cashManagementProcedure = moderatorProcedure.use(
-  isFlagProtected('cashManagement')
-);
+const cashManagementProcedure = moderatorProcedure.use(isFlagProtected('cashManagement'));
 
 export const modRouter = router({
   models: router({
@@ -72,9 +70,7 @@ export const modRouter = router({
       .query(({ input }) => getWithdrawalHistory(input.userId)),
     adjustBalance: cashManagementProcedure
       .input(modCashAdjustmentSchema)
-      .mutation(({ input, ctx }) =>
-        modAdjustCashBalance({ ...input, modUserId: ctx.user.id })
-      ),
+      .mutation(({ input, ctx }) => modAdjustCashBalance({ ...input, modUserId: ctx.user.id })),
     updateWithdrawal: cashManagementProcedure
       .input(updateCashWithdrawalSchema)
       .mutation(({ input }) => updateCashWithdrawal(input)),

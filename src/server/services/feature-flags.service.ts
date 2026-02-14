@@ -127,6 +127,7 @@ const featureFlags = createFeatureFlags({
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
+  comicSearch: ['public'],
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
   privateModels: ['public'],
@@ -149,6 +150,7 @@ const featureFlags = createFeatureFlags({
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
   challengePlatform: ['blue', 'red', 'public'],
+  comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

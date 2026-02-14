@@ -19,6 +19,7 @@ import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -31,6 +32,8 @@ import { bountiesInstantSearchRoutingParser } from '~/components/Search/parsers/
 import { searchIndexMap } from '~/components/Search/search.types';
 import type { ToolSearchParams } from '~/components/Search/parsers/tool.parser';
 import { toolsInstantSearchRoutingParser } from '~/components/Search/parsers/tool.parser';
+import type { ComicSearchParams } from '~/components/Search/parsers/comic.parser';
+import { comicsInstantSearchRoutingParser } from '~/components/Search/parsers/comic.parser';
 
 type StoreState = {
   models: ModelSearchParams;
@@ -40,6 +43,7 @@ type StoreState = {
   collections: CollectionSearchParams;
   bounties: BountySearchParams;
   tools: ToolSearchParams;
+  comics: ComicSearchParams;
   setSearchParamsByUiState: (uiState: UiState) => void;
   setModelsSearchParams: (filters: Partial<ModelSearchParams>) => void;
   setImagesSearchParams: (filters: Partial<ImageSearchParams>) => void;
@@ -48,6 +52,7 @@ type StoreState = {
   setCollectionSearchParams: (filters: Partial<CollectionSearchParams>) => void;
   setBountiesSearchParams: (filters: Partial<BountySearchParams>) => void;
   setToolsSearchParams: (filters: Partial<ToolSearchParams>) => void;
+  setComicsSearchParams: (filters: Partial<ComicSearchParams>) => void;
 };
 
 export const IndexToLabel = {
@@ -58,6 +63,7 @@ export const IndexToLabel = {
   [COLLECTIONS_SEARCH_INDEX]: 'Collections',
   [BOUNTIES_SEARCH_INDEX]: 'Bounties',
   [TOOLS_SEARCH_INDEX]: 'Tools',
+  [COMICS_SEARCH_INDEX]: 'Comics',
 } as const;
 
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {
@@ -76,6 +82,8 @@ export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingPars
       return bountiesInstantSearchRoutingParser;
     case TOOLS_SEARCH_INDEX:
       return toolsInstantSearchRoutingParser;
+    case COMICS_SEARCH_INDEX:
+      return comicsInstantSearchRoutingParser;
   }
 };
 
@@ -91,6 +99,7 @@ export const useSearchStore = create<StoreState>()(
         collections: {},
         bounties: {},
         tools: {},
+        comics: {},
         // methods
         setSearchParamsByUiState: (uiState: UiState) => {
           const [index] = Object.keys(uiState);
@@ -147,6 +156,13 @@ export const useSearchStore = create<StoreState>()(
                 state.tools = routing.stateToRoute(uiState)[TOOLS_SEARCH_INDEX] as ToolSearchParams;
               });
               break;
+            case COMICS_SEARCH_INDEX:
+              set((state) => {
+                state.comics = routing.stateToRoute(uiState)[
+                  COMICS_SEARCH_INDEX
+                ] as ComicSearchParams;
+              });
+              break;
           }
         },
         setModelsSearchParams: (params) =>
@@ -176,6 +192,10 @@ export const useSearchStore = create<StoreState>()(
         setToolsSearchParams: (params) =>
           set((state) => {
             state.tools = params;
+          }),
+        setComicsSearchParams: (params) =>
+          set((state) => {
+            state.comics = params;
           }),
       };
     })
@@ -212,6 +232,8 @@ export const routing: InstantSearchProps['routing'] = {
           query = QS.stringify(routeState[BOUNTIES_SEARCH_INDEX]);
         } else if (routeState[TOOLS_SEARCH_INDEX]) {
           query = QS.stringify(routeState[TOOLS_SEARCH_INDEX]);
+        } else if (routeState[COMICS_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[COMICS_SEARCH_INDEX]);
         }
 
         // Needs to be absolute url, otherwise instantsearch complains
@@ -259,6 +281,9 @@ export const routing: InstantSearchProps['routing'] = {
       }
       if (routeState[TOOLS_SEARCH_INDEX]) {
         return getRoutingForIndex(TOOLS_SEARCH_INDEX).routeToState(routeState);
+      }
+      if (routeState[COMICS_SEARCH_INDEX]) {
+        return getRoutingForIndex(COMICS_SEARCH_INDEX).routeToState(routeState);
       }
 
       return routeState;

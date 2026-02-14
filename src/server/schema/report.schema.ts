@@ -18,6 +18,7 @@ export enum ReportEntity {
   Bounty = 'bounty',
   BountyEntry = 'bountyEntry',
   Chat = 'chat',
+  ComicProject = 'comicProject',
 }
 
 // #region [report reason detail schemas]

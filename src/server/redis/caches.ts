@@ -598,6 +598,25 @@ export const userCollectionCountCache = createUserContentCountCache<UserCollecti
   `
 );
 
+type UserComicCount = { id: number; comicCount: number };
+export const userComicCountCache = createUserContentCountCache<UserComicCount>(
+  'comicCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      p."userId" as id,
+      COUNT(DISTINCT p.id)::INT as "comicCount"
+    FROM "comic_projects" p
+    WHERE p."userId" IN (${Prisma.join(userIds)})
+      AND p."status" = 'Active'
+      AND EXISTS (
+        SELECT 1 FROM "comic_chapters" c
+        WHERE c."projectId" = p.id
+          AND c."status" = 'Published'
+      )
+    GROUP BY p."userId"
+  `
+);
+
 type UserHasReceivedReviews = { id: number; hasReceivedReviews: boolean };
 export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasReceivedReviews>(
   'hasReceivedReviews',
@@ -623,6 +642,7 @@ type UserContentOverview = {
   bountyEntryCount: number;
   hasReceivedReviews: boolean;
   collectionCount: number;
+  comicCount: number;
 };
 
 // Helper function to fetch all user content overview data using individual caches
@@ -642,6 +662,7 @@ export const getUserContentOverview = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
+    comicCounts,
   ] = await Promise.all([
     userModelCountCache.fetch(ids),
     userPostCountCache.fetch(ids),
@@ -651,6 +672,7 @@ export const getUserContentOverview = async (
     userBountyEntryCountCache.fetch(ids),
     userCollectionCountCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids),
+    userComicCountCache.fetch(ids),
   ]);
 
   // Merge results
@@ -667,6 +689,7 @@ export const getUserContentOverview = async (
         bountyCount: bountyCounts[id]?.bountyCount ?? 0,
         bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,
         collectionCount: collectionCounts[id]?.collectionCount ?? 0,
+        comicCount: comicCounts[id]?.comicCount ?? 0,
         hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
       },
     ])
@@ -688,6 +711,7 @@ export const userContentOverviewCache = {
       userBountyEntryCountCache.bust(ids),
       userCollectionCountCache.bust(ids),
       userHasReceivedReviewsCache.bust(ids),
+      userComicCountCache.bust(ids),
     ]);
   },
 };

@@ -105,7 +105,9 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
     try {
       if (dryRun) {
         console.log(
-          `  [DRY RUN] Would refund ${transaction.externalTransactionId} (${transaction.transactionId}) - ${Math.abs(transaction.amount)} buzz`
+          `  [DRY RUN] Would refund ${transaction.externalTransactionId} (${
+            transaction.transactionId
+          }) - ${Math.abs(transaction.amount)} buzz`
         );
         results.push({
           userId,
@@ -124,7 +126,9 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
       );
 
       console.log(
-        `  [OK] Refunded ${transaction.externalTransactionId} (${transaction.transactionId}) - ${Math.abs(transaction.amount)} buzz`
+        `  [OK] Refunded ${transaction.externalTransactionId} (${
+          transaction.transactionId
+        }) - ${Math.abs(transaction.amount)} buzz`
       );
       results.push({
         userId,

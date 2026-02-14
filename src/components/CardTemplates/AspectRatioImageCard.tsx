@@ -45,6 +45,7 @@ type ImageProps = {
   user?: { id: number };
   width?: number | null;
   height?: number | null;
+  hash?: string | null;
   thumbnailUrl?: string | null;
 };
 
@@ -121,7 +122,25 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       target={target}
                     >
                       {!safe ? (
-                        <MediaHash {...image} />
+                        image.hash ? (
+                          <MediaHash {...image} />
+                        ) : (
+                          <EdgeMedia2
+                            metadata={image.metadata as MixedObject}
+                            src={image.url}
+                            name={image.name ?? image.id.toString()}
+                            alt={image.name ?? undefined}
+                            type={image.type}
+                            thumbnailUrl={image.thumbnailUrl}
+                            placeholder="empty"
+                            className={clsx(styles.image, styles.blurred, {
+                              [styles.top]: originalAspectRatio < 1,
+                            })}
+                            wrapperProps={{ className: 'flex-1 h-full' }}
+                            width={IMAGE_CARD_WIDTH}
+                            contain
+                          />
+                        )
                       ) : (
                         <EdgeMedia2
                           metadata={image.metadata as MixedObject}

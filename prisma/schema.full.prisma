@@ -386,6 +386,11 @@ model User {
   challengeJudges            ChallengeJudge[]
   challengeEventsCreated     ChallengeEvent[]
 
+  // Comics
+  comicProjects              ComicProject[]
+  comicReferences            ComicReference[]
+  comicProjectEngagements    ComicProjectEngagement[]
+
   @@index([deletedAt])
 }
 
@@ -1132,6 +1137,7 @@ model Report {
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
+  comicProject   ComicProjectReport?
   automated      ReportAutomated?
 }
 
@@ -1253,6 +1259,16 @@ model ChatReport {
 
   @@id([reportId, chatId])
   @@index([chatId], type: Hash)
+}
+
+model ComicProjectReport {
+  comicProjectId Int
+  comicProject   ComicProject @relation(fields: [comicProjectId], references: [id], onDelete: Cascade)
+  reportId       Int          @unique
+  report         Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, comicProjectId])
+  @@index([comicProjectId], type: Hash)
 }
 
 model ResourceReview {
@@ -1461,6 +1477,10 @@ model Image {
   tagsNew             TagsOnImageNew[]
   imageResourceNew    ImageResourceNew[]
   imageTagsForReview  ImageTagForReview[]
+  comicPanels             ComicPanel[]
+  comicReferenceImages    ComicReferenceImage[]
+  comicProjectCover       ComicProject[]         @relation("comicProjectCover")
+  comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
 
@@ -2112,6 +2132,9 @@ model Thread {
   bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
   clubPostId    Int?            @unique
   clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
+  comicProjectId       Int?
+  comicChapterPosition Int?
+  comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
   challengeId   Int?            @unique
   challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
 
@@ -2122,6 +2145,7 @@ model Thread {
   directChildren Thread[]    @relation("childThread")
   children       Thread[]    @relation("root")
 
+  @@unique([comicProjectId, comicChapterPosition])
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
   @@index([questionId], type: Hash)
@@ -4896,6 +4920,187 @@ model TagsOnImageDetails {
   confidence  Int
 
   @@id([imageId, tagId])
+}
+
+// =============================================================================
+// COMICS - Hackathon MVP
+// =============================================================================
+
+enum ComicProjectStatus {
+  Active
+  Deleted
+}
+
+enum ComicReferenceStatus {
+  Pending
+  Ready
+  Failed
+}
+
+enum ComicPanelStatus {
+  Pending
+  Generating
+  Ready
+  Failed
+}
+
+enum ComicChapterStatus {
+  Draft
+  Published
+}
+
+enum ComicReferenceType {
+  Character
+  Location
+  Item
+}
+
+enum ComicEngagementType {
+  None
+  Notify
+  Hide
+}
+
+enum ComicGenre {
+  Action
+  Adventure
+  Comedy
+  Drama
+  Fantasy
+  Horror
+  Mystery
+  Romance
+  SciFi
+  SliceOfLife
+  Thriller
+  Other
+}
+
+model ComicProject {
+  id            Int                @id @default(autoincrement())
+  userId        Int
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String             @db.VarChar(255)
+  description   String?            @db.Text
+  coverImageId  Int?
+  coverImage    Image?             @relation("comicProjectCover", fields: [coverImageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image?             @relation("comicProjectHero", fields: [heroImageId], references: [id], onDelete: SetNull)
+  heroImagePosition Int                @default(50)
+  status            ComicProjectStatus @default(Active)
+  baseModel     String?            @db.VarChar(50)
+  genre         ComicGenre?
+  nsfwLevel     Int                @default(0)
+  publishedAt   DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  chapters    ComicChapter[]
+  engagements ComicProjectEngagement[]
+  reports     ComicProjectReport[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([coverImageId])
+  @@index([heroImageId])
+}
+
+model ComicChapter {
+  projectId   Int
+  project     ComicProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String             @db.VarChar(255) @default("Chapter 1")
+  position    Int                @default(0)
+  status      ComicChapterStatus @default(Draft)
+  publishedAt DateTime?
+  nsfwLevel   Int                @default(0)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  panels ComicPanel[]
+  thread Thread?
+
+  @@id([projectId, position])
+}
+
+model ComicReference {
+  id           Int                        @id @default(autoincrement())
+  userId       Int
+  user         User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String                     @db.VarChar(255)
+  type         ComicReferenceType         @default(Character)
+  description  String?                    @db.Text
+  status       ComicReferenceStatus       @default(Pending)
+  errorMessage String?                    @db.Text
+  buzzCost     Int                        @default(0)
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+
+  images          ComicReferenceImage[]
+  panelReferences ComicPanelReference[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model ComicReferenceImage {
+  referenceId Int
+  reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image          @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  position    Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  @@id([referenceId, imageId])
+  @@index([imageId], type: Hash)
+}
+
+model ComicPanel {
+  id              Int              @id @default(autoincrement())
+  projectId       Int
+  chapterPosition Int
+  chapter         ComicChapter     @relation(fields: [projectId, chapterPosition], references: [projectId, position], onDelete: Cascade, onUpdate: Cascade)
+  imageId         Int?
+  image           Image?           @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  prompt          String           @db.Text
+  enhancedPrompt  String?          @db.Text
+  imageUrl        String?          @db.VarChar(500)
+  position        Int              @default(0)
+  status          ComicPanelStatus @default(Pending)
+  workflowId      String?
+  civitaiJobId    String?          @db.VarChar(100)
+  errorMessage    String?          @db.Text
+  metadata        Json?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  references ComicPanelReference[]
+
+  @@index([projectId, chapterPosition, position])
+  @@index([imageId])
+  @@index([status])
+}
+
+model ComicProjectEngagement {
+  userId       Int
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId    Int
+  project      ComicProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type         ComicEngagementType @default(None)
+  readChapters Int[]               @default([])
+  createdAt    DateTime            @default(now())
+
+  @@id([userId, projectId])
+  @@index([projectId], type: Hash)
+}
+
+model ComicPanelReference {
+  panelId     Int
+  panel       ComicPanel     @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  referenceId Int
+  reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+
+  @@id([panelId, referenceId])
+  @@index([referenceId], type: Hash)
 }
 
 // Generation restriction system — tracks restrictions issued for prohibited prompt violations

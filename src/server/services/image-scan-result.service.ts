@@ -37,6 +37,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { updateComicNsfwLevelsForImage } from '~/server/services/nsfwLevels.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
@@ -283,6 +284,7 @@ export async function processImageScanResult(req: NextApiRequest) {
       }
 
       if (image.postId) await updatePostNsfwLevel(image.postId);
+      await updateComicNsfwLevelsForImage(image.id);
 
       await queueImageSearchIndexUpdate({
         ids: [image.id],

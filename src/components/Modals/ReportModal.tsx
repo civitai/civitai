@@ -55,6 +55,7 @@ const reports = [
       ReportEntity.Collection,
       ReportEntity.Bounty,
       ReportEntity.BountyEntry,
+      ReportEntity.ComicProject,
     ],
   },
   {
@@ -73,6 +74,7 @@ const reports = [
       ReportEntity.Collection,
       ReportEntity.Bounty,
       ReportEntity.BountyEntry,
+      ReportEntity.ComicProject,
     ],
   },
   {
@@ -92,6 +94,7 @@ const reports = [
       ReportEntity.Bounty,
       ReportEntity.BountyEntry,
       ReportEntity.Chat,
+      ReportEntity.ComicProject,
     ],
   },
   {

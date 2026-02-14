@@ -201,9 +201,7 @@ export const removeUserContentFromSearchIndex = async ({
     { name: USERS_SEARCH_INDEX, filter: `id = ${userId}` },
   ];
 
-  const metricsIndexConfigs = [
-    { name: METRICS_IMAGES_SEARCH_INDEX, filter: `userId = ${userId}` },
-  ];
+  const metricsIndexConfigs = [{ name: METRICS_IMAGES_SEARCH_INDEX, filter: `userId = ${userId}` }];
 
   const processIndex = async (
     indexName: string,
@@ -220,7 +218,9 @@ export const removeUserContentFromSearchIndex = async ({
         return { indexName, status: 'skipped' };
       }
 
-      console.log(`removeUserContentFromSearchIndex :: Deleting from ${indexName} with filter: ${filter}`);
+      console.log(
+        `removeUserContentFromSearchIndex :: Deleting from ${indexName} with filter: ${filter}`
+      );
 
       // Use filter-based deletion - no limit on document count
       await index.deleteDocuments({ filter });
@@ -256,7 +256,9 @@ export const removeUserContentFromSearchIndex = async ({
     // Main search indexes
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
     // Metrics search indexes (separate Meilisearch instance)
-    ...metricsIndexConfigs.map(({ name, filter }) => processIndex(name, filter, metricsSearchClient)),
+    ...metricsIndexConfigs.map(({ name, filter }) =>
+      processIndex(name, filter, metricsSearchClient)
+    ),
   ]);
 
   const processed: string[] = [];
@@ -277,7 +279,9 @@ export const removeUserContentFromSearchIndex = async ({
   }
 
   console.log(
-    `removeUserContentFromSearchIndex :: Complete - Processed: ${processed.join(', ')}, Skipped: ${skipped.join(', ')}`
+    `removeUserContentFromSearchIndex :: Complete - Processed: ${processed.join(
+      ', '
+    )}, Skipped: ${skipped.join(', ')}`
   );
 
   // Log summary to Axiom

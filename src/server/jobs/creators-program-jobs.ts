@@ -99,7 +99,6 @@ export const creatorsProgramDistribute = createJob(
       });
     }
 
-
     // Bust user caches
     const affectedUsers = Array.from(allAffectedUsers);
     userCashCache.bust(affectedUsers);

@@ -445,10 +445,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           secure: useSecureCookies,
           // Use NEXTAUTH_COOKIE_DOMAIN if set (for cross-subdomain sharing in PR previews),
           // otherwise default to the hostname with a leading dot for subdomain support
-          domain:
-            hostname == 'localhost'
-              ? hostname
-              : env.NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname,
+          domain: hostname == 'localhost' ? hostname : env.NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname,
         },
       },
       // Only configure state/pkce cookies when NEXTAUTH_COOKIE_DOMAIN is set (PR previews)
@@ -500,7 +497,11 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   // Skip domain color override when NEXTAUTH_COOKIE_DOMAIN is explicitly set
   // (needed for PR preview cross-subdomain cookie sharing via auth.civitaic.com)
   const domainColor = getRequestDomainColor(req);
-  if (domainColor && !!options.cookies?.sessionToken?.options?.domain && !env.NEXTAUTH_COOKIE_DOMAIN) {
+  if (
+    domainColor &&
+    !!options.cookies?.sessionToken?.options?.domain &&
+    !env.NEXTAUTH_COOKIE_DOMAIN
+  ) {
     options.cookies.sessionToken.options.domain =
       (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }

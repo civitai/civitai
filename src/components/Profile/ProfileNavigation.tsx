@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   IconAssembly,
+  IconBook,
   IconCategory,
   IconLayoutList,
   IconPencilMinus,
@@ -22,7 +23,7 @@ const overviewPath = '[username]';
 
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
-  const { articles, canViewNsfw } = useFeatureFlags();
+  const { articles, canViewNsfw, comicCreator } = useFeatureFlags();
 
   const {
     data: userOverview,
@@ -69,6 +70,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconPencilMinus {...props} />,
       count: userOverview?.articleCount ?? 0,
       disabled: !articles || !!user?.bannedAt,
+    },
+    comics: {
+      url: `${baseUrl}/comics`,
+      icon: (props) => <IconBook {...props} />,
+      count: userOverview?.comicCount ?? 0,
+      disabled: !comicCreator || !!user?.bannedAt,
     },
     collections: {
       url: `${baseUrl}/collections`,

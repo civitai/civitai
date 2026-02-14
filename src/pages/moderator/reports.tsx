@@ -453,6 +453,7 @@ const getReportLink = (report: ReportDetail) => {
   else if (report.bountyEntry)
     return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
   else if (report.commentV2?.commentV2) return `/comments/v2/${report.commentV2.commentV2.id}`;
+  else if (report.comicProject) return `/comics/${report.comicProject.id}`;
   else if (report.chat)
     return !!env.NEXT_PUBLIC_CHAT_LOOKUP_URL
       ? `${env.NEXT_PUBLIC_CHAT_LOOKUP_URL}${report.chat.id}`
