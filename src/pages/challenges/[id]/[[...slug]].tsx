@@ -1741,54 +1741,44 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
 }
 
 function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
-  const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
-  const router = useRouter();
   const isActive = challenge.status === ChallengeStatus.Active;
 
-  if (!isActive || currentUser?.muted) return null;
+  const isDynamicPool =
+    challenge.prizeMode === PrizeMode.Dynamic && challenge.buzzPerAction > 0;
+
+  if (!isActive || currentUser?.muted || isDynamicPool) return null;
 
   return (
-    <Group gap="xs" wrap="nowrap" hiddenFrom="md" mt="md">
-      <Stack gap="xs" style={{ flex: 1 }}>
-        <Button
-          onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
-          leftSection={<IconBrush size={16} />}
-          variant="filled"
-          color="blue"
-          fullWidth
-        >
-          Generate Entries
-        </Button>
-        {challenge.collectionId && (
-          <LoginRedirect reason="submit-challenge">
-            <Button
-              onClick={() => {
-                dialogStore.trigger({
-                  component: ChallengeSubmitModal,
-                  props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-                });
-              }}
-              leftSection={<IconPhoto size={16} />}
-              variant="light"
-              color="blue"
-              fullWidth
-            >
-              Submit Entries
-            </Button>
-          </LoginRedirect>
-        )}
-      </Stack>
-      <ShareButton url={router.asPath} title={challenge.title}>
-        <ActionIcon
-          size="lg"
-          variant="default"
-          color={colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
-        >
-          <IconShare3 size={18} />
-        </ActionIcon>
-      </ShareButton>
-    </Group>
+    <Stack gap="xs" hiddenFrom="md" mt="md">
+      <Button
+        onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
+        leftSection={<IconBrush size={16} />}
+        variant="filled"
+        color="blue"
+        fullWidth
+      >
+        Generate Entries
+      </Button>
+      {challenge.collectionId && (
+        <LoginRedirect reason="submit-challenge">
+          <Button
+            onClick={() => {
+              dialogStore.trigger({
+                component: ChallengeSubmitModal,
+                props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
+              });
+            }}
+            leftSection={<IconPhoto size={16} />}
+            variant="light"
+            color="blue"
+            fullWidth
+          >
+            Submit Entries
+          </Button>
+        </LoginRedirect>
+      )}
+    </Stack>
   );
 }
 
