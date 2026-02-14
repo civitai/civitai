@@ -149,7 +149,18 @@ export const toggleLockCommentsThread = async ({ entityId, entityType }: Comment
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
-  if (!thread) throw throwNotFoundError();
+
+  if (!thread) {
+    // No thread exists yet — create one in the locked state
+    return await dbWrite.thread.create({
+      data: {
+        [`${entityType}Id`]: entityId,
+        locked: true,
+      } as unknown as Prisma.ThreadCreateInput,
+      select: { locked: true },
+    });
+  }
+
   return await dbWrite.thread.update({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     data: { locked: !thread.locked },
