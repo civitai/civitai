@@ -30,13 +30,14 @@ export function ChallengeDiscussion({ challengeId, userId }: Props) {
         isLoading,
         isFetching,
         isFetchingNextPage,
+        isLocked,
         showMore,
         hiddenCount,
         toggleShowMore,
         sort,
         setSort,
         activeComment,
-      }) => (
+      }) => isLocked ? null : (
         <Stack mt="xl" gap="xl">
           <Stack gap={0}>
             <Group justify="space-between">
