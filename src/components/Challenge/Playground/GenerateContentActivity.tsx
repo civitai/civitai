@@ -3,7 +3,7 @@ import {
   Button,
   Card,
   Group,
-  ScrollArea,
+  Paper,
   Stack,
   Text,
   Textarea,
@@ -111,20 +111,33 @@ export function GenerateContentActivity() {
       {result && (
         <Card withBorder>
           <Stack gap="sm">
-            <Group justify="space-between">
-              <Text fw={600} size="lg">
-                {result.title}
-              </Text>
-              <Badge variant="light">{result.theme}</Badge>
-            </Group>
-            <Text size="sm" fs="italic" c="dimmed">
-              {result.invitation}
+            <Text fw={600} size="sm">
+              Title & Theme
             </Text>
-            <ScrollArea mah={400}>
+            <Paper withBorder p="sm">
+              <Group justify="space-between">
+                <Text fw={600} size="lg">
+                  {result.title}
+                </Text>
+                <Badge variant="light">{result.theme}</Badge>
+              </Group>
+            </Paper>
+            <Text fw={600} size="sm">
+              Invitation
+            </Text>
+            <Paper withBorder p="sm">
+              <Text size="sm" fs="italic" c="dimmed">
+                {result.invitation}
+              </Text>
+            </Paper>
+            <Text fw={600} size="sm">
+              Content
+            </Text>
+            <Paper withBorder p="sm">
               <TypographyStylesProvider>
                 <div dangerouslySetInnerHTML={{ __html: result.content }} />
               </TypographyStylesProvider>
-            </ScrollArea>
+            </Paper>
           </Stack>
         </Card>
       )}

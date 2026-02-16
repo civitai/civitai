@@ -2,6 +2,7 @@ import {
   Button,
   Card,
   Group,
+  Paper,
   Progress,
   ScrollArea,
   Stack,
@@ -150,44 +151,38 @@ export function ReviewImageActivity() {
       </Button>
 
       {result && (
-        <Card withBorder>
+        <Card component={ScrollArea.Autosize} mah={400} withBorder>
           <Stack gap="sm">
             <Text fw={600} size="sm">
               Scores
             </Text>
-            {Object.entries(result.score).map(([key, value]) => (
-              <div key={key}>
-                <Group justify="space-between" mb={4}>
-                  <Text size="xs" tt="capitalize">
-                    {key}
-                  </Text>
-                  <Text size="xs" fw={600}>
-                    {value}/10
-                  </Text>
-                </Group>
-                <Progress value={value * 10} color={SCORE_COLORS[key] ?? 'blue'} size="sm" />
-              </div>
-            ))}
+            <Paper withBorder p="sm">
+              {Object.entries(result.score).map(([key, value]) => (
+                <div key={key}>
+                  <Group justify="space-between" mb={4}>
+                    <Text size="xs" tt="capitalize">
+                      {key}
+                    </Text>
+                    <Text size="xs" fw={600}>
+                      {value}/10
+                    </Text>
+                  </Group>
+                  <Progress value={value * 10} color={SCORE_COLORS[key] ?? 'blue'} size="sm" />
+                </div>
+              ))}
+            </Paper>
             <Group gap="xs">
               <Text size="sm" fw={600}>
                 Reaction:
               </Text>
               <Text size="sm">{result.reaction}</Text>
             </Group>
-            <div>
-              <Text size="sm" fw={600} mb={4}>
-                Comment
-              </Text>
+            <Text size="sm" fw={600} mb={4}>
+              Comment
+            </Text>
+            <Paper withBorder p="sm">
               <Text size="sm">{result.comment}</Text>
-            </div>
-            <div>
-              <Text size="sm" fw={600} mb={4}>
-                Summary
-              </Text>
-              <Text size="sm" c="dimmed">
-                {result.summary}
-              </Text>
-            </div>
+            </Paper>
           </Stack>
         </Card>
       )}

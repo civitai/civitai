@@ -4,7 +4,7 @@ import {
   Card,
   Group,
   Loader,
-  ScrollArea,
+  Paper,
   Select,
   Stack,
   Text,
@@ -16,6 +16,7 @@ import { useMemo, useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 type Winner = {
   creatorId: number;
@@ -49,6 +50,7 @@ export function PickWinnersActivity() {
   // Load recent challenges for the select dropdown
   const { data: challengeData, isLoading: challengesLoading } =
     trpc.challenge.getModeratorList.useQuery({
+      status: [ChallengeStatus.Completed],
       limit: 50,
     });
 
@@ -89,7 +91,7 @@ export function PickWinnersActivity() {
       <Select
         label="Challenge"
         placeholder="Select a challenge..."
-        description="Pick a completed or active challenge to test winner selection"
+        description="Pick a completed challenge to test winner selection"
         data={challengeOptions}
         value={challengeId}
         onChange={(val) => updateInputs({ challengeId: val })}
@@ -134,7 +136,7 @@ export function PickWinnersActivity() {
               Winners
             </Text>
             {result.winners.map((winner, i) => (
-              <Card key={winner.creatorId} withBorder p="sm">
+              <Paper key={winner.creatorId} withBorder p="sm">
                 <Group gap="sm" mb="xs">
                   <IconTrophy
                     size={16}
@@ -150,7 +152,7 @@ export function PickWinnersActivity() {
                 <Text size="sm" c="dimmed">
                   {winner.reason}
                 </Text>
-              </Card>
+              </Paper>
             ))}
 
             {result.process && (
@@ -158,11 +160,11 @@ export function PickWinnersActivity() {
                 <Text fw={600} size="sm" mb="xs">
                   Judging Process
                 </Text>
-                <ScrollArea mah={200}>
+                <Paper withBorder p="sm">
                   <TypographyStylesProvider>
                     <div dangerouslySetInnerHTML={{ __html: result.process }} />
                   </TypographyStylesProvider>
-                </ScrollArea>
+                </Paper>
               </div>
             )}
 
@@ -171,11 +173,11 @@ export function PickWinnersActivity() {
                 <Text fw={600} size="sm" mb="xs">
                   Outcome
                 </Text>
-                <ScrollArea mah={200}>
+                <Paper withBorder p="sm">
                   <TypographyStylesProvider>
                     <div dangerouslySetInnerHTML={{ __html: result.outcome }} />
                   </TypographyStylesProvider>
-                </ScrollArea>
+                </Paper>
               </div>
             )}
           </Stack>
