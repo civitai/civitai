@@ -229,7 +229,11 @@ export const getInfiniteChallengesSchema = z.object({
   userId: z.number().optional(),
   modelVersionId: z.number().optional(),
   participation: z
-    .enum([ChallengeParticipation.Entered, ChallengeParticipation.NotEntered, ChallengeParticipation.Won])
+    .enum([
+      ChallengeParticipation.Entered,
+      ChallengeParticipation.NotEntered,
+      ChallengeParticipation.Won,
+    ])
     .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),

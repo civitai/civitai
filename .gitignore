@@ -19,6 +19,9 @@ prisma/schema.prisma
 /.next/
 /out/
 
+# ladle
+.ladle/stubs/
+
 # production
 /build
 

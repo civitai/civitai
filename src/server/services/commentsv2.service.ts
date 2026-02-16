@@ -62,6 +62,8 @@ export const upsertComment = async ({
     select: { id: true, locked: true },
   });
 
+  if (thread?.locked) throw throwBadRequestError('comment thread locked');
+
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {
       if (!thread) {
@@ -88,7 +90,6 @@ export const upsertComment = async ({
       });
     });
   }
-  if (thread?.locked) throw throwBadRequestError('comment thread locked');
   return await dbWrite.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
 };
 
@@ -148,7 +149,18 @@ export const toggleLockCommentsThread = async ({ entityId, entityType }: Comment
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
-  if (!thread) throw throwNotFoundError();
+
+  if (!thread) {
+    // No thread exists yet — create one in the locked state
+    return await dbWrite.thread.create({
+      data: {
+        [`${entityType}Id`]: entityId,
+        locked: true,
+      } as unknown as Prisma.ThreadCreateInput,
+      select: { locked: true },
+    });
+  }
+
   return await dbWrite.thread.update({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     data: { locked: !thread.locked },

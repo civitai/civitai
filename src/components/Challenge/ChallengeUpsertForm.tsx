@@ -5,8 +5,6 @@ import {
   Divider,
   Group,
   Paper,
-  SegmentedControl,
-  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -26,6 +24,7 @@ import {
   InputDateTimePicker,
   InputNumber,
   InputRTE,
+  InputSegmentedControl,
   InputSelect,
   InputSimpleImageUpload,
   InputText,
@@ -34,6 +33,7 @@ import {
 } from '~/libs/form';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
+import { toDisplayUTC, fromDisplayUTC } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import {
@@ -54,15 +54,6 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
 const InputNumberWrapper = withController(NumberInputWrapper);
-
-// UTC display helpers: Mantine's DateTimePicker only works in local time.
-// We shift dates so the picker *displays* UTC values, then reverse on submit.
-function toDisplayUTC(date: Date): Date {
-  return new Date(date.getTime() + date.getTimezoneOffset() * 60_000);
-}
-function fromDisplayUTC(date: Date): Date {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-}
 
 // Form schema - extends server schema with flattened prize fields for UI
 // judgeId is overridden to string|null because Mantine Select uses string values
@@ -191,8 +182,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const upsertMutation = trpc.challenge.upsert.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryUtils.challenge.getModeratorList.invalidate();
+      queryUtils.challenge.getById.invalidate({ id: result.id });
       showSuccessNotification({
         message: isEditing ? 'Challenge updated successfully' : 'Challenge created successfully',
       });
@@ -313,7 +305,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const maxPrizePool = form.watch('maxPrizePool');
   const totalPct = (dist1 || 0) + (dist2 || 0) + (dist3 || 0);
   // For Dynamic mode: show max pool if set (assume we'll hit it), otherwise base
-  const dynamicDisplayPool = maxPrizePool != null && maxPrizePool > 0 ? maxPrizePool : basePrizePool;
+  const dynamicDisplayPool =
+    maxPrizePool != null && maxPrizePool > 0 ? maxPrizePool : basePrizePool;
   const totalPrizePool =
     prizeMode === PrizeMode.Dynamic
       ? dynamicDisplayPool
@@ -451,9 +444,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             </Group>
 
             {/* Prize Mode Toggle */}
-            <SegmentedControl
-              value={prizeMode}
-              onChange={(val) => form.setValue('prizeMode', val as PrizeMode)}
+            <InputSegmentedControl
+              name="prizeMode"
               data={[
                 { label: 'Fixed Prizes', value: PrizeMode.Fixed },
                 { label: 'Dynamic Pool', value: PrizeMode.Dynamic },
@@ -571,9 +563,11 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                   </Text>
                   {totalPct === 100 && dynamicDisplayPool > 0 && (
                     <Text size="sm" c="dimmed">
-                      1st: {Math.floor(dynamicDisplayPool * (dist1 || 0) / 100).toLocaleString()}
-                      {' / '}2nd: {Math.floor(dynamicDisplayPool * (dist2 || 0) / 100).toLocaleString()}
-                      {' / '}3rd: {Math.floor(dynamicDisplayPool * (dist3 || 0) / 100).toLocaleString()}
+                      1st: {Math.floor((dynamicDisplayPool * (dist1 || 0)) / 100).toLocaleString()}
+                      {' / '}2nd:{' '}
+                      {Math.floor((dynamicDisplayPool * (dist2 || 0)) / 100).toLocaleString()}
+                      {' / '}3rd:{' '}
+                      {Math.floor((dynamicDisplayPool * (dist3 || 0)) / 100).toLocaleString()}
                       {' buzz'}
                     </Text>
                   )}
@@ -631,13 +625,12 @@ export function ChallengeUpsertForm({ challenge }: Props) {
             <Divider />
 
             {/* Paid Review */}
-            <Select
+            <InputSelect
               label="Paid Reviews"
+              name="reviewCostType"
               description="Allow users to pay Buzz to guarantee their entries get judged."
-              value={reviewCostType}
               onChange={(val) => {
                 const type = (val as ChallengeReviewCostType) ?? ChallengeReviewCostType.None;
-                form.setValue('reviewCostType', type);
                 if (type === ChallengeReviewCostType.None) {
                   form.setValue('reviewCost', 0);
                 }

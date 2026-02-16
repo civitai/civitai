@@ -21,6 +21,7 @@ export function ChallengeDiscussion({ challengeId, userId }: Props) {
       entityType="challenge"
       entityId={challengeId}
       limit={10}
+      hideWhenLocked
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
       {({
@@ -29,13 +30,14 @@ export function ChallengeDiscussion({ challengeId, userId }: Props) {
         isLoading,
         isFetching,
         isFetchingNextPage,
+        isLocked,
         showMore,
         hiddenCount,
         toggleShowMore,
         sort,
         setSort,
         activeComment,
-      }) => (
+      }) => isLocked ? null : (
         <Stack mt="xl" gap="xl">
           <Stack gap={0}>
             <Group justify="space-between">
