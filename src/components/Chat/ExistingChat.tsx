@@ -75,6 +75,28 @@ type TypingStatus = {
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
+function ScamWarningContent({ chatId }: { chatId: number }) {
+  return (
+    <Text size="xs">
+      Beware of scam messages. Civitai staff will only message you from{' '}
+      <Text span c="red" fw={700}>
+        red-nameplate
+      </Text>{' '}
+      accounts and have a Civitai moderator badge next to their name (not the profile picture!). Do
+      not click unknown links or share payment info.{' '}
+      <Anchor
+        component="button"
+        type="button"
+        size="xs"
+        onClick={() => openReportModal({ entityType: ReportEntity.Chat, entityId: chatId })}
+      >
+        Report suspicious DMs
+      </Anchor>{' '}
+      immediately.
+    </Text>
+  );
+}
+
 export function ExistingChat() {
   const currentUser = useCurrentUser();
   const { worker } = useSignalContext();
@@ -417,26 +439,7 @@ export function ExistingChat() {
             p="xs"
             m="xs"
           >
-            <Text size="xs">
-              Beware of scam messages. Civitai staff will only message you from{' '}
-              <Text span c="red" fw={700}>
-                red-nameplate
-              </Text>{' '}
-              accounts and have a Civitai moderator badge next to their name (not the profile
-              picture!). Do not click unknown links or share payment info.{' '}
-              <Anchor
-                component="button"
-                type="button"
-                size="xs"
-                onClick={() =>
-                  existingChatId &&
-                  openReportModal({ entityType: ReportEntity.Chat, entityId: existingChatId })
-                }
-              >
-                Report suspicious DMs
-              </Anchor>{' '}
-              immediately.
-            </Text>
+            <ScamWarningContent chatId={existingChatId!} />
           </DismissibleAlert>
           <Box p="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
@@ -518,26 +521,7 @@ export function ExistingChat() {
         <Center h="100%">
           <Stack>
             <Alert color="yellow" icon={<IconAlertTriangle size={20} />} p="xs" mx="sm">
-              <Text size="xs">
-                Beware of scam messages. Civitai staff will only message you from{' '}
-                <Text span c="red" fw={700}>
-                  red-nameplate
-                </Text>{' '}
-                accounts and have a Civitai moderator badge next to their name (not the profile
-                picture!). Do not click unknown links or share payment info.{' '}
-                <Anchor
-                  component="button"
-                  type="button"
-                  size="xs"
-                  onClick={() =>
-                    existingChatId &&
-                    openReportModal({ entityType: ReportEntity.Chat, entityId: existingChatId })
-                  }
-                >
-                  Report suspicious DMs
-                </Anchor>{' '}
-                immediately.
-              </Text>
+              <ScamWarningContent chatId={existingChatId!} />
             </Alert>
             {allChats.length > 0 && (
               <Text mb="md" p="sm" size="xs" italic align="center">{`"${allChats[0].content.slice(
