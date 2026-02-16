@@ -157,8 +157,8 @@ export async function getStrikesForMod(input: GetStrikesInput) {
 
   const where: Prisma.UserStrikeWhereInput = {
     ...(targetUserId && { userId: targetUserId }),
-    ...(status && { status }),
-    ...(reason && { reason }),
+    ...(status?.length && { status: { in: status } }),
+    ...(reason?.length && { reason: { in: reason } }),
   };
 
   const [items, count] = await Promise.all([

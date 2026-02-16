@@ -299,16 +299,16 @@ describe('strike.service', () => {
         limit: 10,
         page: 1,
         userId: 1,
-        status: StrikeStatus.Active,
-        reason: StrikeReason.TOSViolation,
+        status: [StrikeStatus.Active],
+        reason: [StrikeReason.TOSViolation],
       });
 
       expect(mockDbRead.userStrike.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             userId: 1,
-            status: StrikeStatus.Active,
-            reason: StrikeReason.TOSViolation,
+            status: { in: [StrikeStatus.Active] },
+            reason: { in: [StrikeReason.TOSViolation] },
           }),
         })
       );
@@ -836,7 +836,6 @@ describe('strike.service', () => {
         expect.objectContaining({ where: { id: 200 } })
       );
     });
-
   });
 
   // ==========================================================================

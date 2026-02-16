@@ -42,7 +42,7 @@ const featureFlags = createFeatureFlags({
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
-  stripe: ['mod'], 
+  stripe: ['mod'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
   videoTraining: { availability: ['public'], fliptKey: 'video-training' },
   aiToolkitTraining: { availability: ['mod'], fliptKey: 'ai-toolkit-training' },
@@ -149,6 +149,7 @@ const featureFlags = createFeatureFlags({
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
   challengePlatform: ['blue', 'red', 'public'],
+  strikes: ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

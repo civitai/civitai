@@ -1,6 +1,13 @@
+import type { MantineColor } from '@mantine/core';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { EntityType, StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
+
+export const strikeStatusColorScheme: Record<string, MantineColor> = {
+  Active: 'red',
+  Expired: 'gray',
+  Voided: 'yellow',
+};
 
 export const createStrikeSchema = z.object({
   userId: z.number(),
@@ -25,8 +32,8 @@ export const getStrikesSchema = z.object({
   ...paginationSchema.shape,
   userId: z.number().optional(),
   username: z.string().optional(),
-  status: z.enum(StrikeStatus).optional(),
-  reason: z.enum(StrikeReason).optional(),
+  status: z.array(z.enum(StrikeStatus)).optional(),
+  reason: z.array(z.enum(StrikeReason)).optional(),
 });
 export type GetStrikesInput = z.infer<typeof getStrikesSchema>;
 

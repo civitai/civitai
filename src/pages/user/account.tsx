@@ -18,6 +18,7 @@ import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
+import { StrikesCard } from '~/components/Account/StrikesCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
 import dynamic from 'next/dynamic';
 
@@ -53,6 +54,7 @@ export default function Account() {
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />
           {apiKeys && <ApiKeysCard />}
+          <StrikesCard />
           <RefreshSessionCard />
           <DeleteCard />
         </Stack>

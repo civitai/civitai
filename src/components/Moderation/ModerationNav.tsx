@@ -12,6 +12,7 @@ export function ModerationNav() {
     () =>
       [
         { label: 'Reports', href: '/moderator/reports' },
+        { label: 'Strikes', href: '/moderator/strikes', hidden: !features.strikes },
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
