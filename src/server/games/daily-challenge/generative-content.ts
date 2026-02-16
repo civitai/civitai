@@ -1,19 +1,12 @@
-import dayjs from '~/shared/utils/dayjs';
-
 import type {
   ChallengePrompts,
   JudgingConfig,
   Prize,
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { openrouter, AI_MODELS } from '~/server/services/ai/openrouter';
-import {
-  parseBitwiseBrowsingLevel,
-  browsingLevelLabels,
-} from '~/shared/constants/browsingLevel.constants';
+import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { markdownToHtml } from '~/utils/markdown-helpers';
-import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
 
 type GenerateCollectionDetailsInput = {
@@ -27,6 +20,7 @@ type GenerateCollectionDetailsInput = {
     url: string;
   };
   config: JudgingConfig;
+  model?: AIModel;
 };
 type CollectionDetails = {
   name: string;
@@ -37,7 +31,7 @@ export async function generateCollectionDetails(input: GenerateCollectionDetails
 
   const results = await openrouter.getJsonCompletion<CollectionDetails>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: input.model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -84,6 +78,8 @@ type GenerateArticleInput = {
   entryPrize: Prize;
   allowedNsfwLevel: number;
   config: JudgingConfig;
+  model?: AIModel;
+  userMessageOverride?: string;
 };
 type GeneratedArticle = {
   title: string;
@@ -94,18 +90,19 @@ type GeneratedArticle = {
 export async function generateArticle({
   resource,
   image,
-  challengeDate,
-  prizes,
-  entryPrizeRequirement,
-  entryPrize,
-  allowedNsfwLevel,
   config,
+  model,
+  userMessageOverride,
 }: GenerateArticleInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  const userText =
+    userMessageOverride ??
+    `Resource title: ${resource.title}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`;
+
   const result = await openrouter.getJsonCompletion<GeneratedArticle>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         config,
@@ -122,7 +119,7 @@ export async function generateArticle({
         content: [
           {
             type: 'text' as const,
-            text: `Resource title: ${resource.title}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`,
+            text: userText,
           },
           {
             type: 'image_url' as const,
@@ -137,52 +134,6 @@ export async function generateArticle({
 
   const markdownContent = stripLeadingWhitespace(`
     ${result.body}
-
-    ## 🤔 How to Create Entries
-    Use the **Generate** button on this page to open the on-site generator with the challenge model pre-loaded. Type in your prompt, generate images, and submit your favorites!
-
-    You can also:
-    - Browse the [model gallery](/models/${
-      resource.modelId
-    }) and **Remix** any image to create your own version.
-    - Upload images you've created locally using the challenge [model](/models/${resource.modelId}).
-
-    ## 📝 How to Submit
-    Click the **Submit** button on this page to open the submission panel. You can submit entries from:
-    - **From Generator** — select images you just generated on-site.
-    - **My Images** — choose from your existing image library.
-    - **Upload New** — drag and drop images created outside of Civitai.
-
-    ## ⭐ Prizes
-    **Winners will receive**:
-    ${prizes
-      .map(
-        (prize, i) =>
-          `- **${asOrdinal(i + 1)}**: <span style="color:#fab005">${numberWithCommas(
-            prize.buzz
-          )} Buzz</span>, ${prize.points} Challenge Points`
-      )
-      .join('\n')}
-
-    Winners will be announced at 12am UTC and notified via on-site notification.
-
-    **Participation rewards!**:
-    Submit ${entryPrizeRequirement} valid entries to earn <span style="color:#228be6">${
-    entryPrize.buzz
-  } Buzz</span> and ${
-    entryPrize.points
-  } Challenge Points. Only entries that follow the rules below count toward this reward!
-
-    ## 📜 Rules
-    1. All entries must be submitted before the end of ${dayjs(challengeDate).format(
-      'MMMM DD'
-    )} (23:59 UTC).
-    2. All submitted images must be rated ${parseBitwiseBrowsingLevel(allowedNsfwLevel)
-      .map((level) => browsingLevelLabels[level as keyof typeof browsingLevelLabels])
-      .join(', ')} and adhere to our **Terms of Service**.
-    3. Participants can submit up to ${entryPrizeRequirement * 2} images.
-    4. Low-effort entries are not allowed. Submitting entries with no relevance to the challenge, with the intention of farming Participation Reward Buzz, may result in a Contest Ban. Contest-banned users will be prohibited from participating in all future Civitai contests!
-    5. Entries must use the provided model.
   `);
   const content = await markdownToHtml(markdownContent);
 
@@ -199,6 +150,8 @@ type GenerateReviewInput = {
   creator: string;
   imageUrl: string;
   config: JudgingConfig;
+  model?: AIModel;
+  userMessageOverride?: string;
 };
 type GeneratedReview = {
   score: Score;
@@ -209,9 +162,11 @@ type GeneratedReview = {
 export async function generateReview(input: GenerateReviewInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  const userText = input.userMessageOverride ?? `Theme: ${input.theme}\nCreator: ${input.creator}`;
+
   const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: input.model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -233,7 +188,7 @@ export async function generateReview(input: GenerateReviewInput) {
         content: [
           {
             type: 'text' as const,
-            text: `Theme: ${input.theme}\nCreator: ${input.creator}`,
+            text: userText,
           },
           {
             type: 'image_url' as const,
@@ -258,6 +213,8 @@ type GenerateWinnersInput = {
   }>;
   theme: string;
   config: JudgingConfig;
+  model?: AIModel;
+  userMessageOverride?: string;
 };
 type GeneratedWinners = {
   winners: Array<{
@@ -271,9 +228,17 @@ type GeneratedWinners = {
 export async function generateWinners(input: GenerateWinnersInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
 
+  const userText =
+    input.userMessageOverride ??
+    `Theme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
+      input.entries,
+      null,
+      2
+    )}\n\`\`\``;
+
   const result = await openrouter.getJsonCompletion<GeneratedWinners>({
     retries: 3,
-    model: AI_MODELS.GROK,
+    model: input.model ?? AI_MODELS.GROK,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -294,11 +259,7 @@ export async function generateWinners(input: GenerateWinnersInput) {
         content: [
           {
             type: 'text' as const,
-            text: `Theme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
-              input.entries,
-              null,
-              2
-            )}\n\`\`\``,
+            text: userText,
           },
         ],
       },

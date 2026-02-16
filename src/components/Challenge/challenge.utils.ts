@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
 import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
@@ -16,18 +18,27 @@ export function useQueryChallenges(
   options?: { enabled?: boolean }
 ) {
   const { enabled = true } = options ?? {};
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const { data, ...rest } = trpc.challenge.getInfinite.useInfiniteQuery(
-    { ...defaultFilters, ...filters },
+    { ...defaultFilters, ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       enabled,
     }
   );
 
-  const challenges = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
+  const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 
-  return { challenges, ...rest };
+  const { items, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'challenges',
+    data: flatData,
+    isRefetching: rest.isRefetching,
+  });
+
+  const { isLoading, ...restWithoutLoading } = rest;
+
+  return { challenges: items, isLoading: isLoading || loadingPreferences, ...restWithoutLoading };
 }
 
 // Hook to get a single challenge by ID

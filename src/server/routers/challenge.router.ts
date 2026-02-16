@@ -2,15 +2,25 @@ import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
   deleteChallengeSchema,
+  getChallengeEventsSchema,
   getChallengeWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
+  getUserUnjudgedEntriesSchema,
+  requestReviewSchema,
   upsertChallengeSchema,
+  upsertChallengeEventSchema,
   updateChallengeConfigSchema,
+  getJudgeByIdSchema,
+  upsertJudgeSchema,
+  playgroundGenerateContentSchema,
+  playgroundReviewImageSchema,
+  playgroundPickWinnersSchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { z } from 'zod';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -21,19 +31,31 @@ import {
 import {
   checkImageEligibility,
   deleteChallenge,
+  deleteChallengeEvent,
   endChallengeAndPickWinners,
+  getActiveEvents,
   getChallengeDetail,
+  getChallengeEvents,
   getChallengeWinners,
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
   getUserEntryCount,
+  getUserUnjudgedEntries,
+  requestReview,
   upsertChallenge,
+  upsertChallengeEvent,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
   updateChallengeSystemConfig,
+  getJudgeById,
+  upsertJudge,
+  playgroundGenerateContent,
+  playgroundReviewImage,
+  playgroundPickWinners,
 } from '~/server/services/challenge.service';
+import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 
 // Router definition
 export const challengeRouter = router({
@@ -41,7 +63,7 @@ export const challengeRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getInfiniteChallenges(input)),
+    .query(({ input, ctx }) => getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id })),
 
   // Get single challenge by ID (moderators bypass visibility filters)
   getById: publicProcedure
@@ -66,6 +88,18 @@ export const challengeRouter = router({
     .input(getUserEntryCountSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getUserEntryCount(input.challengeId, ctx.user.id)),
+
+  // Pay to guarantee entries get reviewed by the AI judge
+  requestReview: protectedProcedure
+    .input(requestReviewSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => requestReview(input.challengeId, input.imageIds, ctx.user.id)),
+
+  // Get user's unjudged entries for paid review selection
+  getUserUnjudgedEntries: protectedProcedure
+    .input(getUserUnjudgedEntriesSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input, ctx }) => getUserUnjudgedEntries(input.challengeId, ctx.user.id)),
 
   // Check image eligibility for a challenge
   checkEntryEligibility: protectedProcedure
@@ -118,4 +152,67 @@ export const challengeRouter = router({
     .input(deleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => deleteChallenge(input.id)),
+
+  // Public: Get active challenge events for featured section
+  getActiveEvents: publicProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getActiveEvents()),
+
+  // Moderator: Get all challenge events
+  getEvents: moderatorProcedure
+    .input(getChallengeEventsSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getChallengeEvents(input)),
+
+  // Moderator: Create or update a challenge event
+  upsertEvent: moderatorProcedure
+    .input(upsertChallengeEventSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => upsertChallengeEvent({ ...input, userId: ctx.user.id })),
+
+  // Moderator: Delete a challenge event
+  deleteEvent: moderatorProcedure
+    .input(deleteChallengeSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => deleteChallengeEvent(input.id)),
+
+  // Public: Get judge's comment on a specific image
+  getJudgeComment: publicProcedure
+    .input(z.object({ imageId: z.number(), judgeUserId: z.number() }))
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getJudgeCommentForImage(input)),
+
+  // --- Judge Playground ---
+
+  // Moderator: Get a single judge by ID with all prompt fields
+  getJudgeById: moderatorProcedure
+    .input(getJudgeByIdSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getJudgeById(input.id)),
+
+  // Moderator: Create or update a judge
+  upsertJudge: moderatorProcedure
+    .input(upsertJudgeSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) =>
+      upsertJudge({ ...input, userId: input.userId ?? ctx.user.id })
+    ),
+
+  // Moderator: Playground — generate content
+  playgroundGenerateContent: moderatorProcedure
+    .input(playgroundGenerateContentSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundGenerateContent(input)),
+
+  // Moderator: Playground — review image
+  playgroundReviewImage: moderatorProcedure
+    .input(playgroundReviewImageSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundReviewImage(input)),
+
+  // Moderator: Playground — pick winners
+  playgroundPickWinners: moderatorProcedure
+    .input(playgroundPickWinnersSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundPickWinners(input)),
 });

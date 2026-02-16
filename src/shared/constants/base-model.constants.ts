@@ -143,6 +143,9 @@ const baseModelConfig = [
     group: 'SDXLDistilled',
     hidden: true,
   },
+  { name: 'Seedance', type: 'video', group: 'Seedance', hidden: true, engine: 'seedance' },
+  { name: 'Seedance 1.5', type: 'video', group: 'Seedance15', hidden: true, engine: 'seedance15' },
+  { name: 'Seedance 2.0', type: 'video', group: 'Seedance2', hidden: true, engine: 'seedance2' },
   { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
@@ -159,8 +162,7 @@ const baseModelConfig = [
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
-  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' }, 
-  
+  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 type BaseModelGroupConfigEntry = {
@@ -366,6 +368,18 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'SDXL Distilled',
     family: 'StableDiffusion',
     description: 'Faster SDXL variants with reduced inference steps',
+  },
+  Seedance: {
+    name: 'Seedance',
+    description: "ByteDance's video generation model",
+  },
+  Seedance15: {
+    name: 'Seedance 1.5',
+    description: "ByteDance's video generation model",
+  },
+  Seedance2: {
+    name: 'Seedance 2.0',
+    description: "ByteDance's next-generation video generation model",
   },
   Seedream: {
     name: 'Seedream',
@@ -762,6 +776,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Flux.2 Klein 9B'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B-base'],
+      },
+    ],
   },
   {
     group: 'Flux2Klein_9B_base',
@@ -778,6 +798,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.2 Klein 4B'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B-base'],
       },
     ],
   },
@@ -929,6 +955,14 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 2.5 I2V'],
       },
     ],
+  },
+  {
+    group: 'Seedance15',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedance 1.5'] }],
+  },
+  {
+    group: 'Seedance2',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedance 2.0'] }],
   },
   {
     group: 'Veo3',

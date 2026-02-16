@@ -14,6 +14,7 @@ type CommentEntityType =
   | 'article'
   | 'bounty'
   | 'bountyEntry'
+  | 'challenge'
   | 'comment'
   | 'image';
 

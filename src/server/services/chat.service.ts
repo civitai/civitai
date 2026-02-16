@@ -11,13 +11,28 @@ import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.s
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getChatHash } from '~/server/utils/chat';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwOnBlockedLinkDomain, throwOnBlockedMessagePattern } from '~/server/services/blocklist.service';
+import { createLimiter } from '~/server/utils/rate-limiting';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
 export const maxUsersPerChat = 10;
+
+// Message rate limiting — stricter for new accounts (< 7 days old)
+const newAccountAgeDays = 7;
+const newAccountMessageLimit = 20; // per hour
+const normalMessageLimit = 100; // per hour
+
+const messageLimiter = createLimiter({
+  counterKey: REDIS_SYS_KEYS.COUNTERS.CHAT_MESSAGES,
+  limitKey: REDIS_SYS_KEYS.LIMITS.CHAT_MESSAGES,
+  fetchCount: async () => 0,
+  refetchInterval: 60 * 60, // 1 hour window
+});
 
 export const upsertChat = async ({
   userIds,
@@ -229,6 +244,24 @@ export const createMessage = async ({
     });
     if (existingReference === 0) {
       throw throwBadRequestError(`Reference message does not exist: (${referenceMessageId})`);
+    }
+  }
+
+  // Enforce blocklists and rate limits on message content
+  if (userId !== -1 && !isModerator) {
+    await throwOnBlockedLinkDomain(content);
+    await throwOnBlockedMessagePattern(content);
+
+    // Rate limit messages — stricter for new accounts
+    const user = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { createdAt: true },
+    });
+    const accountAgeDays = user ? dayjs().diff(dayjs(user.createdAt), 'day') : Infinity;
+    const limit = accountAgeDays < newAccountAgeDays ? newAccountMessageLimit : normalMessageLimit;
+    const count = await messageLimiter.increment(userId.toString());
+    if (count > limit) {
+      throw throwBadRequestError('You are sending messages too quickly. Please try again later.');
     }
   }
 

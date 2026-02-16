@@ -11,6 +11,9 @@ import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { createReport } from '~/server/services/report.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { updateUserById } from '~/server/services/user.service';
+import { invalidateSession } from '~/server/auth/session-invalidation';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
 import type { EntityType } from '~/shared/utils/prisma/enums';
 import { ChatMessageType, JobQueueType, ReportReason } from '~/shared/utils/prisma/enums';
@@ -30,6 +33,10 @@ const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
 const reportRetention = 14;
 
+// Tags that trigger auto-mute for new accounts (< autoMuteAccountAgeDays old)
+const autoMuteTags = ['Impersonating Civitai Staff'];
+const autoMuteAccountAgeDays = 7;
+
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
   log(data);
@@ -37,6 +44,66 @@ const logAx = (data: MixedObject) => {
 };
 
 const tracker = new Tracker();
+
+/**
+ * Auto-mute users who match high-confidence scam tags and have new accounts.
+ * Only applies to Chat entities. Skips moderators.
+ */
+async function autoMuteIfScamAccount({
+  type,
+  userId,
+  matches,
+}: {
+  type: AllModKeys;
+  userId: number;
+  matches: string[];
+}) {
+  if (type !== 'Chat') return;
+  const hasAutoMuteTag = matches.some((m) => autoMuteTags.includes(m));
+  if (!hasAutoMuteTag) return;
+
+  try {
+    const user = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { createdAt: true, isModerator: true, muted: true },
+    });
+    if (!user || user.isModerator || user.muted) return;
+
+    const accountAgeDays = dayjs().diff(dayjs(user.createdAt), 'day');
+    if (accountAgeDays > autoMuteAccountAgeDays) return;
+
+    const date = new Date();
+    await updateUserById({
+      id: userId,
+      data: { muted: true, mutedAt: date, muteConfirmedAt: date },
+      updateSource: 'entity-moderation:auto-mute-scam',
+    });
+    await invalidateSession(userId);
+
+    // Delete the scammer's chat messages so recipients don't see them
+    const deleted = await dbWrite.chatMessage.deleteMany({
+      where: { userId },
+    });
+
+    // Audit trail — track in ModActivity (Postgres) and userActivities (ClickHouse)
+    await trackModActivity(-1, {
+      entityType: 'user',
+      entityId: userId,
+      activity: 'autoMuteScam',
+    });
+    await tracker.userActivity({
+      type: 'Muted',
+      targetUserId: userId,
+      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(', ')}, deleted: ${deleted.count} msgs)`,
+    });
+
+    log(
+      `Auto-muted user ${userId} and deleted ${deleted.count} messages (account age: ${accountAgeDays}d, tags: ${matches.join(', ')})`
+    );
+  } catch (error) {
+    logAx({ message: 'Error auto-muting user', data: { error, userId, matches } });
+  }
+}
 
 // type PrismaSelectForModel<T extends Uncapitalize<Prisma.ModelName>> =
 //   T extends Uncapitalize<Prisma.ModelName>
@@ -331,6 +398,13 @@ const runClavata = async ({
           });
           // continue; // we have enough logging, can proceed
         }
+
+        // Auto-mute new accounts flagged for scam impersonation
+        await autoMuteIfScamAccount({
+          type,
+          userId: metadata.userId,
+          matches: item.matches ?? [],
+        });
 
         if (deleteJob) {
           // TODO batching these would probably be better but this is fine for now

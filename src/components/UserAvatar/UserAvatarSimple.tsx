@@ -58,7 +58,7 @@ export function UserAvatarSimple({
   return (
     <UnstyledButton
       onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
-      className="flex items-center gap-2"
+      className="flex w-fit items-center gap-2"
     >
       {displayProfilePicture && (
         <div className="relative ">

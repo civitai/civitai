@@ -22,6 +22,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
         entityType="article"
         entityId={articleId}
         limit={20}
+        hideWhenLocked
         badges={[{ userId, label: 'op', color: 'violet' }]}
       >
         {({
@@ -30,13 +31,14 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           isLoading,
           isFetching,
           isFetchingNextPage,
+          isLocked,
           showMore,
           hiddenCount,
           toggleShowMore,
           sort,
           setSort,
           activeComment,
-        }) => (
+        }) => isLocked ? null : (
           <Stack mt="xl" gap="xl">
             <Stack gap={0}>
               <Group justify="space-between">
