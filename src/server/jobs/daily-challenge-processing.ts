@@ -60,7 +60,6 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from './job';
-import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -1439,32 +1438,15 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     cooldown: config.winnerCooldown,
   });
 
-  // Fetch engagement metrics from Redis for eligible entries only
-  const imageIds = eligibleEntries.map((entry) => entry.imageId);
-  const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
-
-  // Calculate engagement (sum of all metrics except Buzz)
-  const entriesWithEngagement = eligibleEntries.map((entry) => {
-    const metrics = metricsMap.get(entry.imageId);
-    const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
-    return { ...entry, engagement };
-  });
-
-  // Sort entries by (rating * 0.75) and (engagement * 0.25)
-  const maxEngagement = Math.max(...entriesWithEngagement.map((entry) => entry.engagement));
-  const minEngagement = Math.min(...entriesWithEngagement.map((entry) => entry.engagement));
-  const judgedEntries = entriesWithEngagement.map(({ note, engagement, ...entry }) => {
+  // Rank entries purely by AI judge score (no engagement/reaction weighting)
+  const judgedEntries = eligibleEntries.map(({ note, ...entry }) => {
     const { score, summary } = JSON.parse(note);
-    // Calculate average rating
     const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
-    // Adjust engagement to be between 0 and 10
-    const engagementNormalized =
-      ((engagement - minEngagement) / Math.max(maxEngagement - minEngagement, 1)) * 10;
     return {
       ...entry,
       summary,
       score,
-      weightedRating: rating * 0.75 + engagementNormalized * 0.25,
+      weightedRating: rating,
     };
   });
   judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
