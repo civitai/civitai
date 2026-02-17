@@ -1,6 +1,7 @@
 import {
   Button,
   Card,
+  Checkbox,
   Group,
   Paper,
   Progress,
@@ -61,6 +62,7 @@ export function ReviewImageActivity() {
   const updateInputs = usePlaygroundStore((s) => s.updateReviewImageInputs);
 
   const [result, setResult] = useState<ReviewResult | null>(null);
+  const [multiTurn, setMultiTurn] = useState(false);
 
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
@@ -91,6 +93,7 @@ export function ReviewImageActivity() {
           : undefined,
       userMessage: userMessage || undefined,
       aiModel: aiModel || undefined,
+      multiTurn: multiTurn || undefined,
     });
   };
 
@@ -140,6 +143,12 @@ export function ReviewImageActivity() {
         maxRows={6}
         value={userMessage}
         onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
+      />
+      <Checkbox
+        label="Multi-turn review (2-pass: objective analysis → persona scoring)"
+        description="Higher quality but 2x API cost. Recommended for finals."
+        checked={multiTurn}
+        onChange={(e) => setMultiTurn(e.currentTarget.checked)}
       />
       <Button
         leftSection={<IconPlayerPlay size={16} />}

@@ -475,6 +475,8 @@ export const playgroundReviewImageSchema = z.object({
     .optional(),
   userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
+  /** Use two-pass review: persona-free analysis first, then persona-scored review */
+  multiTurn: z.boolean().optional(),
 });
 
 // Playground: Pick winners from a challenge

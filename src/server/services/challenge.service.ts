@@ -2050,6 +2050,7 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
     userMessageOverride: input.userMessage,
+    multiTurn: input.multiTurn,
   });
 
   return result;
