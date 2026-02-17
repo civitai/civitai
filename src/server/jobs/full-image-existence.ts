@@ -2,6 +2,8 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
+import { OPENSEARCH_METRICS_IMAGES_INDEX } from '~/server/opensearch/metrics-images.mappings';
+import { syncToOpenSearch } from '~/server/opensearch/sync';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createJob, getJobDate } from './job';
 
@@ -49,6 +51,13 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
           documents: data,
           batchSize: queryBatch,
           client,
+        });
+
+        await syncToOpenSearch({
+          operation: 'update',
+          indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+          documents: data,
+          batchSize: queryBatch,
         });
       }
 

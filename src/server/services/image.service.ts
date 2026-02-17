@@ -37,6 +37,19 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
+import { openSearchClient } from '~/server/opensearch/client';
+import { OPENSEARCH_METRICS_IMAGES_INDEX } from '~/server/opensearch/metrics-images.mappings';
+import type { FilterClause } from '~/server/opensearch/query-builder';
+import {
+  termFilter,
+  termsFilter,
+  rangeFilter,
+  existsFilter,
+  notFilter,
+  orFilter,
+  andFilter,
+  buildSearchBody,
+} from '~/server/opensearch/query-builder';
 import { postMetrics } from '~/server/metrics';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
@@ -1911,8 +1924,22 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
 };
 
 export async function getImagesFromSearch(input: ImageSearchInput) {
-  let searchFn = getImagesFromSearchPreFilter;
+  // Check OpenSearch flag first
   const fliptClient = await FliptSingleton.getInstance();
+  if (fliptClient) {
+    try {
+      const osFlag = fliptClient.evaluateBoolean({
+        flagKey: FLIPT_FEATURE_FLAGS.FEED_OPENSEARCH,
+        entityId: input.currentUserId?.toString() || 'anonymous',
+        context: {},
+      });
+      if (osFlag.enabled) return getImagesFromOpenSearch(input);
+    } catch {
+      // Fall through to Meilisearch
+    }
+  }
+
+  let searchFn = getImagesFromSearchPreFilter;
   if (fliptClient) {
     const flag = fliptClient.evaluateBoolean({
       flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
@@ -3200,6 +3227,477 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     ).catch();
     endTimer();
 
+    return { data: [], nextCursor: undefined };
+  }
+}
+
+export async function getImagesFromOpenSearch(input: ImageSearchInput) {
+  if (!openSearchClient) return { data: [], nextCursor: undefined };
+  let { postIds = [] } = input;
+
+  const {
+    sort,
+    modelVersionId,
+    types,
+    withMeta,
+    fromPlatform,
+    notPublished,
+    scheduled,
+    username,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    period,
+    isModerator,
+    currentUserId,
+    excludedUserIds,
+    hideAutoResources,
+    hideManualResources,
+    hidden,
+    followed,
+    limit = 100,
+    offset,
+    entry,
+    postId,
+    reviewId,
+    modelId,
+    prioritizedUserIds,
+    useCombinedNsfwLevel,
+    remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    requiringMeta,
+    poiOnly,
+    minorOnly,
+    blockedFor,
+  } = input;
+  let { browsingLevel, userId } = input;
+
+  const osSort: Array<Record<string, { order: 'asc' | 'desc' }>> = [];
+  const filters: FilterClause[] = [];
+  const mustNot: FilterClause[] = [];
+
+  if (!isModerator) {
+    // Avoid exposing private resources — allow own content through
+    if (currentUserId) {
+      filters.push(
+        orFilter([
+          notFilter(termFilter('availability', Availability.Private)),
+          termFilter('userId', currentUserId),
+        ])
+      );
+    } else {
+      mustNot.push(termFilter('availability', Availability.Private));
+    }
+
+    // Avoid blocked resources — allow own content through
+    if (currentUserId) {
+      filters.push(
+        orFilter([
+          notFilter(existsFilter('blockedFor')),
+          termFilter('userId', currentUserId),
+        ])
+      );
+    } else {
+      mustNot.push(existsFilter('blockedFor'));
+    }
+  }
+
+  if (postId) {
+    postIds = [...(postIds ?? []), postId];
+  }
+
+  if (disablePoi) {
+    if (currentUserId) {
+      filters.push(
+        orFilter([
+          notFilter(termFilter('poi', true)),
+          termFilter('userId', currentUserId),
+        ])
+      );
+    } else {
+      mustNot.push(termFilter('poi', true));
+    }
+  }
+  if (disableMinor) {
+    mustNot.push(termFilter('minor', true));
+  }
+
+  // Require url to exist (replaces client-side !hit.url check)
+  filters.push(existsFilter('url'));
+
+  // Filter acceptableMinor at query level (replaces client-side hit.acceptableMinor check)
+  if (!isModerator) {
+    if (currentUserId) {
+      filters.push(
+        orFilter([
+          notFilter(termFilter('acceptableMinor', true)),
+          termFilter('userId', currentUserId),
+        ])
+      );
+    } else {
+      mustNot.push(termFilter('acceptableMinor', true));
+    }
+  }
+
+  if (isModerator) {
+    if (poiOnly) filters.push(termFilter('poi', true));
+    if (minorOnly) filters.push(termFilter('minor', true));
+    if (blockedFor?.length) filters.push(termsFilter('blockedFor', blockedFor));
+  }
+
+  // Hidden images
+  if (hidden) {
+    if (!currentUserId) throw throwAuthorizationError();
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId: currentUserId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (imageIds.length) {
+      filters.push(termsFilter('id', imageIds));
+    } else {
+      return { data: [], nextCursor: undefined };
+    }
+  }
+
+  if (username && !userId) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    userId = targetUser.id;
+  }
+
+  // Followed users
+  if (currentUserId && followed) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      filters.push(termsFilter('userId', userIds));
+    } else {
+      return { data: [], nextCursor: undefined };
+    }
+  }
+
+  // NSFW Level
+  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
+  else browsingLevel = onlySelectableLevels(browsingLevel);
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+
+  if (isModerator && includesNsfwContent) browsingLevels.push(0);
+
+  const nsfwLevelField = useCombinedNsfwLevel ? 'combinedNsfwLevel' : 'nsfwLevel';
+  const nsfwFilters = [termsFilter(nsfwLevelField, browsingLevels)];
+  const nsfwUserFilters = [termFilter(nsfwLevelField, 0)];
+  if (currentUserId) nsfwUserFilters.push(termFilter('userId', currentUserId));
+  nsfwFilters.push(andFilter(nsfwUserFilters));
+  filters.push(orFilter(nsfwFilters));
+
+  // NSFW License Restrictions
+  if (nsfwRestrictedBaseModels.length > 0) {
+    mustNot.push(
+      andFilter([
+        termsFilter(nsfwLevelField, nsfwBrowsingLevelsArray),
+        termsFilter('baseModel', nsfwRestrictedBaseModels),
+      ])
+    );
+  }
+
+  if (modelVersionId) {
+    const versionFilters = [termFilter('postedToId', modelVersionId)];
+    if (!hideAutoResources) versionFilters.push(termsFilter('modelVersionIds', [modelVersionId]));
+    if (!hideManualResources)
+      versionFilters.push(termsFilter('modelVersionIdsManual', [modelVersionId]));
+    filters.push(orFilter(versionFilters));
+  }
+
+  if (remixOfId) filters.push(termFilter('remixOfId', remixOfId));
+  if (remixesOnly && !nonRemixesOnly) filters.push(rangeFilter('remixOfId', 'gte', 0));
+  if (nonRemixesOnly) mustNot.push(existsFilter('remixOfId'));
+
+  if (excludedTagIds?.length) {
+    mustNot.push(termsFilter('tagIds', excludedTagIds));
+  }
+
+  if (withMeta) filters.push(termFilter('hasMeta', true));
+  if (requiringMeta) filters.push(termFilter('blockedFor', BlockedReason.AiNotVerified));
+  if (fromPlatform) filters.push(termFilter('onSite', true));
+
+  // Published date filtering
+  if (isModerator) {
+    if (notPublished) mustNot.push(existsFilter('publishedAtUnix'));
+    else if (scheduled) filters.push(rangeFilter('publishedAtUnix', 'gt', Date.now()));
+    else {
+      const publishedFilters = [rangeFilter('publishedAtUnix', 'lte', Date.now())];
+      if (currentUserId) publishedFilters.push(termFilter('userId', currentUserId));
+      filters.push(orFilter(publishedFilters));
+    }
+  } else {
+    const snappedNow = snapToInterval(Math.round(Date.now()));
+    const publishedFilters = [rangeFilter('publishedAtUnix', 'lte', snappedNow)];
+    if (currentUserId) publishedFilters.push(termFilter('userId', currentUserId));
+    filters.push(orFilter(publishedFilters));
+  }
+
+  if (types?.length) filters.push(termsFilter('type', types));
+  if (tags?.length) filters.push(termsFilter('tagIds', tags));
+  if (tools?.length) filters.push(termsFilter('toolIds', tools));
+  if (techniques?.length) filters.push(termsFilter('techniqueIds', techniques));
+  if (postIds?.length) filters.push(termsFilter('postId', postIds));
+  if (baseModels?.length) filters.push(termsFilter('baseModel', baseModels));
+
+  if (userId) filters.push(termFilter('userId', userId));
+  else if (excludedUserIds) mustNot.push(termsFilter('userId', excludedUserIds));
+
+  // Period filter
+  let afterDate: Date | undefined;
+  if (period && period !== 'AllTime') {
+    const now = dayjs();
+    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
+  }
+  if (afterDate) {
+    filters.push(rangeFilter('sortAtUnix', 'gt', snapToInterval(Math.round(afterDate.getTime()))));
+  }
+
+  // Sort
+  let searchSort: Record<string, { order: 'asc' | 'desc' }>;
+  let useSearchAfter = false;
+  if (sort === ImageSort.MostComments) {
+    searchSort = { commentCount: { order: 'desc' } };
+  } else if (sort === ImageSort.MostReactions) {
+    searchSort = { reactionCount: { order: 'desc' } };
+  } else if (sort === ImageSort.MostCollected) {
+    searchSort = { collectedCount: { order: 'desc' } };
+  } else if (sort === ImageSort.Oldest) {
+    searchSort = { sortAt: { order: 'asc' } };
+  } else {
+    searchSort = { sortAt: { order: 'desc' } };
+    if (entry) {
+      // Keep the range filter for deduplication safety, but also use search_after
+      filters.push(rangeFilter('sortAtUnix', 'lte', snapToInterval(Math.round(entry))));
+      useSearchAfter = true;
+    }
+  }
+  osSort.push(searchSort);
+  // Tiebreaker sort for deterministic ordering
+  osSort.push({ _id: { order: 'desc' } });
+
+  const body = buildSearchBody({
+    filters,
+    mustNot,
+    sort: osSort,
+    size: limit + 1,
+    ...(useSearchAfter && entry ? { searchAfter: [entry] } : { from: offset }),
+  });
+
+  const route = 'getImagesFromOpenSearch';
+  const endTimer = requestDurationSeconds.startTimer({ route });
+  requestTotal.inc({ route });
+
+  try {
+    const response = await openSearchClient.search({
+      index: OPENSEARCH_METRICS_IMAGES_INDEX,
+      body,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hits = (response.body.hits.hits as any[]) ?? [];
+    const results: ImageMetricsSearchIndexRecord[] = hits.map(
+      (h: { _source: ImageMetricsSearchIndexRecord }) => h._source
+    );
+
+    let nextCursor: number | undefined;
+    if (results.length > limit) {
+      results.pop();
+      if (useSearchAfter && hits.length > limit) {
+        // Use the last kept hit's sort values — first sort value is sortAtUnix
+        const lastSortValues = hits[hits.length - 2]?.sort;
+        nextCursor = lastSortValues?.[0] ?? entry;
+      } else {
+        nextCursor = !entry ? results[0]?.sortAtUnix : entry;
+      }
+    }
+
+    // url existence and acceptableMinor are now handled in the OS query.
+    // Only the nsfwLevel/needsReview check remains (complex per-hit conditional logic).
+    const filteredHits = results.filter((hit) => {
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
+    });
+
+    // Existence check — Flipt-gated smart cache (same logic as PreFilter)
+    const searchImageIds = filteredHits.map((hit) => hit.id);
+    const filteredHitIds = [...new Set(searchImageIds)];
+
+    let cacheExistenceEnabled = false;
+
+    const fliptClient = await FliptSingleton.getInstance();
+    if (fliptClient) {
+      const flag = fliptClient.evaluateBoolean({
+        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+        entityId: currentUserId?.toString() || 'anonymous',
+        context: {},
+      });
+      cacheExistenceEnabled = flag.enabled;
+    }
+    ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
+
+    if (!cacheExistenceEnabled) {
+      cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
+
+      // BASIC DB CHECK (default)
+      const dbIdResp = await dbRead.image.findMany({
+        where: { id: { in: filteredHitIds } },
+        select: { id: true },
+      });
+
+      const idSet = new Set(dbIdResp.map((r) => r.id));
+      const filtered = filteredHits.filter((h) => idSet.has(h.id));
+
+      const droppedCount = filteredHits.length - filtered.length;
+      droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
+
+      const imageMetrics = await getImageMetricsObject(filtered);
+      const fullData = filtered.map((h) => {
+        const match = imageMetrics[h.id];
+        return {
+          ...h,
+          stats: {
+            likeCountAllTime: match?.reactionLike ?? 0,
+            laughCountAllTime: match?.reactionLaugh ?? 0,
+            heartCountAllTime: match?.reactionHeart ?? 0,
+            cryCountAllTime: match?.reactionCry ?? 0,
+            commentCountAllTime: match?.comment ?? 0,
+            collectedCountAllTime: match?.collection ?? 0,
+            tippedAmountCountAllTime: match?.buzz ?? 0,
+            dislikeCountAllTime: 0,
+            viewCountAllTime: 0,
+          },
+        };
+      });
+
+      endTimer();
+      return { data: fullData, nextCursor };
+    }
+
+    // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
+    const checkImageExistence = async (imageIds: number[]) => {
+      const uniqueIds = [...new Set(imageIds)];
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
+
+      // Check cached results first
+      const cachedResults = await sysRedis.packed.mGet(cacheKeys);
+
+      const uncachedIds: number[] = [];
+      const cachedMap = new Map<number, boolean>();
+      let cacheMiss = 0;
+
+      for (let i = 0; i < uniqueIds.length; i++) {
+        const id = uniqueIds[i];
+        const cachedResult = cachedResults[i];
+
+        if (cachedResult === 'true') {
+          cachedMap.set(id, true);
+        } else if (cachedResult === 'false') {
+          cachedMap.set(id, false);
+        } else {
+          uncachedIds.push(id);
+          cacheMiss++;
+        }
+      }
+
+      let hitType: 'full' | 'partial' | 'miss';
+      if (cacheMiss === 0) {
+        hitType = 'full';
+      } else if (cacheMiss === uniqueIds.length) {
+        hitType = 'miss';
+      } else {
+        hitType = 'partial';
+      }
+
+      cacheHitRequestsTotal.inc({ route, hit_type: hitType });
+
+      // Query DB for uncached IDs
+      if (uncachedIds.length > 0) {
+        const dbResults = await dbRead.image.findMany({
+          where: { id: { in: uncachedIds } },
+          select: { id: true },
+        });
+
+        const dbIdSet = new Set(dbResults.map((r) => r.id));
+
+        // Update cache with DB results (10-minute TTL)
+        const cacheUpdates: Record<string, string> = {};
+        for (const id of uncachedIds) {
+          const exists = dbIdSet.has(id);
+          cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
+          cachedMap.set(id, exists);
+        }
+
+        await Promise.all(
+          Object.entries(cacheUpdates).map(([key, value]) =>
+            sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
+          )
+        );
+      }
+
+      // Filter hits based on existence check while preserving order
+      let dropped = 0;
+      const existenceFiltered = filteredHits.filter((hit) => {
+        const exists = cachedMap.get(hit.id);
+        const keep = exists !== false; // treat undefined as exists=true
+        if (!keep) dropped++;
+        return keep;
+      });
+
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
+
+      return existenceFiltered.filter((x) => imageIds.includes(x.id));
+    };
+
+    const filtered = await checkImageExistence(filteredHitIds);
+
+    const imageMetrics = await getImageMetricsObject(filtered);
+    const fullData = filtered.map((h) => {
+      const match = imageMetrics[h.id];
+      return {
+        ...h,
+        stats: {
+          likeCountAllTime: match?.reactionLike ?? 0,
+          laughCountAllTime: match?.reactionLaugh ?? 0,
+          heartCountAllTime: match?.reactionHeart ?? 0,
+          cryCountAllTime: match?.reactionCry ?? 0,
+          commentCountAllTime: match?.comment ?? 0,
+          collectedCountAllTime: match?.collection ?? 0,
+          tippedAmountCountAllTime: match?.buzz ?? 0,
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
+        },
+      };
+    });
+
+    endTimer();
+    return { data: fullData, nextCursor };
+  } catch (error) {
+    const err = error as Error;
+    logToAxiom(
+      {
+        type: 'opensearch-error',
+        error: err.message,
+        cause: err.cause,
+        input: removeEmpty(input),
+      },
+      'temp-search'
+    ).catch();
+    endTimer();
     return { data: [], nextCursor: undefined };
   }
 }

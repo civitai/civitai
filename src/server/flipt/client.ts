@@ -21,6 +21,7 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
+  FEED_OPENSEARCH = 'feed-opensearch',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

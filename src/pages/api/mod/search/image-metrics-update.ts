@@ -7,6 +7,8 @@ import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbReadLong } from '~/server/db/pgDb';
 import { metricsSearchClient, updateDocs } from '~/server/meilisearch/client';
+import { OPENSEARCH_METRICS_IMAGES_INDEX } from '~/server/opensearch/metrics-images.mappings';
+import { syncToOpenSearch } from '~/server/opensearch/sync';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
@@ -95,6 +97,7 @@ const addFields = async () => {
         batchSize: BATCH_SIZE,
         client: metricsSearchClient,
       });
+      await syncToOpenSearch({ operation: 'index', indexName: OPENSEARCH_METRICS_IMAGES_INDEX, documents, batchSize: BATCH_SIZE });
       console.timeEnd(consolePushKey);
     },
   });
@@ -163,6 +166,7 @@ const updateBaseModel = async () => {
         batchSize: BATCH_SIZE,
         client: metricsSearchClient,
       });
+      await syncToOpenSearch({ operation: 'index', indexName: OPENSEARCH_METRICS_IMAGES_INDEX, documents: records, batchSize: BATCH_SIZE });
       console.timeEnd(consolePushKey);
     },
   });
@@ -194,6 +198,7 @@ const addCollections = async () => {
       batchSize: BATCH_SIZE,
       client: metricsSearchClient,
     });
+    await syncToOpenSearch({ operation: 'index', indexName: OPENSEARCH_METRICS_IMAGES_INDEX, documents: batch, batchSize: BATCH_SIZE });
     console.timeEnd(consolePushKey);
   });
   await limitConcurrency(tasks, 10);

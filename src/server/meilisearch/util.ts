@@ -14,6 +14,8 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { OPENSEARCH_METRICS_IMAGES_INDEX } from '~/server/opensearch/metrics-images.mappings';
+import { syncDeleteByQuery, syncToOpenSearch } from '~/server/opensearch/sync';
 
 const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
@@ -114,6 +116,15 @@ const onSearchIndexDocumentsCleanup = async ({
     }
 
     await index.deleteDocuments(ids);
+
+    if (indexName === METRICS_IMAGES_SEARCH_INDEX) {
+      await syncToOpenSearch({
+        operation: 'delete',
+        indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+        documents: ids.map((id: number) => ({ id })),
+      });
+    }
+
     console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
 
     return;
@@ -141,6 +152,15 @@ const onSearchIndexDocumentsCleanup = async ({
   }
 
   await index.deleteDocuments(itemIds);
+
+  if (indexName === METRICS_IMAGES_SEARCH_INDEX) {
+    await syncToOpenSearch({
+      operation: 'delete',
+      indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+      documents: itemIds.map((id: number) => ({ id })),
+    });
+  }
+
   await queuedItemsToDelete.commit();
   console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
 };
@@ -250,6 +270,20 @@ export const removeUserContentFromSearchIndex = async ({
     }
   };
 
+  // Also remove from OpenSearch when flag is enabled
+  const openSearchDeletion = (async () => {
+    try {
+      await syncDeleteByQuery({
+        indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+        query: { term: { userId } },
+      });
+      return { indexName: 'opensearch-metrics-images', status: 'processed' as const };
+    } catch (error) {
+      console.error('removeUserContentFromSearchIndex :: OpenSearch error:', error);
+      return { indexName: 'opensearch-metrics-images', status: 'skipped' as const };
+    }
+  })();
+
   // Process all indexes in parallel using allSettled for resilience
   // If one index fails, others should still complete
   const results = await Promise.allSettled([
@@ -257,6 +291,8 @@ export const removeUserContentFromSearchIndex = async ({
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
     // Metrics search indexes (separate Meilisearch instance)
     ...metricsIndexConfigs.map(({ name, filter }) => processIndex(name, filter, metricsSearchClient)),
+    // OpenSearch metrics index
+    openSearchDeletion,
   ]);
 
   const processed: string[] = [];

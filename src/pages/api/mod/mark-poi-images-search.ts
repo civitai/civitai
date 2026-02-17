@@ -5,6 +5,8 @@ import * as z from 'zod';
 import { IMAGES_SEARCH_INDEX, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { metricsSearchClient, searchClient, updateDocs } from '~/server/meilisearch/client';
+import { OPENSEARCH_METRICS_IMAGES_INDEX } from '~/server/opensearch/metrics-images.mappings';
+import { syncToOpenSearch } from '~/server/opensearch/sync';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -96,6 +98,13 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           })),
           indexName: METRICS_IMAGES_SEARCH_INDEX,
           client: metricsSearchClient,
+          batchSize: 10000,
+        });
+
+        await syncToOpenSearch({
+          operation: 'update',
+          indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+          documents: batch.map((id) => ({ id, poi: true })),
           batchSize: 10000,
         });
 

@@ -5,6 +5,14 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import type { BlockedReason } from '~/server/common/enums';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { openSearchClient } from '~/server/opensearch/client';
+import {
+  OPENSEARCH_METRICS_IMAGES_INDEX,
+  metricsImagesMappings,
+  metricsImagesSettings,
+} from '~/server/opensearch/metrics-images.mappings';
+import { syncToOpenSearch } from '~/server/opensearch/sync';
+import { ensureIndex } from '~/server/opensearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import type { Availability } from '~/shared/utils/prisma/enums';
@@ -120,6 +128,16 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   console.log('onIndexSetup :: all tasks completed');
+
+  // Also ensure OpenSearch index exists
+  if (openSearchClient) {
+    try {
+      await ensureIndex(OPENSEARCH_METRICS_IMAGES_INDEX, metricsImagesMappings, metricsImagesSettings);
+      console.log('onIndexSetup :: OpenSearch index ensured');
+    } catch (e) {
+      console.error('onIndexSetup :: Failed to ensure OpenSearch index', e);
+    }
+  }
 };
 
 export type SearchBaseImage = {
@@ -478,14 +496,23 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     return result;
   },
   transformData,
-  pushData: async ({ indexName }, data) => {
+  pushData: async ({ indexName, jobContext }, data) => {
     if (data.length > 0) {
-      await updateDocs({
-        indexName,
-        documents: data,
-        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        client,
-      });
+      await Promise.all([
+        updateDocs({
+          indexName,
+          documents: data,
+          batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+          client,
+        }),
+        syncToOpenSearch({
+          operation: 'index',
+          indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+          documents: data,
+          batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+          jobContext,
+        }),
+      ]);
     }
 
     return;

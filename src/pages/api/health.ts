@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
+import { openSearchClient } from '~/server/opensearch/client';
 import { registerCounter } from '~/server/prom/client';
 import { redis, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -100,6 +101,19 @@ const checkFns: Record<string, CancellableCheckFn> = {
     });
   },
 
+  async openSearch(signal: AbortSignal) {
+    if (signal.aborted) return false;
+    if (!env.OPENSEARCH_HOST) return true;
+    if (openSearchClient === null) return false;
+    try {
+      const { body } = await openSearchClient.cluster.health();
+      return body.status === 'green' || body.status === 'yellow';
+    } catch (e) {
+      logError({ error: e as Error, name: 'openSearch', details: null });
+      return false;
+    }
+  },
+
   // Redis checks - use simple ping (redis v5 doesn't support AbortSignal via commandOptions)
   async redis(signal: AbortSignal) {
     if (signal.aborted) return false;
@@ -150,6 +164,7 @@ type CheckKey =
   | 'pgWrite'
   | 'pgRead'
   | 'searchMetrics'
+  | 'openSearch'
   | 'redis'
   | 'sysRedis'
   | 'clickhouse';

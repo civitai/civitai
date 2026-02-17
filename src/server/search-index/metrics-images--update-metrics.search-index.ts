@@ -2,6 +2,8 @@ import { chunk } from 'lodash-es';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { OPENSEARCH_METRICS_IMAGES_INDEX } from '~/server/opensearch/metrics-images.mappings';
+import { syncToOpenSearch } from '~/server/opensearch/sync';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -86,12 +88,20 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     logger('Pushing data to index', data.length);
     if (data.length <= 0) return;
 
-    await updateDocs({
-      indexName,
-      documents: data,
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-      client,
-    });
+    await Promise.all([
+      updateDocs({
+        indexName,
+        documents: data,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+        client,
+      }),
+      syncToOpenSearch({
+        operation: 'update',
+        indexName: OPENSEARCH_METRICS_IMAGES_INDEX,
+        documents: data,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      }),
+    ]);
   },
   client,
 });
