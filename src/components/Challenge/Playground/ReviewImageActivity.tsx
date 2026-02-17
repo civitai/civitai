@@ -1,8 +1,8 @@
 import {
   Button,
   Card,
-  Checkbox,
   Group,
+  JsonInput,
   Paper,
   Progress,
   ScrollArea,
@@ -56,17 +56,15 @@ export function ReviewImageActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
-  const { imageInput, theme, creator, userMessage } = usePlaygroundStore(
-    (s) => s.reviewImageInputs
-  );
+  const { imageInput, theme, creator } = usePlaygroundStore((s) => s.reviewImageInputs);
   const updateInputs = usePlaygroundStore((s) => s.updateReviewImageInputs);
 
   const [result, setResult] = useState<ReviewResult | null>(null);
-  const [multiTurn, setMultiTurn] = useState(false);
 
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const reviewPrompt = draft?.reviewPrompt ?? '';
+  const reviewTemplate = draft?.reviewTemplate ?? '';
 
   const parsedImageId = parseImageInput(imageInput);
 
@@ -91,9 +89,8 @@ export function ReviewImageActivity() {
               review: draft?.reviewPrompt ?? undefined,
             }
           : undefined,
-      userMessage: userMessage || undefined,
+      reviewTemplate: draft?.reviewTemplate ?? undefined,
       aiModel: aiModel || undefined,
-      multiTurn: multiTurn || undefined,
     });
   };
 
@@ -135,25 +132,26 @@ export function ReviewImageActivity() {
           if (id != null) updateDraft(id, { reviewPrompt: e.currentTarget.value || null });
         }}
       />
-      <Textarea
-        label="User Message (override)"
-        placeholder="Leave empty to use default (Theme + Creator)"
+      <JsonInput
+        label="Review Template (override)"
+        placeholder="Leave empty to use judge's default"
+        description="Agent-workbench format. Variables: {{systemPrompt}}, {{theme}}, {{creatorName}}, {{imageUrl}}"
         autosize
-        minRows={2}
-        maxRows={6}
-        value={userMessage}
-        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
-      />
-      <Checkbox
-        label="Multi-turn review (2-pass: objective analysis → persona scoring)"
-        description="Higher quality but 2x API cost. Recommended for finals."
-        checked={multiTurn}
-        onChange={(e) => setMultiTurn(e.currentTarget.checked)}
+        minRows={3}
+        maxRows={8}
+        formatOnBlur
+        validationError="Invalid JSON"
+        styles={{ input: { fontFamily: 'monospace', fontSize: '12px' } }}
+        value={reviewTemplate}
+        onChange={(value) => {
+          const id = selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : null;
+          if (id != null) updateDraft(id, { reviewTemplate: value || null });
+        }}
       />
       <Button
         leftSection={<IconPlayerPlay size={16} />}
         onClick={handleRun}
-        loading={mutation.isLoading}
+        loading={mutation.isPending}
         disabled={!parsedImageId || !theme}
       >
         Review Image

@@ -10,24 +10,22 @@ export type JudgeDraft = {
   systemPrompt?: string | null;
   contentPrompt?: string | null;
   reviewPrompt?: string | null;
+  reviewTemplate?: string | null;
   winnerSelectionPrompt?: string | null;
 };
 
 type GenerateContentInputs = {
   modelVersionIds: number[];
-  userMessage: string;
 };
 
 type ReviewImageInputs = {
   imageInput: string;
   theme: string;
   creator: string;
-  userMessage: string;
 };
 
 type PickWinnersInputs = {
   challengeId: string | null;
-  userMessage: string;
 };
 
 type PlaygroundState = {
@@ -61,9 +59,9 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
       aiModel: 'x-ai/grok-4.1-fast',
       customModelId: '',
       drafts: {},
-      generateContentInputs: { modelVersionIds: [], userMessage: '' },
-      reviewImageInputs: { imageInput: '', theme: '', creator: '', userMessage: '' },
-      pickWinnersInputs: { challengeId: null, userMessage: '' },
+      generateContentInputs: { modelVersionIds: [] },
+      reviewImageInputs: { imageInput: '', theme: '', creator: '' },
+      pickWinnersInputs: { challengeId: null },
 
       setSelectedJudgeId: (id) =>
         set((state) => {

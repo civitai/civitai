@@ -33,6 +33,7 @@ const judgingConfigSchema = z.object({
   userId: z.number(),
   sourceCollectionId: z.number().nullable(),
   prompts: challengePromptsSchema,
+  reviewTemplate: z.string().nullable().default(null),
 });
 
 const challengeConfigSchema = z.object({
@@ -160,6 +161,7 @@ async function fetchJudgingConfigFromDb(judgeId: number): Promise<JudgingConfig 
       collectionPrompt: true,
       contentPrompt: true,
       reviewPrompt: true,
+      reviewTemplate: true,
       winnerSelectionPrompt: true,
     },
   });
@@ -178,6 +180,7 @@ async function fetchJudgingConfigFromDb(judgeId: number): Promise<JudgingConfig 
       review: judge.reviewPrompt ?? '',
       winner: judge.winnerSelectionPrompt ?? '',
     },
+    reviewTemplate: judge.reviewTemplate ?? null,
   };
 }
 
@@ -229,6 +232,7 @@ export type JudgingConfig = {
   userId: number;
   sourceCollectionId: number | null; // Collection to pick model resources from
   prompts: ChallengePrompts;
+  reviewTemplate: string | null; // JSON message template (agent-workbench format)
 };
 
 /**
@@ -253,6 +257,7 @@ export async function getJudgingConfig(
       collectionPrompt: true,
       contentPrompt: true,
       reviewPrompt: true,
+      reviewTemplate: true,
       winnerSelectionPrompt: true,
     },
   });
@@ -271,6 +276,7 @@ export async function getJudgingConfig(
       review: judgingPromptOverride ?? judge.reviewPrompt ?? '',
       winner: judge.winnerSelectionPrompt ?? '',
     },
+    reviewTemplate: judge.reviewTemplate ?? null,
   };
 }
 type ChallengeTypeRow = {

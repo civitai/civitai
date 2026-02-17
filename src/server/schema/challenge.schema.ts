@@ -441,6 +441,7 @@ export const upsertJudgeSchema = z.object({
   collectionPrompt: z.string().optional().nullable(),
   contentPrompt: z.string().optional().nullable(),
   reviewPrompt: z.string().optional().nullable(),
+  reviewTemplate: z.string().optional().nullable(),
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
 });
@@ -473,10 +474,9 @@ export const playgroundReviewImageSchema = z.object({
       review: z.string().optional(),
     })
     .optional(),
+  reviewTemplate: z.string().optional(),
   userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
-  /** Use two-pass review: persona-free analysis first, then persona-scored review */
-  multiTurn: z.boolean().optional(),
 });
 
 // Playground: Pick winners from a challenge

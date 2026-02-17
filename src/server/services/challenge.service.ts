@@ -59,6 +59,7 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewTemplateSchema } from '~/server/games/daily-challenge/template-engine';
 import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -1905,6 +1906,7 @@ export async function getJudgeById(id: number) {
       collectionPrompt: true,
       contentPrompt: true,
       reviewPrompt: true,
+      reviewTemplate: true,
       winnerSelectionPrompt: true,
     },
   });
@@ -1919,6 +1921,19 @@ export async function getJudgeById(id: number) {
 export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) {
   const { id, userId, ...data } = input;
 
+  // Validate reviewTemplate JSON if provided
+  if (data.reviewTemplate) {
+    try {
+      const parsed = JSON.parse(data.reviewTemplate);
+      reviewTemplateSchema.parse(parsed);
+    } catch (e) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Invalid review template: ${e instanceof Error ? e.message : 'Invalid JSON'}`,
+      });
+    }
+  }
+
   const judge = await dbWrite.challengeJudge.upsert({
     where: { id: id ?? -1 },
     create: {
@@ -1930,6 +1945,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       collectionPrompt: data.collectionPrompt ?? null,
       contentPrompt: data.contentPrompt ?? null,
       reviewPrompt: data.reviewPrompt ?? null,
+      reviewTemplate: data.reviewTemplate ?? null,
       winnerSelectionPrompt: data.winnerSelectionPrompt ?? null,
       active: data.active ?? true,
     },
@@ -1943,6 +1959,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       ...(data.collectionPrompt !== undefined && { collectionPrompt: data.collectionPrompt }),
       ...(data.contentPrompt !== undefined && { contentPrompt: data.contentPrompt }),
       ...(data.reviewPrompt !== undefined && { reviewPrompt: data.reviewPrompt }),
+      ...(data.reviewTemplate !== undefined && { reviewTemplate: data.reviewTemplate }),
       ...(data.winnerSelectionPrompt !== undefined && {
         winnerSelectionPrompt: data.winnerSelectionPrompt,
       }),
@@ -2034,6 +2051,11 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
 
   judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
 
+  // Apply reviewTemplate override from playground draft
+  if (input.reviewTemplate != null) {
+    judgingConfig = { ...judgingConfig, reviewTemplate: input.reviewTemplate || null };
+  }
+
   // Resolve imageId to an image URL
   const image = await dbRead.image.findUnique({
     where: { id: input.imageId },
@@ -2041,7 +2063,7 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
 
-  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image' });
+  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image', optimized: true });
 
   const result = await generateReview({
     theme: input.theme,
@@ -2050,7 +2072,6 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
     userMessageOverride: input.userMessage,
-    multiTurn: input.multiTurn,
   });
 
   return result;
