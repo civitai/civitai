@@ -407,6 +407,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   startDate: z.date(),
   endDate: z.date(),
   active: z.boolean().default(true),
+  allowConsecutiveWins: z.boolean().default(false),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

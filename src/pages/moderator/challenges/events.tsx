@@ -74,6 +74,7 @@ const eventFormSchema = z.object({
   startDate: z.date({ error: 'Start date is required' }),
   endDate: z.date({ error: 'End date is required' }),
   active: z.boolean().default(false),
+  allowConsecutiveWins: z.boolean().default(false),
 });
 
 type ChallengeEventItem = {
@@ -84,6 +85,7 @@ type ChallengeEventItem = {
   startDate: Date;
   endDate: Date;
   active: boolean;
+  allowConsecutiveWins: boolean;
   _count: { challenges: number };
 };
 
@@ -111,6 +113,7 @@ function EventFormModal({
       startDate: event?.startDate ? toDisplayUTC(event.startDate) : defaultStartDate,
       endDate: event?.endDate ? toDisplayUTC(event.endDate) : defaultEndDate,
       active: event?.active ?? false,
+      allowConsecutiveWins: event?.allowConsecutiveWins ?? false,
     },
   });
 
@@ -146,6 +149,7 @@ function EventFormModal({
       startDate,
       endDate,
       active: data.active,
+      allowConsecutiveWins: data.allowConsecutiveWins,
     });
   };
 
@@ -197,6 +201,11 @@ function EventFormModal({
             name="active"
             label="Active"
             description="Active events are displayed in the featured challenges section."
+          />
+          <InputSwitch
+            name="allowConsecutiveWins"
+            label="Allow consecutive wins"
+            description="When enabled, users can win multiple challenges within this event without cooldown."
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>
