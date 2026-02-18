@@ -96,18 +96,24 @@ export async function requestScannerTasks({
       ({ url: fileUrl } = await getDownloadUrl(s3Url));
     }
   } catch (error) {
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'request-scanner-tasks',
-        message: `Failed to get download url for file ${fileId} (${fileUrl})`,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      },
-      'webhooks'
-    ).catch();
-    console.error(`Failed to get download url for file ${fileId} (${fileUrl})`);
-    return false;
+    // Storage-resolver may not have this file yet (sync lag for recently uploaded files).
+    // Fall back to delivery worker using the S3 URL directly.
+    try {
+      ({ url: fileUrl } = await getDownloadUrl(s3Url));
+    } catch (fallbackError) {
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'request-scanner-tasks',
+          message: `Failed to get download url for file ${fileId} (${fileUrl})`,
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          stack: fallbackError instanceof Error ? fallbackError.stack : undefined,
+        },
+        'webhooks'
+      ).catch();
+      console.error(`Failed to get download url for file ${fileId} (${fileUrl})`);
+      return false;
+    }
   }
 
   const scanUrl =
