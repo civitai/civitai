@@ -86,6 +86,7 @@ const maxRuns = 5;
 const prefersCaptions: TrainingBaseModelType[] = [
   'flux',
   'flux2',
+  'flux2klein',
   'sd35',
   'hunyuan',
   'wan',

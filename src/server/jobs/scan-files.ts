@@ -6,7 +6,12 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 
 import { createJob } from './job';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import {
+  getDownloadUrl,
+  getDownloadUrlByFileId,
+  isStorageResolverEnabled,
+} from '~/utils/delivery-worker';
+import { logToAxiom } from '~/server/logging/client';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
@@ -85,9 +90,23 @@ export async function requestScannerTasks({
 
   let fileUrl = s3Url;
   try {
-    ({ url: fileUrl } = await getDownloadUrl(s3Url));
+    if (isStorageResolverEnabled()) {
+      ({ url: fileUrl } = await getDownloadUrlByFileId(fileId));
+    } else {
+      ({ url: fileUrl } = await getDownloadUrl(s3Url));
+    }
   } catch (error) {
-    console.error(`Failed to get download url for ${s3Url}`);
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'request-scanner-tasks',
+        message: `Failed to get download url for file ${fileId} (${fileUrl})`,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+      'webhooks'
+    ).catch();
+    console.error(`Failed to get download url for file ${fileId} (${fileUrl})`);
     return false;
   }
 

@@ -66,6 +66,7 @@ import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
+import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
@@ -107,6 +108,7 @@ export const jobs: Job[] = [
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
+  searchIndexUserCleanupJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,

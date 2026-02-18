@@ -9,7 +9,7 @@ The daily challenge system consists of several key components:
 - **Challenge Table**: Dedicated `Challenge` entity (not Articles) with full lifecycle management
 - **Automated Jobs**: Three scheduled jobs handle challenge setup, entry processing, and winner selection
 - **LLM Integration**: GPT-4O powers content generation and entry scoring
-- **Scoring System**: Hybrid scoring combining AI judgment (75%) and community engagement (25%)
+- **Scoring System**: Pure AI judgment scoring across four dimensions
 - **Prize Distribution**: Automated Buzz rewards for winners and participation prizes
 - **Completion Summary**: AI-generated judging process and outcome stored in challenge metadata
 
@@ -23,11 +23,11 @@ The daily challenge system consists of several key components:
 
 ### Scheduled Jobs
 
-| Job | Schedule | Function |
-|-----|----------|----------|
-| `daily-challenge-setup` | `0 22 * * *` (10 PM UTC) | Creates upcoming challenges |
-| `daily-challenge-process-entries` | `*/10 * * * *` (Every 10 mins) | Reviews and scores entries |
-| `daily-challenge-pick-winners` | `0 0 * * *` (Midnight UTC) | Selects winners, distributes prizes |
+| Job                               | Schedule                       | Function                            |
+| --------------------------------- | ------------------------------ | ----------------------------------- |
+| `daily-challenge-setup`           | `0 22 * * *` (10 PM UTC)       | Creates upcoming challenges         |
+| `daily-challenge-process-entries` | `*/10 * * * *` (Every 10 mins) | Reviews and scores entries          |
+| `daily-challenge-pick-winners`    | `0 0 * * *` (Midnight UTC)     | Selects winners, distributes prizes |
 
 ## LLM Integration
 
@@ -36,10 +36,12 @@ The system uses GPT-4O for AI-powered content generation and scoring. LLM prompt
 ### LLM Functions
 
 #### 1. Collection Details Generation
+
 - **Purpose**: Create metadata for the challenge collection
 - **Output**: Collection name and description based on the featured resource
 
 #### 2. Challenge Content Generation
+
 - **Purpose**: Create the challenge content (title, description, invitation, theme)
 - **Output**:
   - Challenge title
@@ -48,6 +50,7 @@ The system uses GPT-4O for AI-powered content generation and scoring. LLM prompt
   - Theme (1-2 words, e.g., "SynthwavePunk")
 
 #### 3. Entry Review
+
 - **Purpose**: Score each submitted entry
 - **Triggered**: Every 10 minutes for new submissions
 - **Output**:
@@ -67,6 +70,7 @@ The system uses GPT-4O for AI-powered content generation and scoring. LLM prompt
 - The comment and reaction are posted directly to the submitted image
 
 #### 4. Winner Selection
+
 - **Purpose**: Pick final winners from top candidates
 - **Input**: Top 10 scored entries with their summaries and scores
 - **Output**:
@@ -89,6 +93,7 @@ Entries failing any check are automatically rejected.
 ### AI Scoring
 
 Each accepted entry receives scores in four dimensions (0-10 each):
+
 - **Theme**: How well the image matches the challenge theme
 - **Wittiness**: Cleverness of the creative interpretation
 - **Humor**: Entertainment value
@@ -97,14 +102,10 @@ Each accepted entry receives scores in four dimensions (0-10 each):
 ### Final Ranking Formula
 
 ```
-Weighted Rating = (AI Rating × 0.75) + (Engagement Score × 0.25)
-
-Where:
-- AI Rating = Average of [theme, wittiness, humor, aesthetic]
-- Engagement Score = Normalized sum of [views, comments, reactions]
+Rating = Average of [theme, wittiness, humor, aesthetic]
 ```
 
-The engagement score is normalized using min/max scaling to a 0-10 range across all entries.
+Entries are ranked purely by their AI judge scores with no community engagement weighting.
 
 ## Winner Selection Process
 
@@ -125,9 +126,9 @@ When a challenge completes, the AI generates content that is stored in `Challeng
 
 ```typescript
 {
-  judgingProcess: string;  // HTML describing how winners were selected
-  outcome: string;         // HTML summary of the challenge outcome
-  completedAt: string;     // ISO timestamp of completion
+  judgingProcess: string; // HTML describing how winners were selected
+  outcome: string; // HTML summary of the challenge outcome
+  completedAt: string; // ISO timestamp of completion
 }
 ```
 
@@ -135,15 +136,16 @@ This content is displayed on the challenge detail page in the Winners section.
 
 ### Prize Structure
 
-| Position | Buzz | Points | Buzz Type |
-|----------|------|--------|-----------|
-| 1st Place | 5,000 | 150 | Yellow |
-| 2nd Place | 2,500 | 100 | Yellow |
-| 3rd Place | 1,500 | 50 | Yellow |
+| Position  | Buzz  | Points | Buzz Type |
+| --------- | ----- | ------ | --------- |
+| 1st Place | 5,000 | 150    | Yellow    |
+| 2nd Place | 2,500 | 100    | Yellow    |
+| 3rd Place | 1,500 | 50     | Yellow    |
 
 **Participation Prize**: Users who submit 10+ valid (accepted) entries receive 200 Buzz (blue) and 10 points.
 
 Entry participation prizes are sent at two times:
+
 1. **During the challenge**: When entries are reviewed and users first meet the requirement
 2. **At completion**: Final sweep to ensure all eligible non-winners receive their entry prizes
 
@@ -185,22 +187,24 @@ Default challenge configuration:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/server/jobs/daily-challenge-processing.ts` | Main job logic (setup, review, winners) |
-| `src/server/games/daily-challenge/generative-content.ts` | LLM integrations |
-| `src/server/games/daily-challenge/daily-challenge.utils.ts` | Config and state management |
-| `src/server/games/daily-challenge/challenge-helpers.ts` | Challenge CRUD and winner management |
-| `src/server/services/challenge.service.ts` | Challenge service (CRUD, manual actions) |
-| `src/server/routers/challenge.router.ts` | Challenge tRPC routes |
-| `src/server/schema/challenge.schema.ts` | Challenge types and validation schemas |
-| `src/pages/challenges/[id]/[[...slug]].tsx` | Challenge detail page |
-| `src/components/Challenge/challenge.utils.ts` | Frontend utilities |
+| File                                                        | Purpose                                  |
+| ----------------------------------------------------------- | ---------------------------------------- |
+| `src/server/jobs/daily-challenge-processing.ts`             | Main job logic (setup, review, winners)  |
+| `src/server/games/daily-challenge/generative-content.ts`    | LLM integrations                         |
+| `src/server/games/daily-challenge/daily-challenge.utils.ts` | Config and state management              |
+| `src/server/games/daily-challenge/challenge-helpers.ts`     | Challenge CRUD and winner management     |
+| `src/server/services/challenge.service.ts`                  | Challenge service (CRUD, manual actions) |
+| `src/server/routers/challenge.router.ts`                    | Challenge tRPC routes                    |
+| `src/server/schema/challenge.schema.ts`                     | Challenge types and validation schemas   |
+| `src/pages/challenges/[id]/[[...slug]].tsx`                 | Challenge detail page                    |
+| `src/components/Challenge/challenge.utils.ts`               | Frontend utilities                       |
 
 ## Database Tables
 
 ### ChallengeType
+
 Stores challenge type definitions and LLM prompts:
+
 - `promptSystemMessage`: Base system context
 - `promptCollection`: Collection generation instructions
 - `promptArticle`: Challenge content generation instructions (title, description, invitation, theme)
@@ -208,6 +212,8 @@ Stores challenge type definitions and LLM prompts:
 - `promptWinner`: Winner selection instructions
 
 ### Challenge State
+
 Challenge state and configuration are stored in Redis:
+
 - `REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG`: Current configuration
 - Custom challenges can be set via Redis with automatic end date management

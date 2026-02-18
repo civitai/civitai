@@ -651,6 +651,7 @@ export const REDIS_SYS_KEYS = {
   QUEUES: {
     BUCKETS: 'queues:buckets',
     SEEN_IMAGES: 'queues:seen-images',
+    USER_CONTENT_REMOVAL: 'queues:user-content-removal',
   },
   RESEARCH: {
     RATINGS_TRACKS: 'research:ratings-tracks-2',

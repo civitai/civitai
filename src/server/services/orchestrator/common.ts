@@ -243,6 +243,7 @@ export async function parseGenerateImageInput({
     originalParams.draft = false;
     originalParams.negativePrompt = '';
     delete originalParams.clipSkip;
+    delete originalParams.enhancedCompatibility;
     if (originalParams.fluxMode === fluxDraftAir) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
@@ -252,7 +253,7 @@ export async function parseGenerateImageInput({
       delete originalParams.cfgScale;
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
-      delete originalParams.enhancedCompatibility;
+      // delete originalParams.enhancedCompatibility;
     }
   }
 

@@ -1866,24 +1866,25 @@ export function GenerationFormContent() {
                                 }}
                               />
                             )}
-                            {EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
-                              getBaseModelGroup(baseModel)
-                            ) && (
-                              <InputSwitch
-                                name="enhancedCompatibility"
-                                labelPosition="left"
-                                label={
-                                  <div className="relative flex items-center gap-1">
-                                    <Input.Label>Enhanced Compatibility</Input.Label>
-                                    <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                                      {`We've updated our generation engine for better performance,
+                            {!isFlux &&
+                              EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
+                                getBaseModelGroup(baseModel)
+                              ) && (
+                                <InputSwitch
+                                  name="enhancedCompatibility"
+                                  labelPosition="left"
+                                  label={
+                                    <div className="relative flex items-center gap-1">
+                                      <Input.Label>Enhanced Compatibility</Input.Label>
+                                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                                        {`We've updated our generation engine for better performance,
                                         but older prompts may look different. Turn this on to make
                                         new generations look more like your originals.`}
-                                    </InfoPopover>
-                                  </div>
-                                }
-                              />
-                            )}
+                                      </InfoPopover>
+                                    </div>
+                                  }
+                                />
+                              )}
                           </div>
                           {/* <Text variant="link" onClick={() => {
                           const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};

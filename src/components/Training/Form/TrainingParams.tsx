@@ -186,10 +186,10 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: 10, max: 40 },
       },
       flux2klein_4b: {
-        all: { default: 5 },
+        all: { default: 10 },
       },
       flux2klein_9b: {
-        all: { default: 5 },
+        all: { default: 10 },
       },
       ltx2: {
         all: { min: 1, max: 20 },
