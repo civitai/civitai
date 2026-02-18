@@ -25,9 +25,8 @@ export type ReviewTemplate = z.infer<typeof reviewTemplateSchema>;
 
 export type ReviewTemplateVariables = {
   systemPrompt: string;
+  reviewPrompt: string;
   theme: string;
-  creatorName: string;
-  imageUrl: string;
 };
 
 /**

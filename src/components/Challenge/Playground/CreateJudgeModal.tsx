@@ -3,11 +3,12 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';
-import { Form, InputText, InputTextArea, useForm } from '~/libs/form';
+import { Form, InputJson, InputText, InputTextArea, useForm } from '~/libs/form';
 import { upsertJudgeSchema } from '~/server/schema/challenge.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
+import { TemplateVariableIndicators } from './TemplateVariableIndicators';
 
 // Form schema — derives from server schema, overrides userId to string for Select
 const schema = upsertJudgeSchema.omit({ id: true, userId: true, active: true }).extend({
@@ -131,13 +132,15 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
             minRows={3}
             maxRows={8}
           />
-          <InputTextArea
+          <InputJson
             name="reviewTemplate"
             label="Review Template (JSON)"
-            description="Agent-workbench format. Variables: {{systemPrompt}}, {{theme}}, {{creatorName}}, {{imageUrl}}"
+            description={<TemplateVariableIndicators value={form.watch('reviewTemplate') ?? ''} />}
             autosize
             minRows={3}
             maxRows={8}
+            formatOnBlur
+            validationError="Invalid JSON"
             styles={{ input: { fontFamily: 'monospace', fontSize: '12px' } }}
           />
           <InputTextArea

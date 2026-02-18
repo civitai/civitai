@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
+import { TemplateVariableIndicators } from './TemplateVariableIndicators';
 
 type ReviewResult = {
   score: { theme: number; wittiness: number; humor: number; aesthetic: number };
@@ -135,7 +136,7 @@ export function ReviewImageActivity() {
       <JsonInput
         label="Review Template (override)"
         placeholder="Leave empty to use judge's default"
-        description="Agent-workbench format. Variables: {{systemPrompt}}, {{theme}}, {{creatorName}}, {{imageUrl}}"
+        description={<TemplateVariableIndicators value={reviewTemplate} />}
         autosize
         minRows={3}
         maxRows={8}
@@ -164,7 +165,7 @@ export function ReviewImageActivity() {
               Scores
             </Text>
             <Paper withBorder p="sm">
-              {Object.entries(result.score).map(([key, value]) => (
+              {Object.entries(result.score ?? {}).map(([key, value]) => (
                 <div key={key}>
                   <Group justify="space-between" mb={4}>
                     <Text size="xs" tt="capitalize">

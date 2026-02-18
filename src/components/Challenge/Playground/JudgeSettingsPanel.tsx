@@ -13,6 +13,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ModelSelector } from './ModelSelector';
 import { usePlaygroundStore } from './playground.store';
+import { TemplateVariableIndicators } from './TemplateVariableIndicators';
 
 export function JudgeSettingsPanel() {
   const selectedJudgeId = usePlaygroundStore((s) => s.selectedJudgeId);
@@ -147,7 +148,7 @@ export function JudgeSettingsPanel() {
           />
           <JsonInput
             label="Review Template (JSON)"
-            description="Agent-workbench format. Variables: {{systemPrompt}}, {{theme}}, {{creatorName}}, {{imageUrl}}"
+            description={<TemplateVariableIndicators value={currentReviewTemplate ?? ''} />}
             autosize
             minRows={4}
             maxRows={14}

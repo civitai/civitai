@@ -457,7 +457,6 @@ export const playgroundGenerateContentSchema = z.object({
       content: z.string().optional(),
     })
     .optional(),
-  userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
 });
 
@@ -475,7 +474,6 @@ export const playgroundReviewImageSchema = z.object({
     })
     .optional(),
   reviewTemplate: z.string().optional(),
-  userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
 });
 
@@ -490,6 +488,5 @@ export const playgroundPickWinnersSchema = z.object({
       winner: z.string().optional(),
     })
     .optional(),
-  userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
 });

@@ -2035,7 +2035,6 @@ export async function playgroundGenerateContent(input: PlaygroundGenerateContent
     allowedNsfwLevel: 1,
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
-    userMessageOverride: input.userMessage,
   });
 
   return result;
@@ -2071,7 +2070,6 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
     imageUrl,
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
-    userMessageOverride: input.userMessage,
   });
 
   return result;
@@ -2109,7 +2107,6 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
     theme: challenge.theme ?? 'Unknown',
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
-    userMessageOverride: input.userMessage,
   });
 
   return result;
