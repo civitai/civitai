@@ -6,28 +6,32 @@ import { isMobileDevice } from '~/hooks/useIsMobile';
 
 export function TwScrollX({ children, className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   const [node, setNode] = useState<HTMLDivElement | null>(null);
-  const largerThanViewport = node && node.scrollWidth > node.offsetWidth;
+  const [largerThanViewport, setLargerThanViewport] = useState(false);
   const [position, setPosition] = useState<'start' | 'end' | null>(null);
 
   useEffect(() => {
     if (!node) return;
 
-    function scroll() {
+    function update() {
       if (!node) return;
+      setLargerThanViewport(node.scrollWidth > node.offsetWidth);
       if (node.scrollLeft === 0) setPosition('start');
       else if (node.scrollLeft >= node.scrollWidth - node.offsetWidth - 1) setPosition('end');
       else setPosition(null);
     }
 
-    scroll();
+    update();
 
-    const observer = new MutationObserver(scroll);
+    const mutationObserver = new MutationObserver(update);
+    const resizeObserver = new ResizeObserver(update);
 
-    observer.observe(node, { subtree: true, childList: true });
-    node?.addEventListener('scroll', scroll, { passive: true });
+    mutationObserver.observe(node, { subtree: true, childList: true });
+    resizeObserver.observe(node);
+    node?.addEventListener('scroll', update, { passive: true });
     return () => {
-      observer.disconnect();
-      node?.removeEventListener('scroll', scroll);
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
+      node?.removeEventListener('scroll', update);
     };
   }, [node]);
 
@@ -40,12 +44,12 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
       {largerThanViewport && position !== 'start' && (
         <div
           className={clsx(
-            'absolute inset-y-0 left-0 z-10 flex items-center bg-gradient-to-r from-white/50 transition hover:bg-white dark:from-dark-7 hover:dark:bg-dark-7',
+            'absolute inset-y-0 left-0 z-10 flex items-center bg-gradient-to-r from-white from-60% to-transparent dark:from-dark-7',
             { ['hidden']: isMobile }
           )}
         >
           <LegacyActionIcon
-            variant="transparent"
+            variant="subtle"
             radius={0}
             onClick={scrollLeft}
             className="h-full"
@@ -54,19 +58,18 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
           </LegacyActionIcon>
         </div>
       )}
-      {/* TODO - add a mutation observer to check node scroll width when children are added/removed */}
       <div ref={setNode} className={clsx('overflow-x-auto scrollbar-none', className)}>
         {children}
       </div>
       {largerThanViewport && position !== 'end' && (
         <div
           className={clsx(
-            'absolute inset-y-0 right-0 z-10 flex items-center bg-gradient-to-l from-white/50 transition hover:bg-white dark:from-dark-7 hover:dark:bg-dark-7',
+            'absolute inset-y-0 right-0 z-10 flex items-center bg-gradient-to-l from-white from-60% to-transparent dark:from-dark-7',
             { ['hidden']: isMobile }
           )}
         >
           <LegacyActionIcon
-            variant="transparent"
+            variant="subtle"
             radius={0}
             onClick={scrollRight}
             className="h-full"
