@@ -64,7 +64,13 @@ const schema = upsertChallengeBaseSchema
     judgeId: z.string().nullish().default('1'),
     eventId: z.string().nullish().default(null),
     coverImage: z
-      .object({ id: z.number().optional(), url: z.string() })
+      .object({
+        id: z.number().optional(),
+        url: z.string(),
+        hash: z.string().nullish(),
+        width: z.number().nullish(),
+        height: z.number().nullish(),
+      })
       .refine((val) => !!val.url, { error: 'Cover image is required' }),
     prize1Buzz: z.number().min(0).default(5000),
     prize2Buzz: z.number().min(0).default(2500),
