@@ -31,6 +31,7 @@ import {
   getTrainingFields,
   isInvalidRapid,
   isInvalidAiToolkit,
+  isAiToolkitEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -230,6 +231,7 @@ export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
   user,
+  features,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
@@ -284,6 +286,14 @@ export const createTrainingWorkflow = async ({
 
   if (isInvalidAiToolkit(baseModelType, trainingParams.engine))
     throw throwBadRequestError('AI Toolkit training is not supported for this model.');
+
+  if (
+    trainingParams.engine === 'ai-toolkit' &&
+    !isAiToolkitEnabled(baseModelType, features)
+  )
+    throw throwBadRequestError(
+      'AI Toolkit training is not currently enabled for this base model.'
+    );
 
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 

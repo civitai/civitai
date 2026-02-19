@@ -1898,16 +1898,17 @@ export const publishModelById = async ({
         }
 
         await tx.$executeRaw`
-          UPDATE "Post"
+          UPDATE "Post" p
           SET "publishedAt" = CASE
-                                WHEN "metadata" ->> 'prevPublishedAt' IS NOT NULL
-                                  THEN ("metadata" ->> 'prevPublishedAt')::timestamptz
-                                ELSE ${publishedAt}
+                                WHEN p."metadata" ->> 'prevPublishedAt' IS NOT NULL
+                                  THEN (p."metadata" ->> 'prevPublishedAt')::timestamptz
+                                ELSE mv."publishedAt"
             END,
-              "metadata"    = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
-          WHERE
-            "userId" = ${model.userId}
-          AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+              "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          FROM "ModelVersion" mv
+          WHERE mv.id = p."modelVersionId"
+            AND p."userId" = ${model.userId}
+            AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
         `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });

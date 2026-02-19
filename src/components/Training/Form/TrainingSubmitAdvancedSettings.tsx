@@ -44,7 +44,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import {
   discountInfo,
   isValidRapid,
-  isAiToolkitSupported,
+  isAiToolkitEnabled,
   isAiToolkitMandatory,
   isSamplePromptsRequired,
   getDefaultEngine,
@@ -280,8 +280,8 @@ export const AdvancedSettings = ({
       )}
 
       {/* AI Toolkit Training Toggle or Required Badge */}
-      {/* AI Toolkit is public for SD1.5 and SDXL, mod-only for other supported models */}
-      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
+      {/* Per-model AI Toolkit availability controlled via Flipt boolean flags */}
+      {isAiToolkitEnabled(selectedRun.baseType, features) && (
         <Group mt="md">
           {!isAiToolkitMandatory(selectedRun.baseType) && (
             // Show toggle for optional AI Toolkit

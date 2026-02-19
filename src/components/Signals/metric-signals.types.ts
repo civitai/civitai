@@ -26,6 +26,9 @@ export type MetricType =
   | 'ratingCount'
   | 'thumbsUpCount'
   | 'thumbsDownCount'
+  | 'generationCount'
+  | 'uploadCount'
+  | 'earnedAmount'
   // Tipping metrics
   | 'tippedAmount'
   | 'tippedAmountCount'

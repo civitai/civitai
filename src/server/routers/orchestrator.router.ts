@@ -377,6 +377,7 @@ export const orchestratorRouter = router({
         ...input,
         token: ctx.token,
         user: ctx.user,
+        features: ctx.features,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
       return await createTrainingWorkflow(args);

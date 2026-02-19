@@ -1,4 +1,5 @@
 import type { SessionUser } from 'next-auth';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import {
@@ -187,6 +188,7 @@ const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
 });
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
+  features: FeatureAccess;
 };
 
 // Can't extend a union, so we need to merge with an intersection

@@ -28,11 +28,18 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
 import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import classes from './CreatorCard.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
-export const CreatorCardSimple = ({
+export const CreatorCardSimple = (props: CreatorCardSimpleProps) => (
+  <MetricSubscriptionProvider entityType="User" entityId={props.user.id}>
+    <CreatorCardSimpleContent {...props} />
+  </MetricSubscriptionProvider>
+);
+
+const CreatorCardSimpleContent = ({
   user,
   cosmeticOverwrites,
   useEquippedCosmetics = true,
@@ -94,6 +101,17 @@ export const CreatorCardSimple = ({
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
   const stats = creator?.stats;
+
+  // Live metrics for user stats
+  const liveStats = useLiveMetrics('User', user.id, {
+    uploadCount: stats?.uploadCountAllTime ?? 0,
+    followerCount: stats?.followerCountAllTime ?? 0,
+    thumbsUpCount: stats?.thumbsUpCountAllTime ?? 0,
+    downloadCount: stats?.downloadCountAllTime ?? 0,
+    reactionCount: stats?.reactionCountAllTime ?? 0,
+    generationCount: stats?.generationCountAllTime ?? 0,
+  });
+
   const displayStats = data
     ? statDisplayOverwrite ??
       ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
@@ -154,19 +172,19 @@ export const CreatorCardSimple = ({
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
-                    uploads={displayStats.includes('uploads') ? stats.uploadCountAllTime : null}
+                    uploads={displayStats.includes('uploads') ? liveStats.uploadCount : null}
                     followers={
-                      displayStats.includes('followers') ? stats.followerCountAllTime : null
+                      displayStats.includes('followers') ? liveStats.followerCount : null
                     }
-                    favorites={displayStats.includes('likes') ? stats.thumbsUpCountAllTime : null}
+                    favorites={displayStats.includes('likes') ? liveStats.thumbsUpCount : null}
                     downloads={
-                      displayStats.includes('downloads') ? stats.downloadCountAllTime : null
+                      displayStats.includes('downloads') ? liveStats.downloadCount : null
                     }
                     reactions={
-                      displayStats.includes('reactions') ? stats.reactionCountAllTime : null
+                      displayStats.includes('reactions') ? liveStats.reactionCount : null
                     }
                     generations={
-                      displayStats.includes('generations') ? stats.generationCountAllTime : null
+                      displayStats.includes('generations') ? liveStats.generationCount : null
                     }
                     colorOverrides={backgroundImage?.data}
                   />
