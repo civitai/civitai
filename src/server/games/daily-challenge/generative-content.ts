@@ -229,6 +229,10 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
         const textItem = items[lastTextIdx] as { type: 'text'; text: string };
         items[lastTextIdx] = { type: 'text', text: textItem.text + schemaInstruction };
         messages[lastSystemIdx] = { ...msg, content: items };
+      } else {
+        const items = [...msg.content];
+        items.push({ type: 'text', text: schemaInstruction.trimStart() });
+        messages[lastSystemIdx] = { ...msg, content: items };
       }
     }
   } else {
