@@ -2897,7 +2897,7 @@ export interface ChallengeEvent {
   startDate: Date;
   endDate: Date;
   active: boolean;
-  allowConsecutiveWins: boolean;
+  winnerCooldownDays: number | null;
   createdById: number | null;
   createdBy?: User | null;
   createdAt: Date;

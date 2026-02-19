@@ -1431,13 +1431,17 @@ export async function getJudgedEntries(
 
   // Exclude users who won a challenge within the cooldown period, scoped by event
   let recentWinnerIds = new Set<number>();
-  if (eventContext?.allowConsecutiveWins) {
+  if (eventContext?.winnerCooldownDays === 0) {
     // Event allows consecutive wins — skip cooldown entirely
-    log('Skipping winner cooldown — event allows consecutive wins', {
+    log('Skipping winner cooldown — event cooldown set to 0', {
       eventId: eventContext.eventId,
     });
   } else if (eventContext !== undefined) {
     // Scoped cooldown: filter by event context
+    const cooldownInterval =
+      eventContext.winnerCooldownDays != null
+        ? `${eventContext.winnerCooldownDays} day`
+        : config.winnerCooldown;
     const eventCondition =
       eventContext.eventId != null
         ? Prisma.sql`AND c."eventId" = ${eventContext.eventId}`
@@ -1446,7 +1450,7 @@ export async function getJudgedEntries(
       SELECT DISTINCT cw."userId"
       FROM "ChallengeWinner" cw
       JOIN "Challenge" c ON c.id = cw."challengeId"
-      WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
+      WHERE cw."createdAt" > now() - ${cooldownInterval}::interval
         AND c.status = 'Completed'
         ${eventCondition}
     `;
@@ -1464,11 +1468,17 @@ export async function getJudgedEntries(
   }
   const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
 
+  const cooldownSource =
+    eventContext?.winnerCooldownDays === 0
+      ? 'none (no cooldown)'
+      : eventContext?.winnerCooldownDays != null
+      ? `${String(eventContext.winnerCooldownDays)} day (event override)`
+      : `${String(config.winnerCooldown)} (global default)`;
   log('Winner cooldown filter:', {
     total: userBestEntries.length,
     excluded: userBestEntries.length - eligibleEntries.length,
     eligible: eligibleEntries.length,
-    cooldown: config.winnerCooldown,
+    cooldown: cooldownSource,
   });
 
   // Rank entries purely by AI judge score (no engagement/reaction weighting)

@@ -587,17 +587,21 @@ export type SelectedResource = {
 };
 
 /** Event context for scoping winner cooldowns. */
-export type EventContext = { eventId: number | null; allowConsecutiveWins: boolean };
+export type EventContext = {
+  eventId: number | null;
+  /** null = use global default, 0 = no cooldown, >0 = custom cooldown days */
+  winnerCooldownDays: number | null;
+};
 
 /** Resolve event context for a challenge's eventId. */
 export async function resolveEventContext(eventId: number | null): Promise<EventContext> {
-  let allowConsecutiveWins = false;
+  let winnerCooldownDays: number | null = null;
   if (eventId != null) {
     const eventRow = await dbRead.challengeEvent.findUnique({
       where: { id: eventId },
-      select: { allowConsecutiveWins: true },
+      select: { winnerCooldownDays: true },
     });
-    allowConsecutiveWins = eventRow?.allowConsecutiveWins ?? false;
+    winnerCooldownDays = eventRow?.winnerCooldownDays ?? null;
   }
-  return { eventId, allowConsecutiveWins };
+  return { eventId, winnerCooldownDays };
 }

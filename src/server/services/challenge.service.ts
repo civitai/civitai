@@ -1836,7 +1836,7 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
       startDate: true,
       endDate: true,
       active: true,
-      allowConsecutiveWins: true,
+      winnerCooldownDays: true,
       createdAt: true,
       _count: { select: { challenges: true } },
     },

@@ -3881,18 +3881,18 @@ model ChallengeWinner {
 }
 
 model ChallengeEvent {
-  id                   Int      @id @default(autoincrement())
-  title                String
-  description          String?  @db.Text
-  titleColor           String?
-  startDate            DateTime
-  endDate              DateTime
-  active               Boolean  @default(true)
-  allowConsecutiveWins Boolean  @default(false)
-  createdById          Int?
-  createdBy            User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                 Int      @id @default(autoincrement())
+  title              String
+  description        String?  @db.Text
+  titleColor         String?
+  startDate          DateTime
+  endDate            DateTime
+  active             Boolean  @default(true)
+  winnerCooldownDays Int?
+  createdById        Int?
+  createdBy          User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   challenges Challenge[]
 
