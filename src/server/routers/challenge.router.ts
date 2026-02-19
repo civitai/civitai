@@ -194,9 +194,7 @@ export const challengeRouter = router({
   upsertJudge: moderatorProcedure
     .input(upsertJudgeSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input, ctx }) =>
-      upsertJudge({ ...input, userId: input.userId ?? ctx.user.id })
-    ),
+    .mutation(({ input, ctx }) => upsertJudge({ ...input, userId: input.userId ?? ctx.user.id })),
 
   // Moderator: Playground — generate content
   playgroundGenerateContent: moderatorProcedure
