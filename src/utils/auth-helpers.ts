@@ -45,7 +45,14 @@ export function handleSignIn(providerId: string, callbackUrl: string) {
       ? callbackUrl
       : `${window.location.origin}${callbackUrl.startsWith('/') ? callbackUrl : '/' + callbackUrl}`;
 
-    window.location.href = `${authProxyUrl}/login?returnUrl=${encodeURIComponent(fullCallbackUrl)}`;
+    const url = new URL(`${authProxyUrl}/login`);
+    url.searchParams.set('returnUrl', fullCallbackUrl);
+
+    // Forward reason param (e.g., switch-accounts) so auth proxy doesn't auto-redirect
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    if (reason) url.searchParams.set('reason', reason);
+
+    window.location.href = url.toString();
   } else {
     // Normal flow: use NextAuth's built-in signIn
     signIn(providerId, { callbackUrl });
