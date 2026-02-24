@@ -155,9 +155,8 @@ type GeneratedReview = {
   reaction: ReviewReactions;
   comment: string;
   summary: string;
+  aestheticFlaws?: string[];
 };
-
-const REVIEW_TEMPERATURE = 0.4;
 
 const RESPONSE_SCHEMA = `{
   "score": {
@@ -169,6 +168,7 @@ const RESPONSE_SCHEMA = `{
   "reaction": "Laugh" | "Heart" | "Like" | "Cry",
   "comment": "your review comment (2-3 sentences)",
   "summary": "concise factual summary of the image"
+  "aestheticFlaws": ["string describing flaw 1","string describing flaw 2",...] // optional array of strings describing specific aesthetic flaws in the image 
 }`;
 
 export async function generateReview(input: GenerateReviewInput): Promise<GeneratedReview> {
@@ -189,7 +189,6 @@ export async function generateReview(input: GenerateReviewInput): Promise<Genera
   const result = await openrouter.getJsonCompletion<GeneratedReview>({
     retries: 3,
     model: input.model ?? AI_MODELS.GROK,
-    temperature: REVIEW_TEMPERATURE,
     messages,
   });
 
@@ -198,6 +197,7 @@ export async function generateReview(input: GenerateReviewInput): Promise<Genera
     reaction: result.reaction,
     comment: result.comment,
     summary: result.summary,
+    aestheticFlaws: result.aestheticFlaws,
   };
 }
 

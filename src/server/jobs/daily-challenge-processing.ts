@@ -886,6 +886,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         score: review.score,
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
+        ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
       });
       await dbWrite.$executeRaw`
         UPDATE "CollectionItem"

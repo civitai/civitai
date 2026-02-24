@@ -106,6 +106,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         score: review.score,
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
+        ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
       });
       await dbWrite.$executeRaw`
         UPDATE "CollectionItem"

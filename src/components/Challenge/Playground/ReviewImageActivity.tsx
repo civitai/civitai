@@ -23,6 +23,7 @@ type ReviewResult = {
   reaction: string;
   comment: string;
   summary: string;
+  aestheticFlaws?: string[];
 };
 
 const SCORE_COLORS: Record<string, string> = {
@@ -191,6 +192,22 @@ export function ReviewImageActivity() {
             <Paper withBorder p="sm">
               <Text size="sm">{result.comment}</Text>
             </Paper>
+            {result.aestheticFlaws && result.aestheticFlaws.length > 0 && (
+              <>
+                <Text size="sm" fw={600} mb={4}>
+                  Aesthetic Flaws
+                </Text>
+                <Paper withBorder p="sm">
+                  <Stack gap={4}>
+                    {result.aestheticFlaws.map((flaw, i) => (
+                      <Text key={i} size="sm">
+                        &bull; {flaw}
+                      </Text>
+                    ))}
+                  </Stack>
+                </Paper>
+              </>
+            )}
           </Stack>
         </Card>
       )}
