@@ -407,6 +407,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   startDate: z.date(),
   endDate: z.date(),
   active: z.boolean().default(true),
+  winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(
@@ -441,6 +442,7 @@ export const upsertJudgeSchema = z.object({
   collectionPrompt: z.string().optional().nullable(),
   contentPrompt: z.string().optional().nullable(),
   reviewPrompt: z.string().optional().nullable(),
+  reviewTemplate: z.string().optional().nullable(),
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
 });
@@ -456,7 +458,6 @@ export const playgroundGenerateContentSchema = z.object({
       content: z.string().optional(),
     })
     .optional(),
-  userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
 });
 
@@ -473,7 +474,7 @@ export const playgroundReviewImageSchema = z.object({
       review: z.string().optional(),
     })
     .optional(),
-  userMessage: z.string().optional(),
+  reviewTemplate: z.string().optional(),
   aiModel: z.string().min(1).optional(),
 });
 
@@ -488,6 +489,5 @@ export const playgroundPickWinnersSchema = z.object({
       winner: z.string().optional(),
     })
     .optional(),
-  userMessage: z.string().optional(),
   aiModel: z.string().min(1).optional(),
 });

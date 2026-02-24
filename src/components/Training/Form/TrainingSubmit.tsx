@@ -86,6 +86,7 @@ const maxRuns = 5;
 const prefersCaptions: TrainingBaseModelType[] = [
   'flux',
   'flux2',
+  'flux2klein',
   'sd35',
   'hunyuan',
   'wan',
@@ -212,6 +213,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         flipAugmentation: selectedRun.params.flipAugmentation || false,
         shuffleTokens: selectedRun.params.shuffleCaption,
         keepTokens: selectedRun.params.keepTokens,
+        numRepeats: selectedRun.params.numRepeats,
       } as any;
       return retData;
     }
@@ -559,6 +561,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           flipAugmentation: paramData.flipAugmentation || false,
           shuffleTokens: paramData.shuffleCaption,
           keepTokens: paramData.keepTokens,
+          numRepeats: paramData.numRepeats,
         };
       }
 

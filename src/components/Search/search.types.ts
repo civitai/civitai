@@ -2,6 +2,7 @@ import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
@@ -18,6 +19,7 @@ export const searchIndexMap = {
   collections: COLLECTIONS_SEARCH_INDEX,
   bounties: BOUNTIES_SEARCH_INDEX,
   tools: TOOLS_SEARCH_INDEX,
+  comics: COMICS_SEARCH_INDEX,
 } as const;
 
 export type ReverseSearchIndexKey = keyof typeof reverseSearchIndexMap;
@@ -29,6 +31,7 @@ export const reverseSearchIndexMap = {
   [COLLECTIONS_SEARCH_INDEX]: 'collections',
   [BOUNTIES_SEARCH_INDEX]: 'bounties',
   [TOOLS_SEARCH_INDEX]: 'tools',
+  [COMICS_SEARCH_INDEX]: 'comics',
 } as const;
 // #endregion
 
@@ -40,4 +43,5 @@ export const searchIndexProps: Record<SearchIndexKey, { label: string }> = {
   collections: { label: 'Collections' },
   bounties: { label: 'Bounties' },
   tools: { label: 'Tools' },
+  comics: { label: 'Comics' },
 } as const;

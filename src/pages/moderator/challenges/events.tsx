@@ -31,6 +31,7 @@ import {
   Form,
   InputDateTimePicker,
   InputSelect,
+  InputNumber,
   InputSwitch,
   InputText,
   InputTextArea,
@@ -74,6 +75,7 @@ const eventFormSchema = z.object({
   startDate: z.date({ error: 'Start date is required' }),
   endDate: z.date({ error: 'End date is required' }),
   active: z.boolean().default(false),
+  winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 
 type ChallengeEventItem = {
@@ -84,6 +86,7 @@ type ChallengeEventItem = {
   startDate: Date;
   endDate: Date;
   active: boolean;
+  winnerCooldownDays: number | null;
   _count: { challenges: number };
 };
 
@@ -111,6 +114,7 @@ function EventFormModal({
       startDate: event?.startDate ? toDisplayUTC(event.startDate) : defaultStartDate,
       endDate: event?.endDate ? toDisplayUTC(event.endDate) : defaultEndDate,
       active: event?.active ?? false,
+      winnerCooldownDays: event?.winnerCooldownDays ?? null,
     },
   });
 
@@ -146,6 +150,7 @@ function EventFormModal({
       startDate,
       endDate,
       active: data.active,
+      winnerCooldownDays: data.winnerCooldownDays ?? null,
     });
   };
 
@@ -197,6 +202,15 @@ function EventFormModal({
             name="active"
             label="Active"
             description="Active events are displayed in the featured challenges section."
+          />
+          <InputNumber
+            name="winnerCooldownDays"
+            label="Winner Cooldown (days)"
+            placeholder="e.g., 7"
+            description="Leave empty for global default (7 days). Set to 0 for no cooldown (allow consecutive wins)."
+            min={0}
+            max={365}
+            clearable
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>
@@ -316,6 +330,15 @@ export default function ModeratorChallengeEventsPage() {
                             {event._count.challenges} challenge
                             {event._count.challenges !== 1 ? 's' : ''}
                           </Badge>
+                          {event.winnerCooldownDays === 0 ? (
+                            <Badge color="yellow" size="sm" variant="light">
+                              No cooldown
+                            </Badge>
+                          ) : event.winnerCooldownDays != null ? (
+                            <Badge color="violet" size="sm" variant="light">
+                              Cooldown: {event.winnerCooldownDays}d
+                            </Badge>
+                          ) : null}
                         </Group>
                         {event.description && (
                           <Text size="sm" c="dimmed">

@@ -164,6 +164,7 @@ const aiToolkitTrainingDetailsParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  numRepeats: z.number().optional(),
   maxTrainEpochs: z.number().nullable().optional(),
 });
 

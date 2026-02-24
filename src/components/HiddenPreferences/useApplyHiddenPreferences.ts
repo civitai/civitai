@@ -633,6 +633,9 @@ function filterPreferences<
     case 'tools':
       // No need to apply hidden preferences to tools
       return { items: value, hidden };
+    case 'comics':
+      // No need to apply hidden preferences to comics
+      return { items: value, hidden };
     case 'challenges':
       const challenges = value.filter((challenge) => {
         const isOwner = challenge.createdBy.id === currentUser?.id;
@@ -768,6 +771,10 @@ type BaseTool = {
   id: number;
 };
 
+type BaseComic = {
+  id: number;
+}
+
 type BaseChallenge = {
   id: number;
   nsfwLevel: number;
@@ -784,5 +791,6 @@ export type BaseDataTypeMap = {
   posts: BasePost[];
   tags: BaseTag[];
   tools: BaseTool[];
+  comics: BaseComic[];
   challenges: BaseChallenge[];
 };

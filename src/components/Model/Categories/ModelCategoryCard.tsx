@@ -56,13 +56,27 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function ModelCategoryCard({
+export function ModelCategoryCard(
+  props: ElementDataAttributes & {
+    data: AssociatedResourceModelCardData;
+    height: number;
+  }
+) {
+  return (
+    <MetricSubscriptionProvider entityType="Model" entityId={props.data.id}>
+      <ModelCategoryCardContent {...props} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ModelCategoryCardContent({
   data,
   ...props
 }: ElementDataAttributes & {
@@ -78,6 +92,14 @@ export function ModelCategoryCard({
 
   const { id, images, name, rank, user, earlyAccessDeadline } = data;
   const image = images[0];
+
+  // Live metrics for model stats
+  const liveMetrics = useLiveMetrics('Model', id, {
+    downloadCount: rank.downloadCount,
+    thumbsUpCount: rank.thumbsUpCount,
+    commentCount: rank.commentCount,
+  });
+
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
@@ -127,11 +149,11 @@ export function ModelCategoryCard({
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-      <Text fz={12}>{abbreviateNumber(rank.downloadCount)}</Text>
+      <Text fz={12}>{abbreviateNumber(liveMetrics.downloadCount)}</Text>
     </IconBadge>
   );
 
-  const modelLikes = !!rank.thumbsUpCount && (
+  const modelLikes = !!liveMetrics.thumbsUpCount && (
     <IconBadge
       className={classes.statBadge}
       icon={
@@ -141,13 +163,13 @@ export function ModelCategoryCard({
       }
       color={hasReview ? 'success.5' : 'gray'}
     >
-      <Text size="xs">{abbreviateNumber(rank.thumbsUpCount)}</Text>
+      <Text size="xs">{abbreviateNumber(liveMetrics.thumbsUpCount)}</Text>
     </IconBadge>
   );
 
-  const modelComments = !!rank.commentCount && (
+  const modelComments = !!liveMetrics.commentCount && (
     <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
-      <Text size="xs">{abbreviateNumber(rank.commentCount)}</Text>
+      <Text size="xs">{abbreviateNumber(liveMetrics.commentCount)}</Text>
     </IconBadge>
   );
 

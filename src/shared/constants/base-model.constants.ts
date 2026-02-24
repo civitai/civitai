@@ -791,6 +791,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Flux.2 Klein 9B-base'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B'],
+      },
+    ],
   },
   {
     group: 'Flux2Klein_4B',
@@ -813,6 +819,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.2 Klein 4B-base'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B'],
       },
     ],
   },

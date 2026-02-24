@@ -62,15 +62,33 @@ async function autoMuteIfScamAccount({
   const hasAutoMuteTag = matches.some((m) => autoMuteTags.includes(m));
   if (!hasAutoMuteTag) return;
 
+  log(`Auto-mute check: userId=${userId}, matches=[${matches.join(', ')}]`);
+
   try {
     const user = await dbRead.user.findUnique({
       where: { id: userId },
       select: { createdAt: true, isModerator: true, muted: true },
     });
-    if (!user || user.isModerator || user.muted) return;
+    if (!user) {
+      log(`Auto-mute skip: user ${userId} not found`);
+      return;
+    }
+    if (user.isModerator) {
+      log(`Auto-mute skip: user ${userId} is moderator`);
+      return;
+    }
+    if (user.muted) {
+      log(`Auto-mute skip: user ${userId} already muted`);
+      return;
+    }
 
     const accountAgeDays = dayjs().diff(dayjs(user.createdAt), 'day');
-    if (accountAgeDays > autoMuteAccountAgeDays) return;
+    if (accountAgeDays > autoMuteAccountAgeDays) {
+      log(
+        `Auto-mute skip: user ${userId} account age ${accountAgeDays}d > ${autoMuteAccountAgeDays}d`
+      );
+      return;
+    }
 
     const date = new Date();
     await updateUserById({
@@ -94,11 +112,15 @@ async function autoMuteIfScamAccount({
     await tracker.userActivity({
       type: 'Muted',
       targetUserId: userId,
-      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(', ')}, deleted: ${deleted.count} msgs)`,
+      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(', ')}, deleted: ${
+        deleted.count
+      } msgs)`,
     });
 
     log(
-      `Auto-muted user ${userId} and deleted ${deleted.count} messages (account age: ${accountAgeDays}d, tags: ${matches.join(', ')})`
+      `Auto-muted user ${userId} and deleted ${
+        deleted.count
+      } messages (account age: ${accountAgeDays}d, tags: ${matches.join(', ')})`
     );
   } catch (error) {
     logAx({ message: 'Error auto-muting user', data: { error, userId, matches } });
@@ -274,6 +296,7 @@ const deleteFromJobQueue = async (entityType: QueueKeys, ids: number[]) => {
 interface ContentItem {
   id: number;
   userId: number;
+  userIds?: number[]; // For chat: all real userIds in a grouped entity
   value: string;
 }
 
@@ -400,11 +423,23 @@ const runClavata = async ({
         }
 
         // Auto-mute new accounts flagged for scam impersonation
-        await autoMuteIfScamAccount({
-          type,
-          userId: metadata.userId,
-          matches: item.matches ?? [],
-        });
+        const matches = item.matches ?? [];
+        const originalItem = batch.find((b) => b.id === Number(metadata.id));
+        const userIdsToCheck = [
+          ...new Set(
+            originalItem?.userIds ?? (Number(metadata.userId) > 0 ? [Number(metadata.userId)] : [])
+          ),
+        ];
+
+        log(
+          `Auto-mute resolve: type=${type}, entityId=${metadata.id},` +
+            ` userIds=[${userIdsToCheck.join(', ')}],` +
+            ` source=${originalItem?.userIds ? 'chat-group' : 'metadata'}`
+        );
+
+        for (const uid of userIdsToCheck) {
+          await autoMuteIfScamAccount({ type, userId: uid, matches });
+        }
 
         if (deleteJob) {
           // TODO batching these would probably be better but this is fine for now
@@ -483,6 +518,7 @@ async function runModChat(lastRun: Date) {
   );
 
   if (badMessages.length > 0) {
+    const chatUserIds: Record<string, Set<number>> = {};
     const badMessagesByChat = badMessages.reduce((acc, cur) => {
       const key = `${cur.chatId}`;
       if (!acc[key]) {
@@ -490,6 +526,8 @@ async function runModChat(lastRun: Date) {
       } else {
         acc[key] += ` | [${cur.userId}]: ${cur.content}`;
       }
+      if (!chatUserIds[key]) chatUserIds[key] = new Set();
+      chatUserIds[key].add(cur.userId);
       return acc;
     }, {} as Record<string, string>);
 
@@ -499,6 +537,7 @@ async function runModChat(lastRun: Date) {
       data: Object.entries(badMessagesByChat).map(([key, value]) => ({
         id: Number(key),
         userId: -1, // we are parsing multiple chats at once, so we can't know who is responsible
+        userIds: Array.from(chatUserIds[key] ?? []),
         value,
       })),
       deleteJob: false,

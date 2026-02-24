@@ -28,7 +28,7 @@ export function GenerateContentActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
-  const { modelVersionIds, userMessage } = usePlaygroundStore((s) => s.generateContentInputs);
+  const { modelVersionIds } = usePlaygroundStore((s) => s.generateContentInputs);
   const updateInputs = usePlaygroundStore((s) => s.updateGenerateContentInputs);
 
   const [result, setResult] = useState<GenerateResult | null>(null);
@@ -57,7 +57,6 @@ export function GenerateContentActivity() {
               content: draft?.contentPrompt ?? undefined,
             }
           : undefined,
-      userMessage: userMessage || undefined,
       aiModel: aiModel || undefined,
     });
   };
@@ -90,19 +89,10 @@ export function GenerateContentActivity() {
           if (id != null) updateDraft(id, { contentPrompt: e.currentTarget.value || null });
         }}
       />
-      <Textarea
-        label="User Message (override)"
-        placeholder="Leave empty to use default (auto-generated from model info)"
-        autosize
-        minRows={2}
-        maxRows={6}
-        value={userMessage}
-        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
-      />
       <Button
         leftSection={<IconPlayerPlay size={16} />}
         onClick={handleRun}
-        loading={mutation.isLoading}
+        loading={mutation.isPending}
         disabled={modelVersionIds.length === 0}
       >
         Generate Content

@@ -45,18 +45,28 @@ export const baseModelMetrics = createMetricProcessor({
         WHERE "modelId" IN (${Prisma.join(ctx.queue)})
       `;
       ctx.queuedModelVersions = queuedModelVersions.map((x) => x.id);
-      log(`queued model versions: ${ctx.queuedModelVersions.length} (${Date.now() - queueStart}ms)`);
+      log(
+        `queued model versions: ${ctx.queuedModelVersions.length} (${Date.now() - queueStart}ms)`
+      );
     }
 
     // Get base model aggregation tasks
     const aggStart = Date.now();
     const baseModelTasks = await getBaseModelAggregationTasks(ctx);
-    log(`baseModelMetrics aggregation tasks: ${baseModelTasks.length} (task creation: ${Date.now() - aggStart}ms)`);
+    log(
+      `baseModelMetrics aggregation tasks: ${baseModelTasks.length} (task creation: ${
+        Date.now() - aggStart
+      }ms)`
+    );
 
     const aggExecStart = Date.now();
     await limitConcurrency(baseModelTasks, AGGREGATION_CONCURRENCY);
     const aggDuration = Date.now() - aggExecStart;
-    log(`aggregation phase complete: ${Object.keys(ctx.baseModelUpdates).length} updates (${aggDuration}ms)`);
+    log(
+      `aggregation phase complete: ${
+        Object.keys(ctx.baseModelUpdates).length
+      } updates (${aggDuration}ms)`
+    );
 
     // Bulk insert base model metrics
     const insertStart = Date.now();
@@ -68,7 +78,9 @@ export const baseModelMetrics = createMetricProcessor({
     log('========== baseModelMetrics update COMPLETE ==========');
     log(`TOTAL TIME: ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`);
     log(`  - Aggregation: ${aggDuration}ms (${((aggDuration / totalDuration) * 100).toFixed(1)}%)`);
-    log(`  - Insert: ${insertDuration}ms (${((insertDuration / totalDuration) * 100).toFixed(1)}%)`);
+    log(
+      `  - Insert: ${insertDuration}ms (${((insertDuration / totalDuration) * 100).toFixed(1)}%)`
+    );
   },
   rank: {
     async refresh() {
@@ -110,7 +122,11 @@ async function getBaseModelAggregationTasks(ctx: BaseModelMetricContext) {
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     const batchStart = Date.now();
-    log(`[batch ${i + 1}/${tasks.length}] starting | models: ${ids.length} | range: ${ids[0]}-${ids[ids.length - 1]}`);
+    log(
+      `[batch ${i + 1}/${tasks.length}] starting | models: ${ids.length} | range: ${ids[0]}-${
+        ids[ids.length - 1]
+      }`
+    );
 
     // Run version stats and review stats queries in parallel for better performance
     const queryStart = Date.now();
@@ -142,7 +158,11 @@ async function getBaseModelAggregationTasks(ctx: BaseModelMetricContext) {
 
     const batchDuration = Date.now() - batchStart;
     log(
-      `[batch ${i + 1}/${tasks.length}] done | versionStats: ${versionStats.length} | reviewStats: ${reviewStats.length} | queries: ${queryDuration}ms | total: ${batchDuration}ms`
+      `[batch ${i + 1}/${tasks.length}] done | versionStats: ${
+        versionStats.length
+      } | reviewStats: ${
+        reviewStats.length
+      } | queries: ${queryDuration}ms | total: ${batchDuration}ms`
     );
   });
 
@@ -212,7 +232,11 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
     return;
   }
 
-  log(`inserting base model metrics | total records: ${updates.length} | batches: ${Math.ceil(updates.length / 250)}`);
+  log(
+    `inserting base model metrics | total records: ${updates.length} | batches: ${Math.ceil(
+      updates.length / 250
+    )}`
+  );
 
   const tasks = chunk(updates, 250).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();
@@ -257,7 +281,9 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
           "updatedAt" = NOW()
     `;
 
-    log(`[insert ${i + 1}/${tasks.length}] ${batch.length} records (${Date.now() - insertStart}ms)`);
+    log(
+      `[insert ${i + 1}/${tasks.length}] ${batch.length} records (${Date.now() - insertStart}ms)`
+    );
   });
 
   await limitConcurrency(tasks, 10);

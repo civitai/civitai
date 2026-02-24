@@ -156,7 +156,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ images, ...args }): Veo3VideoGenInput => {
+  inputFn: ({ images, ...args }) => {
     const checkpoint = getVeo3Checkpoint(args.resources);
     const mode = veo3ModelOptions.find((x) => x.value === checkpoint.air)?.mode ?? 'fast';
     const fastMode = mode === 'fast';
@@ -164,6 +164,6 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
       ...args,
       fastMode,
       images: images?.map((x) => x.url),
-    };
+    } as Veo3VideoGenInput;
   },
 });

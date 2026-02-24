@@ -132,7 +132,7 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
@@ -806,6 +806,7 @@ export const getDownloadCommandHandler = async ({
         files: {
           where: fileWhere,
           select: {
+            id: true,
             url: true,
             name: true,
             type: true,
@@ -884,7 +885,7 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
-    const { url } = await getDownloadUrl(file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -914,7 +915,8 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await getDownloadUrl(additionalFile.url, additionalFileName)).url,
+          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
+            .url,
         },
       });
     }

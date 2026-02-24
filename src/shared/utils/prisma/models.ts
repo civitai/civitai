@@ -184,6 +184,20 @@ export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
 
+export type ComicProjectStatus = "Active" | "Deleted";
+
+export type ComicReferenceStatus = "Pending" | "Ready" | "Failed";
+
+export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
+
+export type ComicChapterStatus = "Draft" | "Published";
+
+export type ComicReferenceType = "Character" | "Location" | "Item";
+
+export type ComicEngagementType = "None" | "Notify" | "Hide";
+
+export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy" | "Horror" | "Mystery" | "Romance" | "SciFi" | "SliceOfLife" | "Thriller" | "Other";
+
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
 export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
@@ -460,9 +474,9 @@ export interface User {
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
   challengeEventsCreated?: ChallengeEvent[];
-  strikes?: UserStrike[];
-  issuedStrikes?: UserStrike[];
-  voidedStrikes?: UserStrike[];
+  comicProjects?: ComicProject[];
+  comicReferences?: ComicReference[];
+  comicProjectEngagements?: ComicProjectEngagement[];
 }
 
 export interface CustomerSubscription {
@@ -947,6 +961,7 @@ export interface Report {
   bounty?: BountyReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
+  comicProject?: ComicProjectReport | null;
   automated?: ReportAutomated | null;
 }
 
@@ -1030,6 +1045,13 @@ export interface BountyEntryReport {
 export interface ChatReport {
   chatId: number;
   chat?: Chat;
+  reportId: number;
+  report?: Report;
+}
+
+export interface ComicProjectReport {
+  comicProjectId: number;
+  comicProject?: ComicProject;
   reportId: number;
   report?: Report;
 }
@@ -1187,6 +1209,10 @@ export interface Image {
   tagsNew?: TagsOnImageNew[];
   imageResourceNew?: ImageResourceNew[];
   imageTagsForReview?: ImageTagForReview[];
+  comicPanels?: ComicPanel[];
+  comicReferenceImages?: ComicReferenceImage[];
+  comicProjectCover?: ComicProject[];
+  comicProjectHero?: ComicProject[];
   challengesCover?: Challenge[];
   challengeWins?: ChallengeWinner[];
 }
@@ -1672,6 +1698,9 @@ export interface Thread {
   bountyEntry?: BountyEntry | null;
   clubPostId: number | null;
   clubPost?: ClubPost | null;
+  comicProjectId: number | null;
+  comicChapterPosition: number | null;
+  comicChapter?: ComicChapter | null;
   challengeId: number | null;
   challenge?: Challenge | null;
   metadata: JsonValue;
@@ -2875,6 +2904,7 @@ export interface ChallengeJudge {
   collectionPrompt: string | null;
   contentPrompt: string | null;
   reviewPrompt: string | null;
+  reviewTemplate: string | null;
   winnerSelectionPrompt: string | null;
   active: boolean;
   createdAt: Date;
@@ -2905,6 +2935,7 @@ export interface ChallengeEvent {
   startDate: Date;
   endDate: Date;
   active: boolean;
+  winnerCooldownDays: number | null;
   createdById: number | null;
   createdBy?: User | null;
   createdAt: Date;
@@ -3817,6 +3848,106 @@ export interface TagsOnImageDetails {
   reserved_1: boolean;
   reserved_2: boolean;
   confidence: number;
+}
+
+export interface ComicProject {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  heroImagePosition: number;
+  status: ComicProjectStatus;
+  baseModel: string | null;
+  genre: ComicGenre | null;
+  nsfwLevel: number;
+  publishedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  chapters?: ComicChapter[];
+  engagements?: ComicProjectEngagement[];
+  reports?: ComicProjectReport[];
+}
+
+export interface ComicChapter {
+  projectId: number;
+  project?: ComicProject;
+  name: string;
+  position: number;
+  status: ComicChapterStatus;
+  publishedAt: Date | null;
+  nsfwLevel: number;
+  createdAt: Date;
+  updatedAt: Date;
+  panels?: ComicPanel[];
+  thread?: Thread | null;
+}
+
+export interface ComicReference {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  type: ComicReferenceType;
+  description: string | null;
+  status: ComicReferenceStatus;
+  errorMessage: string | null;
+  buzzCost: number;
+  createdAt: Date;
+  updatedAt: Date;
+  images?: ComicReferenceImage[];
+  panelReferences?: ComicPanelReference[];
+}
+
+export interface ComicReferenceImage {
+  referenceId: number;
+  reference?: ComicReference;
+  imageId: number;
+  image?: Image;
+  position: number;
+  createdAt: Date;
+}
+
+export interface ComicPanel {
+  id: number;
+  projectId: number;
+  chapterPosition: number;
+  chapter?: ComicChapter;
+  imageId: number | null;
+  image?: Image | null;
+  prompt: string;
+  enhancedPrompt: string | null;
+  imageUrl: string | null;
+  position: number;
+  status: ComicPanelStatus;
+  workflowId: string | null;
+  civitaiJobId: string | null;
+  errorMessage: string | null;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  references?: ComicPanelReference[];
+}
+
+export interface ComicProjectEngagement {
+  userId: number;
+  user?: User;
+  projectId: number;
+  project?: ComicProject;
+  type: ComicEngagementType;
+  readChapters: number[];
+  createdAt: Date;
+}
+
+export interface ComicPanelReference {
+  panelId: number;
+  panel?: ComicPanel;
+  referenceId: number;
+  reference?: ComicReference;
 }
 
 export interface UserRestriction {

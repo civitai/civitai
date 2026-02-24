@@ -38,7 +38,7 @@ export function PickWinnersActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
-  const { challengeId, userMessage } = usePlaygroundStore((s) => s.pickWinnersInputs);
+  const { challengeId } = usePlaygroundStore((s) => s.pickWinnersInputs);
   const updateInputs = usePlaygroundStore((s) => s.updatePickWinnersInputs);
 
   const [result, setResult] = useState<PickWinnersResult | null>(null);
@@ -81,7 +81,6 @@ export function PickWinnersActivity() {
               winner: draft?.winnerSelectionPrompt ?? undefined,
             }
           : undefined,
-      userMessage: userMessage || undefined,
       aiModel: aiModel || undefined,
     });
   };
@@ -111,19 +110,10 @@ export function PickWinnersActivity() {
           if (id != null) updateDraft(id, { winnerSelectionPrompt: e.currentTarget.value || null });
         }}
       />
-      <Textarea
-        label="User Message (override)"
-        placeholder="Leave empty to use default (Theme + Entries JSON)"
-        autosize
-        minRows={2}
-        maxRows={6}
-        value={userMessage}
-        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
-      />
       <Button
         leftSection={<IconPlayerPlay size={16} />}
         onClick={handleRun}
-        loading={mutation.isLoading}
+        loading={mutation.isPending}
         disabled={!challengeId}
       >
         Pick Winners

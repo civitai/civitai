@@ -21,10 +21,7 @@ function isPrPreview(): boolean {
 function getAuthProxyUrl(): string | undefined {
   // Try env var first, then fallback to hostname detection for PR previews
   // Using ?? ensures both branches are preserved in the bundle
-  return (
-    env.NEXT_PUBLIC_AUTH_PROXY_URL ??
-    (isPrPreview() ? PR_PREVIEW_AUTH_PROXY : undefined)
-  );
+  return env.NEXT_PUBLIC_AUTH_PROXY_URL ?? (isPrPreview() ? PR_PREVIEW_AUTH_PROXY : undefined);
 }
 
 /**
@@ -48,7 +45,14 @@ export function handleSignIn(providerId: string, callbackUrl: string) {
       ? callbackUrl
       : `${window.location.origin}${callbackUrl.startsWith('/') ? callbackUrl : '/' + callbackUrl}`;
 
-    window.location.href = `${authProxyUrl}/api/auth/signin/${providerId}?callbackUrl=${encodeURIComponent(fullCallbackUrl)}`;
+    const url = new URL(`${authProxyUrl}/login`);
+    url.searchParams.set('returnUrl', fullCallbackUrl);
+
+    // Forward reason param (e.g., switch-accounts) so auth proxy doesn't auto-redirect
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    if (reason) url.searchParams.set('reason', reason);
+
+    window.location.href = url.toString();
   } else {
     // Normal flow: use NextAuth's built-in signIn
     signIn(providerId, { callbackUrl });

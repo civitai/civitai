@@ -6,6 +6,7 @@ import {
   createChallengeWinner,
   getChallengeById,
   getChallengeWinners,
+  resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
@@ -59,6 +60,7 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewTemplateSchema } from '~/server/games/daily-challenge/template-engine';
 import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -495,12 +497,7 @@ export async function getChallengeDetail(
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // Fetch eventId (not in the shared getChallengeById helper)
-  const challengeEventData = await dbRead.challenge.findUnique({
-    where: { id },
-    select: { eventId: true },
-  });
-  const eventId = challengeEventData?.eventId ?? null;
+  const eventId = challenge.eventId;
 
   // Visibility check: only show challenges that are visible to the public
   // unless bypassVisibility is true (for moderators)
@@ -1319,7 +1316,10 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
   }
 
-  const judgedEntries = await getJudgedEntries(challenge.collectionId, config);
+  // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
+  const eventContext = await resolveEventContext(challenge.eventId);
+
+  const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
   if (!judgedEntries.length) {
     // No judged entries, just mark as completed
     await dbWrite.challenge.update({
@@ -1837,6 +1837,7 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
       startDate: true,
       endDate: true,
       active: true,
+      winnerCooldownDays: true,
       createdAt: true,
       _count: { select: { challenges: true } },
     },
@@ -1905,6 +1906,7 @@ export async function getJudgeById(id: number) {
       collectionPrompt: true,
       contentPrompt: true,
       reviewPrompt: true,
+      reviewTemplate: true,
       winnerSelectionPrompt: true,
     },
   });
@@ -1919,6 +1921,19 @@ export async function getJudgeById(id: number) {
 export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) {
   const { id, userId, ...data } = input;
 
+  // Validate reviewTemplate JSON if provided
+  if (data.reviewTemplate) {
+    try {
+      const parsed = JSON.parse(data.reviewTemplate);
+      reviewTemplateSchema.parse(parsed);
+    } catch (e) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Invalid review template: ${e instanceof Error ? e.message : 'Invalid JSON'}`,
+      });
+    }
+  }
+
   const judge = await dbWrite.challengeJudge.upsert({
     where: { id: id ?? -1 },
     create: {
@@ -1930,6 +1945,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       collectionPrompt: data.collectionPrompt ?? null,
       contentPrompt: data.contentPrompt ?? null,
       reviewPrompt: data.reviewPrompt ?? null,
+      reviewTemplate: data.reviewTemplate ?? null,
       winnerSelectionPrompt: data.winnerSelectionPrompt ?? null,
       active: data.active ?? true,
     },
@@ -1943,6 +1959,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       ...(data.collectionPrompt !== undefined && { collectionPrompt: data.collectionPrompt }),
       ...(data.contentPrompt !== undefined && { contentPrompt: data.contentPrompt }),
       ...(data.reviewPrompt !== undefined && { reviewPrompt: data.reviewPrompt }),
+      ...(data.reviewTemplate !== undefined && { reviewTemplate: data.reviewTemplate }),
       ...(data.winnerSelectionPrompt !== undefined && {
         winnerSelectionPrompt: data.winnerSelectionPrompt,
       }),
@@ -2018,7 +2035,6 @@ export async function playgroundGenerateContent(input: PlaygroundGenerateContent
     allowedNsfwLevel: 1,
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
-    userMessageOverride: input.userMessage,
   });
 
   return result;
@@ -2034,6 +2050,11 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
 
   judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
 
+  // Apply reviewTemplate override from playground draft
+  if (input.reviewTemplate != null) {
+    judgingConfig = { ...judgingConfig, reviewTemplate: input.reviewTemplate || null };
+  }
+
   // Resolve imageId to an image URL
   const image = await dbRead.image.findUnique({
     where: { id: input.imageId },
@@ -2041,7 +2062,7 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
 
-  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image' });
+  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image', optimized: true });
 
   const result = await generateReview({
     theme: input.theme,
@@ -2049,7 +2070,6 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
     imageUrl,
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
-    userMessageOverride: input.userMessage,
   });
 
   return result;
@@ -2087,7 +2107,6 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
     theme: challenge.theme ?? 'Unknown',
     config: judgingConfig,
     model: (input.aiModel || undefined) as AIModel | undefined,
-    userMessageOverride: input.userMessage,
   });
 
   return result;

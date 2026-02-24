@@ -499,7 +499,10 @@ async function testSortingComparison(baseModels: string[]): Promise<TestResult> 
       passed,
       queryPath: 'baseModelMetrics',
       details: passed
-        ? `Sorting differs: ${orderDifferences}/${Math.min(standardIds.length, mbmIds.length)} positions different`
+        ? `Sorting differs: ${orderDifferences}/${Math.min(
+            standardIds.length,
+            mbmIds.length
+          )} positions different`
         : 'WARNING: Both paths returned identical ordering - base model metrics may not be affecting sort',
       itemCount: mbmResult.items.length,
       sampleItems: [

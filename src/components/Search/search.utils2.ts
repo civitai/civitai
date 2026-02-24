@@ -12,6 +12,7 @@ import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { ReverseSearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap } from '~/components/Search/search.types';
 import type { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
+import type { ComicSearchIndexRecord } from '~/server/search-index/comics.search-index';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 
 // #region [transformers]
@@ -97,6 +98,14 @@ function toolsTransform(items: Hit<ToolSearchIndexRecord>[]) {
   return items;
 }
 
+type ComicsTransformed = ReturnType<typeof comicsTransform>;
+function comicsTransform(items: Hit<ComicSearchIndexRecord>[]) {
+  return items.map((comic) => ({
+    ...comic,
+    nsfwLevel: flagifyBrowsingLevel(comic.nsfwLevel),
+  }));
+}
+
 type IndexName = keyof SearchIndexDataMap;
 export type SearchIndexDataMap = {
   models: ModelsTransformed;
@@ -106,6 +115,7 @@ export type SearchIndexDataMap = {
   collections: CollectionsTransformed;
   bounties: BountiesTransformed;
   tools: ToolsTransformed;
+  comics: ComicsTransformed;
 };
 // type IndexName = keyof typeof searchIndexTransformMap;
 // export type SearchIndexDataTransformType<T extends IndexName> = ReturnType<
@@ -119,6 +129,7 @@ const searchIndexTransformMap = {
   collections: collectionsTransform,
   bounties: bountiesTransform,
   tools: toolsTransform,
+  comics: comicsTransform,
 };
 // #endregion
 

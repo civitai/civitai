@@ -340,23 +340,21 @@ const CreateChangelog = ({
 
   const form = useForm({
     schema,
-    defaultValues,
+    defaultValues: {
+      title: existing?.title || defaultValues.title,
+      titleColor: existing?.titleColor || defaultValues.titleColor,
+      content: existing?.content || defaultValues.content,
+      link: existing?.link || defaultValues.link,
+      cta: existing?.cta || defaultValues.cta,
+      effectiveAt: existing ? new Date(existing.effectiveAt) : defaultValues.effectiveAt,
+      type: existing?.type || defaultValues.type,
+      tags: existing?.tags || defaultValues.tags,
+      disabled: existing?.disabled || defaultValues.disabled,
+      sticky: existing?.sticky || defaultValues.sticky,
+      domain: existing?.domain || defaultValues.domain,
+    },
     shouldUnregister: false,
   });
-
-  useEffect(() => {
-    form.reset(
-      !!existing
-        ? {
-            ...existing,
-            link: existing.link ?? undefined,
-            cta: existing.cta ?? undefined,
-            titleColor: existing.titleColor ?? 'blue',
-            domain: existing.domain ?? [DomainColor.all],
-          }
-        : defaultValues
-    );
-  }, [existing]);
 
   const formTags = form.watch('tags');
   const allTagData = useMemo(
@@ -595,6 +593,7 @@ export function Changelogs() {
       {/* Create */}
       {canEdit && (
         <CreateChangelog
+          key={editingItem ? `edit-${editingItem.id}` : 'create-new'}
           opened={createOpened}
           setOpened={setCreateOpened}
           existing={editingItem}

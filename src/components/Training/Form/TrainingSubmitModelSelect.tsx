@@ -181,10 +181,12 @@ const ModelSelector = ({
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
                   ? 'qwen'
-                  : ([
-                      ...getBaseModelsByGroup('ZImageTurbo'),
-                      ...getBaseModelsByGroup('ZImageBase'),
-                    ] as string[]).includes(baseModel)
+                  : (
+                      [
+                        ...getBaseModelsByGroup('ZImageTurbo'),
+                        ...getBaseModelsByGroup('ZImageBase'),
+                      ] as string[]
+                    ).includes(baseModel)
                   ? 'zimage'
                   : (
                       [

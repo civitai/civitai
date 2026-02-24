@@ -2,6 +2,7 @@ import {
   Button,
   Card,
   Group,
+  JsonInput,
   Paper,
   Progress,
   ScrollArea,
@@ -15,12 +16,14 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
+import { TemplateVariableIndicators } from './TemplateVariableIndicators';
 
 type ReviewResult = {
   score: { theme: number; wittiness: number; humor: number; aesthetic: number };
   reaction: string;
   comment: string;
   summary: string;
+  aestheticFlaws?: string[];
 };
 
 const SCORE_COLORS: Record<string, string> = {
@@ -55,9 +58,7 @@ export function ReviewImageActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
-  const { imageInput, theme, creator, userMessage } = usePlaygroundStore(
-    (s) => s.reviewImageInputs
-  );
+  const { imageInput, theme, creator } = usePlaygroundStore((s) => s.reviewImageInputs);
   const updateInputs = usePlaygroundStore((s) => s.updateReviewImageInputs);
 
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -65,6 +66,7 @@ export function ReviewImageActivity() {
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
   const reviewPrompt = draft?.reviewPrompt ?? '';
+  const reviewTemplate = draft?.reviewTemplate ?? '';
 
   const parsedImageId = parseImageInput(imageInput);
 
@@ -89,7 +91,7 @@ export function ReviewImageActivity() {
               review: draft?.reviewPrompt ?? undefined,
             }
           : undefined,
-      userMessage: userMessage || undefined,
+      reviewTemplate: draft?.reviewTemplate ?? undefined,
       aiModel: aiModel || undefined,
     });
   };
@@ -132,19 +134,26 @@ export function ReviewImageActivity() {
           if (id != null) updateDraft(id, { reviewPrompt: e.currentTarget.value || null });
         }}
       />
-      <Textarea
-        label="User Message (override)"
-        placeholder="Leave empty to use default (Theme + Creator)"
+      <JsonInput
+        label="Review Template (override)"
+        placeholder="Leave empty to use judge's default"
+        description={<TemplateVariableIndicators value={reviewTemplate} />}
         autosize
-        minRows={2}
-        maxRows={6}
-        value={userMessage}
-        onChange={(e) => updateInputs({ userMessage: e.currentTarget.value })}
+        minRows={3}
+        maxRows={8}
+        formatOnBlur
+        validationError="Invalid JSON"
+        styles={{ input: { fontFamily: 'monospace', fontSize: '12px' } }}
+        value={reviewTemplate}
+        onChange={(value) => {
+          const id = selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : null;
+          if (id != null) updateDraft(id, { reviewTemplate: value || null });
+        }}
       />
       <Button
         leftSection={<IconPlayerPlay size={16} />}
         onClick={handleRun}
-        loading={mutation.isLoading}
+        loading={mutation.isPending}
         disabled={!parsedImageId || !theme}
       >
         Review Image
@@ -157,7 +166,7 @@ export function ReviewImageActivity() {
               Scores
             </Text>
             <Paper withBorder p="sm">
-              {Object.entries(result.score).map(([key, value]) => (
+              {Object.entries(result.score ?? {}).map(([key, value]) => (
                 <div key={key}>
                   <Group justify="space-between" mb={4}>
                     <Text size="xs" tt="capitalize">
@@ -183,6 +192,22 @@ export function ReviewImageActivity() {
             <Paper withBorder p="sm">
               <Text size="sm">{result.comment}</Text>
             </Paper>
+            {result.aestheticFlaws && result.aestheticFlaws.length > 0 && (
+              <>
+                <Text size="sm" fw={600} mb={4}>
+                  Aesthetic Flaws
+                </Text>
+                <Paper withBorder p="sm">
+                  <Stack gap={4}>
+                    {result.aestheticFlaws.map((flaw, i) => (
+                      <Text key={i} size="sm">
+                        &bull; {flaw}
+                      </Text>
+                    ))}
+                  </Stack>
+                </Paper>
+              </>
+            )}
           </Stack>
         </Card>
       )}

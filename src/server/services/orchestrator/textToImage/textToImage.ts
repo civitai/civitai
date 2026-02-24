@@ -13,7 +13,11 @@ import {
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { WORKFLOW_TAGS, samplersToSchedulers, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
+import {
+  WORKFLOW_TAGS,
+  samplersToSchedulers,
+  getProcessTagFromWorkflow,
+} from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';

@@ -2,19 +2,19 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
   ChallengeSource,
   ChallengeStatus,
   CollectionMode,
   PrizeMode,
-  PoolTrigger,
 } from '~/shared/utils/prisma/enums';
 import {
-    deriveChallengeNsfwLevel,
-    parseJudgeScore,
-    type JudgeScore,
-    type Prize,
+  deriveChallengeNsfwLevel,
+  parseJudgeScore,
+  type JudgeScore,
+  type Prize,
 } from './daily-challenge.utils';
 
 // Re-export pure pool computation (lives in separate file to avoid pulling
@@ -67,6 +67,7 @@ export type ChallengeDetails = {
   createdById: number;
   source: ChallengeSource;
   status: ChallengeStatus;
+  eventId: number | null;
   metadata: Record<string, unknown> | null;
 };
 
@@ -138,6 +139,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."createdById",
       c.source,
       c.status,
+      c."eventId",
       c.metadata
     FROM "Challenge" c
     WHERE c.id = ${challengeId}
@@ -156,8 +158,8 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       result.prizeDistribution == null
         ? null
         : typeof result.prizeDistribution === 'string'
-          ? JSON.parse(result.prizeDistribution)
-          : result.prizeDistribution,
+        ? JSON.parse(result.prizeDistribution)
+        : result.prizeDistribution,
   };
 }
 
@@ -583,3 +585,23 @@ export type SelectedResource = {
   creator: string;
   title: string;
 };
+
+/** Event context for scoping winner cooldowns. */
+export type EventContext = {
+  eventId: number | null;
+  /** null = use global default, 0 = no cooldown, >0 = custom cooldown days */
+  winnerCooldownDays: number | null;
+};
+
+/** Resolve event context for a challenge's eventId. */
+export async function resolveEventContext(eventId: number | null): Promise<EventContext> {
+  let winnerCooldownDays: number | null = null;
+  if (eventId != null) {
+    const eventRow = await dbRead.challengeEvent.findUnique({
+      where: { id: eventId },
+      select: { winnerCooldownDays: true },
+    });
+    winnerCooldownDays = eventRow?.winnerCooldownDays ?? null;
+  }
+  return { eventId, winnerCooldownDays };
+}

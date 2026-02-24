@@ -82,5 +82,7 @@ export function createBlurHash(
     ctx.drawImage(media, 0, 0, clampedSize.width, clampedSize.height);
     const result = ctx.getImageData(0, 0, clampedSize.width, clampedSize.height);
     return encode(result.data, result.width, result.height, 4, 4);
-  } catch (e) {}
+  } catch (e) {
+    console.error('Failed to generate blurhash:', e);
+  }
 }

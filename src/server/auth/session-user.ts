@@ -110,7 +110,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
           // Track highest tier for backward compatibility
           // Only set highest tier for active subscriptions (not bad state)
-          if (isActive && (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0))) {
+          if (
+            isActive &&
+            (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0))
+          ) {
             highestTier = tier;
             primarySubscriptionId = sub.id;
           }

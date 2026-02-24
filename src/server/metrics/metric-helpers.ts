@@ -163,8 +163,7 @@ type EntityMetricOptions = {
 const AGG_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const AGG_REFRESH_BUFFER_MS = 30 * 1000;
 
-const getAggInterval = (date: Date) =>
-  Math.floor(date.getTime() / AGG_REFRESH_INTERVAL_MS);
+const getAggInterval = (date: Date) => Math.floor(date.getTime() / AGG_REFRESH_INTERVAL_MS);
 
 const floorToAggInterval = (date: Date) =>
   new Date(getAggInterval(date) * AGG_REFRESH_INTERVAL_MS - AGG_REFRESH_BUFFER_MS);

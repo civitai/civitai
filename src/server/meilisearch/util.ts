@@ -14,6 +14,7 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
@@ -175,10 +176,10 @@ const waitForTasksWithRetries = async (
 };
 
 /**
- * Remove all user content from search indexes using filter-based deletion.
- * This function processes all search indexes (main and metrics) and removes documents
- * associated with the specified user using Meilisearch's deleteDocuments with filter.
- * No document count limit - filter-based deletion handles any number of documents.
+ * Queue a user's content for batched removal from all search indexes.
+ * Instead of creating 7 individual Meilisearch deletion tasks immediately,
+ * this queues the user into Redis. A periodic job (processUserContentRemovalQueue)
+ * drains the queue and batches multiple users into a single filter per index.
  */
 export const removeUserContentFromSearchIndex = async ({
   userId,
@@ -187,110 +188,101 @@ export const removeUserContentFromSearchIndex = async ({
   userId: number;
   username: string;
 }) => {
-  // Escape username for Meilisearch filter (escape quotes and backslashes)
-  const escapedUsername = username.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.QUEUES.USER_CONTENT_REMOVAL,
+    userId.toString(),
+    username
+  );
+  console.log(
+    `removeUserContentFromSearchIndex :: Queued user ${userId} (${username}) for batch removal`
+  );
+};
 
-  // Define index configurations with their filter strategies
-  // Some indexes have user.id filterable, others only have user.username
+/**
+ * Process the queued user content removals in a single batch.
+ * Combines multiple users into one filter per index using IN syntax,
+ * reducing Meilisearch task count from 7*N to just 7.
+ */
+export const processUserContentRemovalQueue = async () => {
+  const pending = await sysRedis.hGetAll(REDIS_SYS_KEYS.QUEUES.USER_CONTENT_REMOVAL);
+  const entries = Object.entries(pending);
+
+  if (entries.length === 0) return { processed: 0 };
+
+  console.log(`processUserContentRemovalQueue :: Processing ${entries.length} users`);
+
+  const userIds = entries.map(([id]) => parseInt(id));
+  const usernames = entries.map(([, username]) => username);
+
+  // Remove entries from queue before processing to avoid blocking new additions
+  await sysRedis.hDel(
+    REDIS_SYS_KEYS.QUEUES.USER_CONTENT_REMOVAL,
+    entries.map(([id]) => id)
+  );
+
+  // Build escaped username list for filter
+  const escapedUsernames = usernames
+    .map((u) => `"${u.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
+    .join(', ');
+  const userIdList = userIds.join(', ');
+
+  // One combined filter per index instead of one per user per index
   const mainIndexConfigs = [
-    { name: MODELS_SEARCH_INDEX, filter: `user.id = ${userId}` },
-    { name: IMAGES_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
-    { name: ARTICLES_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
-    { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
-    { name: BOUNTIES_SEARCH_INDEX, filter: `user.username = "${escapedUsername}"` },
-    { name: USERS_SEARCH_INDEX, filter: `id = ${userId}` },
+    { name: MODELS_SEARCH_INDEX, filter: `user.id IN [${userIdList}]` },
+    { name: IMAGES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
+    { name: ARTICLES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
+    { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
+    { name: BOUNTIES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
+    { name: USERS_SEARCH_INDEX, filter: `id IN [${userIdList}]` },
   ];
 
   const metricsIndexConfigs = [
-    { name: METRICS_IMAGES_SEARCH_INDEX, filter: `userId = ${userId}` },
+    { name: METRICS_IMAGES_SEARCH_INDEX, filter: `userId IN [${userIdList}]` },
   ];
 
-  const processIndex = async (
-    indexName: string,
-    filter: string,
-    client: MeiliSearch | null
-  ): Promise<{ indexName: string; status: 'processed' | 'skipped' }> => {
-    if (!client) {
-      return { indexName, status: 'skipped' };
-    }
+  const processIndex = async (indexName: string, filter: string, client: MeiliSearch | null) => {
+    if (!client) return;
 
     try {
       const index = await getOrCreateIndex(indexName, undefined, client);
-      if (!index) {
-        return { indexName, status: 'skipped' };
-      }
+      if (!index) return;
 
-      console.log(`removeUserContentFromSearchIndex :: Deleting from ${indexName} with filter: ${filter}`);
-
-      // Use filter-based deletion - no limit on document count
+      console.log(
+        `processUserContentRemovalQueue :: Deleting from ${indexName} with filter: ${filter}`
+      );
       await index.deleteDocuments({ filter });
-
-      // Log to Axiom for tracking
+    } catch (error) {
+      console.error(`processUserContentRemovalQueue :: Error on ${indexName}:`, error);
       await logToAxiom({
-        name: 'remove-user-search-index-content',
-        type: 'info',
-        userId,
-        username,
+        name: 'process-user-content-removal-error',
+        type: 'error',
         indexName,
         filter,
-      }).catch();
-
-      return { indexName, status: 'processed' };
-    } catch (error) {
-      console.error(`removeUserContentFromSearchIndex :: Error processing ${indexName}:`, error);
-      await logToAxiom({
-        name: 'remove-user-search-index-content-error',
-        type: 'error',
-        userId,
-        username,
-        indexName,
+        userIds,
         error: error instanceof Error ? error.message : String(error),
       }).catch();
-      return { indexName, status: 'skipped' };
     }
   };
 
-  // Process all indexes in parallel using allSettled for resilience
-  // If one index fails, others should still complete
-  const results = await Promise.allSettled([
-    // Main search indexes
+  await Promise.allSettled([
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
-    // Metrics search indexes (separate Meilisearch instance)
-    ...metricsIndexConfigs.map(({ name, filter }) => processIndex(name, filter, metricsSearchClient)),
+    ...metricsIndexConfigs.map(({ name, filter }) =>
+      processIndex(name, filter, metricsSearchClient)
+    ),
   ]);
 
-  const processed: string[] = [];
-  const skipped: string[] = [];
-  const failed: string[] = [];
-
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      if (result.value.status === 'processed') {
-        processed.push(result.value.indexName);
-      } else {
-        skipped.push(result.value.indexName);
-      }
-    } else {
-      // Promise rejected - should be rare since processIndex catches errors
-      failed.push('unknown');
-    }
-  }
-
-  console.log(
-    `removeUserContentFromSearchIndex :: Complete - Processed: ${processed.join(', ')}, Skipped: ${skipped.join(', ')}`
-  );
-
-  // Log summary to Axiom
   await logToAxiom({
-    name: 'remove-user-search-index-content-summary',
+    name: 'process-user-content-removal-summary',
     type: 'info',
-    userId,
-    username,
-    processedIndexes: processed,
-    skippedIndexes: skipped,
+    userCount: entries.length,
+    userIds,
   }).catch();
 
-  return { processed, skipped };
+  console.log(
+    `processUserContentRemovalQueue :: Completed batch removal for ${entries.length} users`
+  );
+
+  return { processed: entries.length };
 };
 
 export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };

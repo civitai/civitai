@@ -46,6 +46,7 @@ import { isDefined, paired } from '~/utils/type-guards';
 import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
+import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -106,6 +107,7 @@ const targetData = [
   { value: 'collections', label: 'Collections' },
   { value: 'bounties', label: 'Bounties' },
   { value: 'tools', label: 'Tools' },
+  { value: 'comics', label: 'Comics' },
 ] as const;
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
@@ -125,6 +127,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
         searchIndexMap.images,
         searchIndexMap.collections,
         searchIndexMap.tools,
+        searchIndexMap.comics,
       ].some((i) => i === searchIndexMap[targetIndex]),
     [targetIndex]
   );
@@ -477,6 +480,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         return `/user/${hit.username as string}`;
       case 'tools':
         return `/${indexName}/${slugit(hit.name)}`;
+      case 'comics':
+        return `/comics/${hit.id as number}`;
       case 'models':
       default:
         return `/${indexName}/${hit.id as number}/${slugit(hit.name)}`;
@@ -507,7 +512,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               (features.imageSearch ? true : value !== 'images') &&
               (features.bounties ? true : value !== 'bounties') &&
               (features.articles ? true : value !== 'articles') &&
-              (features.toolSearch ? true : value !== 'tools')
+              (features.toolSearch ? true : value !== 'tools') &&
+              (features.comicSearch ? true : value !== 'comics')
           )}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           style={{ flexShrink: 1 }}
@@ -677,6 +683,7 @@ const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   collections: CollectionsSearchItem,
   bounties: BountiesSearchItem,
   tools: ToolSearchItem,
+  comics: ComicsSearchItem,
 };
 
 const queryFilters: Record<

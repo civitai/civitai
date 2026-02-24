@@ -9,8 +9,10 @@ import {
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  resolveEventContext,
   setChallengeActive,
   updateChallengeStatus,
+  type EventContext,
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
@@ -60,7 +62,6 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from './job';
-import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -885,6 +886,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         score: review.score,
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
+        ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
       });
       await dbWrite.$executeRaw`
         UPDATE "CollectionItem"
@@ -1055,11 +1057,11 @@ export async function pickWinnersForChallenge(
 ) {
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  // Get judging config from ChallengeJudge (or cached default judge if not assigned)
+  // Get judging config and event context from Challenge
   const [challengeJudgeRow] = await dbRead.$queryRaw<
-    [{ judgeId: number | null; judgingPrompt: string | null } | undefined]
+    [{ judgeId: number | null; judgingPrompt: string | null; eventId: number | null } | undefined]
   >`
-    SELECT "judgeId", "judgingPrompt" FROM "Challenge"
+    SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
   `;
@@ -1072,6 +1074,9 @@ export async function pickWinnersForChallenge(
     challengeJudgeRow?.judgingPrompt
   );
 
+  // Resolve event context for cooldown scoping
+  const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
+
   // Close challenge
   // ----------------------------------------------
   await endChallenge(currentChallenge);
@@ -1080,7 +1085,7 @@ export async function pickWinnersForChallenge(
   // Pick Winners
   // ----------------------------------------------
   // Get top judged entries
-  const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config);
+  const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config, eventContext);
   if (!judgedEntries.length) {
     log('No judged entries for challenge:', currentChallenge.challengeId);
     // Still need to mark the challenge as completed even with no entries
@@ -1385,7 +1390,11 @@ export async function getCoverOfModel(modelId: number) {
   return image;
 }
 
-export async function getJudgedEntries(collectionId: number, config: ChallengeConfig) {
+export async function getJudgedEntries(
+  collectionId: number,
+  config: ChallengeConfig,
+  eventContext?: EventContext
+) {
   // Get each user's BEST entry only (by AI score), so users with many entries
   // don't have an advantage over users with fewer entries
   const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
@@ -1421,50 +1430,67 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     return [];
   }
 
-  // Exclude users who won a challenge within the cooldown period
-  const recentWinners = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT DISTINCT cw."userId"
-    FROM "ChallengeWinner" cw
-    JOIN "Challenge" c ON c.id = cw."challengeId"
-    WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
-      AND c.status = 'Completed'
-  `;
-  const recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  // Exclude users who won a challenge within the cooldown period, scoped by event
+  let recentWinnerIds = new Set<number>();
+  if (eventContext?.winnerCooldownDays === 0) {
+    // Event allows consecutive wins — skip cooldown entirely
+    log('Skipping winner cooldown — event cooldown set to 0', {
+      eventId: eventContext.eventId,
+    });
+  } else if (eventContext !== undefined) {
+    // Scoped cooldown: filter by event context
+    const cooldownInterval =
+      eventContext.winnerCooldownDays != null
+        ? `${eventContext.winnerCooldownDays} day`
+        : config.winnerCooldown;
+    const eventCondition =
+      eventContext.eventId != null
+        ? Prisma.sql`AND c."eventId" = ${eventContext.eventId}`
+        : Prisma.sql`AND c."eventId" IS NULL`;
+    const recentWinners = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT cw."userId"
+      FROM "ChallengeWinner" cw
+      JOIN "Challenge" c ON c.id = cw."challengeId"
+      WHERE cw."createdAt" > now() - ${cooldownInterval}::interval
+        AND c.status = 'Completed'
+        ${eventCondition}
+    `;
+    recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  } else {
+    // No event context provided — apply global cooldown (original behavior)
+    const recentWinners = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT cw."userId"
+      FROM "ChallengeWinner" cw
+      JOIN "Challenge" c ON c.id = cw."challengeId"
+      WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
+        AND c.status = 'Completed'
+    `;
+    recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  }
   const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
 
+  const cooldownSource =
+    eventContext?.winnerCooldownDays === 0
+      ? 'none (no cooldown)'
+      : eventContext?.winnerCooldownDays != null
+      ? `${String(eventContext.winnerCooldownDays)} day (event override)`
+      : `${String(config.winnerCooldown)} (global default)`;
   log('Winner cooldown filter:', {
     total: userBestEntries.length,
     excluded: userBestEntries.length - eligibleEntries.length,
     eligible: eligibleEntries.length,
-    cooldown: config.winnerCooldown,
+    cooldown: cooldownSource,
   });
 
-  // Fetch engagement metrics from Redis for eligible entries only
-  const imageIds = eligibleEntries.map((entry) => entry.imageId);
-  const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
-
-  // Calculate engagement (sum of all metrics except Buzz)
-  const entriesWithEngagement = eligibleEntries.map((entry) => {
-    const metrics = metricsMap.get(entry.imageId);
-    const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
-    return { ...entry, engagement };
-  });
-
-  // Sort entries by (rating * 0.75) and (engagement * 0.25)
-  const maxEngagement = Math.max(...entriesWithEngagement.map((entry) => entry.engagement));
-  const minEngagement = Math.min(...entriesWithEngagement.map((entry) => entry.engagement));
-  const judgedEntries = entriesWithEngagement.map(({ note, engagement, ...entry }) => {
+  // Rank entries purely by AI judge score (no engagement/reaction weighting)
+  const judgedEntries = eligibleEntries.map(({ note, ...entry }) => {
     const { score, summary } = JSON.parse(note);
-    // Calculate average rating
     const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
-    // Adjust engagement to be between 0 and 10
-    const engagementNormalized =
-      ((engagement - minEngagement) / Math.max(maxEngagement - minEngagement, 1)) * 10;
     return {
       ...entry,
       summary,
       score,
-      weightedRating: rating * 0.75 + engagementNormalized * 0.25,
+      weightedRating: rating,
     };
   });
   judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);

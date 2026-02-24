@@ -1,9 +1,19 @@
-import { Button, Loader, ScrollArea, Stack, Text, TextInput, Textarea } from '@mantine/core';
+import {
+  Button,
+  JsonInput,
+  Loader,
+  ScrollArea,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+} from '@mantine/core';
 import { IconDeviceFloppy } from '@tabler/icons-react';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ModelSelector } from './ModelSelector';
 import { usePlaygroundStore } from './playground.store';
+import { TemplateVariableIndicators } from './TemplateVariableIndicators';
 
 export function JudgeSettingsPanel() {
   const selectedJudgeId = usePlaygroundStore((s) => s.selectedJudgeId);
@@ -39,6 +49,7 @@ export function JudgeSettingsPanel() {
   const currentSystemPrompt = draft?.systemPrompt ?? judge?.systemPrompt ?? '';
   const currentContentPrompt = draft?.contentPrompt ?? judge?.contentPrompt ?? '';
   const currentReviewPrompt = draft?.reviewPrompt ?? judge?.reviewPrompt ?? '';
+  const currentReviewTemplate = draft?.reviewTemplate ?? judge?.reviewTemplate ?? '';
   const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
 
   const handleSave = () => {
@@ -49,9 +60,10 @@ export function JudgeSettingsPanel() {
       name: currentName,
       bio: currentBio || null,
       systemPrompt: currentSystemPrompt || null,
-      contentPrompt: draft?.contentPrompt ?? judge?.contentPrompt ?? null,
-      reviewPrompt: draft?.reviewPrompt ?? judge?.reviewPrompt ?? null,
-      winnerSelectionPrompt: draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? null,
+      contentPrompt: currentContentPrompt || null,
+      reviewPrompt: currentReviewPrompt || null,
+      reviewTemplate: currentReviewTemplate || null,
+      winnerSelectionPrompt: currentWinnerPrompt || null,
     });
   };
 
@@ -134,6 +146,21 @@ export function JudgeSettingsPanel() {
                 updateDraft(selectedJudgeId, { reviewPrompt: e.currentTarget.value || null });
             }}
           />
+          <JsonInput
+            label="Review Template (JSON)"
+            description={<TemplateVariableIndicators value={currentReviewTemplate ?? ''} />}
+            autosize
+            minRows={4}
+            maxRows={14}
+            formatOnBlur
+            validationError="Invalid JSON"
+            styles={{ input: { fontFamily: 'monospace', fontSize: '12px' } }}
+            value={currentReviewTemplate ?? ''}
+            onChange={(value) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { reviewTemplate: value || null });
+            }}
+          />
           <Textarea
             label="Winner Selection Prompt"
             description="Used for picking challenge winners"
@@ -155,7 +182,7 @@ export function JudgeSettingsPanel() {
         leftSection={<IconDeviceFloppy size={16} />}
         m="sm"
         onClick={handleSave}
-        loading={upsertMutation.isLoading}
+        loading={upsertMutation.isPending}
         disabled={!currentName}
       >
         Save Judge

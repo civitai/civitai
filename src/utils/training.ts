@@ -238,22 +238,22 @@ export const trainingModelInfo: {
   },
   //
   flux2klein_4b: {
-    label: '4B',
-    pretty: 'Flux.2 Klein 4B',
+    label: '4B Base',
+    pretty: 'Flux.2 Klein 4B Base',
     type: 'flux2klein',
-    description: 'Efficient 4B parameter Flux.2 Klein model.',
+    description: 'Efficient 4B parameter Flux.2 Klein base model.',
     air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734041',
-    baseModel: 'Flux.2 Klein 4B',
+    baseModel: 'Flux.2 Klein 4B-base',
     isNew: true,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '4b' },
   },
   flux2klein_9b: {
-    label: '9B',
-    pretty: 'Flux.2 Klein 9B',
+    label: '9B Base',
+    pretty: 'Flux.2 Klein 9B Base',
     type: 'flux2klein',
-    description: 'High-quality 9B parameter Flux.2 Klein model.',
+    description: 'High-quality 9B parameter Flux.2 Klein base model.',
     air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734042',
-    baseModel: 'Flux.2 Klein 9B',
+    baseModel: 'Flux.2 Klein 9B-base',
     isNew: true,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
   },
@@ -385,6 +385,35 @@ export function getAiToolkitModelVariant(
   const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
   return modelInfo?.aiToolkit?.modelVariant;
 }
+
+/**
+ * Map from TrainingBaseModelType to the per-model AI Toolkit feature flag key.
+ * Only includes models where AI Toolkit is optional — mandatory models (qwen, zimage,
+ * flux2klein, ltx2) are already gated by their own training feature flags.
+ */
+const aiToolkitFlagByBaseType: Partial<Record<TrainingBaseModelType, string>> = {
+  sd15: 'aiToolkitSd15',
+  sdxl: 'aiToolkitSdxl',
+  flux: 'aiToolkitFlux',
+  sd35: 'aiToolkitSd35',
+  hunyuan: 'aiToolkitHunyuan',
+  wan: 'aiToolkitWan',
+  chroma: 'aiToolkitChroma',
+};
+
+/**
+ * Check if AI Toolkit is enabled for a base model type, using feature flags.
+ * Mandatory AI Toolkit models always return true (gated elsewhere by their own flags).
+ * Optional models check their per-model Flipt boolean flag.
+ */
+export const isAiToolkitEnabled = (
+  baseType: TrainingBaseModelType,
+  features: Record<string, boolean>
+): boolean => {
+  if (isAiToolkitMandatory(baseType)) return true;
+  const flagKey = aiToolkitFlagByBaseType[baseType];
+  return flagKey ? !!features[flagKey] : false;
+};
 
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {

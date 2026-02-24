@@ -50,7 +50,7 @@ export const autoLabelLimits = {
       max: 1,
     },
     maxNewTokens: {
-      def: 100,
+      def: 300,
       min: 25,
       max: 500,
     },

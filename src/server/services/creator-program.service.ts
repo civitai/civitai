@@ -62,6 +62,7 @@ import {
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
+import { getCapForDefinition } from '~/shared/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -148,12 +149,7 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
             earned: 0,
           };
 
-          let cap = definition.limit ?? MIN_CAP;
-          if (definition.percentOfPeakEarning && peakEarning?.earned) {
-            const peakEarnedCap = peakEarning.earned * definition.percentOfPeakEarning;
-            if (peakEarnedCap < MIN_CAP) cap = MIN_CAP;
-            else cap = Math.min(peakEarnedCap, definition.limit ?? Infinity);
-          }
+          const cap = getCapForDefinition(definition, peakEarning.earned);
 
           return [s.userId, { id: s.userId, definition, peakEarning, cap }];
         })
