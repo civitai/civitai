@@ -6,6 +6,10 @@ export namespace Coinbase {
       internalOrderId: z.string(),
       userId: z.number().optional(),
       buzzAmount: z.number().optional(),
+      orderType: z.string().optional(),
+      codeType: z.string().optional(),
+      codeUnitValue: z.number().optional(),
+      codePriceId: z.string().optional(),
     })
     .passthrough();
 

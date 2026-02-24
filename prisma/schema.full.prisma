@@ -3407,6 +3407,7 @@ model RedeemableCode {
   transactionId String?
   priceId       String?
   price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
+  sourceOrderId String?            @unique
 }
 
 enum ToolType {
@@ -5147,3 +5148,4 @@ model PromptAllowlist {
   @@unique([trigger, category])
   @@index([category])
 }
+

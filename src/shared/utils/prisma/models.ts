@@ -2584,6 +2584,7 @@ export interface RedeemableCode {
   transactionId: string | null;
   priceId: string | null;
   price?: Price | null;
+  sourceOrderId: string | null;
 }
 
 export interface Tool {

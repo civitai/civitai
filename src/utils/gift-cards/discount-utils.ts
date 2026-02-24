@@ -10,9 +10,9 @@ export interface DiscountInfo {
 /**
  * Checks if a discount is currently active based on the date range
  */
-export function isDiscountActive(startDate: Date, endDate: Date): boolean {
+export function isDiscountActive(startDate: Date | string, endDate: Date | string): boolean {
   const now = new Date();
-  return now >= startDate && now <= endDate;
+  return now >= new Date(startDate) && now <= new Date(endDate);
 }
 
 /**

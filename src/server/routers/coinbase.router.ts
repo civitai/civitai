@@ -1,5 +1,14 @@
-import { getStatus, createBuzzOrderHandler } from '~/server/controllers/coinbase.controller';
-import { createBuzzChargeSchema } from '~/server/schema/coinbase.schema';
+import {
+  getStatus,
+  createBuzzOrderHandler,
+  createCodeOrderHandler,
+  getCodeOrderHandler,
+} from '~/server/controllers/coinbase.controller';
+import {
+  createBuzzChargeSchema,
+  createCodeOrderSchema,
+  getCodeOrderSchema,
+} from '~/server/schema/coinbase.schema';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const coinbaseRouter = router({
@@ -8,4 +17,9 @@ export const coinbaseRouter = router({
     .input(createBuzzChargeSchema)
     .use(isFlagProtected('coinbasePayments'))
     .mutation(createBuzzOrderHandler),
+  createCodeOrder: protectedProcedure
+    .input(createCodeOrderSchema)
+    .use(isFlagProtected('coinbasePayments'))
+    .mutation(createCodeOrderHandler),
+  getCodeOrder: protectedProcedure.input(getCodeOrderSchema).query(getCodeOrderHandler),
 });

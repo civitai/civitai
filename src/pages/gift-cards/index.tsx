@@ -21,9 +21,11 @@ import {
   IconBuildingStore,
   IconArrowRight,
   IconAlertTriangle,
+  IconCurrencyBitcoin,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Meta } from '~/components/Meta/Meta';
 import { PromoNotification } from '~/components/PromoNotification/PromoNotification';
 import { KinguinCheckout } from '~/components/KinguinCheckout';
@@ -36,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getEnabledVendorsServer } from '~/server/services/gift-card-vendors.service';
+import { useMutateCoinbaseCodeOrder } from '~/components/Coinbase/util';
 import classes from './index.module.scss';
 
 // Kinguin utility moved to KinguinCheckout component
@@ -104,62 +107,29 @@ const GiftCardItem = ({
         </Text>
 
         <Card.Section p="sm">
-          <UnstyledButton
-            component="a"
-            href={primaryUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="relative block"
-          >
-            {/* Slanted corner discount banner - positioned over top left of image */}
-            {hasDiscount && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: 150,
-                  height: 150,
-                  overflow: 'hidden',
-                  zIndex: 2,
-                  pointerEvents: 'none',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 35,
-                    left: -45,
-                    width: 180,
-                    padding: '10px 0',
-                    background: 'linear-gradient(135deg, #ff6b1a 0%, #8b2fc9 100%)',
-                    transform: 'rotate(-45deg)',
-                    textAlign: 'center',
-                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                  }}
-                >
-                  <Text
-                    size="sm"
-                    fw={700}
-                    c="white"
-                    style={{
-                      textShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
-                      letterSpacing: '0.5px',
-                    }}
-                  >
-                    {discountPercentage}% OFF
-                  </Text>
-                </div>
-              </div>
-            )}
-            <Image
-              src={image}
-              alt={imageAlt}
-              height={200}
-              fit="contain"
-              style={{ cursor: 'pointer' }}
-            />
-          </UnstyledButton>
+          {primaryUrl ? (
+            <UnstyledButton
+              component="a"
+              href={primaryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="relative block"
+            >
+              {hasDiscount && <DiscountBanner percentage={discountPercentage!} />}
+              <Image
+                src={image}
+                alt={imageAlt}
+                height={200}
+                fit="contain"
+                style={{ cursor: 'pointer' }}
+              />
+            </UnstyledButton>
+          ) : (
+            <div className="relative">
+              {hasDiscount && <DiscountBanner percentage={discountPercentage!} />}
+              <Image src={image} alt={imageAlt} height={200} fit="contain" />
+            </div>
+          )}
         </Card.Section>
 
         <Stack gap="sm">{actions}</Stack>
@@ -167,6 +137,47 @@ const GiftCardItem = ({
     </Card>
   );
 };
+
+const DiscountBanner = ({ percentage }: { percentage: number }) => (
+  <div
+    style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: 150,
+      height: 150,
+      overflow: 'hidden',
+      zIndex: 2,
+      pointerEvents: 'none',
+    }}
+  >
+    <div
+      style={{
+        position: 'absolute',
+        top: 35,
+        left: -45,
+        width: 180,
+        padding: '10px 0',
+        background: 'linear-gradient(135deg, #ff6b1a 0%, #8b2fc9 100%)',
+        transform: 'rotate(-45deg)',
+        textAlign: 'center',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+      }}
+    >
+      <Text
+        size="sm"
+        fw={700}
+        c="white"
+        style={{
+          textShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
+          letterSpacing: '0.5px',
+        }}
+      >
+        {percentage}% OFF
+      </Text>
+    </div>
+  </div>
+);
 
 interface GiftCardsPageProps {
   enabledVendors: Vendor[];
@@ -179,7 +190,8 @@ export const getServerSideProps = createServerSideProps<GiftCardsPageProps>({
 
     return {
       props: {
-        enabledVendors,
+        // JSON round-trip to convert Date objects to strings for serialization
+        enabledVendors: JSON.parse(JSON.stringify(enabledVendors)),
       },
     };
   },
@@ -262,6 +274,33 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
       { shallow: true }
     );
   };
+
+  // Crypto purchase handler
+  const currentUser = useCurrentUser();
+  const { createCodeOrder } = useMutateCoinbaseCodeOrder();
+  const [cryptoPurchasingProduct, setCryptoPurchasingProduct] = useState<string | null>(null);
+
+  const handleCryptoPurchase = useCallback(
+    async (productKey: string, orderData: Parameters<typeof createCodeOrder>[0]) => {
+      if (cryptoPurchasingProduct) return;
+      if (!currentUser) {
+        router.push(`/login?returnUrl=${encodeURIComponent(router.asPath)}`);
+        return;
+      }
+      setCryptoPurchasingProduct(productKey);
+      try {
+        const charge = await createCodeOrder(orderData);
+        if (charge?.hosted_url) {
+          window.location.replace(charge.hosted_url);
+        }
+      } catch {
+        // Error notification handled by the mutation hook
+      } finally {
+        setCryptoPurchasingProduct(null);
+      }
+    },
+    [cryptoPurchasingProduct, currentUser, createCodeOrder, router]
+  );
 
   // Kinguin checkout handlers
   const handleKinguinPurchase = (productUrl: string, productName: string) => {
@@ -484,7 +523,25 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
                             className={classes.card}
                             type="buzz"
                             actions={
-                              selectedVendor.id === 'kinguin' ? (
+                              selectedVendor.id === 'crypto' ? (
+                                <Button
+                                  onClick={() =>
+                                    handleCryptoPurchase(`buzz-${card.amount}`, {
+                                      type: 'Buzz',
+                                      buzzAmount: card.amount,
+                                    })
+                                  }
+                                  loading={cryptoPurchasingProduct === `buzz-${card.amount}`}
+                                  leftSection={<IconCurrencyBitcoin size={16} />}
+                                  fullWidth
+                                  size="md"
+                                  className={classes.buzzButton}
+                                >
+                                  {card.price
+                                    ? `Buy with Crypto - $${(card.price / 100).toFixed(2)}`
+                                    : 'Buy with Crypto'}
+                                </Button>
+                              ) : selectedVendor.id === 'kinguin' ? (
                                 <Button
                                   onClick={() =>
                                     handleKinguinPurchase(
@@ -550,7 +607,32 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
                                     duration.months
                                   } Month${duration.months > 1 ? 's' : ''}`;
 
-                                  return selectedVendor.id === 'kinguin' ? (
+                                  const tier = membership.tier.toLowerCase() as
+                                    | 'bronze'
+                                    | 'silver'
+                                    | 'gold';
+                                  const productKey = `${tier}-${duration.months}`;
+
+                                  return selectedVendor.id === 'crypto' ? (
+                                    <Button
+                                      key={duration.months}
+                                      onClick={() =>
+                                        handleCryptoPurchase(productKey, {
+                                          type: 'Membership',
+                                          tier,
+                                          months: duration.months,
+                                        })
+                                      }
+                                      loading={cryptoPurchasingProduct === productKey}
+                                      size="sm"
+                                      className={classes.membershipButton}
+                                    >
+                                      {duration.months} Mo
+                                      {duration.price
+                                        ? ` - $${(duration.price / 100).toFixed(2)}`
+                                        : ''}
+                                    </Button>
+                                  ) : selectedVendor.id === 'kinguin' ? (
                                     <Button
                                       key={duration.months}
                                       onClick={() =>

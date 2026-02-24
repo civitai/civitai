@@ -10,6 +10,7 @@ export enum FLIPT_FEATURE_FLAGS {
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
+  GIFT_CARD_VENDOR_CRYPTO = 'gift-card-vendor-crypto',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
