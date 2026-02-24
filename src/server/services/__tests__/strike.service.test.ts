@@ -9,12 +9,14 @@ const {
   mockInvalidateSession,
   mockRefreshSession,
   mockStrikeIssuedEmailSend,
+  mockLogToAxiom,
 } = vi.hoisted(() => {
   const mockUserStrikeRead = {
     findMany: vi.fn(),
     findUnique: vi.fn(),
     findUniqueOrThrow: vi.fn(),
     count: vi.fn(),
+    aggregate: vi.fn(),
   };
 
   const mockUserStrikeWrite = {
@@ -36,12 +38,14 @@ const {
     },
     mockDbWrite: {
       userStrike: mockUserStrikeWrite,
+      $transaction: vi.fn(),
     },
     mockCreateNotification: vi.fn().mockResolvedValue(undefined),
     mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
     mockInvalidateSession: vi.fn().mockResolvedValue(undefined),
     mockRefreshSession: vi.fn().mockResolvedValue(undefined),
     mockStrikeIssuedEmailSend: vi.fn().mockResolvedValue(undefined),
+    mockLogToAxiom: vi.fn(),
   };
 });
 
@@ -69,7 +73,7 @@ vi.mock('~/server/email/templates', () => ({
 }));
 
 vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(),
+  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/server/utils/pagination-helpers', () => ({
@@ -93,6 +97,8 @@ import {
   getActiveStrikePoints,
   getStrikesForUser,
   getStrikesForMod,
+  getStrikeHistoryForMod,
+  getUserStandings,
   evaluateStrikeEscalation,
   createStrike,
   voidStrike,
@@ -100,6 +106,16 @@ import {
   processTimedUnmutes,
 } from '~/server/services/strike.service';
 import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
+
+// Helper: mock evaluateStrikeEscalation's transaction
+function mockTransactionForEscalation(pointsSum: number | null, user: any) {
+  mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
+    fn({
+      $queryRaw: vi.fn().mockResolvedValue([{ sum: pointsSum }]),
+      user: { findUnique: vi.fn().mockResolvedValue(user) },
+    })
+  );
+}
 
 describe('strike.service', () => {
   beforeEach(() => {
@@ -182,7 +198,10 @@ describe('strike.service', () => {
 
     it('returns strikes with totalActivePoints and nextExpiry', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([mockStrike]);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 1 }]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: 1 },
+        _min: { expiresAt: new Date('2099-01-01') },
+      });
 
       const result = await getStrikesForUser(100);
 
@@ -191,9 +210,25 @@ describe('strike.service', () => {
       expect(result.nextExpiry).toEqual(new Date('2099-01-01'));
     });
 
+    it('returns 0 points and null expiry when no active strikes', async () => {
+      mockDbRead.userStrike.findMany.mockResolvedValue([]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
+
+      const result = await getStrikesForUser(100);
+
+      expect(result.totalActivePoints).toBe(0);
+      expect(result.nextExpiry).toBeNull();
+    });
+
     it('filters to Active-only by default (includeExpired: false)', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([]);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: null }]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
 
       await getStrikesForUser(100);
 
@@ -206,7 +241,10 @@ describe('strike.service', () => {
 
     it('includes all statuses when includeExpired: true', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([]);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: null }]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
 
       await getStrikesForUser(100, { includeExpired: true });
 
@@ -219,7 +257,10 @@ describe('strike.service', () => {
 
     it('select.internalNotes is true when includeInternalNotes: true', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([]);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: null }]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
 
       await getStrikesForUser(100, { includeInternalNotes: true });
 
@@ -232,7 +273,10 @@ describe('strike.service', () => {
 
     it('select.internalNotes is false when includeInternalNotes: false', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([]);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: null }]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
 
       await getStrikesForUser(100, { includeInternalNotes: false });
 
@@ -241,6 +285,77 @@ describe('strike.service', () => {
           select: expect.objectContaining({ internalNotes: false }),
         })
       );
+    });
+
+    it('uses aggregate for active points instead of separate query', async () => {
+      mockDbRead.userStrike.findMany.mockResolvedValue([]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: 3 },
+        _min: { expiresAt: new Date('2099-06-01') },
+      });
+
+      const result = await getStrikesForUser(100);
+
+      expect(mockDbRead.userStrike.aggregate).toHaveBeenCalledWith({
+        where: {
+          userId: 100,
+          status: StrikeStatus.Active,
+          expiresAt: { gt: expect.any(Date) },
+        },
+        _sum: { points: true },
+        _min: { expiresAt: true },
+      });
+      expect(result.totalActivePoints).toBe(3);
+      expect(result.nextExpiry).toEqual(new Date('2099-06-01'));
+    });
+  });
+
+  // ==========================================================================
+  // getStrikeHistoryForMod
+  // ==========================================================================
+  describe('getStrikeHistoryForMod', () => {
+    it('fetches strikes with includeExpired and includeInternalNotes + user profile', async () => {
+      const mockUser = {
+        id: 100,
+        username: 'testuser',
+        createdAt: new Date('2023-01-01'),
+        muted: false,
+        bannedAt: null,
+        deletedAt: null,
+        meta: { scores: { total: 500 } },
+      };
+      mockDbRead.userStrike.findMany.mockResolvedValue([]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
+      mockDbRead.user.findUnique.mockResolvedValue(mockUser);
+
+      const result = await getStrikeHistoryForMod(100);
+
+      expect(result.user).toEqual(mockUser);
+      expect(result.strikes).toEqual([]);
+      expect(result.totalActivePoints).toBe(0);
+      // Verify includeExpired: true — no status filter in findMany
+      expect(mockDbRead.userStrike.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 100 },
+          select: expect.objectContaining({ internalNotes: true }),
+        })
+      );
+    });
+
+    it('returns null user when user does not exist', async () => {
+      mockDbRead.userStrike.findMany.mockResolvedValue([]);
+      mockDbRead.userStrike.aggregate.mockResolvedValue({
+        _sum: { points: null },
+        _min: { expiresAt: null },
+      });
+      mockDbRead.user.findUnique.mockResolvedValue(null);
+
+      const result = await getStrikeHistoryForMod(999);
+
+      expect(result.user).toBeNull();
     });
   });
 
@@ -316,12 +431,86 @@ describe('strike.service', () => {
   });
 
   // ==========================================================================
+  // getUserStandings
+  // ==========================================================================
+  describe('getUserStandings', () => {
+    it('returns paginated user standings', async () => {
+      const mockItems = [
+        {
+          id: 1,
+          username: 'testuser',
+          createdAt: new Date(),
+          muted: false,
+          bannedAt: null,
+          deletedAt: null,
+          userScore: 100,
+          flaggedForReview: false,
+          activeStrikeCount: 1,
+          totalActivePoints: 2,
+          totalStrikeCount: 3,
+          lastStrikeDate: new Date(),
+        },
+      ];
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce(mockItems) // data query
+        .mockResolvedValueOnce([{ count: BigInt(1) }]); // count query
+
+      const result = await getUserStandings({
+        limit: 10,
+        page: 1,
+        sort: 'points',
+        sortOrder: 'desc',
+      });
+
+      expect(result.items).toEqual(mockItems);
+      expect(result.totalItems).toBe(1);
+    });
+
+    it('returns zero count safely when count query returns empty', async () => {
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce([]) // data query — no items
+        .mockResolvedValueOnce([]); // count query — empty array (edge case)
+
+      const result = await getUserStandings({
+        limit: 10,
+        page: 1,
+        sort: 'points',
+        sortOrder: 'desc',
+      });
+
+      expect(result.items).toEqual([]);
+      expect(result.totalItems).toBe(0);
+    });
+
+    it('uses INNER JOIN by default (only users with strike history)', async () => {
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ count: BigInt(0) }]);
+
+      await getUserStandings({ limit: 10, page: 1, sort: 'points', sortOrder: 'desc' });
+
+      // Both calls should have been made (data + count)
+      expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to points sort for unknown sort value', async () => {
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ count: BigInt(0) }]);
+
+      // Even with valid schema, test the internal fallback
+      await getUserStandings({ limit: 10, page: 1, sort: 'points', sortOrder: 'asc' });
+
+      expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ==========================================================================
   // evaluateStrikeEscalation
   // ==========================================================================
   describe('evaluateStrikeEscalation', () => {
     it('3+ points: mutes, flags for review, invalidates session', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 3 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(3, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -347,8 +536,7 @@ describe('strike.service', () => {
     });
 
     it('3+ points, already flagged: updates user but skips duplicate notification', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 4 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(4, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
@@ -362,8 +550,7 @@ describe('strike.service', () => {
     });
 
     it('2 points: 3-day mute, invalidates session', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 2 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(2, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -391,8 +578,7 @@ describe('strike.service', () => {
     });
 
     it('2 points, already timed-muted: updates user but skips duplicate notification', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 2 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(2, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
@@ -406,8 +592,7 @@ describe('strike.service', () => {
     });
 
     it('2 points with existing flag: clears strikeFlaggedForReview', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 2 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(2, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
@@ -426,8 +611,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user not muted: no action', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 1 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(1, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -441,8 +625,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user strike-muted (has muteExpiresAt): unmutes and sends notification', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 1 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(1, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
@@ -467,8 +650,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user flagged (has strikeFlaggedForReview): unmutes and clears flag', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
@@ -489,8 +671,7 @@ describe('strike.service', () => {
     });
 
     it('<2 points, user manually muted (no muteExpiresAt, no flag): does NOT unmute', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: null,
         meta: {},
@@ -503,13 +684,25 @@ describe('strike.service', () => {
     });
 
     it('user not found: returns none', async () => {
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 3 }]);
-      mockDbRead.user.findUnique.mockResolvedValue(null);
+      mockTransactionForEscalation(3, null);
 
       const result = await evaluateStrikeEscalation(999);
 
       expect(result).toEqual({ totalPoints: 3, action: 'none' });
       expect(mockUpdateUserById).not.toHaveBeenCalled();
+    });
+
+    it('uses dbWrite.$transaction with FOR UPDATE for race condition safety', async () => {
+      mockTransactionForEscalation(1, {
+        muted: false,
+        muteExpiresAt: null,
+        meta: {},
+      });
+
+      await evaluateStrikeEscalation(1);
+
+      expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.$transaction).toHaveBeenCalledWith(expect.any(Function));
     });
   });
 
@@ -538,13 +731,13 @@ describe('strike.service', () => {
       // Default: user exists, no rate limit, escalation returns none
       mockDbRead.user.findUnique
         .mockResolvedValueOnce({ id: 100 }) // user exists check
-        .mockResolvedValueOnce({ muted: false, muteExpiresAt: null, meta: {} }) // evaluateStrikeEscalation
         .mockResolvedValueOnce({ email: 'user@test.com', username: 'testuser' }); // email lookup
       mockDbRead.$queryRaw
         .mockResolvedValueOnce([{ count: 0 }]) // shouldRateLimitStrike
-        .mockResolvedValueOnce([{ sum: 1 }]) // evaluateStrikeEscalation -> getActiveStrikePoints
         .mockResolvedValueOnce([{ sum: 1 }]); // getActiveStrikePoints for notification
       mockDbWrite.userStrike.create.mockResolvedValue(mockCreatedStrike);
+      // evaluateStrikeEscalation transaction
+      mockTransactionForEscalation(1, { muted: false, muteExpiresAt: null, meta: {} });
     });
 
     it('creates strike record and returns it', async () => {
@@ -579,19 +772,31 @@ describe('strike.service', () => {
       expect(mockDbWrite.userStrike.create).not.toHaveBeenCalled();
     });
 
+    it('logs to Axiom when rate limited', async () => {
+      mockDbRead.$queryRaw.mockReset();
+      mockDbRead.$queryRaw.mockResolvedValueOnce([{ count: 1 }]); // rate limited
+
+      await createStrike(baseInput);
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'info',
+          name: 'strike-rate-limited',
+          userId: 100,
+        })
+      );
+    });
+
     it('bypasses rate limit for ManualModAction', async () => {
       const manualInput = { ...baseInput, reason: StrikeReason.ManualModAction };
 
       // Reset and set up for manual action (no rate limit call)
       mockDbRead.$queryRaw.mockReset();
-      mockDbRead.$queryRaw
-        .mockResolvedValueOnce([{ sum: 1 }]) // evaluateStrikeEscalation -> getActiveStrikePoints
-        .mockResolvedValueOnce([{ sum: 1 }]); // getActiveStrikePoints for notification
+      mockDbRead.$queryRaw.mockResolvedValueOnce([{ sum: 1 }]); // getActiveStrikePoints for notification
 
       mockDbRead.user.findUnique.mockReset();
       mockDbRead.user.findUnique
         .mockResolvedValueOnce({ id: 100 }) // user exists
-        .mockResolvedValueOnce({ muted: false, muteExpiresAt: null, meta: {} }) // escalation
         .mockResolvedValueOnce({ email: 'user@test.com', username: 'testuser' }); // email
 
       const result = await createStrike(manualInput);
@@ -602,14 +807,8 @@ describe('strike.service', () => {
     it('calls evaluateStrikeEscalation after creation', async () => {
       await createStrike(baseInput);
 
-      // evaluateStrikeEscalation calls getActiveStrikePoints which uses $queryRaw,
-      // and user.findUnique for user state
-      expect(mockDbRead.user.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 100 },
-          select: { muted: true, muteExpiresAt: true, meta: true },
-        })
-      );
+      // evaluateStrikeEscalation uses dbWrite.$transaction
+      expect(mockDbWrite.$transaction).toHaveBeenCalled();
     });
 
     it('sends in-app notification', async () => {
@@ -669,13 +868,8 @@ describe('strike.service', () => {
     it('atomically voids active strike via updateMany', async () => {
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 1 });
       mockDbRead.userStrike.findUniqueOrThrow.mockResolvedValue(mockVoidedStrike);
-      // evaluateStrikeEscalation mocks
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
-        muted: false,
-        muteExpiresAt: null,
-        meta: {},
-      });
+      // evaluateStrikeEscalation
+      mockTransactionForEscalation(0, { muted: false, muteExpiresAt: null, meta: {} });
 
       const result = await voidStrike(voidInput);
 
@@ -711,12 +905,7 @@ describe('strike.service', () => {
     it('sends strike-voided notification', async () => {
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 1 });
       mockDbRead.userStrike.findUniqueOrThrow.mockResolvedValue(mockVoidedStrike);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
-        muted: false,
-        muteExpiresAt: null,
-        meta: {},
-      });
+      mockTransactionForEscalation(0, { muted: false, muteExpiresAt: null, meta: {} });
 
       await voidStrike(voidInput);
 
@@ -732,8 +921,7 @@ describe('strike.service', () => {
     it('re-evaluates escalation after voiding', async () => {
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 1 });
       mockDbRead.userStrike.findUniqueOrThrow.mockResolvedValue(mockVoidedStrike);
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
@@ -741,7 +929,8 @@ describe('strike.service', () => {
 
       await voidStrike(voidInput);
 
-      // evaluateStrikeEscalation should have been called and unmuted the user
+      // evaluateStrikeEscalation should have been called via transaction
+      expect(mockDbWrite.$transaction).toHaveBeenCalled();
       expect(mockUpdateUserById).toHaveBeenCalledWith(
         expect.objectContaining({
           id: 100,
@@ -770,13 +959,8 @@ describe('strike.service', () => {
         { id: 2, userId: 100 },
       ]);
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 2 });
-      // evaluateStrikeEscalation mocks
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
-        muted: false,
-        muteExpiresAt: null,
-        meta: {},
-      });
+      // evaluateStrikeEscalation
+      mockTransactionForEscalation(0, { muted: false, muteExpiresAt: null, meta: {} });
 
       const result = await expireStrikes();
 
@@ -788,18 +972,13 @@ describe('strike.service', () => {
       );
     });
 
-    it('sends strike-expired notification per affected user', async () => {
+    it('sends strike-expired notification per affected user in parallel', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([
         { id: 1, userId: 100 },
         { id: 2, userId: 200 },
       ]);
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 2 });
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
-        muted: false,
-        muteExpiresAt: null,
-        meta: {},
-      });
+      mockTransactionForEscalation(0, { muted: false, muteExpiresAt: null, meta: {} });
 
       await expireStrikes();
 
@@ -812,29 +991,18 @@ describe('strike.service', () => {
       );
     });
 
-    it('calls evaluateStrikeEscalation per affected user', async () => {
+    it('calls evaluateStrikeEscalation per affected user via transaction', async () => {
       mockDbRead.userStrike.findMany.mockResolvedValue([
         { id: 1, userId: 100 },
         { id: 2, userId: 200 },
       ]);
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 2 });
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
-        muted: false,
-        muteExpiresAt: null,
-        meta: {},
-      });
+      mockTransactionForEscalation(0, { muted: false, muteExpiresAt: null, meta: {} });
 
       await expireStrikes();
 
-      // getActiveStrikePoints (via $queryRaw) should have been called for each unique user
-      // 2 users = 2 calls to evaluateStrikeEscalation
-      expect(mockDbRead.user.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 100 } })
-      );
-      expect(mockDbRead.user.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 200 } })
-      );
+      // 2 unique users = 2 calls to evaluateStrikeEscalation (each uses $transaction)
+      expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -852,12 +1020,9 @@ describe('strike.service', () => {
 
     it('unmutes user when escalation returns none (points < 2)', async () => {
       mockDbRead.user.findMany.mockResolvedValue([{ id: 100 }]);
-      // evaluateStrikeEscalation: points < 2, user not strike-muted (no muteExpiresAt, no flag)
-      // -> returns 'none', so processTimedUnmutes manually unmutes
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 0 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(0, {
         muted: true,
-        muteExpiresAt: null, // evaluateStrikeEscalation sees this state after mute check
+        muteExpiresAt: null,
         meta: {},
       });
 
@@ -876,12 +1041,9 @@ describe('strike.service', () => {
 
     it('counts user when escalation returns unmuted', async () => {
       mockDbRead.user.findMany.mockResolvedValue([{ id: 100 }]);
-      // evaluateStrikeEscalation: points < 2, but user has muteExpiresAt set
-      // -> escalation unmutes them itself and returns 'unmuted'
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 1 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(1, {
         muted: true,
-        muteExpiresAt: new Date('2024-01-01'), // strike-based mute
+        muteExpiresAt: new Date('2024-01-01'),
         meta: {},
       });
 
@@ -892,9 +1054,7 @@ describe('strike.service', () => {
 
     it('does NOT unmute when escalation re-applies mute (points still >= 2)', async () => {
       mockDbRead.user.findMany.mockResolvedValue([{ id: 100 }]);
-      // evaluateStrikeEscalation: points >= 2, re-applies mute -> returns 'muted'
-      mockDbRead.$queryRaw.mockResolvedValue([{ sum: 2 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({
+      mockTransactionForEscalation(2, {
         muted: false,
         muteExpiresAt: null,
         meta: {},

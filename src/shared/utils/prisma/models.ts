@@ -474,6 +474,9 @@ export interface User {
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
   challengeEventsCreated?: ChallengeEvent[];
+  strikes?: UserStrike[];
+  issuedStrikes?: UserStrike[];
+  voidedStrikes?: UserStrike[];
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];

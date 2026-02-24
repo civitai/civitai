@@ -1,15 +1,21 @@
-import { Badge, Button, Card, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { Badge, Card, Divider, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
+import { IconCheck } from '@tabler/icons-react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { strikeStatusColorScheme } from '~/server/schema/strike.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { UserScoreDisplay } from './UserScoreDisplay';
 
 export function StrikesCard() {
-  const { data: summary, isLoading } = trpc.strike.getMyStrikeSummary.useQuery();
-  const [showDetails, { toggle }] = useDisclosure(false);
+  const currentUser = useCurrentUser();
+  const scores = currentUser?.meta?.scores;
+  const { data: summary, isLoading: summaryLoading } = trpc.strike.getMyStrikeSummary.useQuery();
+  const { data: strikesData, isLoading: strikesLoading } = trpc.strike.getMyStrikes.useQuery({
+    includeExpired: false,
+  });
 
-  if (isLoading) {
+  if (summaryLoading) {
     return (
       <Card withBorder>
         <Stack>
@@ -23,88 +29,99 @@ export function StrikesCard() {
   const points = summary?.totalActivePoints ?? 0;
   const standingColor = points === 0 ? 'green' : points === 1 ? 'yellow' : 'red';
   const standingLabel = points === 0 ? 'Good Standing' : points === 1 ? 'Warning' : 'Restricted';
+  const strikes = strikesData?.strikes ?? [];
 
   return (
     <Card withBorder id="strikes">
-      <Stack>
+      <Stack gap="lg">
+        {/* Header */}
         <Group justify="space-between" align="center">
           <Title order={2}>Account Standing</Title>
-          <Badge color={standingColor} size="lg" variant="filled">
+          <Badge
+            color={standingColor}
+            size="lg"
+            variant="light"
+            leftSection={points === 0 ? <IconCheck size={14} /> : undefined}
+          >
             {standingLabel}
           </Badge>
         </Group>
 
-        {points === 0 ? (
+        <Divider />
+
+        {/* User Score Section */}
+        <UserScoreDisplay scores={scores} />
+
+        <Divider />
+
+        {/* Strikes Section */}
+        <Group justify="space-between" align="center">
+          <Text size="lg" fw={700}>
+            Strikes
+          </Text>
+          {points > 0 && (
+            <Badge color={standingColor} size="md" variant="light">
+              {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+            </Badge>
+          )}
+        </Group>
+
+        {strikesLoading ? (
+          <Loader size="sm" />
+        ) : strikes.length === 0 ? (
           <Text size="sm" c="dimmed">
-            Your account is in good standing. You have no active strikes.
+            No active strikes. Your account is in good standing.
           </Text>
         ) : (
-          <Stack gap="xs">
-            <Text size="sm">
-              You have <strong>{summary?.activeStrikes}</strong> active{' '}
-              {summary?.activeStrikes === 1 ? 'strike' : 'strikes'} with a total of{' '}
-              <strong>{points}</strong> {points === 1 ? 'point' : 'points'}.
-            </Text>
-            {summary?.nextExpiry && (
-              <Text size="sm" c="dimmed">
-                Next strike expires: {formatDate(summary.nextExpiry)}
-              </Text>
-            )}
-            <Button variant="subtle" size="xs" onClick={toggle} w="fit-content">
-              {showDetails ? 'Hide details' : 'View strike details'}
-            </Button>
+          <Stack gap="sm">
+            {strikes.map((strike) => (
+              <Paper key={strike.id} withBorder p="md" radius="md">
+                <Stack gap="xs">
+                  <Group gap="xs" wrap="nowrap">
+                    <div
+                      role="img"
+                      aria-label={strike.status === 'Active' ? 'Active strike' : 'Inactive strike'}
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        backgroundColor:
+                          strike.status === 'Active'
+                            ? 'var(--mantine-color-red-filled)'
+                            : 'var(--mantine-color-gray-filled)',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Text size="sm" fw={600} style={{ flex: 1 }}>
+                      {getDisplayName(strike.reason)}
+                    </Text>
+                    <Badge
+                      color={strikeStatusColorScheme[strike.status] ?? 'gray'}
+                      size="sm"
+                      variant="light"
+                    >
+                      {strike.points} {strike.points === 1 ? 'pt' : 'pts'}
+                    </Badge>
+                  </Group>
+
+                  <Text size="sm" c="dimmed">
+                    {strike.description}
+                  </Text>
+
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">
+                      Issued: {formatDate(strike.createdAt)}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Expires: {formatDate(strike.expiresAt)}
+                    </Text>
+                  </Group>
+                </Stack>
+              </Paper>
+            ))}
           </Stack>
         )}
-
-        {showDetails && <StrikeDetails />}
       </Stack>
     </Card>
-  );
-}
-
-function StrikeDetails() {
-  const { data, isLoading } = trpc.strike.getMyStrikes.useQuery({ includeExpired: false });
-
-  if (isLoading) return <Loader size="sm" />;
-
-  const strikes = data?.strikes ?? [];
-  if (strikes.length === 0) {
-    return (
-      <Text size="sm" c="dimmed">
-        No active strikes found.
-      </Text>
-    );
-  }
-
-  return (
-    <Stack gap="sm">
-      <Divider />
-      {strikes.map((strike) => (
-        <Card key={strike.id} withBorder padding="sm" radius="sm">
-          <Stack gap={4}>
-            <Group justify="space-between">
-              <Badge color={strikeStatusColorScheme[strike.status] ?? 'gray'} size="sm">
-                {strike.status}
-              </Badge>
-              <Text size="xs" c="dimmed">
-                {strike.points} {strike.points === 1 ? 'point' : 'points'}
-              </Text>
-            </Group>
-            <Text size="sm" fw={500}>
-              {getDisplayName(strike.reason)}
-            </Text>
-            <Text size="sm">{strike.description}</Text>
-            <Group gap="xs">
-              <Text size="xs" c="dimmed">
-                Issued: {formatDate(strike.createdAt)}
-              </Text>
-              <Text size="xs" c="dimmed">
-                Expires: {formatDate(strike.expiresAt)}
-              </Text>
-            </Group>
-          </Stack>
-        </Card>
-      ))}
-    </Stack>
   );
 }

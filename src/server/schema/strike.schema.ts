@@ -37,6 +37,33 @@ export const getStrikesSchema = z.object({
 });
 export type GetStrikesInput = z.infer<typeof getStrikesSchema>;
 
+export const getUserStandingsSchema = z.object({
+  ...paginationSchema.shape,
+  userId: z.number().optional(),
+  username: z.string().optional(),
+  hasActiveStrikes: z.boolean().optional(),
+  isMuted: z.boolean().optional(),
+  isFlaggedForReview: z.boolean().optional(),
+  sort: z.enum(['points', 'score', 'lastStrike', 'created']).default('points'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+export type GetUserStandingsInput = z.infer<typeof getUserStandingsSchema>;
+
+export type UserStandingRow = {
+  id: number;
+  username: string | null;
+  createdAt: Date;
+  muted: boolean;
+  bannedAt: Date | null;
+  deletedAt: Date | null;
+  userScore: number | null;
+  flaggedForReview: boolean;
+  activeStrikeCount: number;
+  totalActivePoints: number;
+  totalStrikeCount: number;
+  lastStrikeDate: Date | null;
+};
+
 export const getMyStrikesSchema = z.object({
   includeExpired: z.boolean().default(false),
 });

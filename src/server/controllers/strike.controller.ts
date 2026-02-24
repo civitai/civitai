@@ -4,15 +4,19 @@ import type {
   CreateStrikeInput,
   GetStrikesInput,
   GetMyStrikesInput,
+  GetUserStandingsInput,
   VoidStrikeInput,
 } from '~/server/schema/strike.schema';
 import {
   createStrike,
+  getStrikeHistoryForMod,
   getStrikesForMod,
   getStrikesForUser,
   getStrikeSummary,
+  getUserStandings,
   voidStrike,
 } from '~/server/services/strike.service';
+import { userMeta as userMetaSchema } from '~/server/schema/user.schema';
 import { throwDbError } from '~/server/utils/errorHandling';
 
 export const createStrikeHandler = async ({
@@ -54,12 +58,37 @@ export const getStrikesHandler = async ({ input }: { input: GetStrikesInput }) =
   }
 };
 
+export const getUserStandingsHandler = async ({ input }: { input: GetUserStandingsInput }) => {
+  try {
+    return await getUserStandings(input);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
 export const getUserStrikeHistoryHandler = async ({ input }: { input: { userId: number } }) => {
   try {
-    return await getStrikesForUser(input.userId, {
-      includeExpired: true,
-      includeInternalNotes: true, // Mod-only endpoint
-    });
+    const { user: rawUser, ...strikeData } = await getStrikeHistoryForMod(input.userId);
+
+    const parsed = userMetaSchema.safeParse(rawUser?.meta);
+    const meta = parsed.success ? parsed.data : {};
+
+    return {
+      ...strikeData,
+      user: rawUser
+        ? {
+            id: rawUser.id,
+            username: rawUser.username,
+            createdAt: rawUser.createdAt,
+            muted: rawUser.muted,
+            bannedAt: rawUser.bannedAt,
+            deletedAt: rawUser.deletedAt,
+            scores: meta.scores ?? null,
+            flaggedForReview: meta.strikeFlaggedForReview ?? false,
+          }
+        : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

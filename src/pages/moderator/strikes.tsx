@@ -1,19 +1,23 @@
 import type { ComboboxItem } from '@mantine/core';
 import {
+  Alert,
   Anchor,
   Badge,
   Button,
   Container,
+  Divider,
   Drawer,
   Group,
+  Loader,
   Modal,
+  Paper,
   Stack,
   Text,
   Textarea,
   Title,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconExternalLink } from '@tabler/icons-react';
+import { IconAlertCircle, IconCheck, IconExternalLink } from '@tabler/icons-react';
 import type {
   MRT_ColumnDef,
   MRT_ColumnFiltersState,
@@ -21,44 +25,20 @@ import type {
   MRT_SortingState,
 } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type * as z from 'zod';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Form, InputNumber, InputSelect, InputTextArea, useForm } from '~/libs/form';
-import { createStrikeSchema } from '~/server/schema/strike.schema';
-import { strikeStatusColorScheme } from '~/server/schema/strike.schema';
+import { createStrikeSchema, strikeStatusColorScheme } from '~/server/schema/strike.schema';
+import type { UserStandingRow } from '~/server/schema/strike.schema';
 import { EntityType, StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-// ============================================================================
-// Types
-// ============================================================================
-type StrikeItem = {
-  id: number;
-  userId: number;
-  reason: string;
-  status: string;
-  points: number;
-  description: string;
-  internalNotes: string | null;
-  entityType: string | null;
-  entityId: number | null;
-  reportId: number | null;
-  createdAt: Date;
-  expiresAt: Date;
-  voidedAt: Date | null;
-  voidedBy: number | null;
-  voidReason: string | null;
-  issuedBy: number | null;
-  user: { id: number; username: string | null };
-  issuedByUser: { id: number; username: string | null } | null;
-};
 
 // ============================================================================
 // Helpers
@@ -83,37 +63,58 @@ function getEntityLink(entityType: string | null, entityId: number | null): stri
   return `${prefix}${entityId}`;
 }
 
+type SortValue = 'points' | 'score' | 'lastStrike' | 'created';
+
+const sortColumnMap: Record<string, SortValue> = {
+  totalActivePoints: 'points',
+  userScore: 'score',
+  lastStrikeDate: 'lastStrike',
+  createdAt: 'created',
+};
+
 // ============================================================================
 // Main Page Component
 // ============================================================================
 export default function Strikes() {
-  const [selected, setSelected] = useState<StrikeItem | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [issueModalOpened, { open: openIssueModal, close: closeIssueModal }] = useDisclosure(false);
   const [issueDefaultUserId, setIssueDefaultUserId] = useState<number | undefined>();
 
-  const [columnFilters, setColumnFilters] = useState<MRT_ColumnFiltersState>([
-    { id: 'status', value: [StrikeStatus.Active] },
+  const [columnFilters, setColumnFilters] = useState<MRT_ColumnFiltersState>([]);
+  const [sorting, setSorting] = useState<MRT_SortingState>([
+    { id: 'totalActivePoints', desc: true },
   ]);
-  const [sorting, setSorting] = useState<MRT_SortingState>([{ id: 'createdAt', desc: true }]);
   const [pagination, setPagination] = useState<MRT_PaginationState>({
     pageIndex: 0,
     pageSize: 20,
   });
 
-  // Extract typed filter values from MRT column filters
-  const statusFilter = columnFilters.find((f) => f.id === 'status')?.value as string[] | undefined;
-  const reasonFilter = columnFilters.find((f) => f.id === 'reason')?.value as string[] | undefined;
-  const usernameFilter = columnFilters.find((f) => f.id === 'username')?.value as
-    | string
-    | undefined;
+  // Extract typed filter values from MRT column filters with runtime validation
+  const usernameFilterRaw = columnFilters.find((f) => f.id === 'username')?.value;
+  const usernameFilter = typeof usernameFilterRaw === 'string' ? usernameFilterRaw : undefined;
+  const statusFilterRaw = columnFilters.find((f) => f.id === 'userStatus')?.value;
+  const statusFilter = Array.isArray(statusFilterRaw) ? (statusFilterRaw as string[]) : undefined;
 
-  const { data, isLoading, isFetching } = trpc.strike.getAll.useQuery(
+  // Map MRT sort to schema sort
+  const activeSortCol = sorting[0]?.id;
+  const activeSortDir = sorting[0]?.desc ? 'desc' : 'asc';
+  const sort: SortValue = sortColumnMap[activeSortCol] ?? 'points';
+
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isError: isTableError,
+    error: tableError,
+  } = trpc.strike.getUserStandings.useQuery(
     {
       page: pagination.pageIndex + 1,
       limit: pagination.pageSize,
-      status: statusFilter?.length ? (statusFilter as StrikeStatus[]) : undefined,
-      reason: reasonFilter?.length ? (reasonFilter as StrikeReason[]) : undefined,
       username: usernameFilter || undefined,
+      isMuted: statusFilter?.includes('muted') || undefined,
+      isFlaggedForReview: statusFilter?.includes('flagged') || undefined,
+      sort,
+      sortOrder: activeSortDir,
     },
     { keepPreviousData: true }
   );
@@ -123,98 +124,146 @@ export default function Strikes() {
     openIssueModal();
   };
 
-  const columns = useMemo<MRT_ColumnDef<StrikeItem>[]>(
+  const columns = useMemo<MRT_ColumnDef<UserStandingRow>[]>(
     () => [
       {
         id: 'actions',
         header: '',
-        Cell: ({ row: { original: strike } }) => (
-          <Button size="compact-xs" onClick={() => setSelected(strike)}>
-            Details
+        Cell: ({ row: { original: user } }) => (
+          <Button
+            size="compact-xs"
+            onClick={() => setSelectedUserId(user.id)}
+            aria-label={`View standing for ${user.username ?? `User ${user.id}`}`}
+          >
+            View
           </Button>
         ),
         enableSorting: false,
         enableColumnFilter: false,
         enableColumnActions: false,
-        size: 80,
+        size: 70,
       },
       {
         id: 'username',
-        header: 'User',
-        accessorFn: (row) => row.user.username ?? `User ${row.userId}`,
+        header: 'Username',
+        accessorFn: (row) => row.username ?? `User ${row.id}`,
         filterVariant: 'text',
         enableSorting: false,
-        Cell: ({ row: { original: strike } }) => (
-          <Link legacyBehavior href={`/user/${strike.user.username ?? strike.userId}`} passHref>
+        Cell: ({ row: { original: user } }) => (
+          <Link legacyBehavior href={`/user/${user.username ?? user.id}`} passHref>
             <Text component="a" c="blue.4" target="_blank" size="sm">
-              {strike.user.username ?? `User ${strike.userId}`}
+              {user.username ?? `User ${user.id}`}
             </Text>
           </Link>
         ),
       },
       {
-        id: 'reason',
-        header: 'Reason',
-        accessorFn: (row) => getDisplayName(row.reason),
-        filterVariant: 'multi-select',
+        id: 'userScore',
+        header: 'User Score',
+        accessorFn: (row) => (row.userScore != null ? Math.round(row.userScore) : '—'),
+        enableColumnFilter: false,
+        size: 100,
+      },
+      {
+        id: 'activeStrikeCount',
+        header: 'Active Strikes',
+        accessorFn: (row) => row.activeStrikeCount,
+        enableColumnFilter: false,
         enableSorting: false,
-        mantineFilterMultiSelectProps: {
-          data: Object.values(StrikeReason).map(
-            (x) => ({ label: getDisplayName(x), value: x }) as ComboboxItem
+        size: 110,
+        Cell: ({ row: { original: user } }) =>
+          user.activeStrikeCount > 0 ? (
+            <Badge color="red" size="md" variant="light">
+              {user.activeStrikeCount}
+            </Badge>
+          ) : (
+            <Text size="sm" c="dimmed">
+              0
+            </Text>
           ),
+      },
+      {
+        id: 'totalActivePoints',
+        header: 'Total Points',
+        accessorFn: (row) => row.totalActivePoints,
+        enableColumnFilter: false,
+        size: 110,
+        Cell: ({ row: { original: user } }) => {
+          const pts = user.totalActivePoints;
+          const color = pts >= 3 ? 'red' : pts >= 2 ? 'orange' : pts >= 1 ? 'yellow' : 'gray';
+          return (
+            <Badge color={color} size="md" variant="light">
+              {pts} {pts === 1 ? 'pt' : 'pts'}
+            </Badge>
+          );
         },
       },
       {
-        id: 'status',
-        header: 'Status',
-        accessorFn: (row) => row.status,
-        filterVariant: 'multi-select',
+        id: 'standing',
+        header: 'Standing',
+        enableColumnFilter: false,
         enableSorting: false,
-        mantineFilterMultiSelectProps: {
-          data: Object.values(StrikeStatus).map(
-            (x) => ({ label: getDisplayName(x), value: x }) as ComboboxItem
-          ),
+        size: 110,
+        Cell: ({ row: { original: user } }) => {
+          const pts = user.totalActivePoints;
+          const label = pts === 0 ? 'Good' : pts <= 1 ? 'Warning' : 'Restricted';
+          const color = pts === 0 ? 'green' : pts <= 1 ? 'yellow' : 'red';
+          return (
+            <Badge color={color} size="md" variant="light">
+              {label}
+            </Badge>
+          );
         },
-        Cell: ({ row: { original: strike } }) => (
-          <Badge color={strikeStatusColorScheme[strike.status] ?? 'gray'} size="md">
-            {strike.status}
-          </Badge>
+      },
+      {
+        id: 'userStatus',
+        header: 'Status',
+        enableSorting: false,
+        filterVariant: 'multi-select',
+        mantineFilterMultiSelectProps: {
+          data: [
+            { label: 'Muted', value: 'muted' },
+            { label: 'Flagged for Review', value: 'flagged' },
+          ] as ComboboxItem[],
+        },
+        Cell: ({ row: { original: user } }) => (
+          <Group gap={4}>
+            {user.muted && (
+              <Badge color="orange" size="sm" variant="light">
+                Muted
+              </Badge>
+            )}
+            {user.bannedAt && (
+              <Badge color="red" size="sm" variant="light">
+                Banned
+              </Badge>
+            )}
+            {user.flaggedForReview && (
+              <Badge color="pink" size="sm" variant="light">
+                Flagged
+              </Badge>
+            )}
+            {!user.muted && !user.bannedAt && !user.flaggedForReview && (
+              <Text size="sm" c="dimmed">
+                —
+              </Text>
+            )}
+          </Group>
         ),
       },
       {
-        accessorKey: 'points',
-        header: 'Points',
+        id: 'lastStrikeDate',
+        header: 'Last Strike',
+        accessorFn: (row) => (row.lastStrikeDate ? formatDate(row.lastStrikeDate) : '—'),
         enableColumnFilter: false,
-        enableSorting: false,
-        size: 80,
-      },
-      {
-        id: 'description',
-        header: 'Description',
-        accessorFn: (row) =>
-          row.description.length > 60 ? `${row.description.slice(0, 60)}...` : row.description,
-        enableColumnFilter: false,
-        enableSorting: false,
-      },
-      {
-        id: 'issuedBy',
-        header: 'Issued By',
-        accessorFn: (row) => row.issuedByUser?.username ?? (row.issuedBy ? 'System' : 'System'),
-        enableColumnFilter: false,
-        enableSorting: false,
+        size: 120,
       },
       {
         id: 'createdAt',
-        header: 'Created',
+        header: 'Member Since',
         accessorFn: (row) => formatDate(row.createdAt),
         enableColumnFilter: false,
-      },
-      {
-        id: 'expiresAt',
-        header: 'Expires',
-        accessorFn: (row) => formatDate(row.expiresAt),
-        enableColumnFilter: false,
-        enableSorting: false,
+        size: 120,
       },
     ],
     []
@@ -226,12 +275,17 @@ export default function Strikes() {
       <Container size="xl" pb="xl">
         <Stack>
           <Group justify="space-between" align="center">
-            <Title>Strikes</Title>
+            <Title>User Standings</Title>
             <Button onClick={() => handleOpenIssueModal()}>Issue Strike</Button>
           </Group>
+          {isTableError && (
+            <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+              Failed to load user standings: {tableError.message}
+            </Alert>
+          )}
           <MantineReactTable
             columns={columns}
-            data={(data?.items as StrikeItem[]) ?? []}
+            data={(data?.items as UserStandingRow[]) ?? []}
             manualFiltering
             manualPagination
             manualSorting
@@ -257,9 +311,9 @@ export default function Strikes() {
           />
         </Stack>
       </Container>
-      <StrikeDetailDrawer
-        strike={selected}
-        onClose={() => setSelected(null)}
+      <UserStandingDrawer
+        userId={selectedUserId}
+        onClose={() => setSelectedUserId(null)}
         onIssueStrike={(userId) => handleOpenIssueModal(userId)}
       />
       <IssueStrikeModal
@@ -272,98 +326,49 @@ export default function Strikes() {
 }
 
 // ============================================================================
-// Strike Detail Drawer
+// User Standing Drawer
 // ============================================================================
-function StrikeDetailDrawer({
-  strike,
+function UserStandingDrawer({
+  userId,
   onClose,
   onIssueStrike,
 }: {
-  strike: StrikeItem | null;
+  userId: number | null;
   onClose: () => void;
   onIssueStrike: (userId: number) => void;
 }) {
   const mobile = useIsMobile();
-  const [voidModalOpened, { open: openVoidModal, close: closeVoidModal }] = useDisclosure(false);
+  const [voidStrikeId, setVoidStrikeId] = useState<number | null>(null);
 
-  if (!strike) {
-    return (
-      <Drawer opened={false} onClose={onClose} position="right" size="xl">
-        {null}
-      </Drawer>
-    );
-  }
+  const {
+    data,
+    isLoading,
+    isError: isDrawerError,
+    error: drawerError,
+  } = trpc.strike.getUserHistory.useQuery({ userId: userId ?? 0 }, { enabled: userId != null });
 
-  const entityLink = getEntityLink(strike.entityType, strike.entityId);
-  const isActive = strike.status === StrikeStatus.Active;
+  const user = data?.user;
+  const strikes = data?.strikes ?? [];
+  const totalActivePoints = data?.totalActivePoints ?? 0;
+  const activeStrikeCount = strikes.filter(
+    (s) => s.status === StrikeStatus.Active && new Date(s.expiresAt) > new Date()
+  ).length;
 
-  const detailItems = [
-    {
-      label: 'Status',
-      value: (
-        <Badge color={strikeStatusColorScheme[strike.status] ?? 'gray'}>{strike.status}</Badge>
-      ),
-    },
-    { label: 'Reason', value: getDisplayName(strike.reason) },
-    { label: 'Points', value: strike.points },
-    { label: 'Description', value: strike.description },
-    {
-      label: 'Internal Notes',
-      value: strike.internalNotes ?? 'None',
-    },
-    {
-      label: 'Issued By',
-      value: strike.issuedByUser ? (
-        <Link legacyBehavior href={`/user/${strike.issuedByUser.username ?? strike.issuedByUser.id}`} passHref>
-          <Text component="a" c="blue.4" target="_blank" size="sm">
-            {strike.issuedByUser.username}
-          </Text>
-        </Link>
-      ) : (
-        'System'
-      ),
-    },
-    { label: 'Created', value: formatDate(strike.createdAt) },
-    { label: 'Expires', value: formatDate(strike.expiresAt) },
-    {
-      label: 'Voided At',
-      value: strike.voidedAt ? formatDate(strike.voidedAt) : undefined,
-      visible: !!strike.voidedAt,
-    },
-    {
-      label: 'Void Reason',
-      value: strike.voidReason,
-      visible: !!strike.voidReason,
-    },
-    {
-      label: 'Report ID',
-      value: strike.reportId,
-      visible: !!strike.reportId,
-    },
-    {
-      label: 'Entity',
-      value: entityLink ? (
-        <Anchor href={entityLink} target="_blank" size="sm">
-          <Group gap={4}>
-            <Text inherit>
-              {strike.entityType} #{strike.entityId}
-            </Text>
-            <IconExternalLink size={14} stroke={1.5} />
-          </Group>
-        </Anchor>
-      ) : undefined,
-      visible: !!entityLink,
-    },
-  ];
+  const standingColor =
+    totalActivePoints === 0 ? 'green' : totalActivePoints <= 1 ? 'yellow' : 'red';
+  const standingLabel =
+    totalActivePoints === 0 ? 'Good Standing' : totalActivePoints <= 1 ? 'Warning' : 'Restricted';
+
+  const scores = user?.scores;
 
   return (
     <>
       <Drawer
         withOverlay={false}
-        opened
+        opened={userId != null}
         onClose={onClose}
         position={mobile ? 'bottom' : 'right'}
-        title="Strike Details"
+        title="User Standing"
         size={mobile ? '100%' : 'xl'}
         padding="md"
         shadow="sm"
@@ -372,40 +377,201 @@ function StrikeDetailDrawer({
           content: 'border-l border-l-gray-3 dark:border-l-dark-4',
         }}
       >
-        <Stack>
-          <Link legacyBehavior href={`/user/${strike.user.username ?? strike.userId}`} passHref>
-            <Anchor size="sm" target="_blank">
-              <Group gap={4}>
-                <Text inherit>View User: {strike.user.username ?? strike.userId}</Text>
-                <IconExternalLink size={14} stroke={1.5} />
+        {isLoading ? (
+          <Stack align="center" py="xl" role="status" aria-label="Loading user standing">
+            <Loader size="sm" />
+          </Stack>
+        ) : isDrawerError ? (
+          <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+            Failed to load user data: {drawerError.message}
+          </Alert>
+        ) : !user ? (
+          <Text c="dimmed">User not found.</Text>
+        ) : (
+          <Stack gap="lg">
+            {/* Section 1: User Header */}
+            <Stack gap="xs">
+              <Group justify="space-between" align="center">
+                <Group gap="xs">
+                  <Link legacyBehavior href={`/user/${user.username ?? user.id}`} passHref>
+                    <Anchor size="lg" fw={700} target="_blank">
+                      <Group gap={4}>
+                        <Text inherit>{user.username ?? `User ${user.id}`}</Text>
+                        <IconExternalLink size={14} stroke={1.5} />
+                      </Group>
+                    </Anchor>
+                  </Link>
+                  <Text size="sm" c="dimmed">
+                    #{user.id}
+                  </Text>
+                </Group>
+                <Badge
+                  color={standingColor}
+                  size="lg"
+                  variant="light"
+                  leftSection={totalActivePoints === 0 ? <IconCheck size={14} /> : undefined}
+                >
+                  {standingLabel}
+                </Badge>
               </Group>
-            </Anchor>
-          </Link>
-          <DescriptionTable items={detailItems} labelWidth="30%" />
-          <Group>
-            {isActive && (
-              <Button color="yellow" variant="outline" onClick={openVoidModal}>
-                Void Strike
-              </Button>
+              <Group gap="xs">
+                {user.muted && (
+                  <Badge color="orange" size="sm" variant="light">
+                    Muted
+                  </Badge>
+                )}
+                {user.bannedAt && (
+                  <Badge color="red" size="sm" variant="light">
+                    Banned
+                  </Badge>
+                )}
+                {user.flaggedForReview && (
+                  <Badge color="pink" size="sm" variant="light">
+                    Flagged for Review
+                  </Badge>
+                )}
+              </Group>
+              <Text size="sm" c="dimmed">
+                Member since {formatDate(user.createdAt)}
+              </Text>
+            </Stack>
+
+            <Divider />
+
+            {/* Section 2: User Score */}
+            <UserScoreDisplay scores={scores} showReports />
+
+            <Divider />
+
+            {/* Section 3: Strike History */}
+            <Group justify="space-between" align="center">
+              <Text size="lg" fw={700}>
+                Strikes
+              </Text>
+              {totalActivePoints > 0 && (
+                <Badge color={standingColor} size="md" variant="light">
+                  {activeStrikeCount} active &middot; {totalActivePoints}{' '}
+                  {totalActivePoints === 1 ? 'pt' : 'pts'}
+                </Badge>
+              )}
+            </Group>
+
+            {strikes.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                No strikes on record.
+              </Text>
+            ) : (
+              <Stack gap="sm">
+                {strikes.map((strike) => {
+                  const entityLink = getEntityLink(strike.entityType, strike.entityId);
+                  const isActive =
+                    strike.status === StrikeStatus.Active &&
+                    new Date(strike.expiresAt) > new Date();
+
+                  return (
+                    <Paper key={strike.id} withBorder p="md" radius="md">
+                      <Stack gap="xs">
+                        <Group justify="space-between" wrap="nowrap">
+                          <Group gap="xs" wrap="nowrap">
+                            <Badge
+                              color={strikeStatusColorScheme[strike.status] ?? 'gray'}
+                              size="sm"
+                              variant="light"
+                            >
+                              {strike.status}
+                            </Badge>
+                            <Text size="sm" fw={600}>
+                              {getDisplayName(strike.reason)}
+                            </Text>
+                          </Group>
+                          <Badge
+                            color={
+                              strike.points >= 3 ? 'red' : strike.points >= 2 ? 'orange' : 'yellow'
+                            }
+                            size="sm"
+                            variant="light"
+                          >
+                            {strike.points} {strike.points === 1 ? 'pt' : 'pts'}
+                          </Badge>
+                        </Group>
+
+                        <Text size="sm">{strike.description}</Text>
+
+                        {strike.internalNotes && (
+                          <Text size="sm" c="dimmed" fs="italic">
+                            Internal: {strike.internalNotes}
+                          </Text>
+                        )}
+
+                        {entityLink && (
+                          <Anchor href={entityLink} target="_blank" size="sm">
+                            <Group gap={4}>
+                              <Text inherit>
+                                {strike.entityType} #{strike.entityId}
+                              </Text>
+                              <IconExternalLink size={14} stroke={1.5} />
+                            </Group>
+                          </Anchor>
+                        )}
+
+                        <Group justify="space-between">
+                          <Text size="xs" c="dimmed">
+                            Issued by {strike.issuedByUser?.username ?? 'System'} on{' '}
+                            {formatDate(strike.createdAt)}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            Expires: {formatDate(strike.expiresAt)}
+                          </Text>
+                        </Group>
+
+                        {strike.voidedAt && (
+                          <Text size="xs" c="dimmed">
+                            Voided on {formatDate(strike.voidedAt)}
+                            {strike.voidReason ? ` — ${strike.voidReason}` : ''}
+                          </Text>
+                        )}
+
+                        {isActive && (
+                          <Button
+                            size="compact-xs"
+                            color="yellow"
+                            variant="outline"
+                            onClick={() => setVoidStrikeId(strike.id)}
+                            style={{ alignSelf: 'flex-start' }}
+                          >
+                            Void
+                          </Button>
+                        )}
+                      </Stack>
+                    </Paper>
+                  );
+                })}
+              </Stack>
             )}
+
+            <Divider />
+
+            {/* Section 4: Actions */}
             <Button
-              variant="outline"
               onClick={() => {
+                if (!userId) return;
                 onClose();
-                onIssueStrike(strike.userId);
+                onIssueStrike(userId);
               }}
             >
-              Issue Another Strike
+              Issue Strike for this User
             </Button>
-          </Group>
-        </Stack>
+          </Stack>
+        )}
       </Drawer>
-      <VoidStrikeModal
-        strikeId={strike.id}
-        opened={voidModalOpened}
-        onClose={closeVoidModal}
-        onSuccess={onClose}
-      />
+      {voidStrikeId != null && (
+        <VoidStrikeModal
+          strikeId={voidStrikeId}
+          opened
+          onClose={() => setVoidStrikeId(null)}
+          onSuccess={() => setVoidStrikeId(null)}
+        />
+      )}
     </>
   );
 }
@@ -430,7 +596,10 @@ function VoidStrikeModal({
   const voidMutation = trpc.strike.void.useMutation({
     async onSuccess() {
       showSuccessNotification({ message: 'Strike has been voided' });
-      await queryUtils.strike.getAll.invalidate();
+      await Promise.all([
+        queryUtils.strike.getUserStandings.invalidate(),
+        queryUtils.strike.getUserHistory.invalidate(),
+      ]);
       setVoidReason('');
       onClose();
       onSuccess();
@@ -508,23 +677,28 @@ function IssueStrikeModal({
     },
   });
 
-  // Reset form when modal opens with new defaultUserId
-  const prevDefaultUserId = useState(defaultUserId)[0];
-  if (opened && defaultUserId !== prevDefaultUserId) {
-    form.reset({
-      userId: defaultUserId ?? ('' as unknown as number),
-      reason: StrikeReason.ManualModAction,
-      points: 1,
-      description: '',
-      internalNotes: '',
-      expiresInDays: 30,
-    });
-  }
+  // Reset form when modal opens with a new defaultUserId
+  useEffect(() => {
+    if (opened) {
+      form.reset({
+        userId: defaultUserId ?? ('' as unknown as number),
+        reason: StrikeReason.ManualModAction,
+        points: 1,
+        description: '',
+        internalNotes: '',
+        expiresInDays: 30,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, defaultUserId]);
 
   const createMutation = trpc.strike.create.useMutation({
     async onSuccess() {
       showSuccessNotification({ message: 'Strike has been issued' });
-      await queryUtils.strike.getAll.invalidate();
+      await Promise.all([
+        queryUtils.strike.getUserStandings.invalidate(),
+        queryUtils.strike.getUserHistory.invalidate(),
+      ]);
       form.reset();
       onClose();
     },

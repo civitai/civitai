@@ -4,6 +4,7 @@ import {
   getMyStrikesHandler,
   getMyStrikeSummaryHandler,
   getStrikesHandler,
+  getUserStandingsHandler,
   getUserStrikeHistoryHandler,
   voidStrikeHandler,
 } from '~/server/controllers/strike.controller';
@@ -11,6 +12,7 @@ import {
   createStrikeSchema,
   getMyStrikesSchema,
   getStrikesSchema,
+  getUserStandingsSchema,
   voidStrikeSchema,
 } from '~/server/schema/strike.schema';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
@@ -24,6 +26,7 @@ export const strikeRouter = router({
   create: moderatorProcedure.input(createStrikeSchema).mutation(createStrikeHandler),
   void: moderatorProcedure.input(voidStrikeSchema).mutation(voidStrikeHandler),
   getAll: moderatorProcedure.input(getStrikesSchema).query(getStrikesHandler),
+  getUserStandings: moderatorProcedure.input(getUserStandingsSchema).query(getUserStandingsHandler),
   getUserHistory: moderatorProcedure
     .input(z.object({ userId: z.number() }))
     .query(getUserStrikeHistoryHandler),

@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -9,6 +9,8 @@ import { strikeIssuedEmail } from '~/server/email/templates';
 import type {
   CreateStrikeInput,
   GetStrikesInput,
+  GetUserStandingsInput,
+  UserStandingRow,
   VoidStrikeInput,
 } from '~/server/schema/strike.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -88,50 +90,78 @@ export async function getStrikesForUser(
 ) {
   const { includeExpired = false, includeInternalNotes = false } = opts ?? {};
 
-  const strikes = await dbRead.userStrike.findMany({
-    where: {
-      userId,
-      ...(!includeExpired && { status: StrikeStatus.Active }),
-    },
-    select: {
-      id: true,
-      userId: true,
-      reason: true,
-      status: true,
-      points: true,
-      description: true,
-      internalNotes: includeInternalNotes,
-      entityType: true,
-      entityId: true,
-      reportId: true,
-      createdAt: true,
-      expiresAt: true,
-      voidedAt: true,
-      voidedBy: true,
-      voidReason: true,
-      issuedBy: true,
-      issuedByUser: {
-        select: { id: true, username: true },
+  const [strikes, aggregates] = await Promise.all([
+    dbRead.userStrike.findMany({
+      where: {
+        userId,
+        ...(!includeExpired && { status: StrikeStatus.Active }),
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      select: {
+        id: true,
+        userId: true,
+        reason: true,
+        status: true,
+        points: true,
+        description: true,
+        internalNotes: includeInternalNotes,
+        entityType: true,
+        entityId: true,
+        reportId: true,
+        createdAt: true,
+        expiresAt: true,
+        voidedAt: true,
+        voidedBy: true,
+        voidReason: true,
+        issuedBy: true,
+        issuedByUser: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    dbRead.userStrike.aggregate({
+      where: {
+        userId,
+        status: StrikeStatus.Active,
+        expiresAt: { gt: new Date() },
+      },
+      _sum: { points: true },
+      _min: { expiresAt: true },
+    }),
+  ]);
 
-  const totalActivePoints = await getActiveStrikePoints(userId);
+  return {
+    strikes,
+    totalActivePoints: aggregates._sum.points ?? 0,
+    nextExpiry: aggregates._min.expiresAt ?? null,
+  };
+}
 
-  // Find the next expiry date for active strikes
-  const activeStrikes = strikes.filter(
-    (s) => s.status === StrikeStatus.Active && s.expiresAt > new Date()
-  );
-  const nextExpiry =
-    activeStrikes.length > 0
-      ? activeStrikes.reduce(
-          (earliest, s) => (s.expiresAt < earliest ? s.expiresAt : earliest),
-          activeStrikes[0].expiresAt
-        )
-      : null;
+/**
+ * Get a user's full strike history with profile data for the moderator drawer.
+ * Combines strike data + user profile in a single service call.
+ */
+export async function getStrikeHistoryForMod(userId: number) {
+  const [strikeData, user] = await Promise.all([
+    getStrikesForUser(userId, {
+      includeExpired: true,
+      includeInternalNotes: true,
+    }),
+    dbRead.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        createdAt: true,
+        muted: true,
+        bannedAt: true,
+        deletedAt: true,
+        meta: true,
+      },
+    }),
+  ]);
 
-  return { strikes, totalActivePoints, nextExpiry };
+  return { ...strikeData, user };
 }
 
 /**
@@ -182,6 +212,107 @@ export async function getStrikesForMod(input: GetStrikesInput) {
   return getPagingData({ items, count }, take, page);
 }
 
+/**
+ * Get paginated user standings for the moderator dashboard.
+ * Shows one row per user with aggregated strike data.
+ */
+export async function getUserStandings(input: GetUserStandingsInput) {
+  const {
+    limit,
+    page,
+    userId,
+    username,
+    hasActiveStrikes,
+    isMuted,
+    isFlaggedForReview,
+    sort,
+    sortOrder,
+  } = input;
+  const { take, skip } = getPagination(limit, page);
+
+  // Use LEFT JOIN when searching by userId/username (find any user),
+  // INNER JOIN by default (only users with strike history)
+  const joinClause =
+    userId || username
+      ? Prisma.sql`LEFT JOIN "UserStrike" us ON us."userId" = u."id"`
+      : Prisma.sql`INNER JOIN "UserStrike" us ON us."userId" = u."id"`;
+
+  // Build WHERE conditions as Prisma.sql fragments
+  const whereConditions: Prisma.Sql[] = [];
+  if (userId) {
+    whereConditions.push(Prisma.sql`u."id" = ${userId}`);
+  }
+  if (username) {
+    whereConditions.push(Prisma.sql`u."username" ILIKE ${'%' + username + '%'}`);
+  }
+  if (isMuted) {
+    whereConditions.push(Prisma.sql`u."muted" = true`);
+  }
+  if (isFlaggedForReview) {
+    whereConditions.push(Prisma.sql`(u."meta"->>'strikeFlaggedForReview')::boolean = true`);
+  }
+
+  const whereClause =
+    whereConditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, ' AND ')}`
+      : Prisma.empty;
+
+  const havingClause = hasActiveStrikes
+    ? Prisma.sql`HAVING COUNT(*) FILTER (WHERE us."status" = 'Active' AND us."expiresAt" > NOW()) > 0`
+    : Prisma.empty;
+
+  // Sort mapping — all values are static SQL identifiers, safe to use Prisma.raw
+  const sortMap: Record<string, string> = {
+    points: '"totalActivePoints"',
+    score: '"userScore"',
+    lastStrike: '"lastStrikeDate"',
+    created: 'u."createdAt"',
+  };
+  const orderColumn = Prisma.raw(sortMap[sort] ?? '"totalActivePoints"');
+  const orderDir = Prisma.raw(sortOrder === 'asc' ? 'ASC' : 'DESC');
+
+  const baseQuery = Prisma.sql`
+    SELECT
+      u."id",
+      u."username",
+      u."createdAt",
+      u."muted",
+      u."bannedAt",
+      u."deletedAt",
+      (u."meta"->'scores'->>'total')::float AS "userScore",
+      COALESCE((u."meta"->>'strikeFlaggedForReview')::boolean, false) AS "flaggedForReview",
+      COUNT(*) FILTER (WHERE us."status" = 'Active' AND us."expiresAt" > NOW())::int AS "activeStrikeCount",
+      COALESCE(SUM(us."points") FILTER (WHERE us."status" = 'Active' AND us."expiresAt" > NOW()), 0)::int AS "totalActivePoints",
+      COUNT(us."id")::int AS "totalStrikeCount",
+      MAX(us."createdAt") AS "lastStrikeDate"
+    FROM "User" u
+    ${joinClause}
+    ${whereClause}
+    GROUP BY u."id"
+    ${havingClause}
+    ORDER BY ${orderColumn} ${orderDir} NULLS LAST, u."id" DESC
+  `;
+
+  const limitClause = take != null ? Prisma.sql`LIMIT ${take}` : Prisma.empty;
+  const offsetClause = skip != null ? Prisma.sql`OFFSET ${skip}` : Prisma.empty;
+
+  const [items, countResult] = await Promise.all([
+    dbRead.$queryRaw<UserStandingRow[]>`${baseQuery} ${limitClause} ${offsetClause}`,
+    dbRead.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*) as count FROM (
+      SELECT u."id"
+      FROM "User" u
+      ${joinClause}
+      ${whereClause}
+      GROUP BY u."id"
+      ${havingClause}
+    ) AS sub`,
+  ]);
+
+  const count = Number(countResult[0]?.count ?? 0);
+
+  return getPagingData({ items, count }, take, page);
+}
+
 // ============================================================================
 // Escalation Engine
 // ============================================================================
@@ -198,12 +329,24 @@ export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted
 export async function evaluateStrikeEscalation(
   userId: number
 ): Promise<{ totalPoints: number; action: EscalationAction }> {
-  const totalPoints = await getActiveStrikePoints(userId);
-
-  // Get current user state
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { muted: true, muteExpiresAt: true, meta: true },
+  // Read points and user state in a single transaction to prevent race conditions
+  const { totalPoints, user } = await dbWrite.$transaction(async (tx) => {
+    const [pointsResult] = await tx.$queryRaw<[{ sum: bigint | null }]>`
+      SELECT SUM(points) as sum
+      FROM "UserStrike"
+      WHERE "userId" = ${userId}
+        AND "status" = ${StrikeStatus.Active}::"StrikeStatus"
+        AND "expiresAt" > NOW()
+      FOR UPDATE
+    `;
+    const txUser = await tx.user.findUnique({
+      where: { id: userId },
+      select: { muted: true, muteExpiresAt: true, meta: true },
+    });
+    return {
+      totalPoints: Number(pointsResult.sum ?? 0),
+      user: txUser,
+    };
   });
 
   if (!user) {
@@ -350,7 +493,13 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
   if (reason !== StrikeReason.ManualModAction) {
     const shouldLimit = await shouldRateLimitStrike(userId);
     if (shouldLimit) {
-      // Skip creating the strike but don't throw an error
+      logToAxiom({
+        type: 'info',
+        name: 'strike-rate-limited',
+        message: `Skipped auto-strike for user ${userId} — rate limited`,
+        userId,
+        reason,
+      });
       return null;
     }
   }
@@ -525,17 +674,23 @@ export async function expireStrikes(): Promise<{ expiredCount: number }> {
 
   // Send notifications and re-evaluate escalation for affected users
   const uniqueUserIds = [...new Set(strikesToExpire.map((s) => s.userId))];
-  for (const userId of uniqueUserIds) {
-    // createNotification handles its own error logging
-    await createNotification({
-      type: 'strike-expired',
-      category: NotificationCategory.System,
-      key: `strike-expired:${userId}:${Date.now()}`,
-      userId,
-      details: {},
-    });
 
-    // Re-evaluate escalation — may de-escalate (unmute) if points dropped below threshold
+  // Batch notifications
+  await Promise.all(
+    uniqueUserIds.map((userId) =>
+      createNotification({
+        type: 'strike-expired',
+        category: NotificationCategory.System,
+        key: `strike-expired:${userId}:${Date.now()}`,
+        userId,
+        details: {},
+      })
+    )
+  );
+
+  // Re-evaluate escalation for each user — must be sequential since each
+  // uses a transaction with FOR UPDATE locks
+  for (const userId of uniqueUserIds) {
     try {
       await evaluateStrikeEscalation(userId);
     } catch (error) {
