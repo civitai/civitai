@@ -44,7 +44,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import {
   discountInfo,
   isValidRapid,
-  isAiToolkitSupported,
+  isAiToolkitEnabled,
   isAiToolkitMandatory,
   isSamplePromptsRequired,
   getDefaultEngine,
@@ -91,7 +91,8 @@ export const AdvancedSettings = ({
     const defaultParams = getDefaultTrainingParams(runBase, selectedRun.params.engine);
 
     defaultParams.engine = selectedRun.params.engine;
-    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+    const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1))));
 
     if (selectedRun.params.engine !== 'rapid') {
       defaultParams.targetSteps = Math.ceil(
@@ -106,7 +107,8 @@ export const AdvancedSettings = ({
   // Use functions to set proper starting values based on metadata
   useEffect(() => {
     if (selectedRun.params.numRepeats === undefined) {
-      const numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+      const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+      const numRepeats = Math.max(1, Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1))));
       doUpdate({ params: { numRepeats } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,8 +282,8 @@ export const AdvancedSettings = ({
       )}
 
       {/* AI Toolkit Training Toggle or Required Badge */}
-      {/* AI Toolkit is public for SD1.5 and SDXL, mod-only for other supported models */}
-      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
+      {/* Per-model AI Toolkit availability controlled via Flipt boolean flags */}
+      {isAiToolkitEnabled(selectedRun.baseType, features) && (
         <Group mt="md">
           {!isAiToolkitMandatory(selectedRun.baseType) && (
             // Show toggle for optional AI Toolkit
@@ -677,7 +679,7 @@ export const AdvancedSettings = ({
                     value: inp,
                     visible: !(
                       ts.name === 'engine' ||
-                      ((ts.name === 'numRepeats' || ts.name === 'trainBatchSize') &&
+                      (ts.name === 'trainBatchSize' &&
                         selectedRun.params.engine === 'ai-toolkit')
                     ),
                   };

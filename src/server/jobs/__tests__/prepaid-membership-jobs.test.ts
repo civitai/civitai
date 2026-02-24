@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
-const { mockDbWrite, mockCreateBuzzTransactionMany, mockDeliverMonthlyCosmetics, mockRefreshSession } = vi.hoisted(() => {
+const {
+  mockDbWrite,
+  mockCreateBuzzTransactionMany,
+  mockDeliverMonthlyCosmetics,
+  mockRefreshSession,
+} = vi.hoisted(() => {
   const mockCustomerSubscription = {
     findFirst: vi.fn(),
     findMany: vi.fn(),

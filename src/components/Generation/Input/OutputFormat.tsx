@@ -163,9 +163,7 @@ export function PreferredImageFormatCompact({
             <IconPhoto size={16} className="text-gray-6 dark:text-dark-2" />
             <span className="font-medium">{selected?.label ?? 'JPEG'}</span>
             {selected && selected.offset > 0 && (
-              <span
-                className={clsx('flex items-center', isMember && 'line-through opacity-50')}
-              >
+              <span className={clsx('flex items-center', isMember && 'line-through opacity-50')}>
                 <span className="text-xs">+</span>
                 <IconBolt className="fill-yellow-7 stroke-yellow-7" size={14} />
                 <span className="text-xs">{selected.offset}</span>

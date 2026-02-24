@@ -7,11 +7,18 @@ export enum FLIPT_FEATURE_FLAGS {
   ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
+
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
-  AI_TOOLKIT_TRAINING = 'ai-toolkit-training',
+  AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
+  AI_TOOLKIT_SDXL = 'ai-toolkit-sdxl',
+  AI_TOOLKIT_FLUX = 'ai-toolkit-flux',
+  AI_TOOLKIT_SD35 = 'ai-toolkit-sd35',
+  AI_TOOLKIT_HUNYUAN = 'ai-toolkit-hunyuan',
+  AI_TOOLKIT_WAN = 'ai-toolkit-wan',
+  AI_TOOLKIT_CHROMA = 'ai-toolkit-chroma',
   QWEN_TRAINING = 'qwen-training',
   FLUX2_TRAINING = 'flux2-training',
   ZIMAGE_TURBO_TRAINING = 'zimage-turbo-training',
@@ -21,6 +28,7 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
+  COMIC_CREATOR = 'comic-creator',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

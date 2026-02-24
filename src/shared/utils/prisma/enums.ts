@@ -874,6 +874,70 @@ export const EntityMetric_MetricType_Type = {
 
 export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
 
+export const ComicProjectStatus = {
+  Active: 'Active',
+  Deleted: 'Deleted',
+} as const;
+
+export type ComicProjectStatus = (typeof ComicProjectStatus)[keyof typeof ComicProjectStatus];
+
+export const ComicReferenceStatus = {
+  Pending: 'Pending',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ComicReferenceStatus = (typeof ComicReferenceStatus)[keyof typeof ComicReferenceStatus];
+
+export const ComicPanelStatus = {
+  Pending: 'Pending',
+  Generating: 'Generating',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ComicPanelStatus = (typeof ComicPanelStatus)[keyof typeof ComicPanelStatus];
+
+export const ComicChapterStatus = {
+  Draft: 'Draft',
+  Published: 'Published',
+} as const;
+
+export type ComicChapterStatus = (typeof ComicChapterStatus)[keyof typeof ComicChapterStatus];
+
+export const ComicReferenceType = {
+  Character: 'Character',
+  Location: 'Location',
+  Item: 'Item',
+} as const;
+
+export type ComicReferenceType = (typeof ComicReferenceType)[keyof typeof ComicReferenceType];
+
+export const ComicEngagementType = {
+  None: 'None',
+  Notify: 'Notify',
+  Hide: 'Hide',
+} as const;
+
+export type ComicEngagementType = (typeof ComicEngagementType)[keyof typeof ComicEngagementType];
+
+export const ComicGenre = {
+  Action: 'Action',
+  Adventure: 'Adventure',
+  Comedy: 'Comedy',
+  Drama: 'Drama',
+  Fantasy: 'Fantasy',
+  Horror: 'Horror',
+  Mystery: 'Mystery',
+  Romance: 'Romance',
+  SciFi: 'SciFi',
+  SliceOfLife: 'SliceOfLife',
+  Thriller: 'Thriller',
+  Other: 'Other',
+} as const;
+
+export type ComicGenre = (typeof ComicGenre)[keyof typeof ComicGenre];
+
 export const UserRestrictionStatus = {
   Pending: 'Pending',
   Upheld: 'Upheld',

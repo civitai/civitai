@@ -6,6 +6,7 @@ import {
   createChallengeWinner,
   getChallengeById,
   getChallengeWinners,
+  resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
@@ -496,12 +497,7 @@ export async function getChallengeDetail(
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // Fetch eventId (not in the shared getChallengeById helper)
-  const challengeEventData = await dbRead.challenge.findUnique({
-    where: { id },
-    select: { eventId: true },
-  });
-  const eventId = challengeEventData?.eventId ?? null;
+  const eventId = challenge.eventId;
 
   // Visibility check: only show challenges that are visible to the public
   // unless bypassVisibility is true (for moderators)
@@ -1320,7 +1316,10 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
   }
 
-  const judgedEntries = await getJudgedEntries(challenge.collectionId, config);
+  // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
+  const eventContext = await resolveEventContext(challenge.eventId);
+
+  const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
   if (!judgedEntries.length) {
     // No judged entries, just mark as completed
     await dbWrite.challenge.update({
@@ -1838,6 +1837,7 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
       startDate: true,
       endDate: true,
       active: true,
+      winnerCooldownDays: true,
       createdAt: true,
       _count: { select: { challenges: true } },
     },

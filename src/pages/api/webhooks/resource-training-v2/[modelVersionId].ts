@@ -2,6 +2,7 @@ import { WorkflowStatus } from '@civitai/client';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';

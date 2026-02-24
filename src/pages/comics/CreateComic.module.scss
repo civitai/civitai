@@ -1,0 +1,445 @@
+/* ── Two-column layout ────────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 32px;
+  align-items: start;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.formColumn {
+  min-width: 0;
+}
+
+.previewColumn {
+  position: sticky;
+  top: 80px;
+
+  @media (max-width: 900px) {
+    position: static;
+    order: -1;
+  }
+}
+
+/* ── Images row: Hero + Cover side by side ────────── */
+
+.imagesRow {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+
+  @media (max-width: 560px) {
+    flex-direction: column;
+  }
+}
+
+.heroSection {
+  flex: 1;
+  min-width: 0;
+}
+
+.coverSection {
+  flex-shrink: 0;
+  width: 100px;
+
+  @media (max-width: 560px) {
+    width: 100%;
+    max-width: 120px;
+  }
+}
+
+.heroDropzone {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: light-dark(var(--mantine-color-gray-1), #2c2e33);
+  max-height: 160px;
+}
+
+.heroPickerWrap {
+  max-height: 160px;
+  overflow: hidden;
+
+  /* Constrain the inner frame to match */
+  > div {
+    max-height: 160px;
+  }
+}
+
+.coverDropzone {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: light-dark(var(--mantine-color-gray-1), #2c2e33);
+}
+
+.coverPreviewWrap {
+  position: relative;
+  display: inline-block;
+}
+
+.coverPreview {
+  width: 100px;
+  height: 133px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #2c2e33;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.removeBtn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+}
+
+/* ── Name + Genre row ────────────────────────────── */
+
+.nameGenreRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+
+  @media (max-width: 480px) {
+    flex-direction: column;
+  }
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.genreInput {
+  width: 180px;
+  flex-shrink: 0;
+
+  @media (max-width: 480px) {
+    width: 100%;
+  }
+}
+
+/* ── Gradient button ─────────────────────────────── */
+
+.gradientBtn {
+  background: linear-gradient(135deg, #fab005, #fd7e14);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(250, 176, 5, 0.3);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+/* ── Miniature Reader Preview ────────────────────── */
+
+.previewCard {
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border-radius: 12px;
+  overflow: hidden;
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-8));
+}
+
+.previewInner {
+  position: relative;
+}
+
+.previewHero {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  background: light-dark(var(--mantine-color-gray-1), #1a1b1e);
+  overflow: hidden;
+}
+
+.previewHeroImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  display: block;
+}
+
+.previewHeroGradient {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 70%;
+  background: linear-gradient(
+    transparent,
+    light-dark(var(--mantine-color-white), var(--mantine-color-dark-8))
+  );
+  pointer-events: none;
+}
+
+.previewHeroEmpty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #605e6e;
+  background: linear-gradient(
+    135deg,
+    light-dark(var(--mantine-color-gray-1), #25262b) 0%,
+    light-dark(var(--mantine-color-gray-2), #1a1b1e) 100%
+  );
+}
+
+.previewContent {
+  position: relative;
+  margin-top: -28px;
+  z-index: 1;
+  padding: 0 14px 14px;
+}
+
+.previewTitle {
+  font-size: 16px;
+  font-weight: 800;
+  color: light-dark(var(--mantine-color-dark-9), #f9fafb);
+  margin: 0 0 2px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewCreator {
+  font-size: 10px;
+  color: #909296;
+  margin: 0;
+}
+
+.previewDescription {
+  color: light-dark(var(--mantine-color-gray-7), #c1c2c5);
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 6px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.previewStats {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.previewStatPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: light-dark(var(--mantine-color-gray-1), rgba(0, 0, 0, 0.25));
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 9px;
+  color: light-dark(var(--mantine-color-gray-7), #c1c2c5);
+}
+
+.previewStatDot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #fab005;
+  flex-shrink: 0;
+}
+
+.previewCta {
+  background: linear-gradient(135deg, #fab005, #fd7e14);
+  color: #000;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 12px;
+  font-weight: 700;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.previewChapterSection {
+  margin-top: 12px;
+}
+
+.previewChapterTitle {
+  font-size: 8px;
+  font-weight: 700;
+  color: #909296;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 0 0 6px;
+}
+
+.previewChapterItem {
+  background: light-dark(var(--mantine-color-gray-0), #25262b);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.previewChapterNumber {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: light-dark(var(--mantine-color-gray-1), rgba(0, 0, 0, 0.25));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 10px;
+  color: #fab005;
+  flex-shrink: 0;
+}
+
+.previewChapterThumb {
+  width: 24px;
+  height: 32px;
+  border-radius: 3px;
+  background: light-dark(var(--mantine-color-gray-1), #2c2e33);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #605e6e;
+  flex-shrink: 0;
+}
+
+.previewChapterInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.previewChapterName {
+  font-size: 10px;
+  font-weight: 600;
+  margin: 0;
+  color: light-dark(var(--mantine-color-dark-9), #f9fafb);
+}
+
+/* ── Card Preview (browse card) ──────────────────── */
+
+.cardPreview {
+  width: 160px;
+  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border-radius: 8px;
+  overflow: hidden;
+  background: light-dark(var(--mantine-color-gray-0), #25262b);
+}
+
+.cardPreviewCover {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  background: light-dark(var(--mantine-color-gray-1), #1a1b1e);
+  overflow: hidden;
+}
+
+.cardPreviewCoverImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cardPreviewCoverEmpty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #605e6e;
+}
+
+.cardPreviewGenreBadge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  color: #c1c2c5;
+  font-size: 8px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.cardPreviewBody {
+  padding: 6px 8px;
+}
+
+.cardPreviewTitle {
+  font-size: 11px;
+  font-weight: 600;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: light-dark(var(--mantine-color-dark-9), #f9fafb);
+}
+
+.cardPreviewCreator {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.cardPreviewAvatar {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: light-dark(var(--mantine-color-gray-2), #373a40);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909296;
+  flex-shrink: 0;
+}
+
+.cardPreviewUsername {
+  font-size: 9px;
+  color: #909296;
+}
+
+.cardPreviewChapter {
+  display: block;
+  font-size: 9px;
+  color: #909296;
+  margin-top: 3px;
+}

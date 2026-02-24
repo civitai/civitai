@@ -38,11 +38,7 @@ export async function getEnabledVendorsServer(
 
     if (config.fliptFlag) {
       // Vendor uses Flipt flag for enablement
-      isEnabled = await isFlipt(
-        config.fliptFlag,
-        userId?.toString() ?? 'anonymous',
-        context
-      );
+      isEnabled = await isFlipt(config.fliptFlag, userId?.toString() ?? 'anonymous', context);
     } else {
       // Vendor uses static enabled property
       isEnabled = config.vendor.enabled;
@@ -75,11 +71,7 @@ export async function getVendorByIdServer(
   let isEnabled: boolean;
 
   if (config.fliptFlag) {
-    isEnabled = await isFlipt(
-      config.fliptFlag,
-      userId?.toString() ?? 'anonymous',
-      context
-    );
+    isEnabled = await isFlipt(config.fliptFlag, userId?.toString() ?? 'anonymous', context);
   } else {
     isEnabled = config.vendor.enabled;
   }

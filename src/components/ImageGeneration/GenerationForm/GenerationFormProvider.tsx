@@ -47,10 +47,7 @@ import {
   flux2KleinSchedules,
   getIsFlux2KleinGroup,
 } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
-import {
-  zImageSampleMethods,
-  zImageSchedules,
-} from '~/shared/orchestrator/ImageGen/zImage.config';
+import { zImageSampleMethods, zImageSchedules } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
@@ -538,8 +535,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
         // When switching AWAY from ZImageBase/Flux2Klein, reset sdcpp sampler to UI sampler
         const wasUsingsdcppSamplers =
-          prevBaseModel &&
-          (getIsZImageBase(prevBaseModel) || getIsFlux2KleinGroup(prevBaseModel));
+          prevBaseModel && (getIsZImageBase(prevBaseModel) || getIsFlux2KleinGroup(prevBaseModel));
         const nowUsingUISamplers =
           baseModel && !getIsZImageBase(baseModel) && !getIsFlux2KleinGroup(baseModel);
         if (

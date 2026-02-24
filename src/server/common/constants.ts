@@ -701,7 +701,7 @@ export const ponyV7Sizes = [
   { label: '2:3', width: 1024, height: 1536 },
 ];
 
-const nanoBananaProSizes = [
+export const nanoBananaProSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
@@ -1310,6 +1310,7 @@ export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
+export const COMICS_SEARCH_INDEX = 'comics_v1';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

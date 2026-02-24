@@ -5,7 +5,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
@@ -106,7 +106,7 @@ export default PublicEndpoint(
     // }
 
     try {
-      const { url } = await getDownloadUrl(file.url, file.name);
+      const { url } = await resolveDownloadUrl(fileId, file.url, file.name);
 
       const tracker = new Tracker(req, res);
       tracker

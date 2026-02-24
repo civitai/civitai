@@ -407,6 +407,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   startDate: z.date(),
   endDate: z.date(),
   active: z.boolean().default(true),
+  winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

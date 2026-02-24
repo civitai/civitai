@@ -1,3 +1,4 @@
+export declare const blurred: string;
 export declare const chip: string;
 export declare const content: string;
 export declare const footer: string;

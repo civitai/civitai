@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 const requestSchema = z.object({
   id: z.preprocess((x) => (x ? parseInt(String(x)) : undefined), z.number()),
@@ -14,7 +14,7 @@ export default JobEndpoint(async function getPresignedUrl(
 ) {
   const { id: fileId } = requestSchema.parse(req.query);
   const file = await dbRead.modelFile.findFirst({
-    select: { url: true },
+    select: { url: true, name: true },
     where: { id: fileId },
   });
 
@@ -22,6 +22,6 @@ export default JobEndpoint(async function getPresignedUrl(
     return res.status(404).json({ error: 'File not found' });
   }
 
-  const result = await getDownloadUrl(file.url);
+  const result = await resolveDownloadUrl(fileId, file.url, file.name);
   return res.status(200).json(result);
 });

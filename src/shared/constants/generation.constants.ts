@@ -293,7 +293,6 @@ export function getIsZImageBase(baseModel?: string) {
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
-
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelGroup(checkpoint.baseModel);
   const resourceBaseModels = resources.map((x) => getBaseModelGroup(x.baseModel));
@@ -321,12 +320,16 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageTurbo'))
     return 'ZImageTurbo';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageBase')) return 'ZImageBase';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_9B')) return 'Flux2Klein_9B';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_9B_base')) return 'Flux2Klein_9B_base';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_4B')) return 'Flux2Klein_4B';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_4B_base')) return 'Flux2Klein_4B_base';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_9B'))
+    return 'Flux2Klein_9B';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_9B_base'))
+    return 'Flux2Klein_9B_base';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_4B'))
+    return 'Flux2Klein_4B';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_4B_base'))
+    return 'Flux2Klein_4B_base';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
-  
+
   // video base models
   for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
     if (resources.some((x) => getBaseModelGroup(x.baseModel) === baseModelSet)) return baseModelSet;

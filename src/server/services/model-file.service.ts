@@ -11,7 +11,11 @@ import type {
 } from '~/server/schema/model-file.schema';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import { throwBadRequestError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
 

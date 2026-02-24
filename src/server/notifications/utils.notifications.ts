@@ -1,4 +1,5 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
+import { comicNotifications } from '~/server/notifications/comics.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
@@ -49,6 +50,7 @@ export const notificationProcessors = {
   ...challengeNotifications,
   ...auctionNotifications,
   ...knightsNewOrderNotifications,
+  ...comicNotifications,
 };
 
 // Sort notifications by priority and group them by priority

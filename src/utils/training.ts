@@ -386,6 +386,35 @@ export function getAiToolkitModelVariant(
   return modelInfo?.aiToolkit?.modelVariant;
 }
 
+/**
+ * Map from TrainingBaseModelType to the per-model AI Toolkit feature flag key.
+ * Only includes models where AI Toolkit is optional — mandatory models (qwen, zimage,
+ * flux2klein, ltx2) are already gated by their own training feature flags.
+ */
+const aiToolkitFlagByBaseType: Partial<Record<TrainingBaseModelType, string>> = {
+  sd15: 'aiToolkitSd15',
+  sdxl: 'aiToolkitSdxl',
+  flux: 'aiToolkitFlux',
+  sd35: 'aiToolkitSd35',
+  hunyuan: 'aiToolkitHunyuan',
+  wan: 'aiToolkitWan',
+  chroma: 'aiToolkitChroma',
+};
+
+/**
+ * Check if AI Toolkit is enabled for a base model type, using feature flags.
+ * Mandatory AI Toolkit models always return true (gated elsewhere by their own flags).
+ * Optional models check their per-model Flipt boolean flag.
+ */
+export const isAiToolkitEnabled = (
+  baseType: TrainingBaseModelType,
+  features: Record<string, boolean>
+): boolean => {
+  if (isAiToolkitMandatory(baseType)) return true;
+  const flagKey = aiToolkitFlagByBaseType[baseType];
+  return flagKey ? !!features[flagKey] : false;
+};
+
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
   // AI Toolkit supports these base model types (flux2 is not included - it only uses rapid)

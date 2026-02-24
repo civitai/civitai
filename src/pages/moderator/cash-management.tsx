@@ -51,23 +51,18 @@ export function CashManagementPage() {
     data: cashData,
     isLoading: cashLoading,
     error: cashError,
-  } = trpc.moderator.cash.getCashForUser.useQuery(
-    { userId: userId! },
-    { enabled: validUserId }
-  );
+  } = trpc.moderator.cash.getCashForUser.useQuery({ userId: userId! }, { enabled: validUserId });
 
   const { data: creatorData } = trpc.user.getCreator.useQuery(
     { id: userId! },
     { enabled: validUserId }
   );
 
-  const {
-    data: withdrawals,
-    isLoading: withdrawalsLoading,
-  } = trpc.moderator.cash.getWithdrawalHistory.useQuery(
-    { userId: userId! },
-    { enabled: validUserId }
-  );
+  const { data: withdrawals, isLoading: withdrawalsLoading } =
+    trpc.moderator.cash.getWithdrawalHistory.useQuery(
+      { userId: userId! },
+      { enabled: validUserId }
+    );
 
   const invalidateAll = useCallback(() => {
     if (!userId) return;
@@ -162,19 +157,31 @@ export function CashManagementPage() {
           <Alert color="blue" title="Cash Balances">
             <div className="grid grid-cols-3 gap-2 text-sm">
               <div>
-                <Text size="xs" c="dimmed">Pending</Text>
+                <Text size="xs" c="dimmed">
+                  Pending
+                </Text>
                 <Text fw={600}>${centsToDollars(cashData.pending)}</Text>
-                <Text size="xs" c="dimmed">{cashData.pending} cents</Text>
+                <Text size="xs" c="dimmed">
+                  {cashData.pending} cents
+                </Text>
               </div>
               <div>
-                <Text size="xs" c="dimmed">Settled (Available)</Text>
+                <Text size="xs" c="dimmed">
+                  Settled (Available)
+                </Text>
                 <Text fw={600}>${centsToDollars(cashData.ready)}</Text>
-                <Text size="xs" c="dimmed">{cashData.ready} cents</Text>
+                <Text size="xs" c="dimmed">
+                  {cashData.ready} cents
+                </Text>
               </div>
               <div>
-                <Text size="xs" c="dimmed">Withdrawn</Text>
+                <Text size="xs" c="dimmed">
+                  Withdrawn
+                </Text>
                 <Text fw={600}>${centsToDollars(cashData.withdrawn)}</Text>
-                <Text size="xs" c="dimmed">{cashData.withdrawn} cents</Text>
+                <Text size="xs" c="dimmed">
+                  {cashData.withdrawn} cents
+                </Text>
               </div>
             </div>
           </Alert>
@@ -243,7 +250,9 @@ export function CashManagementPage() {
             {withdrawalsLoading && <PageLoader />}
 
             {withdrawals && withdrawals.length === 0 && (
-              <Text c="dimmed" ta="center">No withdrawal history.</Text>
+              <Text c="dimmed" ta="center">
+                No withdrawal history.
+              </Text>
             )}
 
             {withdrawals && withdrawals.length > 0 && (
@@ -270,9 +279,11 @@ export function CashManagementPage() {
                         <Table.Td>
                           <Badge
                             color={
-                              w.status === 'Paid' ? 'green' :
-                              w.status === 'Rejected' || w.status === 'Canceled' ? 'red' :
-                              'yellow'
+                              w.status === 'Paid'
+                                ? 'green'
+                                : w.status === 'Rejected' || w.status === 'Canceled'
+                                ? 'red'
+                                : 'yellow'
                             }
                             variant="light"
                           >
@@ -280,7 +291,9 @@ export function CashManagementPage() {
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          <Text size="xs" lineClamp={2}>{w.note ?? '-'}</Text>
+                          <Text size="xs" lineClamp={2}>
+                            {w.note ?? '-'}
+                          </Text>
                         </Table.Td>
                         <Table.Td>
                           {refundableStatuses.has(w.status) && (
@@ -315,9 +328,8 @@ export function CashManagementPage() {
       >
         <Stack gap="md">
           <Text>
-            You are about to <strong>{direction}</strong>{' '}
-            <strong>${dollarAmount}</strong> ({amount} cents){' '}
-            {direction === 'grant' ? 'to' : 'from'} user <strong>{userId}</strong>&apos;s{' '}
+            You are about to <strong>{direction}</strong> <strong>${dollarAmount}</strong> ({amount}{' '}
+            cents) {direction === 'grant' ? 'to' : 'from'} user <strong>{userId}</strong>&apos;s{' '}
             <strong>{accountType === 'cashPending' ? 'Cash Pending' : 'Cash Settled'}</strong>{' '}
             account.
           </Text>
@@ -362,11 +374,7 @@ export function CashManagementPage() {
               <Button variant="default" onClick={() => setRefundTarget(null)}>
                 Cancel
               </Button>
-              <Button
-                color="orange"
-                loading={refundMutation.isLoading}
-                onClick={handleRefund}
-              >
+              <Button color="orange" loading={refundMutation.isLoading} onClick={handleRefund}>
                 Confirm Refund
               </Button>
             </Group>

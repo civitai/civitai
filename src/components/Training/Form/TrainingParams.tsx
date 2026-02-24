@@ -464,7 +464,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'cosine_with_restarts',
     options: lrSchedulerTypes,
     overrides: {
+      sd_1_5: { 'ai-toolkit': { default: 'cosine' } },
+      anime: { 'ai-toolkit': { default: 'cosine' } },
+      semi: { 'ai-toolkit': { default: 'cosine' } },
+      realistic: { 'ai-toolkit': { default: 'cosine' } },
+      sdxl: { 'ai-toolkit': { default: 'cosine' } },
       pony: { all: { default: 'cosine' } },
+      illustrious: { 'ai-toolkit': { default: 'cosine' } },
       hy_720_fp8: { all: { default: 'constant' } },
       wan_2_1_i2v_14b_720p: { all: { default: 'constant' } },
       wan_2_1_t2v_14b: { all: { default: 'constant' } },
@@ -511,7 +517,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 20,
     step: 1,
     overrides: {
-      pony: { all: { default: 0 } },
+      pony: { kohya: { default: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
@@ -539,8 +545,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       qwen_image: { all: { default: 2 } },
       zimageturbo: { all: { default: 32 } },
       zimagebase: { all: { default: 32 } },
-      flux2klein_4b: { all: { default: 2 } },
-      flux2klein_9b: { all: { default: 2 } },
+      flux2klein_4b: { all: { default: 32 } },
+      flux2klein_9b: { all: { default: 32 } },
       // sd3_medium: { all: { default: 2 } },
       // sd3_large: { all: { default: 2 } },
     },
@@ -564,17 +570,20 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 128,
     step: 1,
     overrides: {
-      sdxl: { all: { max: 256 } },
+      sd_1_5: { 'ai-toolkit': { default: 32 } },
+      semi: { 'ai-toolkit': { default: 32 } },
+      realistic: { 'ai-toolkit': { default: 32 } },
+      anime: { kohya: { default: 8 }, 'ai-toolkit': { default: 32 } },
+      sdxl: { all: { max: 256 }, 'ai-toolkit': { default: 32, max: 256 } },
       pony: { all: { max: 256, default: 32 } },
-      illustrious: { all: { max: 256 } },
-      anime: { all: { default: 8 } },
+      illustrious: { all: { max: 256 }, 'ai-toolkit': { default: 32, max: 256 } },
       hy_720_fp8: { all: { default: 1 } },
       wan_2_1_i2v_14b_720p: { all: { default: 1 } },
       wan_2_1_t2v_14b: { all: { default: 1 } },
       zimageturbo: { all: { default: 32 } },
       zimagebase: { all: { default: 32 } },
-      flux2klein_4b: { all: { default: 1 } },
-      flux2klein_9b: { all: { default: 1 } },
+      flux2klein_4b: { all: { default: 32 } },
+      flux2klein_9b: { all: { default: 32 } },
       ltx2: { all: { default: 1 } },
     },
   },
@@ -588,7 +597,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 1,
     step: 0.01,
     overrides: {
-      pony: { all: { default: 0.03 } },
+      pony: { kohya: { default: 0.03 } },
       hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
@@ -606,7 +615,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       <>
         The optimizer determines how to update the neural net weights during training. Various
         methods have been proposed for smart learning, but the most commonly used in LoRA learning
-        is &quot;AdamW8bit&quot;, or &quot;Adafactor&quot; for SDXL.
+        is &quot;AdamW8bit&quot;.
         <br />
         We will automatically generate the proper optimizer args depending on your choice.
       </>
@@ -615,9 +624,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'AdamW8Bit',
     options: optimizerTypes,
     overrides: {
-      sdxl: { all: { default: 'Adafactor' } },
-      pony: { all: { default: 'Prodigy' } },
-      illustrious: { all: { default: 'Adafactor' } },
+      sdxl: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
+      pony: { kohya: { default: 'Prodigy' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
+      illustrious: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
     },
   },
   {
@@ -629,9 +638,18 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: optimizerArgMap.AdamW8Bit,
     disabled: true,
     overrides: {
-      sdxl: { all: { default: optimizerArgMap.Adafactor } },
-      pony: { all: { default: optimizerArgMap.Prodigy } },
-      illustrious: { all: { default: optimizerArgMap.Adafactor } },
+      sdxl: {
+        kohya: { default: optimizerArgMap.Adafactor },
+        'ai-toolkit': { default: optimizerArgMap.AdamW8Bit },
+      },
+      pony: {
+        kohya: { default: optimizerArgMap.Prodigy },
+        'ai-toolkit': { default: optimizerArgMap.AdamW8Bit },
+      },
+      illustrious: {
+        kohya: { default: optimizerArgMap.Adafactor },
+        'ai-toolkit': { default: optimizerArgMap.AdamW8Bit },
+      },
       flux_dev: {
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
