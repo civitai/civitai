@@ -15,19 +15,37 @@ import {
   getUserStandingsSchema,
   voidStrikeSchema,
 } from '~/server/schema/strike.schema';
-import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { isFlagProtected, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 
 export const strikeRouter = router({
   // User endpoints
-  getMyStrikes: protectedProcedure.input(getMyStrikesSchema).query(getMyStrikesHandler),
-  getMyStrikeSummary: protectedProcedure.query(getMyStrikeSummaryHandler),
+  getMyStrikes: protectedProcedure
+    .input(getMyStrikesSchema)
+    .use(isFlagProtected('strikes'))
+    .query(getMyStrikesHandler),
+  getMyStrikeSummary: protectedProcedure
+    .use(isFlagProtected('strikes'))
+    .query(getMyStrikeSummaryHandler),
 
   // Moderator endpoints
-  create: moderatorProcedure.input(createStrikeSchema).mutation(createStrikeHandler),
-  void: moderatorProcedure.input(voidStrikeSchema).mutation(voidStrikeHandler),
-  getAll: moderatorProcedure.input(getStrikesSchema).query(getStrikesHandler),
-  getUserStandings: moderatorProcedure.input(getUserStandingsSchema).query(getUserStandingsHandler),
+  create: moderatorProcedure
+    .input(createStrikeSchema)
+    .use(isFlagProtected('strikes'))
+    .mutation(createStrikeHandler),
+  void: moderatorProcedure
+    .input(voidStrikeSchema)
+    .use(isFlagProtected('strikes'))
+    .mutation(voidStrikeHandler),
+  getAll: moderatorProcedure
+    .input(getStrikesSchema)
+    .use(isFlagProtected('strikes'))
+    .query(getStrikesHandler),
+  getUserStandings: moderatorProcedure
+    .input(getUserStandingsSchema)
+    .use(isFlagProtected('strikes'))
+    .query(getUserStandingsHandler),
   getUserHistory: moderatorProcedure
     .input(z.object({ userId: z.number() }))
+    .use(isFlagProtected('strikes'))
     .query(getUserStrikeHistoryHandler),
 });

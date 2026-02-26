@@ -28,6 +28,7 @@ import { MantineReactTable } from 'mantine-react-table';
 import { useEffect, useMemo, useState } from 'react';
 import type * as z from 'zod';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -39,6 +40,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 // ============================================================================
 // Helpers
@@ -76,6 +78,12 @@ const sortColumnMap: Record<string, SortValue> = {
 // Main Page Component
 // ============================================================================
 export default function Strikes() {
+  const features = useFeatureFlags();
+  if (!features.strikes) return <NotFound />;
+  return <StrikesContent />;
+}
+
+function StrikesContent() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [issueModalOpened, { open: openIssueModal, close: closeIssueModal }] = useDisclosure(false);
   const [issueDefaultUserId, setIssueDefaultUserId] = useState<number | undefined>();
