@@ -159,7 +159,7 @@ const featureFlags = createFeatureFlags({
   challengePlatform: ['blue', 'red', 'public'],
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
-  strikes: ['mod', 'granted'],
+  strikes: ['dev', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
