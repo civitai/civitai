@@ -281,7 +281,7 @@ if (typeof window === 'undefined') {
   loadFliptModule();
 }
 
-function buildFliptContext(user?: SessionUser): Record<string, string> {
+export function buildFliptContext(user?: SessionUser): Record<string, string> {
   const ctx: Record<string, string> = {};
   if (user) {
     ctx.userId = String(user.id);

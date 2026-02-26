@@ -13,7 +13,7 @@ export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-he
 import {
   ChallengeParticipation,
   ChallengeSort,
-  type ChallengeCompletionSummary,
+  parseChallengeMetadata,
   type ChallengeDetail,
   type ChallengeEventListItem,
   type ChallengeListItem,
@@ -58,6 +58,7 @@ import {
 import {
   generateArticle,
   generateReview,
+  generateThemeElements,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewTemplateSchema } from '~/server/games/daily-challenge/template-engine';
@@ -664,10 +665,10 @@ export async function getChallengeDetail(
     displayCosmetics = cosmetics;
   }
 
-  // Extract completion summary from metadata
-  const metadata = challenge.metadata as Record<string, unknown> | null;
-  const completionSummary =
-    (metadata?.completionSummary as ChallengeCompletionSummary | undefined) ?? null;
+  // Extract structured fields from metadata
+  const metadata = parseChallengeMetadata(challenge.metadata);
+  const completionSummary = metadata.completionSummary ?? null;
+  const themeElements = metadata.themeElements ?? null;
 
   // Get challenge config for judgedTagId
   const challengeConfig = await getChallengeConfig();
@@ -725,6 +726,7 @@ export async function getChallengeDetail(
     },
     judge,
     winners,
+    themeElements,
     completionSummary,
     judgedTagId: challengeConfig.judgedTagId ?? null,
   };
@@ -853,7 +855,7 @@ export async function upsertChallenge({
   userId,
   ...input
 }: UpsertChallengeInput & { userId: number }) {
-  const { id, coverImage, judgeId, eventId, ...data } = input;
+  const { id, coverImage, judgeId, eventId, themeElements: inputThemeElements, ...data } = input;
 
   // Defense-in-depth: validate endsAt > startsAt (also validated by Zod schema)
   if (data.endsAt <= data.startsAt) {
@@ -872,6 +874,18 @@ export async function upsertChallenge({
     // Create new Image record from uploaded file
     const result = await createImage({ ...coverImage, userId });
     coverImageId = result.id;
+  }
+
+  // Helper: resolve judging config and generate theme elements.
+  async function tryGenerateThemeElements(theme: string): Promise<string[] | undefined> {
+    const challengeConfig = await getChallengeConfig();
+    const resolvedJudgeId = judgeId ?? challengeConfig.defaultJudgeId;
+    if (!resolvedJudgeId) return undefined;
+
+    const judgingConfig = await getJudgingConfig(resolvedJudgeId);
+    const elements = await generateThemeElements({ theme, config: judgingConfig });
+
+    return elements.length ? elements : undefined;
   }
 
   if (id) {
@@ -934,6 +948,18 @@ export async function upsertChallenge({
       }
     }
 
+    // Resolve theme elements: use provided ones, keep existing, or auto-generate
+    const existingMetadata = parseChallengeMetadata(challenge.metadata);
+    const existingThemeElements = existingMetadata.themeElements;
+    let themeElements: string[] | undefined;
+    if (inputThemeElements?.length) {
+      // Explicitly provided by the form — use as-is
+      themeElements = inputThemeElements;
+    } else if (data.theme && !existingThemeElements?.length) {
+      // No existing elements and none provided — auto-generate
+      themeElements = await tryGenerateThemeElements(data.theme);
+    }
+
     // Use transaction to update both challenge and collection metadata atomically
     const updatedChallenge = await dbWrite.$transaction(async (tx) => {
       // Update the challenge
@@ -951,6 +977,9 @@ export async function upsertChallenge({
           prizeDistribution: data.prizeDistribution
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
+          ...(themeElements && {
+            metadata: { ...existingMetadata, themeElements },
+          }),
         },
       });
 
@@ -983,6 +1012,13 @@ export async function upsertChallenge({
   } else {
     // Auto-activate if startsAt is in the past or now
     const status = data.startsAt <= new Date() ? ChallengeStatus.Active : data.status;
+
+    // Resolve theme elements: use provided ones or auto-generate
+    const newThemeElements = inputThemeElements?.length
+      ? inputThemeElements
+      : data.theme
+      ? await tryGenerateThemeElements(data.theme)
+      : undefined;
 
     // Create new challenge with a Contest Collection for entries
     const challenge = await dbWrite.$transaction(async (tx) => {
@@ -1027,6 +1063,7 @@ export async function upsertChallenge({
           prizeDistribution: data.prizeDistribution
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
+          ...(newThemeElements && { metadata: { themeElements: newThemeElements } }),
         },
       });
     });
@@ -1462,7 +1499,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   }
 
   // Update challenge status to Completed and store completion summary
-  const existingMetadata = typeof challenge.metadata === 'object' ? challenge.metadata : {};
+  const existingMetadata = parseChallengeMetadata(challenge.metadata);
   await dbWrite.challenge.update({
     where: { id: challengeId },
     data: {
@@ -2066,6 +2103,7 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
 
   const result = await generateReview({
     theme: input.theme,
+    themeElements: input.themeElements,
     creator: input.creator ?? image.user?.username ?? 'Unknown',
     imageUrl,
     config: judgingConfig,

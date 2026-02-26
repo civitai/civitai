@@ -59,8 +59,9 @@ const InputNumberWrapper = withController(NumberInputWrapper);
 // judgeId is overridden to string|null because Mantine Select uses string values
 // Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
 const schema = upsertChallengeBaseSchema
-  .omit({ prizes: true, entryPrize: true, judgeId: true, eventId: true })
+  .omit({ prizes: true, entryPrize: true, judgeId: true, eventId: true, themeElements: true })
   .extend({
+    themeElements: z.string().optional(),
     judgeId: z.string().nullish().default('1'),
     eventId: z.string().nullish().default(null),
     coverImage: z
@@ -119,6 +120,7 @@ type ChallengeForEdit = {
   poolTrigger: PoolTrigger | null;
   maxPrizePool: number | null;
   prizeDistribution: number[] | null;
+  themeElements: string[] | null;
 };
 
 type Props = {
@@ -153,6 +155,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       title: challenge?.title ?? '',
       description: challenge?.description ?? '',
       theme: challenge?.theme ?? '',
+      themeElements: challenge?.themeElements?.join(', ') ?? '',
       invitation: challenge?.invitation ?? '',
       coverImage: challenge?.coverImage ?? undefined,
       modelVersionIds: challenge?.modelVersionIds ?? [],
@@ -213,12 +216,19 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       return;
     }
 
+    // Parse comma-separated theme elements into array
+    const parsedThemeElements = data.themeElements
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     // Shared fields for both modes
     const sharedFields = {
       id: challenge?.id,
       title: data.title,
       description: data.description || undefined,
-      theme: data.theme || undefined,
+      theme: data.theme,
+      themeElements: parsedThemeElements?.length ? parsedThemeElements : undefined,
       invitation: data.invitation || undefined,
       coverImage: data.coverImage ?? undefined,
       modelVersionIds: data.modelVersionIds,
@@ -361,6 +371,18 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                   name="theme"
                   label="Theme"
                   placeholder="1-2 word theme (e.g., 'Neon Dreams')"
+                  withAsterisk
+                  disabled={isTerminal}
+                />
+
+                <InputTextArea
+                  name="themeElements"
+                  label="Theme Elements"
+                  description="Comma-separated visual cues for scoring. Leave empty to auto-generate from theme."
+                  placeholder="fluffy white textures, soft rounded shapes, pastel palette, ..."
+                  autosize
+                  minRows={2}
+                  maxRows={4}
                   disabled={isTerminal}
                 />
 

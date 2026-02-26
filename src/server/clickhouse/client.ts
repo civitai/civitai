@@ -414,7 +414,12 @@ export class Tracker {
   }
 
   public action(values: { type: ActionType; details?: any }) {
-    return this.track('actions', values);
+    const { details, ...rest } = values;
+    return this.track('actions', {
+      ...rest,
+      details:
+        details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
+    });
   }
 
   public activity(activity: string) {
@@ -595,7 +600,12 @@ export class Tracker {
   }
 
   public search(values: { query: string; index: string; filters?: any }) {
-    return this.track('search', values);
+    const { filters, ...rest } = values;
+    return this.track('search', {
+      ...rest,
+      filters:
+        filters != null ? (typeof filters === 'string' ? filters : JSON.stringify(filters)) : '',
+    });
   }
 
   public newOrderImageRating(

@@ -1,6 +1,6 @@
 import { Text, type TextProps } from '@mantine/core';
 import { useLiveMetric } from './useLiveMetrics';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { AnimatedCount } from './AnimatedCount';
 import type { MetricEntityType, MetricType } from '~/components/Signals/metric-signals.types';
 
 interface LiveMetricProps extends Omit<TextProps, 'children'> {
@@ -37,7 +37,10 @@ export function LiveMetric({
   ...textProps
 }: LiveMetricProps) {
   const liveValue = useLiveMetric(entityType, entityId, metricType, baseValue);
-  const displayValue = abbreviate ? abbreviateNumber(liveValue) : liveValue.toString();
 
-  return <Text {...textProps}>{displayValue}</Text>;
+  return (
+    <Text {...textProps}>
+      <AnimatedCount value={liveValue} abbreviate={abbreviate} />
+    </Text>
+  );
 }

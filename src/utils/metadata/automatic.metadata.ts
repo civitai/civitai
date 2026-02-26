@@ -16,7 +16,7 @@ type CivitaiResource = {
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
 const civitaiResources = /, Civitai resources:\s*(\[\{.*?\}\])/;
-const civitaiMetadata = /, Civitai metadata:\s*(\{.*?\})/;
+const civitaiMetadataPrefix = ', Civitai metadata: ';
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
@@ -47,6 +47,48 @@ const excludedKeys = [
   'other',
   'external',
 ];
+/** Extract a balanced JSON object from a string, handling nested braces. */
+function extractBalancedJson(
+  str: string,
+  prefix: string
+): { json: string; start: number; end: number } | null {
+  const prefixIndex = str.indexOf(prefix);
+  if (prefixIndex === -1) return null;
+
+  const jsonStart = str.indexOf('{', prefixIndex + prefix.length);
+  if (jsonStart === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = jsonStart; i < str.length; i++) {
+    const char = str[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') depth++;
+    else if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        return { json: str.substring(jsonStart, i + 1), start: prefixIndex, end: i + 1 };
+      }
+    }
+  }
+
+  return null;
+}
+
 function isPartialDate(date: string) {
   return date.length === 14 && date[11] === 'T';
 }
@@ -158,12 +200,16 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       detailsLine = detailsLine.replace(civitaiResources, '');
     }
 
-    // Extract Civitai Metadata
-    const civitaiMetadataMatch = detailsLine?.match(civitaiMetadata)?.[1];
+    // Extract Civitai Metadata (uses balanced brace extraction to handle nested JSON)
+    const civitaiMetadataMatch = detailsLine
+      ? extractBalancedJson(detailsLine, civitaiMetadataPrefix)
+      : null;
     if (civitaiMetadataMatch && detailsLine) {
-      const data = JSON.parse(civitaiMetadataMatch) as Record<string, any>;
+      const data = JSON.parse(civitaiMetadataMatch.json) as Record<string, any>;
       if (Object.keys(data).length !== 0) metadata.extra = data;
-      detailsLine = detailsLine.replace(civitaiMetadata, '');
+      detailsLine =
+        detailsLine.slice(0, civitaiMetadataMatch.start) +
+        detailsLine.slice(civitaiMetadataMatch.end);
     }
 
     // Extract fine details
@@ -256,6 +302,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const fineDetails = [];
     if (steps) fineDetails.push(`Steps: ${steps}`);
     for (const [k, v] of Object.entries(other)) {
+      if (v == null || typeof v === 'object') continue;
       const key = automaticSDEncodeMap.get(k) ?? k;
       if (excludedKeys.includes(key)) continue;
       fineDetails.push(`${key}: ${v}`);

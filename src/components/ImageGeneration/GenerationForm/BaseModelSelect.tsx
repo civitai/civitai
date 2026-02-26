@@ -11,7 +11,7 @@ import {
   getGenerationBaseModelConfigs,
 } from '~/shared/constants/base-model.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 export function BaseModelSelect({ value, type }: { value?: string; type: MediaType }) {
@@ -128,7 +128,7 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
 
   const handleSelect = (group: BaseModelGroup) => {
     const resource = generationConfig[group as GenerationConfigKey].checkpoint;
-    generationPanel.open({ type: 'modelVersion', id: resource.id });
+    generationGraphPanel.open({ type: 'modelVersion', id: resource.id });
     dialog.onClose();
   };
 

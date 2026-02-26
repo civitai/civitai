@@ -13,7 +13,10 @@ import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences
 import { getChatHash } from '~/server/utils/chat';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { throwOnBlockedLinkDomain, throwOnBlockedMessagePattern } from '~/server/services/blocklist.service';
+import {
+  throwOnBlockedLinkDomain,
+  throwOnBlockedMessagePattern,
+} from '~/server/services/blocklist.service';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';

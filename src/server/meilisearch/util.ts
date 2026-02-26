@@ -188,11 +188,7 @@ export const removeUserContentFromSearchIndex = async ({
   userId: number;
   username: string;
 }) => {
-  await sysRedis.hSet(
-    REDIS_SYS_KEYS.QUEUES.USER_CONTENT_REMOVAL,
-    userId.toString(),
-    username
-  );
+  await sysRedis.hSet(REDIS_SYS_KEYS.QUEUES.USER_CONTENT_REMOVAL, userId.toString(), username);
   console.log(
     `removeUserContentFromSearchIndex :: Queued user ${userId} (${username}) for batch removal`
   );

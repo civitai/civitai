@@ -125,7 +125,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
         data.aspectRatio = findClosestAspectRatio(image, [...veo3AspectRatios]);
       }
     }
-    return data;
+    return { ...data, baseModel: 'Veo3' };
   },
   // transformFn: (data) => {
   //   if (!data.sourceImage) {
@@ -162,6 +162,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
     const fastMode = mode === 'fast';
     return {
       ...args,
+      duration: args.duration as Veo3VideoGenInput['duration'],
       fastMode,
       images: images?.map((x) => x.url),
     } as Veo3VideoGenInput;

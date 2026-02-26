@@ -1,7 +1,7 @@
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
   Currency,
@@ -132,7 +132,7 @@ export const constants = {
     [ReviewReactions.Cry]: '😢',
   },
   richTextEditor: {
-    maxFileSize: 1024 * 1024 * 5, // 5MB
+    maxFileSize: 1024 * 1024 * 50, // 50MB
     accept: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE],
     // Taken from https://v5.mantine.dev/others/tiptap/#text-color
     presetColors: [
@@ -597,8 +597,6 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kling: baseLicenses['kling'],
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
-  'Seedance 1.5': baseLicenses['seedream'],
-  'Seedance 2.0': baseLicenses['seedream'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

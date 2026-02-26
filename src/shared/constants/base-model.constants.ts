@@ -144,8 +144,6 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Seedance', type: 'video', group: 'Seedance', hidden: true, engine: 'seedance' },
-  { name: 'Seedance 1.5', type: 'video', group: 'Seedance15', hidden: true, engine: 'seedance15' },
-  { name: 'Seedance 2.0', type: 'video', group: 'Seedance2', hidden: true, engine: 'seedance2' },
   { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
@@ -373,14 +371,6 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'Seedance',
     description: "ByteDance's video generation model",
   },
-  Seedance15: {
-    name: 'Seedance 1.5',
-    description: "ByteDance's video generation model",
-  },
-  Seedance2: {
-    name: 'Seedance 2.0',
-    description: "ByteDance's next-generation video generation model",
-  },
   Seedream: {
     name: 'Seedream',
     description: "ByteDance's image generation model",
@@ -499,12 +489,6 @@ export const baseModelGroups = [...new Set(baseModelConfig.map((x) => x.group))]
 export const activeBaseModels = baseModelConfig
   .filter((x) => !('hidden' in x) || !x.hidden)
   .map((x) => x.name);
-
-export function getActiveBaseModels(isModerator?: boolean) {
-  return isModerator
-    ? baseModelConfig
-    : baseModelConfig.filter((x) => !('hidden' in x) || !x.hidden);
-}
 
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);
@@ -967,14 +951,6 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 2.5 I2V'],
       },
     ],
-  },
-  {
-    group: 'Seedance15',
-    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedance 1.5'] }],
-  },
-  {
-    group: 'Seedance2',
-    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedance 2.0'] }],
   },
   {
     group: 'Veo3',

@@ -17,6 +17,7 @@ export const optimizerArgMap: { [key in OptimizerTypes]: string } = {
   Adafactor: 'scale_parameter=False, relative_step=False, warmup_init=False',
   AdamW8Bit: 'weight_decay=0.1',
   Prodigy: 'weight_decay=0.5, decouple=True, betas=0.9,0.99, use_bias_correction=False',
+  Automagic: '(empty)',
 };
 export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTypes]: string } } = {
   Adafactor: {
@@ -43,11 +44,20 @@ export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTyp
     'flux2-dev-edit': '(empty)',
     'ai-toolkit': '(empty)',
   },
+  Automagic: {
+    kohya: '(empty)',
+    musubi: '(empty)',
+    rapid: '(empty)',
+    'flux2-dev': '(empty)',
+    'flux2-dev-edit': '(empty)',
+    'ai-toolkit': '(empty)',
+  },
 };
 export const optimizerArgMapVideo: { [key in OptimizerTypes]: string } = {
   Adafactor: '',
   AdamW8Bit: '',
   Prodigy: '',
+  Automagic: '',
 };
 
 type BaseTrainingSettingsType = {
@@ -423,7 +433,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_t2v_14b: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       ltx2: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
       zimageturbo: { all: { default: 1e-4 } },
-      zimagebase: { all: { default: 1e-4 } },
+      zimagebase: { all: { default: 1e-6 } },
       flux2klein_4b: { all: { default: 1e-4 } },
       flux2klein_9b: { all: { default: 1e-4 } },
     },
@@ -476,7 +486,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_t2v_14b: { all: { default: 'constant' } },
       ltx2: { all: { default: 'constant' } },
       zimageturbo: { all: { default: 'constant' } },
-      zimagebase: { all: { default: 'constant' } },
+      zimagebase: { all: { default: 'cosine' } },
       flux2klein_4b: { all: { default: 'constant' } },
       flux2klein_9b: { all: { default: 'constant' } },
     },
@@ -518,11 +528,17 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       pony: { kohya: { default: 0 } },
+      flux_dev: { all: { disabled: true, default: 0, max: 0 } },
+      flux2_dev: { all: { disabled: true, default: 0, max: 0 } },
+      chroma: { all: { disabled: true, default: 0, max: 0 } },
+      qwen_image: { all: { disabled: true, default: 0, max: 0 } },
+      zimageturbo: { all: { disabled: true, default: 0, max: 0 } },
+      zimagebase: { all: { disabled: true, default: 0, max: 0 } },
+      flux2klein_4b: { all: { disabled: true, default: 0, max: 0 } },
+      flux2klein_9b: { all: { disabled: true, default: 0, max: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
-      zimageturbo: { all: { default: 0 } },
-      zimagebase: { all: { default: 0 } },
       ltx2: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
@@ -627,6 +643,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
       pony: { kohya: { default: 'Prodigy' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
       illustrious: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
+      zimagebase: { all: { default: 'Automagic' } },
     },
   },
   {
@@ -663,7 +680,7 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       zimagebase: {
-        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+        all: { default: optimizerArgMap.Automagic },
       },
       flux2klein_4b: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },

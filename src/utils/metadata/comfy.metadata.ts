@@ -246,19 +246,21 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ??
         samplerNodes[0];
 
-      metadata.prompt = getPromptText(initialSamplerNode.positive, 'positive');
-      metadata.negativePrompt = getPromptText(initialSamplerNode.negative, 'negative');
-      metadata.cfgScale = initialSamplerNode.cfg;
-      metadata.steps = initialSamplerNode.steps;
-      metadata.seed = getNumberValue(initialSamplerNode.seed ?? initialSamplerNode.noise_seed, [
-        'Value',
-        'seed',
-      ]);
-      metadata.sampler = initialSamplerNode.sampler_name;
-      metadata.scheduler = initialSamplerNode.scheduler;
-      metadata.denoise = initialSamplerNode.denoise;
-      metadata.width = initialSamplerNode.latent_image.inputs.width;
-      metadata.height = initialSamplerNode.latent_image.inputs.height;
+      if (initialSamplerNode) {
+        metadata.prompt = getPromptText(initialSamplerNode.positive, 'positive');
+        metadata.negativePrompt = getPromptText(initialSamplerNode.negative, 'negative');
+        metadata.cfgScale = initialSamplerNode.cfg;
+        metadata.steps = initialSamplerNode.steps;
+        metadata.seed = getNumberValue(initialSamplerNode.seed ?? initialSamplerNode.noise_seed, [
+          'Value',
+          'seed',
+        ]);
+        metadata.sampler = initialSamplerNode.sampler_name;
+        metadata.scheduler = initialSamplerNode.scheduler;
+        metadata.denoise = initialSamplerNode.denoise;
+        metadata.width = initialSamplerNode.latent_image.inputs.width;
+        metadata.height = initialSamplerNode.latent_image.inputs.height;
+      }
       if (exif.extraMetadata) {
         metadata.extra = exif.extraMetadata;
       }

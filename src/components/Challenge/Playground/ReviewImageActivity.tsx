@@ -58,7 +58,9 @@ export function ReviewImageActivity() {
   const aiModel = usePlaygroundStore((s) => s.aiModel);
   const drafts = usePlaygroundStore((s) => s.drafts);
   const updateDraft = usePlaygroundStore((s) => s.updateDraft);
-  const { imageInput, theme, creator } = usePlaygroundStore((s) => s.reviewImageInputs);
+  const { imageInput, theme, themeElements, creator } = usePlaygroundStore(
+    (s) => s.reviewImageInputs
+  );
   const updateInputs = usePlaygroundStore((s) => s.updateReviewImageInputs);
 
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -75,6 +77,13 @@ export function ReviewImageActivity() {
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
+  // Parse themeElements from comma-separated string
+  const parsedThemeElements =
+    themeElements
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) ?? [];
+
   const handleRun = () => {
     if (!parsedImageId || !theme) return;
 
@@ -82,6 +91,7 @@ export function ReviewImageActivity() {
     mutation.mutate({
       imageId: parsedImageId,
       theme,
+      themeElements: parsedThemeElements.length ? parsedThemeElements : undefined,
       creator: creator || undefined,
       judgeId: selectedJudgeId != null && selectedJudgeId > 0 ? selectedJudgeId : undefined,
       promptOverrides:
@@ -115,6 +125,16 @@ export function ReviewImageActivity() {
         value={theme}
         onChange={(e) => updateInputs({ theme: e.currentTarget.value })}
         required
+      />
+      <Textarea
+        label="Theme Elements"
+        placeholder="fluffy white textures, soft rounded shapes, pastel palette, ..."
+        description="Comma-separated visual cues the judge uses to anchor theme scoring"
+        autosize
+        minRows={2}
+        maxRows={4}
+        value={themeElements}
+        onChange={(e) => updateInputs({ themeElements: e.currentTarget.value })}
       />
       <TextInput
         label="Creator"

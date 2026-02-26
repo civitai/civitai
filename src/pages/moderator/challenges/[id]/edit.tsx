@@ -78,6 +78,7 @@ export default function EditChallengePage() {
     poolTrigger: challenge.poolTrigger,
     maxPrizePool: challenge.maxPrizePool,
     prizeDistribution: challenge.prizeDistribution,
+    themeElements: challenge.themeElements,
   };
 
   return (

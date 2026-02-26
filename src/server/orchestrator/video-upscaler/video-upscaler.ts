@@ -8,7 +8,7 @@ export async function createVideoUpscalerStep({
 }: VideoUpscalerSchema): Promise<VideoUpscalerStepTemplate> {
   const transformations = [
     ...(metadata?.transformations ?? []),
-    { type: 'upscale', video: videoUrl, scaleFactor },
+    { workflow: 'vid2vid:upscale', video: videoUrl, scaleFactor },
   ];
   return {
     $type: 'videoUpscaler',

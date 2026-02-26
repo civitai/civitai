@@ -24,7 +24,7 @@ export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
 export type ModelStatus = "Draft" | "Training" | "Published" | "Scheduled" | "Unpublished" | "UnpublishedViolation" | "GatherInterest" | "Deleted";
 
-export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved";
+export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved" | "Expired";
 
 export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell";
 
@@ -2590,6 +2590,7 @@ export interface RedeemableCode {
   expiresAt: Date | null;
   redeemedAt: Date | null;
   transactionId: string | null;
+  metadata: JsonValue | null;
   priceId: string | null;
   price?: Price | null;
 }

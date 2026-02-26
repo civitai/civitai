@@ -15,6 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { AnimatedCount } from '~/components/Metrics';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';
 import clsx from 'clsx';
@@ -284,8 +285,7 @@ function ReactionBadge({
       <Text style={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
       </Text>{' '}
-      {!hideReactionCount && count}
-      {/* {constants.availableReactions[reaction]} {!hideReactionCount && count} */}
+      {!hideReactionCount && <AnimatedCount value={count} abbreviate={false} />}
     </Button>
   );
 }
@@ -329,7 +329,9 @@ function BuzzTippingBadge({
       styles={{ root: { paddingBlock: 0 } }}
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
-      <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+      <Text inherit>
+        <AnimatedCount value={tippedAmountCount + tippedAmount} />
+      </Text>
     </Badge>
   );
 

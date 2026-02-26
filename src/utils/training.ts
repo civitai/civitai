@@ -37,7 +37,7 @@ export const engineTypes = [
 ] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
-export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'] as const;
 export type OptimizerTypes = (typeof optimizerTypes)[number];
 
 export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris

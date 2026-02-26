@@ -1,14 +1,4 @@
-import {
-  Badge,
-  Button,
-  Group,
-  Modal,
-  Pagination,
-  Stack,
-  Table,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Badge, Button, Group, Modal, Pagination, Stack, Table, Text, Title } from '@mantine/core';
 import { IconPencil } from '@tabler/icons-react';
 import { useState } from 'react';
 import { formatDate } from '~/utils/date-helpers';
@@ -89,7 +79,10 @@ function AuctionsPage() {
   return (
     <div className="container flex flex-col gap-4">
       <Title order={1}>Auction Management</Title>
-      <Text c="dimmed">Manage base auction configurations. Changes here only take effect on newly created auctions — the current running auction is not affected.</Text>
+      <Text c="dimmed">
+        Manage base auction configurations. Changes here only take effect on newly created auctions
+        — the current running auction is not affected.
+      </Text>
 
       <Table striped highlightOnHover>
         <Table.Thead>
@@ -115,13 +108,19 @@ function AuctionsPage() {
               <Table.Td>
                 {item.quantity}
                 {item.currentAuction && item.currentAuction.quantity !== item.quantity && (
-                  <Text span c="dimmed" size="xs"> (live: {item.currentAuction.quantity})</Text>
+                  <Text span c="dimmed" size="xs">
+                    {' '}
+                    (live: {item.currentAuction.quantity})
+                  </Text>
                 )}
               </Table.Td>
               <Table.Td>
                 {item.minPrice}
                 {item.currentAuction && item.currentAuction.minPrice !== item.minPrice && (
-                  <Text span c="dimmed" size="xs"> (live: {item.currentAuction.minPrice})</Text>
+                  <Text span c="dimmed" size="xs">
+                    {' '}
+                    (live: {item.currentAuction.minPrice})
+                  </Text>
                 )}
               </Table.Td>
               <Table.Td>
@@ -136,11 +135,14 @@ function AuctionsPage() {
                   <Stack gap={2}>
                     <Text size="sm">{item.currentAuction.bidCount} bids</Text>
                     <Text size="xs" c="dimmed">
-                      {formatDate(item.currentAuction.startAt, 'MMM D', true)} &rarr; {formatDate(item.currentAuction.endAt, 'MMM D', true)}
+                      {formatDate(item.currentAuction.startAt, 'MMM D', true)} &rarr;{' '}
+                      {formatDate(item.currentAuction.endAt, 'MMM D', true)}
                     </Text>
                   </Stack>
                 ) : (
-                  <Text size="sm" c="dimmed">None</Text>
+                  <Text size="sm" c="dimmed">
+                    None
+                  </Text>
                 )}
               </Table.Td>
               <Table.Td>

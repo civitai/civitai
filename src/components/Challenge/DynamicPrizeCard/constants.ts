@@ -63,7 +63,25 @@ export function getShadow(scheme: ColorScheme, size: keyof typeof INSET_SHADOWS)
 
 /** Preview state data for mod-only toggle. */
 export const PREVIEW_STATES = {
-  0: { reviewedCount: 0, unreviewedCount: 0, totalEntries: 0, userEntryCount: 0, hasFlatRatePurchase: false },
-  1: { reviewedCount: 2, unreviewedCount: 3, totalEntries: 5, userEntryCount: 5, hasFlatRatePurchase: false },
-  2: { reviewedCount: 5, unreviewedCount: 0, totalEntries: 5, userEntryCount: 5, hasFlatRatePurchase: true },
+  0: {
+    reviewedCount: 0,
+    unreviewedCount: 0,
+    totalEntries: 0,
+    userEntryCount: 0,
+    hasFlatRatePurchase: false,
+  },
+  1: {
+    reviewedCount: 2,
+    unreviewedCount: 3,
+    totalEntries: 5,
+    userEntryCount: 5,
+    hasFlatRatePurchase: false,
+  },
+  2: {
+    reviewedCount: 5,
+    unreviewedCount: 0,
+    totalEntries: 5,
+    userEntryCount: 5,
+    hasFlatRatePurchase: true,
+  },
 } as const;

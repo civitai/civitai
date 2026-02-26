@@ -26,7 +26,7 @@ import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -234,19 +234,19 @@ function ModelCardContent({ data }: Props) {
                   <Group gap={2}>
                     <IconDownload size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
-                      {abbreviateNumber(liveMetrics.downloadCount)}
+                      <AnimatedCount value={liveMetrics.downloadCount} />
                     </Text>
                   </Group>
                   <Group gap={2}>
                     <IconBookmark size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
-                      {abbreviateNumber(liveMetrics.collectedCount)}
+                      <AnimatedCount value={liveMetrics.collectedCount} />
                     </Text>
                   </Group>
                   <Group gap={2}>
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
-                      {abbreviateNumber(liveMetrics.commentCount)}
+                      <AnimatedCount value={liveMetrics.commentCount} />
                     </Text>
                   </Group>
                   {!isPOI && (
@@ -257,8 +257,8 @@ function ModelCardContent({ data }: Props) {
                     >
                       <Group gap={2}>
                         <IconBolt size={14} strokeWidth={2.5} />
-                        <Text size="xs" lh={1} fw="bold" tt="uppercase">
-                          {abbreviateNumber(liveMetrics.tippedAmountCount + tippedAmount)}
+                        <Text size="xs" lh={1} fw="bold">
+                          <AnimatedCount value={liveMetrics.tippedAmountCount + tippedAmount} />
                         </Text>
                       </Group>
                     </InteractiveTipBuzzButton>
@@ -279,7 +279,7 @@ function ModelCardContent({ data }: Props) {
                     <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
                   </Text>
                   <Text fz={16} fw={500} lh={1} span>
-                    {abbreviateNumber(thumbsUpCount)}
+                    <AnimatedCount value={thumbsUpCount} />
                   </Text>
                 </Badge>
               )}

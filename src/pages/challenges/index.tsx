@@ -87,9 +87,10 @@ function ChallengesPage() {
               🏆 Winning & Rewards
             </Title>
             <Text size="sm">
-              The top 3 entries are reviewed and selected by our AI judging system. Winners receive
-              Buzz prizes and challenge points! Even if you don&apos;t win, you can earn
-              participation rewards for submitting quality entries.
+              The top 3 entries are reviewed and selected by our AI judging system. Entries are
+              ranked by a weighted score where theme relevance counts for 50%, so staying on-theme
+              is key! Winners receive Buzz prizes and challenge points. Even if you don&apos;t win,
+              you can earn participation rewards for submitting quality entries.
             </Text>
           </div>
           <div>

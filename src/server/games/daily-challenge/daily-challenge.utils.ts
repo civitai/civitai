@@ -1,7 +1,9 @@
 import { mergeWith } from 'lodash-es';
 import * as z from 'zod';
+import type { JudgeScore } from './daily-challenge-scoring';
 import { dbRead } from '~/server/db/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { Flags } from '~/shared/utils/flags';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
@@ -391,15 +393,16 @@ export async function getJudgePrompts(
   };
 }
 
-export type Score = {
-  theme: number; // 0-10 how well it fits the theme
-  wittiness: number; // 0-10 how witty it is
-  humor: number; // 0-10 how funny it is
-  aesthetic: number; // 0-10 how aesthetically pleasing it is
-};
-
-/** Alias for Score — used in client-facing contexts (image cards, winner displays). */
-export type JudgeScore = Score;
+// Score types and weighted scoring utilities are defined in the dependency-free
+// daily-challenge-scoring module so they can be imported from client components.
+export type { Score, JudgeScore } from './daily-challenge-scoring';
+export {
+  SCORE_WEIGHTS,
+  THEME_DISQUALIFY_THRESHOLD,
+  THEME_GATE_THRESHOLD,
+  THEME_GATE_MAX_SCORE,
+  calculateWeightedScore,
+} from './daily-challenge-scoring';
 
 export function parseJudgeScore(note: string | null): JudgeScore | null {
   if (!note) return null;
@@ -433,14 +436,14 @@ export type DailyChallengeDetails = {
  * This adapter enables backward compatibility during the transition period.
  */
 export function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChallengeDetails {
-  const metadata = challenge.metadata as Record<string, unknown> | null;
+  const metadata = parseChallengeMetadata(challenge.metadata);
   return {
     challengeId: challenge.id,
-    articleId: (metadata?.articleId as number) ?? 0,
-    type: (metadata?.challengeType as string) ?? 'world-morph',
+    articleId: metadata.articleId ?? 0,
+    type: metadata.challengeType ?? 'world-morph',
     date: challenge.startsAt,
     theme: challenge.theme ?? '',
-    modelId: (metadata?.resourceModelId as number) ?? (metadata?.resourceUserId as number) ?? 0,
+    modelId: metadata.resourceModelId ?? metadata.resourceUserId ?? 0,
     modelVersionIds: challenge.modelVersionIds,
     collectionId: challenge.collectionId!,
     title: challenge.title,

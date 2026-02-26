@@ -33,10 +33,8 @@ const Nsfw = {
 // Placeholder images — unique seeds for variety
 const panelImage = (seed: number) =>
   `https://picsum.photos/seed/comic-panel-${seed}/${PANEL_WIDTH}/${PANEL_HEIGHT}`;
-const coverImageUrl = (seed: number) =>
-  `https://picsum.photos/seed/comic-cover-${seed}/600/800`;
-const heroImageUrl = (seed: number) =>
-  `https://picsum.photos/seed/comic-hero-${seed}/1600/900`;
+const coverImageUrl = (seed: number) => `https://picsum.photos/seed/comic-cover-${seed}/600/800`;
+const heroImageUrl = (seed: number) => `https://picsum.photos/seed/comic-hero-${seed}/1600/900`;
 
 /** Create an Image record in the database and return its id */
 async function createImageRecord(
@@ -93,33 +91,93 @@ const MOCK_COMICS: MockComic[] = [
         name: 'Chapter 1: The First Crane',
         nsfwLevel: Nsfw.PG,
         panels: [
-          { prompt: 'A dark rainy cyberpunk city street at night, neon signs reflecting in puddles, towering skyscrapers with holographic advertisements', nsfwLevel: Nsfw.PG },
-          { prompt: 'Close-up of a weathered detective in a long coat, one eye glowing blue with cybernetic augmentation, rain dripping from his hat', nsfwLevel: Nsfw.PG },
-          { prompt: 'A crime scene in a narrow alley, police drones hovering overhead with spotlights, a small origami crane placed carefully on the ground', nsfwLevel: Nsfw.PG },
-          { prompt: 'The detective kneeling down examining the origami crane with his cybernetic eye zooming in, holographic data overlay visible', nsfwLevel: Nsfw.PG },
-          { prompt: 'Wide shot of the detective walking away from the crime scene into the neon-lit rain, his silhouette against massive holographic billboards', nsfwLevel: Nsfw.PG },
+          {
+            prompt:
+              'A dark rainy cyberpunk city street at night, neon signs reflecting in puddles, towering skyscrapers with holographic advertisements',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Close-up of a weathered detective in a long coat, one eye glowing blue with cybernetic augmentation, rain dripping from his hat',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A crime scene in a narrow alley, police drones hovering overhead with spotlights, a small origami crane placed carefully on the ground',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The detective kneeling down examining the origami crane with his cybernetic eye zooming in, holographic data overlay visible',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Wide shot of the detective walking away from the crime scene into the neon-lit rain, his silhouette against massive holographic billboards',
+            nsfwLevel: Nsfw.PG,
+          },
         ],
       },
       {
         name: 'Chapter 2: Corporate Shadows',
         nsfwLevel: Nsfw.PG,
         panels: [
-          { prompt: 'Interior of a massive corporate tower lobby, sleek white surfaces, holographic reception desk, armed guards in tactical gear', nsfwLevel: Nsfw.PG },
-          { prompt: 'The detective confronting a corporate executive in a luxurious office high above the city, floor-to-ceiling windows showing the cityscape', nsfwLevel: Nsfw.PG },
-          { prompt: 'A secret underground lab revealed behind a hidden door, rows of glowing pods containing human figures in stasis', nsfwLevel: Nsfw.PG },
-          { prompt: 'The detective in a high-speed chase on a motorcycle through neon-lit streets, drones pursuing him from above', nsfwLevel: Nsfw.PG },
-          { prompt: 'Dramatic rooftop scene, the detective standing on the edge of a skyscraper looking down at the city below, wind blowing his coat', nsfwLevel: Nsfw.PG },
-          { prompt: 'Close-up of a second origami crane found on the detectives desk, a threatening message written in light projected from within it', nsfwLevel: Nsfw.PG },
+          {
+            prompt:
+              'Interior of a massive corporate tower lobby, sleek white surfaces, holographic reception desk, armed guards in tactical gear',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The detective confronting a corporate executive in a luxurious office high above the city, floor-to-ceiling windows showing the cityscape',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A secret underground lab revealed behind a hidden door, rows of glowing pods containing human figures in stasis',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The detective in a high-speed chase on a motorcycle through neon-lit streets, drones pursuing him from above',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Dramatic rooftop scene, the detective standing on the edge of a skyscraper looking down at the city below, wind blowing his coat',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Close-up of a second origami crane found on the detectives desk, a threatening message written in light projected from within it',
+            nsfwLevel: Nsfw.PG,
+          },
         ],
       },
       {
         name: 'Chapter 3: Ghost in the Machine',
         nsfwLevel: Nsfw.PG,
         panels: [
-          { prompt: 'A hacker den filled with screens and cables, a young woman with neon-colored hair working at multiple terminals simultaneously', nsfwLevel: Nsfw.PG },
-          { prompt: 'Digital cyberspace visualization, the detective jacked into the network, floating through streams of data represented as light', nsfwLevel: Nsfw.PG },
-          { prompt: 'A virtual confrontation with a masked figure in cyberspace, geometric shapes and code fragments swirling around them', nsfwLevel: Nsfw.PG },
-          { prompt: 'The detective waking up from the cyberspace session, nose bleeding, in a dimly lit apartment filled with case files', nsfwLevel: Nsfw.PG },
+          {
+            prompt:
+              'A hacker den filled with screens and cables, a young woman with neon-colored hair working at multiple terminals simultaneously',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Digital cyberspace visualization, the detective jacked into the network, floating through streams of data represented as light',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A virtual confrontation with a masked figure in cyberspace, geometric shapes and code fragments swirling around them',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The detective waking up from the cyberspace session, nose bleeding, in a dimly lit apartment filled with case files',
+            nsfwLevel: Nsfw.PG,
+          },
         ],
       },
     ],
@@ -129,31 +187,75 @@ const MOCK_COMICS: MockComic[] = [
   {
     name: 'The Witch of Willowmere',
     description:
-      'When twelve-year-old Lily discovers she can talk to the ancient trees in the forest behind her grandmother\'s cottage, she learns that a centuries-old curse is slowly killing the woodland. With the help of a grumpy talking fox and a forgetful ghost, she must find three enchanted seeds before the autumn equinox.',
+      "When twelve-year-old Lily discovers she can talk to the ancient trees in the forest behind her grandmother's cottage, she learns that a centuries-old curse is slowly killing the woodland. With the help of a grumpy talking fox and a forgetful ghost, she must find three enchanted seeds before the autumn equinox.",
     genre: 'Fantasy',
     nsfwLevel: Nsfw.PG13,
     chapters: [
       {
-        name: 'Chapter 1: Grandmother\'s Secret',
+        name: "Chapter 1: Grandmother's Secret",
         nsfwLevel: Nsfw.PG,
         panels: [
-          { prompt: 'A cozy cottage at the edge of an enchanted forest, wildflowers in the garden, smoke curling from the chimney, golden afternoon light', nsfwLevel: Nsfw.PG },
-          { prompt: 'A young girl with braided hair discovering a glowing book hidden in a hollow tree trunk, magical particles floating in the air', nsfwLevel: Nsfw.PG },
-          { prompt: 'The ancient trees of the forest coming alive with faces in their bark, branches reaching down gently toward the girl', nsfwLevel: Nsfw.PG },
-          { prompt: 'A grumpy red fox sitting on a mossy rock, wearing a tiny scarf, looking annoyed but curious at the girl', nsfwLevel: Nsfw.PG },
-          { prompt: 'The girl and the fox standing at the edge of a dark part of the forest where the trees are withered and grey, stark contrast with the healthy forest', nsfwLevel: Nsfw.PG },
+          {
+            prompt:
+              'A cozy cottage at the edge of an enchanted forest, wildflowers in the garden, smoke curling from the chimney, golden afternoon light',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A young girl with braided hair discovering a glowing book hidden in a hollow tree trunk, magical particles floating in the air',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The ancient trees of the forest coming alive with faces in their bark, branches reaching down gently toward the girl',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A grumpy red fox sitting on a mossy rock, wearing a tiny scarf, looking annoyed but curious at the girl',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The girl and the fox standing at the edge of a dark part of the forest where the trees are withered and grey, stark contrast with the healthy forest',
+            nsfwLevel: Nsfw.PG,
+          },
         ],
       },
       {
         name: 'Chapter 2: The Forgetful Ghost',
         nsfwLevel: Nsfw.PG13,
         panels: [
-          { prompt: 'A translucent blue ghost of an elderly woman floating in a moonlit clearing, looking confused and trying to remember something', nsfwLevel: Nsfw.PG },
-          { prompt: 'The girl, the fox, and the ghost looking at an ancient map made of leaves that shows three glowing points in the forest', nsfwLevel: Nsfw.PG },
-          { prompt: 'An underground cavern filled with luminescent mushrooms and crystal formations, a hidden seed glowing on a stone pedestal', nsfwLevel: Nsfw.PG },
-          { prompt: 'The girl carefully picking up the first enchanted seed, which pulses with green life energy, roots growing from her fingertips', nsfwLevel: Nsfw.PG13 },
-          { prompt: 'A dark shadow creature lurking in the dead part of the forest, red eyes watching the group from between withered trees', nsfwLevel: Nsfw.PG13 },
-          { prompt: 'The three companions running through the forest at night, fireflies lighting their path, the shadow creature pursuing in the distance', nsfwLevel: Nsfw.PG13 },
+          {
+            prompt:
+              'A translucent blue ghost of an elderly woman floating in a moonlit clearing, looking confused and trying to remember something',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The girl, the fox, and the ghost looking at an ancient map made of leaves that shows three glowing points in the forest',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'An underground cavern filled with luminescent mushrooms and crystal formations, a hidden seed glowing on a stone pedestal',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The girl carefully picking up the first enchanted seed, which pulses with green life energy, roots growing from her fingertips',
+            nsfwLevel: Nsfw.PG13,
+          },
+          {
+            prompt:
+              'A dark shadow creature lurking in the dead part of the forest, red eyes watching the group from between withered trees',
+            nsfwLevel: Nsfw.PG13,
+          },
+          {
+            prompt:
+              'The three companions running through the forest at night, fireflies lighting their path, the shadow creature pursuing in the distance',
+            nsfwLevel: Nsfw.PG13,
+          },
         ],
       },
     ],
@@ -171,32 +273,88 @@ const MOCK_COMICS: MockComic[] = [
         name: 'Chapter 1: Last Call',
         nsfwLevel: Nsfw.PG13,
         panels: [
-          { prompt: 'A smoky 1940s jazz club interior, a Black man in a sharp suit standing on stage adjusting a microphone, warm amber lighting', nsfwLevel: Nsfw.PG },
-          { prompt: 'A dark rainy alley behind the jazz club, a body lying face down near trash cans, a fedora nearby in a puddle', nsfwLevel: Nsfw.PG13 },
-          { prompt: 'Close-up of the club owners face showing shock, rain on his face, the neon sign of the club reflecting in his eyes', nsfwLevel: Nsfw.PG },
-          { prompt: 'Two police detectives in trench coats arriving at the scene, one suspicious and one sympathetic, flashlights cutting through the rain', nsfwLevel: Nsfw.PG },
-          { prompt: 'The club owner sitting alone at the bar after closing, a glass of whiskey in hand, staring at a framed photo of him and his dead partner', nsfwLevel: Nsfw.PG13 },
+          {
+            prompt:
+              'A smoky 1940s jazz club interior, a Black man in a sharp suit standing on stage adjusting a microphone, warm amber lighting',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A dark rainy alley behind the jazz club, a body lying face down near trash cans, a fedora nearby in a puddle',
+            nsfwLevel: Nsfw.PG13,
+          },
+          {
+            prompt:
+              'Close-up of the club owners face showing shock, rain on his face, the neon sign of the club reflecting in his eyes',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Two police detectives in trench coats arriving at the scene, one suspicious and one sympathetic, flashlights cutting through the rain',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'The club owner sitting alone at the bar after closing, a glass of whiskey in hand, staring at a framed photo of him and his dead partner',
+            nsfwLevel: Nsfw.PG13,
+          },
         ],
       },
       {
         name: 'Chapter 2: The Setup',
         nsfwLevel: Nsfw.R,
         panels: [
-          { prompt: 'A mob bosss office, opulent and intimidating, a large man in an expensive suit behind a mahogany desk, cigar smoke curling', nsfwLevel: Nsfw.PG13 },
-          { prompt: 'The club owner meeting a mysterious woman in a red dress at a dimly lit booth, she slides an envelope across the table', nsfwLevel: Nsfw.PG13 },
-          { prompt: 'A tense confrontation in a boxing gym, the club owner facing down two thugs, dramatic shadows from overhead lights', nsfwLevel: Nsfw.R },
-          { prompt: 'Noir-style shot of the club owner walking down a foggy street alone, his shadow stretched long by a street lamp, city skyline in background', nsfwLevel: Nsfw.PG },
+          {
+            prompt:
+              'A mob bosss office, opulent and intimidating, a large man in an expensive suit behind a mahogany desk, cigar smoke curling',
+            nsfwLevel: Nsfw.PG13,
+          },
+          {
+            prompt:
+              'The club owner meeting a mysterious woman in a red dress at a dimly lit booth, she slides an envelope across the table',
+            nsfwLevel: Nsfw.PG13,
+          },
+          {
+            prompt:
+              'A tense confrontation in a boxing gym, the club owner facing down two thugs, dramatic shadows from overhead lights',
+            nsfwLevel: Nsfw.R,
+          },
+          {
+            prompt:
+              'Noir-style shot of the club owner walking down a foggy street alone, his shadow stretched long by a street lamp, city skyline in background',
+            nsfwLevel: Nsfw.PG,
+          },
         ],
       },
       {
         name: 'Chapter 3: All That Jazz',
         nsfwLevel: Nsfw.R,
         panels: [
-          { prompt: 'The jazz club packed with patrons, a singer in a sequined dress performing on stage, the club owner watching from the back with worried eyes', nsfwLevel: Nsfw.PG13 },
-          { prompt: 'A secret meeting in the clubs basement, the club owner examining documents spread on a table, a single hanging light bulb swinging', nsfwLevel: Nsfw.PG },
-          { prompt: 'A car chase through rain-slicked 1940s Chicago streets, vintage cars, the club owner driving with determination', nsfwLevel: Nsfw.R },
-          { prompt: 'The club owner discovering a hidden safe behind a painting in his partners office, combination written on the back of a photograph', nsfwLevel: Nsfw.PG },
-          { prompt: 'Final dramatic shot: the club owner standing in the spotlight on the empty stage, holding a gun, shadows closing in from all sides', nsfwLevel: Nsfw.R },
+          {
+            prompt:
+              'The jazz club packed with patrons, a singer in a sequined dress performing on stage, the club owner watching from the back with worried eyes',
+            nsfwLevel: Nsfw.PG13,
+          },
+          {
+            prompt:
+              'A secret meeting in the clubs basement, the club owner examining documents spread on a table, a single hanging light bulb swinging',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'A car chase through rain-slicked 1940s Chicago streets, vintage cars, the club owner driving with determination',
+            nsfwLevel: Nsfw.R,
+          },
+          {
+            prompt:
+              'The club owner discovering a hidden safe behind a painting in his partners office, combination written on the back of a photograph',
+            nsfwLevel: Nsfw.PG,
+          },
+          {
+            prompt:
+              'Final dramatic shot: the club owner standing in the spotlight on the empty stage, holding a gun, shadows closing in from all sides',
+            nsfwLevel: Nsfw.R,
+          },
         ],
       },
     ],
@@ -246,14 +404,19 @@ async function main() {
       orderBy: { id: 'asc' },
     });
     if (!user) {
-      console.error('No moderator user found. Pass a userId as argument: npx tsx scripts/seed-comics.ts <userId>');
+      console.error(
+        'No moderator user found. Pass a userId as argument: npx tsx scripts/seed-comics.ts <userId>'
+      );
       process.exit(1);
     }
     userId = user.id;
     console.log(`Using moderator user: ${user.username} (id: ${userId})`);
   }
 
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, username: true },
+  });
   if (!user) {
     console.error(`User ${userId} not found`);
     process.exit(1);
@@ -263,7 +426,9 @@ async function main() {
     await cleanPreviousSeeds(userId);
   }
 
-  console.log(`Creating ${MOCK_COMICS.length} comic projects for user "${user.username}" (id: ${userId})...\n`);
+  console.log(
+    `Creating ${MOCK_COMICS.length} comic projects for user "${user.username}" (id: ${userId})...\n`
+  );
 
   let globalSeed = Date.now(); // Use timestamp for unique seeds across runs
 
@@ -303,8 +468,7 @@ async function main() {
     });
 
     const nsfwLabel =
-      comic.nsfwLevel >= Nsfw.R ? 'R' :
-      comic.nsfwLevel >= Nsfw.PG13 ? 'PG-13' : 'PG';
+      comic.nsfwLevel >= Nsfw.R ? 'R' : comic.nsfwLevel >= Nsfw.PG13 ? 'PG-13' : 'PG';
     console.log(`  Created project: "${project.name}" (id: ${project.id}, nsfw: ${nsfwLabel})`);
 
     for (let chIdx = 0; chIdx < comic.chapters.length; chIdx++) {
@@ -322,9 +486,10 @@ async function main() {
       });
 
       const chNsfwLabel =
-        chapter.nsfwLevel >= Nsfw.R ? 'R' :
-        chapter.nsfwLevel >= Nsfw.PG13 ? 'PG-13' : 'PG';
-      console.log(`    Chapter ${chIdx}: "${chapter.name}" (${chapter.panels.length} panels, nsfw: ${chNsfwLabel})`);
+        chapter.nsfwLevel >= Nsfw.R ? 'R' : chapter.nsfwLevel >= Nsfw.PG13 ? 'PG-13' : 'PG';
+      console.log(
+        `    Chapter ${chIdx}: "${chapter.name}" (${chapter.panels.length} panels, nsfw: ${chNsfwLabel})`
+      );
 
       for (let pIdx = 0; pIdx < chapter.panels.length; pIdx++) {
         const panel = chapter.panels[pIdx];

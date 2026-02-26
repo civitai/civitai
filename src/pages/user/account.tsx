@@ -15,6 +15,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
+import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
@@ -51,6 +52,7 @@ export default function Account() {
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <PaymentMethodsCard />
+          <PurchasedCodesCard />
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />
           {apiKeys && <ApiKeysCard />}

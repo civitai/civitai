@@ -173,16 +173,10 @@ const CreatorCardSimpleContent = ({
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
                     uploads={displayStats.includes('uploads') ? liveStats.uploadCount : null}
-                    followers={
-                      displayStats.includes('followers') ? liveStats.followerCount : null
-                    }
+                    followers={displayStats.includes('followers') ? liveStats.followerCount : null}
                     favorites={displayStats.includes('likes') ? liveStats.thumbsUpCount : null}
-                    downloads={
-                      displayStats.includes('downloads') ? liveStats.downloadCount : null
-                    }
-                    reactions={
-                      displayStats.includes('reactions') ? liveStats.reactionCount : null
-                    }
+                    downloads={displayStats.includes('downloads') ? liveStats.downloadCount : null}
+                    reactions={displayStats.includes('reactions') ? liveStats.reactionCount : null}
                     generations={
                       displayStats.includes('generations') ? liveStats.generationCount : null
                     }

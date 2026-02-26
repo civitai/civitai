@@ -538,47 +538,49 @@ export const comicsRouter = router({
     };
   }),
 
-  getProjectForReader: comicProtectedProcedure.input(getProjectSchema).query(async ({ ctx, input }) => {
-    const project = await dbRead.comicProject.findUnique({
-      where: { id: input.id },
-      select: {
-        id: true,
-        name: true,
-        userId: true,
-        chapters: {
-          orderBy: { position: 'asc' },
-          select: {
-            projectId: true,
-            name: true,
-            position: true,
-            panels: {
-              where: {
-                status: ComicPanelStatus.Ready,
-                imageUrl: { not: null },
-              },
-              orderBy: { position: 'asc' },
-              select: {
-                id: true,
-                imageUrl: true,
-                prompt: true,
-                position: true,
+  getProjectForReader: comicProtectedProcedure
+    .input(getProjectSchema)
+    .query(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          name: true,
+          userId: true,
+          chapters: {
+            orderBy: { position: 'asc' },
+            select: {
+              projectId: true,
+              name: true,
+              position: true,
+              panels: {
+                where: {
+                  status: ComicPanelStatus.Ready,
+                  imageUrl: { not: null },
+                },
+                orderBy: { position: 'asc' },
+                select: {
+                  id: true,
+                  imageUrl: true,
+                  prompt: true,
+                  position: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
-      throw throwAuthorizationError();
-    }
+      if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
+        throw throwAuthorizationError();
+      }
 
-    return {
-      id: project.id,
-      name: project.name,
-      chapters: project.chapters,
-    };
-  }),
+      return {
+        id: project.id,
+        name: project.name,
+        chapters: project.chapters,
+      };
+    }),
 
   // Public queries — no auth required
   getPublicProjects: comicPublicProcedure
@@ -787,9 +789,7 @@ export const comicsRouter = router({
           },
           chapters: {
             // Owners and mods see all chapters; public sees only published
-            ...(!isOwnerOrMod
-              ? { where: { status: ComicChapterStatus.Published } }
-              : {}),
+            ...(!isOwnerOrMod ? { where: { status: ComicChapterStatus.Published } } : {}),
             orderBy: { position: 'asc' },
             select: {
               projectId: true,
@@ -825,8 +825,7 @@ export const comicsRouter = router({
 
       // Check if viewer is the owner or a moderator
       const canViewDrafts =
-        ctx.user != null &&
-        (project.userId === ctx.user.id || ctx.user.isModerator === true);
+        ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
 
       // Filter out draft chapters for non-owner, non-mod viewers
       // Also filter out chapters with no ready panels
@@ -941,113 +940,29 @@ export const comicsRouter = router({
     }
   }),
 
-  createProject: comicProtectedProcedure.input(createProjectSchema).mutation(async ({ ctx, input }) => {
-    const project = await dbWrite.comicProject.create({
-      data: {
-        userId: ctx.user.id,
-        name: input.name,
-        description: input.description ?? null,
-        genre: input.genre ?? null,
-        heroImagePosition: input.heroImagePosition ?? 50,
-        chapters: {
-          create: {
-            name: 'Chapter 1',
-            position: 0,
+  createProject: comicProtectedProcedure
+    .input(createProjectSchema)
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbWrite.comicProject.create({
+        data: {
+          userId: ctx.user.id,
+          name: input.name,
+          description: input.description ?? null,
+          genre: input.genre ?? null,
+          heroImagePosition: input.heroImagePosition ?? 50,
+          chapters: {
+            create: {
+              name: 'Chapter 1',
+              position: 0,
+            },
           },
         },
-      },
-      include: {
-        chapters: true,
-      },
-    });
-
-    // Handle cover image
-    if (input.coverUrl) {
-      const image = await dbWrite.image.create({
-        data: {
-          url: input.coverUrl,
-          userId: ctx.user.id,
-          width: 0,
-          height: 0,
-          ingestion: 'Pending',
+        include: {
+          chapters: true,
         },
       });
-      await dbWrite.comicProject.update({
-        where: { id: project.id },
-        data: { coverImageId: image.id },
-      });
-      ingestImageById({ id: image.id }).catch((e) =>
-        console.error(`Failed to ingest cover image ${image.id}:`, e)
-      );
-    }
 
-    // Handle hero image
-    if (input.heroUrl) {
-      const image = await dbWrite.image.create({
-        data: {
-          url: input.heroUrl,
-          userId: ctx.user.id,
-          width: 0,
-          height: 0,
-          ingestion: 'Pending',
-        },
-      });
-      await dbWrite.comicProject.update({
-        where: { id: project.id },
-        data: { heroImageId: image.id },
-      });
-      ingestImageById({ id: image.id }).catch((e) =>
-        console.error(`Failed to ingest hero image ${image.id}:`, e)
-      );
-    }
-
-    await comicsSearchIndex.queueUpdate([
-      { id: project.id, action: SearchIndexUpdateQueueAction.Update },
-    ]);
-
-    return project;
-  }),
-
-  deleteProject: comicProtectedProcedure.input(getProjectSchema).mutation(async ({ ctx, input }) => {
-    const project = await dbRead.comicProject.findUnique({
-      where: { id: input.id },
-      select: { userId: true },
-    });
-    if (!project || project.userId !== ctx.user.id) {
-      throw throwAuthorizationError();
-    }
-
-    await dbWrite.comicProject.update({
-      where: { id: input.id },
-      data: { status: ComicProjectStatus.Deleted },
-    });
-
-    await comicsSearchIndex.queueUpdate([
-      { id: input.id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
-
-    return { success: true };
-  }),
-
-  updateProject: comicProtectedProcedure.input(updateProjectSchema).mutation(async ({ ctx, input }) => {
-    const project = await dbRead.comicProject.findUnique({
-      where: { id: input.id },
-      select: { userId: true },
-    });
-    if (!project || project.userId !== ctx.user.id) {
-      throw throwAuthorizationError();
-    }
-
-    const data: Record<string, any> = {};
-    if (input.name !== undefined) data.name = input.name;
-    if (input.description !== undefined) data.description = input.description;
-    if (input.genre !== undefined) data.genre = input.genre;
-    if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
-
-    // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
-    if (input.coverImageId !== undefined) {
-      data.coverImageId = input.coverImageId;
-    } else if (input.coverUrl !== undefined) {
+      // Handle cover image
       if (input.coverUrl) {
         const image = await dbWrite.image.create({
           data: {
@@ -1058,16 +973,16 @@ export const comicsRouter = router({
             ingestion: 'Pending',
           },
         });
-        data.coverImageId = image.id;
-      } else {
-        data.coverImageId = null;
+        await dbWrite.comicProject.update({
+          where: { id: project.id },
+          data: { coverImageId: image.id },
+        });
+        ingestImageById({ id: image.id }).catch((e) =>
+          console.error(`Failed to ingest cover image ${image.id}:`, e)
+        );
       }
-    }
 
-    // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
-    if (input.heroImageId !== undefined) {
-      data.heroImageId = input.heroImageId;
-    } else if (input.heroUrl !== undefined) {
+      // Handle hero image
       if (input.heroUrl) {
         const image = await dbWrite.image.create({
           data: {
@@ -1078,35 +993,125 @@ export const comicsRouter = router({
             ingestion: 'Pending',
           },
         });
-        data.heroImageId = image.id;
-      } else {
-        data.heroImageId = null;
+        await dbWrite.comicProject.update({
+          where: { id: project.id },
+          data: { heroImageId: image.id },
+        });
+        ingestImageById({ id: image.id }).catch((e) =>
+          console.error(`Failed to ingest hero image ${image.id}:`, e)
+        );
       }
-    }
 
-    const updated = await dbWrite.comicProject.update({
-      where: { id: input.id },
-      data,
-    });
+      await comicsSearchIndex.queueUpdate([
+        { id: project.id, action: SearchIndexUpdateQueueAction.Update },
+      ]);
 
-    // Trigger ingestion for new images
-    if (data.coverImageId) {
-      ingestImageById({ id: data.coverImageId }).catch((e) =>
-        console.error(`Failed to ingest cover image ${data.coverImageId}:`, e)
-      );
-    }
-    if (data.heroImageId) {
-      ingestImageById({ id: data.heroImageId }).catch((e) =>
-        console.error(`Failed to ingest hero image ${data.heroImageId}:`, e)
-      );
-    }
+      return project;
+    }),
 
-    await comicsSearchIndex.queueUpdate([
-      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+  deleteProject: comicProtectedProcedure
+    .input(getProjectSchema)
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: { userId: true },
+      });
+      if (!project || project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
 
-    return updated;
-  }),
+      await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data: { status: ComicProjectStatus.Deleted },
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.id, action: SearchIndexUpdateQueueAction.Delete },
+      ]);
+
+      return { success: true };
+    }),
+
+  updateProject: comicProtectedProcedure
+    .input(updateProjectSchema)
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: { userId: true },
+      });
+      if (!project || project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      const data: Record<string, any> = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.description !== undefined) data.description = input.description;
+      if (input.genre !== undefined) data.genre = input.genre;
+      if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
+
+      // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
+      if (input.coverImageId !== undefined) {
+        data.coverImageId = input.coverImageId;
+      } else if (input.coverUrl !== undefined) {
+        if (input.coverUrl) {
+          const image = await dbWrite.image.create({
+            data: {
+              url: input.coverUrl,
+              userId: ctx.user.id,
+              width: 0,
+              height: 0,
+              ingestion: 'Pending',
+            },
+          });
+          data.coverImageId = image.id;
+        } else {
+          data.coverImageId = null;
+        }
+      }
+
+      // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
+      if (input.heroImageId !== undefined) {
+        data.heroImageId = input.heroImageId;
+      } else if (input.heroUrl !== undefined) {
+        if (input.heroUrl) {
+          const image = await dbWrite.image.create({
+            data: {
+              url: input.heroUrl,
+              userId: ctx.user.id,
+              width: 0,
+              height: 0,
+              ingestion: 'Pending',
+            },
+          });
+          data.heroImageId = image.id;
+        } else {
+          data.heroImageId = null;
+        }
+      }
+
+      const updated = await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data,
+      });
+
+      // Trigger ingestion for new images
+      if (data.coverImageId) {
+        ingestImageById({ id: data.coverImageId }).catch((e) =>
+          console.error(`Failed to ingest cover image ${data.coverImageId}:`, e)
+        );
+      }
+      if (data.heroImageId) {
+        ingestImageById({ id: data.heroImageId }).catch((e) =>
+          console.error(`Failed to ingest hero image ${data.heroImageId}:`, e)
+        );
+      }
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return updated;
+    }),
 
   // Chapters
   createChapter: comicProtectedProcedure
@@ -1132,51 +1137,55 @@ export const comicsRouter = router({
       return chapter;
     }),
 
-  updateChapter: comicProtectedProcedure.input(updateChapterSchema).mutation(async ({ ctx, input }) => {
-    const chapter = await dbRead.comicChapter.findUnique({
-      where: {
-        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
-      },
-      include: { project: { select: { userId: true } } },
-    });
-    if (!chapter || chapter.project.userId !== ctx.user.id) {
-      throw throwAuthorizationError();
-    }
+  updateChapter: comicProtectedProcedure
+    .input(updateChapterSchema)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        include: { project: { select: { userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
 
-    const updated = await dbWrite.comicChapter.update({
-      where: {
-        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
-      },
-      data: { name: input.name },
-    });
+      const updated = await dbWrite.comicChapter.update({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        data: { name: input.name },
+      });
 
-    return updated;
-  }),
+      return updated;
+    }),
 
-  deleteChapter: comicProtectedProcedure.input(deleteChapterSchema).mutation(async ({ ctx, input }) => {
-    const chapter = await dbRead.comicChapter.findUnique({
-      where: {
-        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
-      },
-      include: { project: { select: { userId: true } } },
-    });
-    if (!chapter || chapter.project.userId !== ctx.user.id) {
-      throw throwAuthorizationError();
-    }
+  deleteChapter: comicProtectedProcedure
+    .input(deleteChapterSchema)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        include: { project: { select: { userId: true } } },
+      });
+      if (!chapter || chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
 
-    await dbWrite.comicChapter.delete({
-      where: {
-        projectId_position: { projectId: input.projectId, position: input.chapterPosition },
-      },
-    });
+      await dbWrite.comicChapter.delete({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+      });
 
-    // Recalculate project NSFW level after chapter removal
-    updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
-      console.error(`Failed to update project NSFW after chapter delete:`, e)
-    );
+      // Recalculate project NSFW level after chapter removal
+      updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
+        console.error(`Failed to update project NSFW after chapter delete:`, e)
+      );
 
-    return { success: true };
-  }),
+      return { success: true };
+    }),
 
   reorderChapters: comicProtectedProcedure
     .input(reorderChaptersSchema)
@@ -1430,7 +1439,9 @@ export const comicsRouter = router({
 
       // Conditionally use previous panel context for prompt enhancement
       const effectiveContext = input.useContext ? contextPanel : null;
-      const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(input.aspectRatio);
+      const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(
+        input.aspectRatio
+      );
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
@@ -1751,8 +1762,14 @@ export const comicsRouter = router({
           baseModel: 'NanoBanana',
           checkpointVersionId: NANOBANANA_VERSION_ID,
           dimensions: (panel.metadata as any)?.generationParams
-            ? { width: (panel.metadata as any).generationParams.width, height: (panel.metadata as any).generationParams.height }
-            : { width: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width, height: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height },
+            ? {
+                width: (panel.metadata as any).generationParams.width,
+                height: (panel.metadata as any).generationParams.height,
+              }
+            : {
+                width: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width,
+                height: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height,
+              },
         },
         workflow: workflowInfo,
       };
@@ -1812,7 +1829,8 @@ export const comicsRouter = router({
           // Extract dimensions from panel metadata (set during creation)
           const genParams = (panel.metadata as any)?.generationParams;
           const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
-          const imgHeight = genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
+          const imgHeight =
+            genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
           // Create Image record for content moderation pipeline
           const image = await dbWrite.image.create({
@@ -1947,7 +1965,9 @@ export const comicsRouter = router({
 
       // Create panels sequentially — each panel uses the previous as context
       // Build story context so the enhancer sees the full narrative arc
-      const { width: smartWidth, height: smartHeight } = getAspectRatioDimensions(input.aspectRatio);
+      const { width: smartWidth, height: smartHeight } = getAspectRatioDimensions(
+        input.aspectRatio
+      );
       const createdPanels: any[] = [];
       const previousPanelPrompts: string[] = [];
       let contextPanel: {
@@ -2334,7 +2354,9 @@ export const comicsRouter = router({
         });
       }
       const effectiveContext = input.useContext ? contextPanel : null;
-      const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(input.aspectRatio);
+      const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(
+        input.aspectRatio
+      );
 
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
@@ -2666,7 +2688,9 @@ export const comicsRouter = router({
             ...combinedRefImages,
           ];
 
-          const { width: bulkPanelW, height: bulkPanelH } = getAspectRatioDimensions(panelDef.aspectRatio);
+          const { width: bulkPanelW, height: bulkPanelH } = getAspectRatioDimensions(
+            panelDef.aspectRatio
+          );
 
           const metadata = {
             sourceImageUrl: panelDef.sourceImageUrl,
@@ -2793,7 +2817,9 @@ export const comicsRouter = router({
             references: allUserRefs,
           });
 
-          const { width: txtPanelW, height: txtPanelH } = getAspectRatioDimensions(panelDef.aspectRatio);
+          const { width: txtPanelW, height: txtPanelH } = getAspectRatioDimensions(
+            panelDef.aspectRatio
+          );
           const panel = await createSinglePanel({
             projectId: input.projectId,
             chapterPosition: input.chapterPosition,

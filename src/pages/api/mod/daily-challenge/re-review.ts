@@ -12,9 +12,11 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { generateReview } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
@@ -52,6 +54,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   // Load judge config (respects per-challenge prompt override)
   const judgingConfig = await getJudgingConfig(challenge.judgeId, challenge.judgingPrompt);
   const config = await getChallengeConfig();
+  const metadata = parseChallengeMetadata(challenge.metadata);
+  const themeElements = metadata.themeElements;
 
   // Fetch all judged entries with their existing judge comment IDs
   type EntryWithComment = RecentEntry & { judgeCommentId: number | null };
@@ -88,17 +92,24 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   let successes = 0;
   let failures = 0;
+  const failedEntries: { imageId: number; url: string; error: string }[] = [];
 
   // Process all entries with limited concurrency to avoid rate limits
   const tasks = entries.map((entry) => async () => {
     try {
       log('Re-reviewing entry:', entry.imageId);
-      const review = await generateReview({
-        theme: challenge.theme!,
-        creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-        config: judgingConfig,
-      });
+      const review = await withRetries(
+        () =>
+          generateReview({
+            theme: challenge.theme!,
+            creator: entry.username,
+            imageUrl: getEdgeUrl(entry.url, { original: true, optimized: true, quality: 90 }),
+            config: judgingConfig,
+            themeElements,
+          }),
+        2,
+        1000
+      );
       log('Review generated', entry.imageId, review.score);
 
       // Overwrite score note on collection item
@@ -129,6 +140,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     } catch (error) {
       failures++;
       const err = error as Error;
+      failedEntries.push({
+        imageId: entry.imageId,
+        url: getEdgeUrl(entry.url, { original: true, optimized: true, quality: 90 }),
+        error: err.message,
+      });
       logToAxiom({
         type: 'error',
         name: 'daily-challenge-re-review-error',
@@ -140,10 +156,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       });
       log('Failed to re-review entry', entry.imageId, error);
     }
+
+    log(
+      `Progress: ${successes + failures}/${entries.length} (${successes} ok, ${failures} failed)`
+    );
   });
 
   try {
-    await limitConcurrency(tasks, 3);
+    await limitConcurrency(tasks, 10);
   } catch (error) {
     const err = error as Error;
     logToAxiom({
@@ -159,6 +179,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       challengeId,
       successes,
       failures,
+      failedEntries,
     });
   }
 
@@ -168,5 +189,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     total: entries.length,
     successes,
     failures,
+    ...(failedEntries.length > 0 && { failedEntries }),
   });
 });

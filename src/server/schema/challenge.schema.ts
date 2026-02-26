@@ -79,11 +79,30 @@ export type ChallengeListItem = {
 };
 
 // Completion summary stored in Challenge.metadata when winners are picked
-export type ChallengeCompletionSummary = {
-  judgingProcess: string;
-  outcome: string;
-  completedAt: string;
-};
+const challengeCompletionSummarySchema = z.object({
+  judgingProcess: z.string(),
+  outcome: z.string(),
+  completedAt: z.string(),
+});
+export type ChallengeCompletionSummary = z.infer<typeof challengeCompletionSummarySchema>;
+
+// Zod schema for Challenge.metadata (Json? column)
+export const challengeMetadataSchema = z.object({
+  challengeType: z.string().optional(),
+  resourceUserId: z.number().optional(),
+  resourceModelId: z.number().optional(),
+  articleId: z.number().optional(),
+  themeElements: z.array(z.string()).optional(),
+  completionSummary: challengeCompletionSummarySchema.optional(),
+});
+export type ChallengeMetadata = z.infer<typeof challengeMetadataSchema>;
+
+/** Safely parse Challenge.metadata from a raw Json? value. */
+export function parseChallengeMetadata(raw: unknown): ChallengeMetadata {
+  if (!raw || typeof raw !== 'object') return {};
+  const result = challengeMetadataSchema.safeParse(raw);
+  return result.success ? result.data : {};
+}
 
 export type ChallengeJudgeInfo = {
   id: number;
@@ -166,6 +185,7 @@ export type ChallengeDetail = {
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
+  themeElements: string[] | null;
   completionSummary: ChallengeCompletionSummary | null;
   judgedTagId: number | null;
 };
@@ -273,7 +293,8 @@ export const upsertChallengeBaseSchema = z.object({
   id: z.number().optional(),
   title: z.string().min(3).max(200),
   description: z.string().optional(),
-  theme: z.string().optional(),
+  theme: z.string().min(1),
+  themeElements: z.array(z.string()).optional(),
   invitation: z.string().optional(),
   coverImage: imageSchema,
   nsfwLevel: z.number().min(1).max(32).default(1),
@@ -466,6 +487,7 @@ export type PlaygroundReviewImageInput = z.infer<typeof playgroundReviewImageSch
 export const playgroundReviewImageSchema = z.object({
   imageId: z.number(),
   theme: z.string(),
+  themeElements: z.array(z.string()).optional(),
   creator: z.string().optional(),
   judgeId: z.number().optional(),
   promptOverrides: z

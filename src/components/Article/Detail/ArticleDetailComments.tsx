@@ -38,89 +38,91 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           sort,
           setSort,
           activeComment,
-        }) => isLocked ? null : (
-          <Stack mt="xl" gap="xl">
-            <Stack gap={0}>
-              <Group justify="space-between">
-                <Group gap="md">
-                  <Title order={2} id="comments">
-                    Comments
-                  </Title>
-                  {hiddenCount > 0 && !isLoading && (
-                    <Button
-                      variant="subtle"
-                      onClick={() =>
-                        dialogStore.trigger({
-                          component: HiddenCommentsModal,
-                          props: { entityId: articleId, entityType: 'article', userId },
-                        })
-                      }
-                      size="compact-xs"
-                    >
-                      <Group gap={4} justify="center">
-                        <IconMessageCancel size={16} />
-                        <Text inherit inline>
-                          {`See ${hiddenCount} more hidden ${
-                            hiddenCount > 1 ? 'comments' : 'comment'
-                          }`}
-                        </Text>
-                      </Group>
-                    </Button>
-                  )}
+        }) =>
+          isLocked ? null : (
+            <Stack mt="xl" gap="xl">
+              <Stack gap={0}>
+                <Group justify="space-between">
+                  <Group gap="md">
+                    <Title order={2} id="comments">
+                      Comments
+                    </Title>
+                    {hiddenCount > 0 && !isLoading && (
+                      <Button
+                        variant="subtle"
+                        onClick={() =>
+                          dialogStore.trigger({
+                            component: HiddenCommentsModal,
+                            props: { entityId: articleId, entityType: 'article', userId },
+                          })
+                        }
+                        size="compact-xs"
+                      >
+                        <Group gap={4} justify="center">
+                          <IconMessageCancel size={16} />
+                          <Text inherit inline>
+                            {`See ${hiddenCount} more hidden ${
+                              hiddenCount > 1 ? 'comments' : 'comment'
+                            }`}
+                          </Text>
+                        </Group>
+                      </Button>
+                    )}
+                  </Group>
+                  <SortFilter
+                    type="threads"
+                    value={sort}
+                    onChange={(v) => setSort(v as ThreadSort)}
+                  />
                 </Group>
-                <SortFilter
-                  type="threads"
-                  value={sort}
-                  onChange={(v) => setSort(v as ThreadSort)}
-                />
-              </Group>
-              <ReturnToRootThread />
-            </Stack>
-            {isLoading || isFetching ? (
-              <Center mt="xl">
-                <Loader type="bars" />
-              </Center>
-            ) : (
-              <>
-                {activeComment && (
-                  <Stack gap="xl">
-                    <Divider />
-                    <Text size="sm" c="dimmed">
-                      Viewing thread for
-                    </Text>
-                    <Comment comment={activeComment} viewOnly />
-                  </Stack>
-                )}
-                <Stack
-                  gap="xl"
-                  className={activeComment ? classes.rootCommentReplyInset : undefined}
-                >
-                  <CreateComment />
-                  <Stack className="relative" gap="xl">
-                    {data?.map((comment) => (
+                <ReturnToRootThread />
+              </Stack>
+              {isLoading || isFetching ? (
+                <Center mt="xl">
+                  <Loader type="bars" />
+                </Center>
+              ) : (
+                <>
+                  {activeComment && (
+                    <Stack gap="xl">
+                      <Divider />
+                      <Text size="sm" c="dimmed">
+                        Viewing thread for
+                      </Text>
+                      <Comment comment={activeComment} viewOnly />
+                    </Stack>
+                  )}
+                  <Stack
+                    gap="xl"
+                    className={activeComment ? classes.rootCommentReplyInset : undefined}
+                  >
+                    <CreateComment />
+                    <Stack className="relative" gap="xl">
+                      {data?.map((comment) => (
+                        <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
+                      ))}
+                    </Stack>
+                    {showMore && (
+                      <Center>
+                        <Button
+                          onClick={toggleShowMore}
+                          loading={isFetchingNextPage}
+                          variant="subtle"
+                          size="md"
+                        >
+                          Load More Comments
+                        </Button>
+                      </Center>
+                    )}
+                    {created.map((comment) => (
                       <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                     ))}
                   </Stack>
-                  {showMore && (
-                    <Center>
-                      <Button
-                        onClick={toggleShowMore}
-                        loading={isFetchingNextPage}
-                        variant="subtle"
-                        size="md"
-                      >
-                        Load More Comments
-                      </Button>
-                    </Center>
-                  )}
-                  {created.map((comment) => (
-                    <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
-                  ))}
-                </Stack>
-              </>
-            )}
-          </Stack>
-        )}
+                </>
+              )}
+            </Stack>
+          )
+        }
       </RootThreadProvider>
     </>
   );

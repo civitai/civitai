@@ -609,6 +609,8 @@ enum TrainingStatus {
   Failed
   /// published
   Approved
+  /// moderation review expired before completion
+  Expired
 }
 
 enum CommercialUse {
@@ -3407,6 +3409,7 @@ model RedeemableCode {
   expiresAt     DateTime?
   redeemedAt    DateTime?
   transactionId String?
+  metadata      Json?
   priceId       String?
   price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
 }

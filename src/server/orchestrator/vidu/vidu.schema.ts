@@ -114,7 +114,7 @@ export const viduGenerationConfig = VideoGenerationConfig2({
       delete data.endSourceImage;
     }
     // TODO - get Koen to update the api spec so that I don't have to cast the duration type
-    return { ...data, duration: data.duration as (typeof viduDurations)[number] };
+    return { ...data, duration: data.duration as (typeof viduDurations)[number], baseModel: 'Vidu' };
   },
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {

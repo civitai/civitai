@@ -37,7 +37,11 @@ import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-import { ChallengeReviewCostType, ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+} from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -542,7 +546,8 @@ export default function ModeratorChallengesPage() {
                         </Group>
                         <Group gap="md" wrap="wrap">
                           <Text size="xs" c="dimmed">
-                            Starts: {formatDate(challenge.startsAt, 'MMM D, YYYY h:mm A [UTC]', true)}
+                            Starts:{' '}
+                            {formatDate(challenge.startsAt, 'MMM D, YYYY h:mm A [UTC]', true)}
                           </Text>
                           <Text size="xs" c="dimmed">
                             Ends: {formatDate(challenge.endsAt, 'MMM D, YYYY h:mm A [UTC]', true)}

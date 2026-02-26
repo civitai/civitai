@@ -52,7 +52,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { useLiveMetrics, MetricSubscriptionProvider } from '~/components/Metrics';
+import { AnimatedCount, useLiveMetrics, MetricSubscriptionProvider } from '~/components/Metrics';
 import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
 import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -407,7 +407,7 @@ function ModelVersionDetailsContent({
           {!downloadsDisabled && (
             <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Unique Downloads">
               <Text fz={11} fw="bold" inline>
-                {liveMetrics.downloadCount.toLocaleString()}
+                <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
               </Text>
             </IconBadge>
           )}
@@ -431,14 +431,14 @@ function ModelVersionDetailsContent({
             >
               <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
                 <Text fz={11} fw="bold" inline>
-                  {abbreviateNumber(liveMetrics.generationCount)}
+                  <AnimatedCount value={liveMetrics.generationCount} />
                 </Text>
               </IconBadge>
             </GenerateButton>
           ) : (
             <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
               <Text fz={11} fw="bold" inline>
-                {liveMetrics.generationCount.toLocaleString()}
+                <AnimatedCount value={liveMetrics.generationCount} abbreviate={false} />
               </Text>
             </IconBadge>
           )}
@@ -450,7 +450,7 @@ function ModelVersionDetailsContent({
                 title={liveMetrics.earnedAmount.toLocaleString()}
                 inline
               >
-                {abbreviateNumber(liveMetrics.earnedAmount)}
+                <AnimatedCount value={liveMetrics.earnedAmount} />
               </Text>
             </IconBadge>
           )}

@@ -11,6 +11,8 @@ import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-kl
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { defaultCatch } from '~/utils/zod-helpers';
 
+const schedulers = ['simple', 'discrete', 'karras', 'exponential', 'ays'] as const;
+
 // All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
 const allValidSamplers = [
   ...generationSamplers,
@@ -20,7 +22,11 @@ const allValidSamplers = [
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
-const transformationSchema = z.looseObject({ type: z.string() });
+const transformationSchema = z.looseObject({
+  workflow: z.string(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  resources: z.array(z.record(z.string(), z.unknown())).optional(),
+});
 
 export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
@@ -31,7 +37,12 @@ export const textToImageParamsSchema = z.object({
   sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
-  scheduler: z.enum(['simple', 'discrete', 'karras', 'exponential', 'ays']).optional(),
+  scheduler: z
+    .string()
+    .transform((val) =>
+      ['simple', 'discrete', 'karras', 'exponential', 'ays'].includes(val) ? val : 'simple'
+    )
+    .optional(),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),

@@ -1240,9 +1240,7 @@ function ProjectWorkspace() {
                           />
                         ) : (
                           <>
-                            <p className={styles.chapterItemName}>
-                              {chapter.name}
-                            </p>
+                            <p className={styles.chapterItemName}>{chapter.name}</p>
                             <p className={styles.chapterItemCount}>
                               <Tooltip
                                 label={
@@ -2246,10 +2244,7 @@ function ProjectWorkspace() {
 
             <Text size="sm" c="dimmed">
               Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
-              {panelCost > 0
-                ? panelCost + (smartEnhance ? enhanceCost : 0)
-                : '...'}{' '}
-              ={' '}
+              {panelCost > 0 ? panelCost + (smartEnhance ? enhanceCost : 0) : '...'} ={' '}
               {panelCost > 0
                 ? smartPanels.filter((p) => p.prompt.trim()).length *
                   (panelCost + (smartEnhance ? enhanceCost : 0))
@@ -2426,7 +2421,6 @@ function ProjectWorkspace() {
           </Group>
         </Stack>
       </Modal>
-
     </>
   );
 }

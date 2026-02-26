@@ -60,7 +60,7 @@ import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getBaseModelGenerationConfig } from '~/shared/constants/base-model.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';

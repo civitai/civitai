@@ -190,6 +190,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         AdamW8Bit: 'adamw8bit',
         Adafactor: 'adafactor',
         Prodigy: 'prodigy',
+        Automagic: 'automagic',
       };
       const optimizerType =
         optimizerTypeMap[selectedRun.params.optimizerType] ||

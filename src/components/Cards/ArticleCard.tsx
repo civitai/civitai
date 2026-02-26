@@ -2,7 +2,6 @@ import { Badge, Text } from '@mantine/core';
 import React from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
@@ -12,7 +11,7 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import clsx from 'clsx';
 
@@ -85,20 +84,20 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
               <div className="flex items-center gap-0.5">
                 <IconBookmark size={14} strokeWidth={2.5} />
                 <Text fw="bold" size="xs">
-                  {abbreviateNumber(liveMetrics.collectedCount)}
+                  <AnimatedCount value={liveMetrics.collectedCount} />
                 </Text>
               </div>
               <div className="flex items-center gap-0.5">
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
                 <Text fw="bold" size="xs">
-                  {abbreviateNumber(liveMetrics.commentCount)}
+                  <AnimatedCount value={liveMetrics.commentCount} />
                 </Text>
               </div>
               <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
                 <div className="flex items-center gap-0.5">
                   <IconBolt size={14} strokeWidth={2.5} />
-                  <Text fw="bold" size="xs" tt="uppercase">
-                    {abbreviateNumber(liveMetrics.tippedAmountCount + tippedAmount)}
+                  <Text fw="bold" size="xs">
+                    <AnimatedCount value={liveMetrics.tippedAmountCount + tippedAmount} />
                   </Text>
                 </div>
               </InteractiveTipBuzzButton>
@@ -111,7 +110,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
               <div className="flex items-center gap-0.5">
                 <IconEye size={14} strokeWidth={2.5} />
                 <Text fw="bold" size="xs">
-                  {abbreviateNumber(liveMetrics.viewCount)}
+                  <AnimatedCount value={liveMetrics.viewCount} />
                 </Text>
               </div>
             </Badge>

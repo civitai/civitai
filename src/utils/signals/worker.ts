@@ -8,6 +8,7 @@ import {
 import { env } from '~/env/client';
 import type {
   SignalConnectionState,
+  SignalEventEntry,
   SignalLogEntry,
   SignalStatus,
   SignalWorkerStatus,
@@ -31,6 +32,12 @@ const _self: SharedWorkerGlobalScope = self as any;
 const LOG_MAX = 500;
 const logBuffer: SignalLogEntry[] = [];
 let verboseLogging = false;
+
+// --------------------------------
+// Recent signals ring buffer
+// --------------------------------
+const SIGNALS_MAX = 50;
+const signalsBuffer: SignalEventEntry[] = [];
 
 function workerLog(type: string, detail?: string) {
   const entry: SignalLogEntry = { ts: Date.now(), type, detail };
@@ -152,6 +159,7 @@ function getWorkerStatus(): SignalWorkerStatus {
     lastEventReceivedAt,
     lastServerPongAt,
     logEntries: [...logBuffer],
+    recentSignals: [...signalsBuffer],
     uptime: Date.now() - startedAt,
   };
 }
@@ -201,12 +209,11 @@ const buildHubConnection = async ({ userId, token }: { token: string; userId: nu
           const logLevel = LogLevel[level] ?? 'unknown';
           workerLog(`signalr:${logLevel}`, message);
         },
-      }
+      },
     })
     .configureLogging(LogLevel.Trace)
     .withAutomaticReconnect([0, 2, 10, 18, 30, 45, 60, 90])
     .build();
-
 
   connection.onreconnected(() => {
     workerLog('connection:reconnected');
@@ -236,6 +243,8 @@ async function registerEvents(targets: string[]) {
     if (!events[target]) {
       events[target] = (payload) => {
         lastEventReceivedAt = Date.now();
+        signalsBuffer.push({ ts: lastEventReceivedAt, target, payload });
+        if (signalsBuffer.length > SIGNALS_MAX) signalsBuffer.shift();
         emitter.emit('eventReceived', { target, payload });
       };
       if (connection) {

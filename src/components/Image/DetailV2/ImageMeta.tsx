@@ -1,8 +1,10 @@
-import { Divider, Text, Badge, UnstyledButton } from '@mantine/core';
+import { Divider, Text, Badge, Tooltip, UnstyledButton } from '@mantine/core';
+import { IconCheck, IconCopy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useMemo } from 'react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
+import { useMetadataCopy } from '~/hooks/useMetadataCopy';
 import { trpc } from '~/utils/trpc';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
@@ -21,6 +23,7 @@ const simpleMetaProps = {
 export function ImageMeta({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
   const { meta, onSite, process } = data ?? {};
+  const { copy: copyAll, copied: copiedAll } = useMetadataCopy(meta);
   // const baseModel = getBaseModelFromResources(resources);
 
   const simpleMeta = useMemo(() => {
@@ -103,13 +106,20 @@ export function ImageMeta({ imageId }: { imageId: number }) {
                 {process}
               </Badge>
             </div>
-            <CopyButton value={prompt}>
-              {({ copy, Icon, color }) => (
-                <LegacyActionIcon onClick={copy} color={color}>
-                  <Icon size={16} />
+            <div className="flex items-center gap-1">
+              <CopyButton value={prompt}>
+                {({ copy, Icon, color }) => (
+                  <LegacyActionIcon onClick={copy} color={color}>
+                    <Icon size={16} />
+                  </LegacyActionIcon>
+                )}
+              </CopyButton>
+              <Tooltip label={copiedAll ? 'Copied' : 'Copy all metadata'} withArrow>
+                <LegacyActionIcon onClick={copyAll} color={copiedAll ? 'teal' : undefined}>
+                  {copiedAll ? <IconCheck size={16} /> : <IconCopy size={16} />}
                 </LegacyActionIcon>
-              )}
-            </CopyButton>
+              </Tooltip>
+            </div>
           </div>
           <LineClamp c="dimmed" className="text-sm">
             {prompt}

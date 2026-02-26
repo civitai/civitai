@@ -68,7 +68,6 @@ export default WebhookEndpoint(async (req, res) => {
           token: env.ORCHESTRATOR_ACCESS_TOKEN,
           path: { workflowId },
         });
-        console.log(workflow);
 
         const result = await updateTrainingWorkflowRecords(workflow, status);
 
@@ -119,7 +118,8 @@ export default WebhookEndpoint(async (req, res) => {
               );
           } else if (
             result.trainingStatus === TrainingStatus.Failed ||
-            result.trainingStatus === TrainingStatus.Denied
+            result.trainingStatus === TrainingStatus.Denied ||
+            result.trainingStatus === TrainingStatus.Expired
           ) {
             trainingFailEmail
               .send(emailData)

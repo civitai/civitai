@@ -26,6 +26,12 @@ export type SignalLogEntry = {
   detail?: string;
 };
 
+export type SignalEventEntry = {
+  ts: number;
+  target: string;
+  payload: unknown;
+};
+
 export type SignalWorkerStatus = {
   connectionState: SignalStatus | null;
   connectedUserId: number | null;
@@ -34,6 +40,7 @@ export type SignalWorkerStatus = {
   lastEventReceivedAt: number | null;
   lastServerPongAt: number | null;
   logEntries: SignalLogEntry[];
+  recentSignals: SignalEventEntry[];
   uptime: number;
 };
 

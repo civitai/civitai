@@ -16,9 +16,7 @@ const reactionToMetricType: Record<string, MetricType> = {
   Cry: 'cryCount',
 };
 
-function normalizeMetricPayload(
-  raw: Record<string, number>
-): MetricUpdatePayload {
+function normalizeMetricPayload(raw: Record<string, number>): MetricUpdatePayload {
   const normalized: MetricUpdatePayload = {};
   for (const [key, value] of Object.entries(raw)) {
     const metricType = (reactionToMetricType[key] ?? key) as MetricType;

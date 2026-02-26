@@ -40,11 +40,7 @@ export function ComicCardContextMenu({ comic, buttonProps, ...menuProps }: Props
       <Menu.Item
         key="follow"
         leftSection={
-          isFollowing ? (
-            <IconBellOff size={14} stroke={1.5} />
-          ) : (
-            <IconBell size={14} stroke={1.5} />
-          )
+          isFollowing ? <IconBellOff size={14} stroke={1.5} /> : <IconBell size={14} stroke={1.5} />
         }
         onClick={(e: React.MouseEvent) => {
           e.preventDefault();

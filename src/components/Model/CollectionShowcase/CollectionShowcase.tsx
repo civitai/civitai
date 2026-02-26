@@ -26,8 +26,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { slugit } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -175,15 +174,21 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
             >
               <Group gap={2}>
                 <IconDownload size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(liveMetrics.downloadCount)}</Text>
+                <Text size="xs">
+                  <AnimatedCount value={liveMetrics.downloadCount} />
+                </Text>
               </Group>
               <Group gap={2}>
                 <IconBookmark size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(liveMetrics.collectedCount)}</Text>
+                <Text size="xs">
+                  <AnimatedCount value={liveMetrics.collectedCount} />
+                </Text>
               </Group>
               <Group gap={2}>
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(liveMetrics.commentCount)}</Text>
+                <Text size="xs">
+                  <AnimatedCount value={liveMetrics.commentCount} />
+                </Text>
               </Group>
             </Badge>
           </Group>

@@ -18,6 +18,7 @@ export const FilterButton = forwardRef<HTMLButtonElement, FilterButtonProps>(
     return (
       <button
         ref={ref}
+        suppressHydrationWarning
         className={clsx(
           'flex items-center gap-1 rounded-3xl border-none text-sm font-semibold text-gray-8 dark:text-white',
           size === 'sm' ? 'h-8 px-2' : 'h-9 pl-4 pr-3',

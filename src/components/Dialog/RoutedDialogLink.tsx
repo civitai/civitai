@@ -18,7 +18,17 @@ export function triggerRoutedDialog<T extends DialogKey>({
   state: ComponentProps<(typeof dialogs)[T]['component']>;
 }) {
   const browserRouter = getBrowserRouter();
-  const { url, asPath, state: sessionState } = resolveDialog(name, browserRouter.query, state);
+  const query = browserRouter.query ?? {};
+
+  // Skip if the dialog is already open with the same params
+  const currentDialogs = ([] as DialogKey[]).concat(query.dialog ?? []);
+  if (currentDialogs.includes(name)) {
+    const dialog = dialogs[name];
+    const result = dialog.resolve(query, state) as { query: Record<string, unknown> };
+    if (QS.stringify(result.query) === QS.stringify(query)) return;
+  }
+
+  const { url, asPath, state: sessionState } = resolveDialog(name, query, state);
   browserRouter.push(url, asPath, sessionState);
 }
 

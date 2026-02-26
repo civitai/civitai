@@ -60,6 +60,8 @@ export const Provider: GlobalProvider = ({ children, globalState }) => (
     defaultColorScheme={globalState.theme === 'dark' ? 'dark' : 'light'}
     forceColorScheme={globalState.theme === 'dark' ? 'dark' : 'light'}
   >
-    <div className="ladle-story-wrapper" style={{ padding: 24, width: 'fit-content' }}>{children}</div>
+    <div className="ladle-story-wrapper" style={{ padding: 24, width: 'fit-content' }}>
+      {children}
+    </div>
   </MantineProvider>
 );

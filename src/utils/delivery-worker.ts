@@ -77,7 +77,14 @@ export async function resolveDownloadUrl(
   fileName?: string
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
-    return getDownloadUrlByFileId(fileId, fileName);
+    try {
+      return await getDownloadUrlByFileId(fileId, fileName);
+    } catch {
+      // Fall back to delivery worker when the storage resolver doesn't have
+      // this file (e.g. File table records like BountyEntry attachments that
+      // aren't synced to file_locations).
+      return getDownloadUrl(fileUrl, fileName);
+    }
   }
   return getDownloadUrl(fileUrl, fileName);
 }

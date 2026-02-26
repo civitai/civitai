@@ -43,6 +43,7 @@ describe('resolveTemplate', () => {
     systemPrompt: 'You are a challenge judge.',
     reviewPrompt: 'Rate this image.',
     theme: 'sunset landscape',
+    themeElements: 'warm orange hues, horizon line, golden hour lighting',
   };
 
   it('replaces variables in string content', () => {
@@ -113,6 +114,22 @@ describe('resolveTemplate', () => {
     const result = resolveTemplate(template, variables);
     expect(result[0].content).toBe(
       'You are a challenge judge. | Rate this image. | sunset landscape'
+    );
+  });
+
+  it('replaces themeElements variable', () => {
+    const template: ReviewTemplate = {
+      messages: [
+        {
+          role: 'user',
+          content: 'Theme: {{theme}}\nExpected elements: {{themeElements}}',
+        },
+      ],
+    };
+
+    const result = resolveTemplate(template, variables);
+    expect(result[0].content).toBe(
+      'Theme: sunset landscape\nExpected elements: warm orange hues, horizon line, golden hour lighting'
     );
   });
 });

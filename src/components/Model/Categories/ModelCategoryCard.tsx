@@ -42,7 +42,6 @@ import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/Hidd
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { isFutureDate } from '~/utils/date-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
@@ -56,7 +55,7 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -149,7 +148,9 @@ function ModelCategoryCardContent({
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-      <Text fz={12}>{abbreviateNumber(liveMetrics.downloadCount)}</Text>
+      <Text fz={12}>
+        <AnimatedCount value={liveMetrics.downloadCount} />
+      </Text>
     </IconBadge>
   );
 
@@ -163,13 +164,17 @@ function ModelCategoryCardContent({
       }
       color={hasReview ? 'success.5' : 'gray'}
     >
-      <Text size="xs">{abbreviateNumber(liveMetrics.thumbsUpCount)}</Text>
+      <Text size="xs">
+        <AnimatedCount value={liveMetrics.thumbsUpCount} />
+      </Text>
     </IconBadge>
   );
 
   const modelComments = !!liveMetrics.commentCount && (
     <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
-      <Text size="xs">{abbreviateNumber(liveMetrics.commentCount)}</Text>
+      <Text size="xs">
+        <AnimatedCount value={liveMetrics.commentCount} />
+      </Text>
     </IconBadge>
   );
 

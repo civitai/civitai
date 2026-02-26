@@ -97,6 +97,54 @@ async function getMatchingGiftNotices(buzzValue: number): Promise<GiftNotice[]> 
   return matchingNotices;
 }
 
+export async function getCodeByOrderId({ orderId, userId }: { orderId: string; userId: number }) {
+  // Validate that orderId belongs to the requesting user
+  // Format: code-{userId}-{timestamp}
+  const expectedPrefix = `code-${userId}-`;
+  if (!orderId.startsWith(expectedPrefix)) {
+    return null;
+  }
+
+  const code = await dbRead.redeemableCode.findFirst({
+    where: {
+      metadata: { path: ['orderId'], equals: orderId },
+      userId,
+    },
+    select: {
+      code: true,
+      type: true,
+      unitValue: true,
+    },
+  });
+
+  return code;
+}
+
+export async function getMyPurchasedCodes({ userId }: { userId: number }) {
+  return dbRead.redeemableCode.findMany({
+    where: {
+      userId,
+    },
+    select: {
+      code: true,
+      type: true,
+      unitValue: true,
+      createdAt: true,
+      expiresAt: true,
+      redeemedAt: true,
+      priceId: true,
+      price: {
+        select: {
+          product: {
+            select: { metadata: true },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
 export async function createRedeemableCodes({
   unitValue,
   type,

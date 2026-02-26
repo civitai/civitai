@@ -21,6 +21,7 @@ type GenerateContentInputs = {
 type ReviewImageInputs = {
   imageInput: string;
   theme: string;
+  themeElements: string;
   creator: string;
 };
 
@@ -60,7 +61,7 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
       customModelId: '',
       drafts: {},
       generateContentInputs: { modelVersionIds: [] },
-      reviewImageInputs: { imageInput: '', theme: '', creator: '' },
+      reviewImageInputs: { imageInput: '', theme: '', themeElements: '', creator: '' },
       pickWinnersInputs: { challengeId: null },
 
       setSelectedJudgeId: (id) =>

@@ -5,13 +5,17 @@ import { useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { trpc } from '~/utils/trpc';
-import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
+import {
+  type JudgeScore,
+  SCORE_WEIGHTS,
+  calculateWeightedScore,
+} from '~/server/games/daily-challenge/daily-challenge-scoring';
 
-const categories: { key: keyof JudgeScore; label: string }[] = [
-  { key: 'theme', label: 'Theme' },
-  { key: 'wittiness', label: 'Wittiness' },
-  { key: 'humor', label: 'Humor' },
-  { key: 'aesthetic', label: 'Aesthetic' },
+const categories: { key: keyof JudgeScore; label: string; weight: number }[] = [
+  { key: 'theme', label: 'Theme', weight: SCORE_WEIGHTS.theme },
+  { key: 'wittiness', label: 'Wittiness', weight: SCORE_WEIGHTS.wittiness },
+  { key: 'humor', label: 'Humor', weight: SCORE_WEIGHTS.humor },
+  { key: 'aesthetic', label: 'Aesthetic', weight: SCORE_WEIGHTS.aesthetic },
 ];
 
 const CIVCHAN_USER_ID = 7665867;
@@ -39,8 +43,8 @@ export function JudgeScoreBadge({
   judgeInfo?: JudgeInfo;
 }) {
   const [opened, setOpened] = useState(false);
-  const avg = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
-  const avgRounded = Math.round(avg * 10) / 10;
+  const weighted = calculateWeightedScore(score) ?? 0;
+  const weightedRounded = Math.round(weighted * 10) / 10;
 
   const hasJudge = !!imageId && !!judgeInfo;
   const vibrant = judgeInfo?.userId === CIVCHAN_USER_ID;
@@ -54,7 +58,7 @@ export function JudgeScoreBadge({
     <Popover opened={opened} onChange={setOpened} withArrow withinPortal shadow="md" width={240}>
       <Popover.Target>
         <Badge
-          color={getScoreColor(avg, vibrant)}
+          color={getScoreColor(weighted, vibrant)}
           radius="xl"
           h={26}
           variant="filled"
@@ -66,7 +70,7 @@ export function JudgeScoreBadge({
           style={{ cursor: 'pointer', flexShrink: 0, boxShadow: '1px 2px 3px -1px #25262B33' }}
           leftSection={<IconStarFilled size={12} />}
         >
-          {avgRounded.toFixed(1)}
+          {weightedRounded.toFixed(1)}
         </Badge>
       </Popover.Target>
       <Popover.Dropdown
@@ -99,10 +103,15 @@ export function JudgeScoreBadge({
           <Text size="sm" fw={600}>
             {hasJudge ? 'Scores' : 'Judge Scores'}
           </Text>
-          {categories.map(({ key, label }) => (
+          {categories.map(({ key, label, weight }) => (
             <div key={key}>
               <Group justify="space-between" mb={2}>
-                <Text size="xs">{label}</Text>
+                <Text size="xs">
+                  {label}{' '}
+                  <Text span size="xs" c="dimmed">
+                    ({Math.round(weight * 100)}%)
+                  </Text>
+                </Text>
                 <Text size="xs" fw={600}>
                   {score[key]}/10
                 </Text>
@@ -121,10 +130,10 @@ export function JudgeScoreBadge({
             pt={4}
           >
             <Text size="xs" fw={600}>
-              Average
+              Weighted Score
             </Text>
-            <Text size="xs" fw={700} c={getScoreColor(avg, vibrant)}>
-              {avgRounded.toFixed(1)}/10
+            <Text size="xs" fw={700} c={getScoreColor(weighted, vibrant)}>
+              {weightedRounded.toFixed(1)}/10
             </Text>
           </Group>
           {hasJudge && (commentLoading || judgeComment) && (

@@ -773,7 +773,7 @@ type BaseTool = {
 
 type BaseComic = {
   id: number;
-}
+};
 
 type BaseChallenge = {
   id: number;

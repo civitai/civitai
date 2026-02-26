@@ -180,7 +180,7 @@ export function useSignalsWorker(options?: {
           return;
         }
         pendingDumpResolve = (status) => {
-          const { logEntries, ...summary } = status;
+          const { logEntries, recentSignals, ...summary } = status;
           console.log('[signals] Status:', summary);
           console.log(
             `[signals] Last event: ${
@@ -204,6 +204,15 @@ export function useSignalsWorker(options?: {
               detail: e.detail ?? '',
             }))
           );
+          if (recentSignals.length) {
+            console.groupCollapsed(`[signals] Recent signals (${recentSignals.length})`);
+            for (const { ts, target, payload } of recentSignals) {
+              console.log(`${new Date(ts).toLocaleTimeString()} ${target}`, payload);
+            }
+            console.groupEnd();
+          } else {
+            console.log('[signals] No signals received yet');
+          }
         };
         worker.port.postMessage({ type: 'debug:dump' });
       };

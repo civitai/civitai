@@ -29,6 +29,8 @@ import type {
   DailyChallengeDetails,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
+  calculateWeightedScore,
+  SCORE_WEIGHTS,
   challengeToLegacyFormat,
   deriveChallengeNsfwLevel,
   endChallenge,
@@ -46,6 +48,7 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransactionMany,
@@ -333,6 +336,7 @@ async function createChallengeFromSelection(
       challengeType: config.challengeType,
       resourceUserId,
       resourceModelId: resource.modelId,
+      themeElements: challengeContent.themeElements,
     },
   });
 
@@ -584,17 +588,21 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           poolTrigger: PoolTrigger | null;
           maxPrizePool: number | null;
           prizeDistribution: number[] | null;
+          metadata: unknown;
         }
       | undefined
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
-           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution"
+           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
+           "metadata"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
   `;
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+  const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
+  const themeElements = challengeMetadata.themeElements;
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
@@ -875,6 +883,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       log('Reviewing entry:', entry);
       const review = await generateReview({
         theme: currentChallenge.theme,
+        themeElements,
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
@@ -1232,8 +1241,7 @@ export async function pickWinnersForChallenge(
       });
     }
     // Update Challenge status to Completed and store completion summary
-    const existingMetadata =
-      typeof winnerChallengeRecord.metadata === 'object' ? winnerChallengeRecord.metadata : {};
+    const existingMetadata = parseChallengeMetadata(winnerChallengeRecord.metadata);
     await dbWrite.challenge.update({
       where: { id: winnerChallengeRecord.id },
       data: {
@@ -1407,10 +1415,10 @@ export async function getJudgedEntries(
         ROW_NUMBER() OVER (
           PARTITION BY i."userId"
           ORDER BY (
-            (ci.note::json->'score'->>'theme')::float +
-            (ci.note::json->'score'->>'wittiness')::float +
-            (ci.note::json->'score'->>'humor')::float +
-            (ci.note::json->'score'->>'aesthetic')::float
+            (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
+            (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
+            (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
+            (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
           ) DESC
         ) as rn
       FROM "CollectionItem" ci
@@ -1482,17 +1490,14 @@ export async function getJudgedEntries(
     cooldown: cooldownSource,
   });
 
-  // Rank entries purely by AI judge score (no engagement/reaction weighting)
-  const judgedEntries = eligibleEntries.map(({ note, ...entry }) => {
-    const { score, summary } = JSON.parse(note);
-    const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
-    return {
-      ...entry,
-      summary,
-      score,
-      weightedRating: rating,
-    };
-  });
+  // Rank entries by weighted AI judge score with theme gate rules
+  const judgedEntries = eligibleEntries
+    .map(({ note, ...entry }) => {
+      const { score, summary } = JSON.parse(note);
+      const weightedRating = calculateWeightedScore(score);
+      return { ...entry, summary, score, weightedRating };
+    })
+    .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
   judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
 
   // Take top entries for final judgment (already one per user from the query)

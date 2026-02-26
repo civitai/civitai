@@ -497,7 +497,8 @@ export default function UserTrainingModels() {
                 </>
               )}
               {(mv.trainingStatus === TrainingStatus.Failed ||
-                mv.trainingStatus === TrainingStatus.Denied) && (
+                mv.trainingStatus === TrainingStatus.Denied ||
+                mv.trainingStatus === TrainingStatus.Expired) && (
                 <>
                   <Divider size="sm" orientation="vertical" />
                   <HoverCard shadow="md" width={300} zIndex={100} withArrow withinPortal>

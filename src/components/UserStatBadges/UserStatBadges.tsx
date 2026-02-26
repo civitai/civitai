@@ -19,6 +19,7 @@ import {
 import Image from 'next/image';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import { AnimatedCount } from '~/components/Metrics';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
@@ -64,7 +65,7 @@ export function UserStatBadges({
               variant="transparent"
             >
               <Text size="xs" fw={600} inline>
-                {abbreviateNumber(uploads)}
+                <AnimatedCount value={uploads} />
               </Text>
             </IconBadge>
           ) : null}
@@ -84,7 +85,7 @@ export function UserStatBadges({
               variant="transparent"
             >
               <Text size="xs" fw={600} inline>
-                {abbreviateNumber(followers)}
+                <AnimatedCount value={followers} />
               </Text>
             </IconBadge>
           ) : null}
@@ -103,7 +104,7 @@ export function UserStatBadges({
               size="lg"
             >
               <Text size="xs" fw={600} inline>
-                {abbreviateNumber(favorites)}
+                <AnimatedCount value={favorites} />
               </Text>
             </IconBadge>
           ) : null}
@@ -122,7 +123,7 @@ export function UserStatBadges({
               size="lg"
             >
               <Text size="xs" fw={600} inline>
-                {abbreviateNumber(downloads)}
+                <AnimatedCount value={downloads} />
               </Text>
             </IconBadge>
           ) : null}
@@ -141,7 +142,7 @@ export function UserStatBadges({
               size="lg"
             >
               <Text size="xs" fw={600} inline>
-                {abbreviateNumber(answers)}
+                <AnimatedCount value={answers} />
               </Text>
             </IconBadge>
           ) : null}
@@ -188,7 +189,7 @@ const BadgedIcon = ({
       {...props}
     >
       <Text size={textSize} fw="bold" inline title={numberWithCommas(value ?? 0)}>
-        {abbreviateNumber(value ?? 0)}
+        <AnimatedCount value={value ?? 0} />
       </Text>
     </IconBadge>
   </Group>

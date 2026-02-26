@@ -6,6 +6,7 @@ import type {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
+import { logToAxiom } from '~/server/logging/client';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { findLastIndex } from '~/utils/array-helpers';
 import { markdownToHtml } from '~/utils/markdown-helpers';
@@ -92,6 +93,7 @@ type GeneratedArticle = {
   body: string;
   invitation: string;
   theme: string;
+  themeElements: string[];
 };
 export async function generateArticle({ resource, image, config, model }: GenerateArticleInput) {
   if (!openrouter) throw new Error('OpenRouter not connected');
@@ -109,7 +111,8 @@ export async function generateArticle({ resource, image, config, model }: Genera
           "title": "title of the challenge/article",
           "invitation": "a single sentence invitation to participate in the challenge displayed in the on-site generator",
           "body": "the content of the article in markdown",
-          "theme": "a 1-2 word theme for the challenge"
+          "theme": "a 1-2 word theme for the challenge",
+          "themeElements": ["5-8 short phrases describing visual elements, colors, moods, objects, or textures expected in images matching this theme — used to anchor judging"]
         }`
       ),
       {
@@ -140,11 +143,54 @@ export async function generateArticle({ resource, image, config, model }: Genera
     content,
     invitation: result.invitation,
     theme: result.theme,
+    themeElements: result.themeElements ?? [],
   };
+}
+
+type GenerateThemeElementsInput = {
+  theme: string;
+  config: JudgingConfig;
+  model?: AIModel;
+};
+export async function generateThemeElements(input: GenerateThemeElementsInput): Promise<string[]> {
+  if (!openrouter) throw new Error('OpenRouter not connected');
+
+  try {
+    const result = await openrouter.getJsonCompletion<{ themeElements: string[] }>({
+      retries: 3,
+      model: input.model ?? AI_MODELS.GROK,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'text',
+              text: `${input.config.prompts.systemMessage}\n\nGenerate 5-8 keywords (single words or short 2-3 word combinations) describing the concrete visual elements, colors, moods, objects, or textures expected in images matching a given theme. These will be used to anchor consistent judging of challenge entries. Keep them broad enough to allow creative interpretation.\n\nReply with json\n\n{"themeElements": ["keyword1", "keyword2", ...]}`,
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: `Theme: ${input.theme}` }],
+        },
+      ],
+    });
+
+    return result.themeElements ?? [];
+  } catch (e) {
+    const err = e as Error;
+    logToAxiom({
+      type: 'warn',
+      name: 'generate-theme-elements',
+      message: `Failed to generate theme elements for theme "${input.theme}": ${err.message}`,
+    });
+    return [];
+  }
 }
 
 type GenerateReviewInput = {
   theme: string;
+  themeElements?: string[];
   creator: string;
   imageUrl: string;
   config: JudgingConfig;
@@ -211,6 +257,7 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
     systemPrompt: input.config.prompts.systemMessage,
     reviewPrompt: input.config.prompts.review,
     theme: input.theme,
+    themeElements: input.themeElements?.join(', ') ?? '',
   };
 
   const messages = resolveTemplate(template, variables);
@@ -241,10 +288,14 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
   }
 
   // Append user message with theme, creator, and image
+  const themeElementsLine = formatThemeElementsLine(input.themeElements);
   messages.push({
     role: 'user',
     content: [
-      { type: 'text', text: `Theme: ${input.theme}\nCreator: ${input.creator}` },
+      {
+        type: 'text',
+        text: `Theme: ${input.theme}${themeElementsLine}\nCreator: ${input.creator}`,
+      },
       { type: 'image_url', image_url: { url: input.imageUrl } },
     ],
   });
@@ -256,7 +307,8 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
  * Build simple 2-message array from systemPrompt + reviewPrompt fields (fallback path).
  */
 function buildFallbackMessages(input: GenerateReviewInput): SimpleMessage[] {
-  const userText = `Theme: ${input.theme}\nCreator: ${input.creator}`;
+  const themeElementsLine = formatThemeElementsLine(input.themeElements);
+  const userText = `Theme: ${input.theme}${themeElementsLine}\nCreator: ${input.creator}`;
 
   return [
     prepareSystemMessage(input.config, 'review', RESPONSE_SCHEMA),
@@ -334,6 +386,12 @@ export async function generateWinners(input: GenerateWinnersInput) {
 
 // Helpers
 // ------------------------------------
+
+function formatThemeElementsLine(themeElements?: string[]): string {
+  if (!themeElements?.length) return '';
+  const joined = themeElements.join(', ');
+  return `\nTheme Elements (the image should contain at least some of these): ${joined}`;
+}
 
 function prepareSystemMessage(
   config: JudgingConfig,

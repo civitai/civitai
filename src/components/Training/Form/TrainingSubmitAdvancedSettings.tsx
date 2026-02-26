@@ -92,7 +92,10 @@ export const AdvancedSettings = ({
 
     defaultParams.engine = selectedRun.params.engine;
     const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
-    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1))));
+    defaultParams.numRepeats = Math.max(
+      1,
+      Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
+    );
 
     if (selectedRun.params.engine !== 'rapid') {
       defaultParams.targetSteps = Math.ceil(
@@ -679,8 +682,8 @@ export const AdvancedSettings = ({
                     value: inp,
                     visible: !(
                       ts.name === 'engine' ||
-                      (ts.name === 'trainBatchSize' &&
-                        selectedRun.params.engine === 'ai-toolkit')
+                      (ts.name === 'trainBatchSize' && selectedRun.params.engine === 'ai-toolkit') ||
+                      (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit')
                     ),
                   };
                 })}

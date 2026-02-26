@@ -27,6 +27,7 @@ export type ReviewTemplateVariables = {
   systemPrompt: string;
   reviewPrompt: string;
   theme: string;
+  themeElements: string;
 };
 
 /**

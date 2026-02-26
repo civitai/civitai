@@ -149,6 +149,7 @@ export const TrainingStatus = {
   InReview: 'InReview',
   Failed: 'Failed',
   Approved: 'Approved',
+  Expired: 'Expired',
 } as const;
 
 export type TrainingStatus = (typeof TrainingStatus)[keyof typeof TrainingStatus];
