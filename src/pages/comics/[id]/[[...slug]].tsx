@@ -1,4 +1,13 @@
-import { ActionIcon, Badge, Container, CopyButton, Select, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Container,
+  CopyButton,
+  SegmentedControl,
+  Select,
+  Tooltip,
+} from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowLeft,
   IconBell,
@@ -7,11 +16,15 @@ import {
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
+  IconColumns,
   IconFlag,
+  IconLayoutList,
   IconLink,
+  IconPencil,
   IconPhoto,
   IconPhotoOff,
   IconShare,
+  IconTrash,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -103,7 +116,9 @@ type Project = RouterOutput['comics']['getPublicProjectForReader'];
 // ─── Overview / Landing Page ─────────────────────────────────────────────────
 
 function ComicOverview({ project }: { project: Project }) {
+  const router = useRouter();
   const currentUser = useCurrentUser();
+  const isOwner = currentUser?.id === project.user.id;
   const { blurLevels } = useBrowsingLevelContext();
   const [unblurredChapters, setUnblurredChapters] = useState<Set<number>>(new Set());
   const toggleChapterBlur = useCallback((e: React.MouseEvent, position: number) => {
@@ -116,6 +131,11 @@ function ComicOverview({ project }: { project: Project }) {
       return next;
     });
   }, []);
+
+  const deleteProject = trpc.comics.deleteProject.useMutation({
+    onSuccess: () => void router.push('/comics'),
+  });
+
   // Hero image for the wide banner, fallback to cover, then first panel
   const heroImage = project.heroImage ?? project.coverImage;
   const heroUrl =
@@ -204,19 +224,21 @@ function ComicOverview({ project }: { project: Project }) {
 
             {currentUser && (
               <>
-                <ActionIcon
-                  variant={isFollowing ? 'filled' : 'subtle'}
-                  color={isFollowing ? 'blue' : 'gray'}
-                  onClick={() =>
-                    toggleEngagement.mutate({
-                      projectId: project.id,
-                      type: ComicEngagementType.Notify,
-                    })
-                  }
-                  loading={toggleEngagement.isPending}
-                >
-                  {isFollowing ? <IconBellOff size={18} /> : <IconBell size={18} />}
-                </ActionIcon>
+                <Tooltip label={isFollowing ? 'Unfollow comic' : 'Get notified of new chapters'}>
+                  <ActionIcon
+                    variant={isFollowing ? 'filled' : 'subtle'}
+                    color={isFollowing ? 'blue' : 'gray'}
+                    onClick={() =>
+                      toggleEngagement.mutate({
+                        projectId: project.id,
+                        type: ComicEngagementType.Notify,
+                      })
+                    }
+                    loading={toggleEngagement.isPending}
+                  >
+                    {isFollowing ? <IconBellOff size={18} /> : <IconBell size={18} />}
+                  </ActionIcon>
+                </Tooltip>
                 {currentUser.id !== project.user.id && (
                   <>
                     <TipBuzzButton
@@ -239,6 +261,39 @@ function ComicOverview({ project }: { project: Project }) {
                         <IconFlag size={18} />
                       </ActionIcon>
                     </LoginRedirect>
+                  </>
+                )}
+                {isOwner && (
+                  <>
+                    <Tooltip label="Edit comic">
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        component={Link}
+                        href={`/comics/project/${project.id}`}
+                      >
+                        <IconPencil size={18} />
+                      </ActionIcon>
+                    </Tooltip>
+                    <Tooltip label="Delete comic">
+                      <ActionIcon
+                        variant="subtle"
+                        color="red"
+                        loading={deleteProject.isPending}
+                        onClick={() =>
+                          openConfirmModal({
+                            title: 'Delete comic',
+                            children:
+                              'Are you sure you want to delete this comic? This action cannot be undone.',
+                            labels: { confirm: 'Delete', cancel: 'Cancel' },
+                            confirmProps: { color: 'red' },
+                            onConfirm: () => deleteProject.mutate({ id: project.id }),
+                          })
+                        }
+                      >
+                        <IconTrash size={18} />
+                      </ActionIcon>
+                    </Tooltip>
                   </>
                 )}
               </>
@@ -379,11 +434,10 @@ function ComicOverview({ project }: { project: Project }) {
                           </button>
                         )}
                       </p>
-                      {ch.publishedAt && (
-                        <p className={styles.chapterPanelCount}>
-                          {formatRelativeDate(ch.publishedAt)}
-                        </p>
-                      )}
+                      <p className={styles.chapterPanelCount}>
+                        {ch.panels.length} {ch.panels.length === 1 ? 'page' : 'pages'}
+                        {ch.publishedAt && ` · ${formatRelativeDate(ch.publishedAt)}`}
+                      </p>
                     </div>
                     <IconChevronRight size={18} className={styles.chapterArrow} />
                   </Link>
@@ -399,6 +453,9 @@ function ComicOverview({ project }: { project: Project }) {
 
 // ─── Chapter Reader ──────────────────────────────────────────────────────────
 
+const READER_MODE_KEY = 'civitai-comic-reader-mode';
+type ReaderMode = 'scroll' | 'pages';
+
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -409,6 +466,44 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const panels = activeChapter?.panels ?? [];
   const headerRef = useRef<HTMLDivElement>(null);
   const lastScrollTop = useRef(0);
+
+  // Reader mode: scroll (default) or pages (bifold page-flip)
+  const [readerMode, setReaderMode] = useState<ReaderMode>(() => {
+    if (typeof window === 'undefined') return 'scroll';
+    return (localStorage.getItem(READER_MODE_KEY) as ReaderMode) || 'scroll';
+  });
+  const [pageIndex, setPageIndex] = useState(0);
+  const PANELS_PER_PAGE = 2;
+  const handleModeChange = (mode: string) => {
+    const m = mode as ReaderMode;
+    setReaderMode(m);
+    setPageIndex(0);
+    localStorage.setItem(READER_MODE_KEY, m);
+  };
+
+  // Pages mode: compute page spreads (pairs of panels)
+  const totalPages = Math.ceil(panels.length / PANELS_PER_PAGE);
+  const visiblePanels =
+    readerMode === 'pages'
+      ? panels.slice(pageIndex * PANELS_PER_PAGE, (pageIndex + 1) * PANELS_PER_PAGE)
+      : panels;
+  const hasPagePrev = pageIndex > 0;
+  const hasPageNext = pageIndex < totalPages - 1;
+
+  const goPage = (dir: 1 | -1) => {
+    const next = pageIndex + dir;
+    if (next >= 0 && next < totalPages) {
+      setPageIndex(next);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (dir === 1 && hasNext) {
+      goToChapter(safeIdx + 1);
+    } else if (dir === -1 && hasPrev) {
+      const prevChapter = chapters[safeIdx - 1];
+      const prevPanelCount = prevChapter?.panels.length ?? 0;
+      const lastPage = Math.max(0, Math.ceil(prevPanelCount / PANELS_PER_PAGE) - 1);
+      goToChapter(safeIdx - 1, lastPage);
+    }
+  };
 
   // Connection key for ImageGuard2 — all panels in a chapter share the same key
   const chapterConnectId = `${project.id}-${activeChapter?.position ?? 0}`;
@@ -430,9 +525,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const hasPrev = safeIdx > 0;
   const hasNext = safeIdx < chapters.length - 1;
 
-  const goToChapter = (idx: number) => {
+  const goToChapter = (idx: number, startPage = 0) => {
     const ch = chapters[idx];
     if (!ch) return;
+    setPageIndex(startPage);
     window.scrollTo({ top: 0 });
     void router.replace(
       `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`,
@@ -450,26 +546,28 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChapter?.position, currentUser?.id]);
 
-  // Keyboard navigation: arrow keys for prev/next chapter
+  // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture when user is typing in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-      if (e.key === 'ArrowLeft' && hasPrev) {
-        goToChapter(safeIdx - 1);
-      } else if (e.key === 'ArrowRight' && hasNext) {
-        goToChapter(safeIdx + 1);
+      if (readerMode === 'pages') {
+        // In pages mode, arrow keys navigate pages (not chapters)
+        if (e.key === 'ArrowLeft') goPage(-1);
+        else if (e.key === 'ArrowRight') goPage(1);
+      } else {
+        if (e.key === 'ArrowLeft' && hasPrev) goToChapter(safeIdx - 1);
+        else if (e.key === 'ArrowRight' && hasNext) goToChapter(safeIdx + 1);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasPrev, hasNext, safeIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasPrev, hasNext, safeIdx, readerMode, pageIndex, totalPages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide reader header on scroll down, show on scroll up
+  // Hide reader header on scroll down, show on scroll up (scroll mode only)
   const handleScroll = useCallback(() => {
-    if (!headerRef.current) return;
+    if (!headerRef.current || readerMode === 'pages') return;
     const scrollTop = window.scrollY;
     if (scrollTop > lastScrollTop.current && scrollTop > 80) {
       headerRef.current.style.transform = 'translateY(-100%)';
@@ -477,12 +575,73 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       headerRef.current.style.transform = 'translateY(0)';
     }
     lastScrollTop.current = scrollTop;
-  }, []);
+  }, [readerMode]);
 
   useEffect(() => {
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, [handleScroll]);
+
+  // Ensure header is visible in pages mode
+  useEffect(() => {
+    if (readerMode === 'pages' && headerRef.current) {
+      headerRef.current.style.transform = 'translateY(0)';
+    }
+  }, [readerMode]);
+
+  // Render a single panel with ImageGuard2 support
+  const renderPanel = (panel: (typeof panels)[number]) => {
+    if (!panel.imageUrl) return null;
+
+    if (panel.image) {
+      return (
+        <div key={panel.id} className="relative">
+          <ImageGuard2
+            image={panel.image}
+            connectType="comicChapter"
+            connectId={chapterConnectId}
+          >
+            {(safe) =>
+              safe ? (
+                <img
+                  src={panel.imageUrl!}
+                  alt={panel.prompt}
+                  loading="lazy"
+                  className={styles.readerPanel}
+                />
+              ) : (
+                <div className={styles.readerPanelBlurWrap}>
+                  <img
+                    src={panel.imageUrl!}
+                    alt={panel.prompt}
+                    loading="lazy"
+                    className={styles.readerPanel}
+                    aria-hidden
+                  />
+                  <img
+                    src={panel.imageUrl!}
+                    alt={panel.prompt}
+                    loading="lazy"
+                    className={styles.readerPanelBlurred}
+                  />
+                </div>
+              )
+            }
+          </ImageGuard2>
+        </div>
+      );
+    }
+
+    return (
+      <img
+        key={panel.id}
+        src={panel.imageUrl}
+        alt={panel.prompt}
+        loading="lazy"
+        className={styles.readerPanel}
+      />
+    );
+  };
 
   // Prev/next navigation component (shared between top and bottom)
   const ChapterNav = () => (
@@ -501,6 +660,31 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
         onClick={() => goToChapter(safeIdx + 1)}
       >
         Next Chapter
+        <IconChevronRight size={16} />
+      </button>
+    </div>
+  );
+
+  // Page navigation for bifold mode
+  const PageNav = () => (
+    <div className={styles.readerBottomNav}>
+      <button
+        className={styles.readerNavBtn}
+        disabled={!hasPagePrev && !hasPrev}
+        onClick={() => goPage(-1)}
+      >
+        <IconChevronLeft size={16} />
+        {hasPagePrev ? 'Previous Page' : 'Previous Chapter'}
+      </button>
+      <span className="text-sm text-gray-400">
+        {pageIndex + 1} / {totalPages}
+      </span>
+      <button
+        className={styles.readerNavBtn}
+        disabled={!hasPageNext && !hasNext}
+        onClick={() => goPage(1)}
+      >
+        {hasPageNext ? 'Next Page' : 'Next Chapter'}
         <IconChevronRight size={16} />
       </button>
     </div>
@@ -541,6 +725,29 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
               </div>
 
               <div className={styles.readerChapterNav}>
+                <SegmentedControl
+                  size="xs"
+                  value={readerMode}
+                  onChange={handleModeChange}
+                  data={[
+                    {
+                      value: 'scroll',
+                      label: (
+                        <Tooltip label="Scroll view">
+                          <IconLayoutList size={16} />
+                        </Tooltip>
+                      ),
+                    },
+                    {
+                      value: 'pages',
+                      label: (
+                        <Tooltip label="Page view">
+                          <IconColumns size={16} />
+                        </Tooltip>
+                      ),
+                    },
+                  ]}
+                />
                 <ActionIcon
                   variant="subtle"
                   disabled={!hasPrev}
@@ -577,15 +784,15 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           </Container>
         </div>
 
-        {/* Top prev/next nav */}
+        {/* Top nav */}
         {panels.length > 0 && (
           <Container size="sm">
-            <ChapterNav />
+            {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
           </Container>
         )}
 
         {/* Panel content */}
-        <Container size="sm" p={0}>
+        <Container size={readerMode === 'pages' ? 'lg' : 'sm'} p={0}>
           {panels.length === 0 ? (
             <div className={styles.readerEmpty}>
               <IconPhotoOff size={48} />
@@ -595,60 +802,13 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 Back to overview
               </Link>
             </div>
+          ) : readerMode === 'pages' ? (
+            <div className={styles.readerPagesSpread}>
+              {visiblePanels.map((panel) => renderPanel(panel))}
+            </div>
           ) : (
             <div className={styles.readerPanels}>
-              {panels.map((panel) => {
-                if (!panel.imageUrl) return null;
-
-                if (panel.image) {
-                  return (
-                    <div key={panel.id} className="relative">
-                      <ImageGuard2
-                        image={panel.image}
-                        connectType="comicChapter"
-                        connectId={chapterConnectId}
-                      >
-                        {(safe) =>
-                          safe ? (
-                            <img
-                              src={panel.imageUrl!}
-                              alt={panel.prompt}
-                              loading="lazy"
-                              className={styles.readerPanel}
-                            />
-                          ) : (
-                            <div className={styles.readerPanelBlurWrap}>
-                              <img
-                                src={panel.imageUrl!}
-                                alt={panel.prompt}
-                                loading="lazy"
-                                className={styles.readerPanel}
-                                aria-hidden
-                              />
-                              <img
-                                src={panel.imageUrl!}
-                                alt={panel.prompt}
-                                loading="lazy"
-                                className={styles.readerPanelBlurred}
-                              />
-                            </div>
-                          )
-                        }
-                      </ImageGuard2>
-                    </div>
-                  );
-                }
-
-                return (
-                  <img
-                    key={panel.id}
-                    src={panel.imageUrl}
-                    alt={panel.prompt}
-                    loading="lazy"
-                    className={styles.readerPanel}
-                  />
-                );
-              })}
+              {visiblePanels.map((panel) => renderPanel(panel))}
             </div>
           )}
         </Container>
@@ -656,7 +816,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
         {/* Bottom nav */}
         {panels.length > 0 && (
           <Container size="sm">
-            <ChapterNav />
+            {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
           </Container>
         )}
 

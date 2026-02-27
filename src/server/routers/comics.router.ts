@@ -1173,10 +1173,53 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
-      await dbWrite.comicChapter.delete({
-        where: {
-          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
-        },
+      // Get all chapter positions before deletion so we know what to re-compact
+      const allChapters = await dbWrite.comicChapter.findMany({
+        where: { projectId: input.projectId },
+        orderBy: { position: 'asc' },
+        select: { position: true },
+      });
+      const remaining = allChapters.filter((ch) => ch.position !== input.chapterPosition);
+
+      await dbWrite.$transaction(async (tx) => {
+        await tx.comicChapter.delete({
+          where: {
+            projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+          },
+        });
+
+        // Re-compact positions so chapters are sequential (0, 1, 2, ...)
+        if (remaining.length > 0) {
+          const TEMP_OFFSET = 10000;
+          // Phase 1: move to temp positions to avoid PK conflicts
+          for (let i = 0; i < remaining.length; i++) {
+            if (remaining[i].position !== i) {
+              await tx.comicChapter.update({
+                where: {
+                  projectId_position: { projectId: input.projectId, position: remaining[i].position },
+                },
+                data: { position: TEMP_OFFSET + i },
+              });
+            }
+          }
+          // Phase 2: move from temp to final sequential positions
+          for (let i = 0; i < remaining.length; i++) {
+            if (remaining[i].position !== i) {
+              await tx.comicChapter.update({
+                where: {
+                  projectId_position: { projectId: input.projectId, position: TEMP_OFFSET + i },
+                },
+                data: { position: i },
+              });
+            }
+          }
+        }
+
+        // Clear stale readChapters since positions may have shifted
+        await tx.comicProjectEngagement.updateMany({
+          where: { projectId: input.projectId, readChapters: { isEmpty: false } },
+          data: { readChapters: [] },
+        });
       });
 
       // Recalculate project NSFW level after chapter removal
@@ -3055,6 +3098,36 @@ export const comicsRouter = router({
         where: { id: thread.id },
         data: { commentCount: { increment: 1 } },
       });
+
+      // Notify the comic project owner (if commenter is not the owner)
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: { userId: true, name: true },
+      });
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: {
+            projectId: input.projectId,
+            position: input.chapterPosition,
+          },
+        },
+        select: { name: true },
+      });
+
+      if (project && project.userId !== ctx.user.id) {
+        createNotification({
+          type: 'new-comic-comment',
+          key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
+          category: NotificationCategory.Comment,
+          userId: project.userId,
+          details: {
+            comicProjectId: String(input.projectId),
+            comicProjectName: project.name,
+            chapterName: chapter?.name ?? `Chapter ${input.chapterPosition + 1}`,
+            commenterUsername: ctx.user.username ?? 'Someone',
+          },
+        }).catch((e) => console.error('Failed to send comic comment notification:', e));
+      }
 
       return comment;
     }),

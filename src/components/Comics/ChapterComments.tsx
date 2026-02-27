@@ -36,14 +36,19 @@ export function ChapterComments({
     createComment.mutate({ projectId, chapterPosition, content: comment.trim() });
   };
 
+  // Use actual comment array length for display count (more reliable than commentCount field)
+  const commentCount = thread?.comments?.length ?? 0;
+
   return (
     <div>
       <h3 className="text-base font-medium mb-3">
-        Comments {thread?.commentCount ? `(${thread.commentCount})` : ''}
+        Comments {commentCount > 0 ? `(${commentCount})` : ''}
       </h3>
 
       {/* Comment input */}
-      {currentUser ? (
+      {thread?.locked ? (
+        <p className="text-sm text-gray-400 mb-4">Comments are locked for this chapter.</p>
+      ) : currentUser ? (
         <div className="flex gap-2 mb-4">
           <Textarea
             placeholder="Write a comment..."
