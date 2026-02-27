@@ -635,6 +635,7 @@ export const REDIS_SYS_KEYS = {
     EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    CLIENT: 'generation:client',
   },
   TRAINING: {
     STATUS: 'training:status',
