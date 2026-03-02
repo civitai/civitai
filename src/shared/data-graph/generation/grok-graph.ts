@@ -11,6 +11,7 @@
  * Video workflows:
  * - txt2vid: Text to video (GrokTextToVideoInput)
  * - img2vid: Image to video (GrokImageToVideoInput)
+ * - vid2vid:edit: Edit video with AI (GrokEditVideoInput)
  *
  * Uses a discriminator on the parent's `output` node ('image' | 'video')
  * to split into image-specific and video-specific subgraphs.
@@ -19,7 +20,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, imagesNode, createCheckpointGraph } from './common';
+import { seedNode, aspectRatioNode, imagesNode, videoNode, createCheckpointGraph } from './common';
 
 // =============================================================================
 // Constants
@@ -97,9 +98,18 @@ type GrokVideoCtx = {
   workflow: string;
   output: 'video';
   images?: ImageEntry[];
+  video?: { url: string; metadata?: { duration?: number } };
 };
 
 const grokVideoGraph = new DataGraph<GrokVideoCtx, GenerationCtx>()
+  .node(
+    'video',
+    (ctx) => ({
+      ...videoNode(),
+      when: ctx.workflow === 'vid2vid:edit',
+    }),
+    ['workflow']
+  )
   .node(
     'images',
     (ctx) => ({
@@ -114,18 +124,26 @@ const grokVideoGraph = new DataGraph<GrokVideoCtx, GenerationCtx>()
     defaultValue: '720p' as const,
     meta: { options: grokResolutions },
   })
+  .node('duration', {
+    input: z.coerce.number().min(6).max(15).optional(),
+    output: z.number().min(6).max(15),
+    defaultValue: 6,
+    meta: { min: 6, max: 15, step: 1 },
+  })
   .node(
     'aspectRatio',
     (ctx) => {
       const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
       const options =
         grokVideoAspectRatiosByResolution[resolution] ?? grokVideoAspectRatiosByResolution['720p'];
+      const hasImages = Array.isArray(ctx.images) && ctx.images.length > 0;
+      const hasVideo = !!ctx.video?.url;
       return {
         ...aspectRatioNode({ options, defaultValue: '16:9' }),
-        when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
+        when: !hasImages && !hasVideo,
       };
     },
-    ['images', 'resolution']
+    ['images', 'video', 'resolution']
   );
 
 // =============================================================================

@@ -352,7 +352,8 @@ async function createEcosystemStep(
     case 'Grok': {
       const isVideo =
         normalizedData.workflow.startsWith('txt2vid') ||
-        normalizedData.workflow.startsWith('img2vid');
+        normalizedData.workflow.startsWith('img2vid') ||
+        normalizedData.workflow.startsWith('vid2vid');
       if (isVideo) {
         return {
           $type: 'videoGen',

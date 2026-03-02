@@ -11,6 +11,7 @@
  * Video operations:
  * - text-to-video: Text to video (GrokTextToVideoInput)
  * - image-to-video: Image to video (GrokImageToVideoInput)
+ * - edit-video: Edit video with AI (GrokEditVideoInput)
  */
 
 import type {
@@ -18,6 +19,7 @@ import type {
   GrokEditImageGenInput,
   GrokTextToVideoInput,
   GrokImageToVideoInput,
+  GrokEditVideoInput,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -33,7 +35,7 @@ type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 type GrokImageInput = GrokCreateImageGenInput | GrokEditImageGenInput;
 
 // Video input union
-type GrokVideoInput = GrokTextToVideoInput | GrokImageToVideoInput;
+type GrokVideoInput = GrokTextToVideoInput | GrokImageToVideoInput | GrokEditVideoInput;
 
 /**
  * Creates imageGen input for Grok image workflows.
@@ -65,10 +67,11 @@ export const createGrokImageInput = defineHandler<GrokCtx, GrokImageInput>((data
 
 /**
  * Creates videoGen input for Grok video workflows.
- * Handles both text-to-video and image-to-video operations.
+ * Handles text-to-video, image-to-video, and edit-video operations.
  */
 export const createGrokVideoInput = defineHandler<GrokCtx, GrokVideoInput>((data) => {
   const hasImages = !!data.images?.length;
+  const hasVideo = 'video' in data && !!data.video;
   const resolution = 'resolution' in data ? (data.resolution as string) : '720p';
 
   const baseData = {
@@ -78,6 +81,18 @@ export const createGrokVideoInput = defineHandler<GrokCtx, GrokVideoInput>((data
     resolution,
   };
 
+  // Edit video (vid2vid:edit)
+  if (hasVideo) {
+    const video = data.video as { url: string; metadata?: { duration?: number } };
+    return removeEmpty({
+      ...baseData,
+      operation: 'edit-video',
+      videoUrl: video.url,
+      analyzedDuration: video.metadata?.duration,
+    }) as GrokEditVideoInput;
+  }
+
+  // Image to video (img2vid)
   if (hasImages) {
     const ratioEntries =
       grokVideoAspectRatiosByResolution[resolution] ?? grokVideoAspectRatiosByResolution['720p'];
@@ -90,6 +105,7 @@ export const createGrokVideoInput = defineHandler<GrokCtx, GrokVideoInput>((data
     }) as GrokImageToVideoInput;
   }
 
+  // Text to video (txt2vid)
   return removeEmpty({
     ...baseData,
     operation: 'text-to-video',
