@@ -829,3 +829,64 @@ export const refundBounty = async ({
 
   return updated;
 };
+
+/**
+ * Moderator-only endpoint to block a bounty.
+ * Refunds all benefactors first, then deletes the bounty.
+ *
+ * For use by moderation agents via the block-content skill.
+ */
+export const moderatorBlockBounty = async ({
+  id,
+  moderatorId,
+}: {
+  id: number;
+  moderatorId: number;
+}): Promise<{ success: true; refunded: boolean }> => {
+  // First, check if bounty exists
+  const bounty = await dbRead.bounty.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      complete: true,
+      refunded: true,
+    },
+  });
+
+  if (!bounty) {
+    throw throwNotFoundError('Bounty not found');
+  }
+
+  let refunded = false;
+
+  // Attempt to refund if not already refunded or completed
+  if (!bounty.complete && !bounty.refunded) {
+    try {
+      await refundBounty({ id, isModerator: true });
+      refunded = true;
+    } catch (error) {
+      // If refund fails due to already being refunded/completed, continue to delete
+      // Other errors should propagate
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('already been awarded or refunded')) {
+        throw error;
+      }
+      // Already refunded, proceed to delete
+    }
+  }
+
+  // Delete the bounty
+  await deleteBountyById({ id, isModerator: true });
+
+  // Log the moderation action
+  await logToAxiom({
+    name: 'bounty-moderator-block',
+    type: 'info',
+    message: `Moderator ${moderatorId} blocked bounty ${id}`,
+    bountyId: id,
+    moderatorId,
+    refunded,
+  });
+
+  return { success: true, refunded };
+};
