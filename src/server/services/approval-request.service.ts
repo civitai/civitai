@@ -156,7 +156,7 @@ export async function decideApprovalRequest(
       status: decision as ApprovalRequestStatus,
       decidedAt: new Date(),
       decidedBy,
-      ...(rejectionReason && { rejectionReason }),
+      rejectionReason: decision === 'Rejected' ? rejectionReason ?? null : null,
     },
   });
 

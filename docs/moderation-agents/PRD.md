@@ -828,9 +828,9 @@ enum ApprovalRequestStatus {
 
 ### 6.2 API Endpoints
 
-All endpoints use `moderatorProcedure` except `create` and `getStatus` which use the agent's Bearer token.
+All endpoints use `moderatorProcedure` (agents use a moderator service account for Bearer token auth). All endpoints are gated behind `isFlagProtected('moderationAgents')`.
 
-#### `approvalRequest.create` (agent-facing)
+#### `approvalRequest.create` (agent-facing) — ✅ Implemented
 
 ```typescript
 input: {
@@ -845,44 +845,44 @@ input: {
   reviewUrl?: string;
   agentSessionId: string;
   agentType: string;
-  actionParams: object;
+  actionParams: object; // Required — stored for execution on approval
 }
 output: { id: number, status: 'Pending' }
 ```
 
-#### `approvalRequest.getAll` (moderator-facing)
+#### `approvalRequest.getAll` (moderator-facing) — ✅ Implemented
 
 ```typescript
 input: {
-  status?: ApprovalRequestStatus;
+  status?: ApprovalRequestStatus[]; // Array — supports multi-status filtering
   agentType?: string;
   action?: string;
   page?: number;
   limit?: number;
 }
-output: { items: ApprovalRequest[], totalCount: number }
+output: { items: ApprovalRequest[], totalItems: number, currentPage: number, pageSize: number }
 ```
 
-#### `approvalRequest.decide` (moderator-facing)
+#### `approvalRequest.decide` (moderator-facing) — ✅ Implemented
 
 ```typescript
 input: {
   id: number;
   decision: 'Approved' | 'Rejected';
-  rejectionReason?: string; // Required if Rejected
+  rejectionReason?: string; // Required if Rejected (Zod refine enforces this)
 }
 ```
 
-**Side effects on Approved**:
+**Current side effects (Phase 1)**:
 1. Update status, `decidedAt`, `decidedBy`
-2. Execute the action using stored `actionParams`
-3. Notify agent session (webhook or polling)
+2. Set `rejectionReason` (if Rejected) or null (if Approved) — prevents data leak
+3. Log decision to Axiom with full context
 
-**Side effects on Rejected**:
-1. Update status, set `rejectionReason`
-2. Notify agent session with rejection reason
+**Planned side effects (Phase 3 — requires agent runner)**:
+4. Execute the action using stored `actionParams`
+5. Notify agent session (webhook or polling)
 
-#### `approvalRequest.getStatus` (agent-facing, for polling)
+#### `approvalRequest.getStatus` (agent-facing, for polling) — ✅ Implemented
 
 ```typescript
 input: { id: number }
@@ -891,19 +891,18 @@ output: { status: ApprovalRequestStatus, decidedAt?: Date, rejectionReason?: str
 
 @dev: How should the agent "pause"? Options: (1) webhook callback when decision is made, (2) agent polls `getStatus`, (3) agent session is suspended and resumed on decision. Which fits best with the agent runner architecture?
 
-### 6.3 Moderator UI
+### 6.3 Moderator UI — ✅ Implemented
 
-**Page**: `/moderator/approval-requests`
+**Page**: `/moderator/approval-requests` (`src/pages/moderator/approval-requests.tsx`)
 
 **UI pattern**: Two-panel split layout (like `/moderator/generation-restrictions`):
-- Left panel (500px fixed): scrollable list of requests
+- Left panel (500px fixed): scrollable list of requests with filters
 - Right panel (flex-1): detail view for selected request
 
-**Codebase references for implementation**:
-- `src/pages/moderator/generation-restrictions.tsx` — closest analog (two-panel decision queue)
-- `src/store/select.store.ts` — `createSelectStore` for selection state
-- `src/server/routers/user-restriction.router.ts` — router pattern with `moderatorProcedure`
-- `src/server/logging/client.ts` — `logToAxiom()` for audit logging
+**Implementation notes**:
+- Selection uses ID-based `useState` (not `createSelectStore`) — single-select is sufficient; the generation-restrictions page uses `createSelectStore` for multi-select/bulk operations
+- Server-side feature flag gating follows existing moderator page pattern (SSR checks `isModerator`; client-side checks `moderationAgents` flag)
+- Audit logging happens server-side in `decideApprovalRequest` service (logged to Axiom with full context)
 
 **Layout**:
 ```
@@ -933,11 +932,12 @@ output: { status: ApprovalRequestStatus, decidedAt?: Date, rejectionReason?: str
 ```
 
 **Key UX**:
-- Pending count badge in moderator nav (see Section 7)
-- NCMEC requests highlighted with distinct badge/color
-- Bulk approve for low-risk actions
-- Rejection requires a reason (feeds back to agent)
-- Audit logging via `logToAxiom()` for all decisions
+- ✅ NCMEC requests highlighted with distinct red badge/color (action === 'report-ncmec')
+- ✅ Rejection requires a reason (Zod refine + modal with required textarea)
+- ✅ Audit logging via `logToAxiom()` for all decisions (server-side)
+- ✅ Error state with retry button on query failure
+- ⏳ Pending count badge in moderator nav (Phase 3)
+- ⏳ Bulk approve for low-risk actions (Phase 4 — requires `createSelectStore` migration)
 
 ### 6.4 Agent Session Pause/Resume
 
@@ -953,39 +953,45 @@ When a skill returns `{ requiresApproval: true }`:
 
 ## 7. Implementation in This Repo
 
-### 7.1 New: ApprovalRequest Model + Router + UI
+### 7.1 New: ApprovalRequest Model + Router + UI — ✅ Complete
 
-| Component | File Path | Notes |
-|-----------|-----------|-------|
-| Prisma model | `prisma/schema.full.prisma` | Add `ApprovalRequest` model + `ApprovalRequestStatus` enum |
-| Schema | `src/server/schema/approval-request.schema.ts` | Zod schemas for create, getAll, decide, getStatus |
-| Router | `src/server/routers/approval-request.router.ts` | tRPC router with `moderatorProcedure` |
-| Controller | `src/server/controllers/approval-request.controller.ts` | Handler functions |
-| Service | `src/server/services/approval-request.service.ts` | Business logic, side effects on decision |
-| UI page | `src/pages/moderator/approval-requests.tsx` | Two-panel layout |
+| Component | File Path | Status |
+|-----------|-----------|--------|
+| Prisma model | `prisma/schema.full.prisma` | ✅ `ApprovalRequest` model + `ApprovalRequestStatus` enum with 4 indexes |
+| Shared types | `src/shared/utils/prisma/enums.ts`, `models.ts` | ✅ Enum + interface exports |
+| Schema | `src/server/schema/approval-request.schema.ts` | ✅ Zod schemas for create, getAll, decide, getStatus |
+| Router | `src/server/routers/approval-request.router.ts` | ✅ tRPC router with `moderatorProcedure` + `isFlagProtected` on all endpoints |
+| Controller | `src/server/controllers/approval-request.controller.ts` | ✅ Handler functions |
+| Service | `src/server/services/approval-request.service.ts` | ✅ CRUD + atomic decide (Pending-only) + Axiom logging |
+| Root router | `src/server/routers/index.ts` | ✅ Registered as `approvalRequest` |
+| UI page | `src/pages/moderator/approval-requests.tsx` | ✅ Two-panel layout with filters, error state, NCMEC highlighting |
 
-### 7.2 New: Bounty Blocking Endpoint
+**Not yet implemented** (Phase 3+):
+- Execute `actionParams` on approval (agents poll via `getStatus` and execute themselves for now)
+- Agent session notification on decision (webhook/polling TBD)
 
-No endpoint currently exists for blocking/removing bounties from a moderator context. **Decision: refund buzz + delete** — the new `moderatorProcedure` endpoint will:
+### 7.2 New: Bounty Blocking Endpoint — ✅ Complete
 
-1. Refund any deposited buzz back to the creator's account
-2. Delete the bounty record
-3. No schema changes required — avoids adding a soft-delete status that would need handling across all bounty queries
+**Decision: refund buzz + delete** — implemented as `bounty.moderatorBlock`:
 
-### 7.3 New: Feature Flag + Nav Entry
+| Component | File Path | Status |
+|-----------|-----------|--------|
+| Service | `src/server/services/bounty.service.ts` → `moderatorBlockBounty()` | ✅ Reads from primary DB, refunds all benefactors, deletes bounty + files inline |
+| Controller | `src/server/controllers/bounty.controller.ts` → `moderatorBlockBountyHandler()` | ✅ |
+| Router | `src/server/routers/bounty.router.ts` → `bounty.moderatorBlock` | ✅ `moderatorProcedure`, input: `{ id: number }` |
 
-Add feature flag for approval requests and add nav entry to `ModerationNav`:
+**Key implementation details**:
+- Uses `dbWrite` (primary) for bounty state check to avoid read-replica lag after refund
+- Deletes bounty inline (`dbWrite.$transaction`) instead of via `deleteBountyById` to prevent double-refund of creator
+- `logToAxiom` is non-blocking (`.catch(() => null)`) to avoid masking successful actions
+- Returns `{ success: true, refunded: boolean }`
 
-```typescript
-// In src/components/Moderation/ModerationNav.tsx, add:
-{
-  label: 'Approval Requests',
-  href: '/moderator/approval-requests',
-  hidden: !features.moderationAgents,
-}
-```
+### 7.3 New: Feature Flag + Nav Entry — ✅ Complete
 
-Feature flag: `moderationAgents` in Flipt, initially restricted to dev/granted.
+| Component | File Path | Status |
+|-----------|-----------|--------|
+| Feature flag | `src/server/services/feature-flags.service.ts` | ✅ `moderationAgents: ['dev', 'granted']` |
+| Nav entry | `src/components/Moderation/ModerationNav.tsx` | ✅ After Strikes, hidden when `!features.moderationAgents` |
 
 ### 7.4 Existing Endpoints Called by Agents
 
@@ -1027,40 +1033,45 @@ The strike system is complete and ready for agent integration:
 
 ## 8. Implementation Phases
 
-### Phase 1: Core Infrastructure (This Repo)
+### Phase 1: Core Infrastructure (This Repo) — ✅ COMPLETE
 
-1. Add `ApprovalRequest` model to `prisma/schema.full.prisma`
-2. Create `approvalRequest` tRPC router with `create`, `getAll`, `decide`, `getStatus`
-3. Build moderator queue page at `/moderator/approval-requests`
-4. Add `moderationAgents` feature flag
-5. Add nav entry to `ModerationNav`
-6. Build bounty blocking endpoint (refund buzz + delete)
+All items implemented on the `moderation-enhancements` branch. Typecheck passes.
 
-### Phase 2: Agent Skills (External Repo)
+1. ✅ Add `ApprovalRequest` model to `prisma/schema.full.prisma` (+ enum, indexes, shared types)
+2. ✅ Create `approvalRequest` tRPC router with `create`, `getAll`, `decide`, `getStatus`
+3. ✅ Build moderator queue page at `/moderator/approval-requests` (two-panel, filters, NCMEC highlighting)
+4. ✅ Add `moderationAgents` feature flag (`['dev', 'granted']`)
+5. ✅ Add nav entry to `ModerationNav` (after Strikes, gated by flag)
+6. ✅ Build bounty blocking endpoint `bounty.moderatorBlock` (refund buzz + delete)
 
-7. Implement shared libraries (`civitai-api.ts`, `civitai-db.ts`, `clickhouse.ts`, `orchestrator.ts`, `retool-db.ts`)
+**Branch**: `moderation-enhancements` — needs DB migration before merge.
+
+### Phase 2: Agent Skills (External Repo) — ⏳ Next
+
+7. Implement shared libraries (`civitai-api.ts`, `civitai-db.ts`, `clickhouse.ts`, `orchestrator.ts` via `@civitai/client`, `retool-db.ts`)
 8. Implement review skills (12 skills)
-9. Implement orchestrator skills (5 skills)
-10. Implement moderation skills (8 skills) with bounds checking
+9. Implement orchestrator skills (5 skills using `@civitai/client`)
+10. Implement moderation skills (9 skills) with bounds checking
 11. Implement processing skills (3 skills)
 12. Define bounds configuration (values from Section 5)
 
-### Phase 3: Agent Runner Integration
+### Phase 3: Agent Runner Integration — ⏳ After Phase 2
 
 13. Build agent runner with system prompts for each of the 7 agents
 14. Wire skills as tool-use definitions
 15. Implement agent session pause/resume on approval request submission
 16. Add pending count badge to moderator nav (real-time or polling)
 17. Test end-to-end flows: report → triage → action/escalation → approval
+18. **Wire `actionParams` execution on approval** — currently agents poll `getStatus` and execute themselves; Phase 3 can add server-side execution if needed
 
-### Phase 4: Polish
+### Phase 4: Polish — ⏳ After Phase 3
 
-18. Bulk approve/reject in UI
-19. Auto-expire old requests (24h timeout → status = Expired)
-20. Notifications to mods when high-priority requests arrive (NCMEC, ban requests)
-21. Audit log dashboard for all agent actions
-22. Tune bounds based on observed agent accuracy
-23. Expand auto-action bounds as confidence increases
+19. Bulk approve/reject in UI (migrate to `createSelectStore` for multi-select)
+20. Auto-expire old requests (24h timeout → status = Expired)
+21. Notifications to mods when high-priority requests arrive (NCMEC, ban requests)
+22. Audit log dashboard for all agent actions
+23. Tune bounds based on observed agent accuracy
+24. Expand auto-action bounds as confidence increases
 
 ---
 
@@ -1069,8 +1080,45 @@ The strike system is complete and ready for agent integration:
 | # | Question | Affects | Status |
 |---|----------|---------|--------|
 | 1 | Custom VLM model name for orchestrator chat completions endpoint | `orchestrator/describe-image` | **Open** — @dev to provide |
-| 2 | Bounty blocking approach: soft-delete status or refund+delete? | `moderation/block-content`, Phase 1 endpoint | **Resolved** — refund buzz + delete (no schema changes) |
-| 3 | Agent session pause/resume mechanism — webhook, polling, or suspension? | Approval request flow, Phase 3 | **Open** — depends on agent runner architecture |
+| 2 | Bounty blocking approach: soft-delete status or refund+delete? | `moderation/block-content`, Phase 1 endpoint | **Resolved** — refund buzz + delete (implemented as `bounty.moderatorBlock`) |
+| 3 | Agent session pause/resume mechanism — webhook, polling, or suspension? | Approval request flow, Phase 3 | **Open** — depends on agent runner architecture. Phase 1 supports polling via `getStatus` |
+| 4 | DB migration for `ApprovalRequest` model | Phase 1 merge to main | **Needs action** — run `pnpm run db:migrate:empty` and write migration SQL before merging `moderation-enhancements` |
+
+---
+
+## 10. Phase 1 Pickup Notes
+
+If resuming work on this branch, here's what's left before Phase 1 can merge:
+
+### Must-do before merge
+- [ ] Create DB migration for `ApprovalRequest` model + `ApprovalRequestStatus` enum (`pnpm run db:migrate:empty`)
+- [ ] Run `pnpm run db:generate` after migration to regenerate Prisma client
+- [ ] Enable `moderationAgents` feature flag for testing accounts in Flipt
+
+### Known limitations (acceptable for Phase 1)
+- **No server-side action execution on approval** — agents poll `getStatus` and execute the action themselves. Phase 3 may add server-side execution
+- **No optimistic updates** on decide mutation — uses invalidate + refetch (fine for mod-only tool)
+- **Hardcoded filter options** for agent types and actions in the UI dropdowns — these could be made dynamic later
+- **No pending count badge** in the moderator nav — deferred to Phase 3
+- **No bulk operations** — single approve/reject only. Phase 4 will add bulk approve with `createSelectStore`
+
+### Files changed (Phase 1)
+```
+prisma/schema.full.prisma                          # ApprovalRequest model + enum
+src/shared/utils/prisma/enums.ts                   # ApprovalRequestStatus enum export
+src/shared/utils/prisma/models.ts                  # ApprovalRequest interface
+src/server/schema/approval-request.schema.ts       # Zod validation schemas
+src/server/services/approval-request.service.ts    # Service layer (CRUD + decide)
+src/server/controllers/approval-request.controller.ts  # Controller handlers
+src/server/routers/approval-request.router.ts      # tRPC router
+src/server/routers/index.ts                        # Router registration
+src/server/services/feature-flags.service.ts       # moderationAgents flag
+src/components/Moderation/ModerationNav.tsx         # Nav entry
+src/pages/moderator/approval-requests.tsx           # Moderator UI page
+src/server/services/bounty.service.ts              # moderatorBlockBounty()
+src/server/controllers/bounty.controller.ts        # moderatorBlockBountyHandler()
+src/server/routers/bounty.router.ts                # bounty.moderatorBlock endpoint
+```
 | 4 | Should expired approval requests auto-escalate to a lead mod? | Approval request system | **Open** — product decision |
 | 5 | Should approved actions execute server-side immediately or on next agent tick? | Approval request system | **Leaning immediate** — simpler, more reliable |
 | 6 | Where should the ApprovalRequest table live? | Schema design | **Resolved** — main Civitai Postgres (ties into User model and moderator flow) |

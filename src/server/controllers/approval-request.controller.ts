@@ -22,7 +22,6 @@ export const createApprovalRequestHandler = async ({
   input,
 }: {
   input: CreateApprovalRequestInput;
-  ctx: DeepNonNullable<Context>;
 }) => {
   try {
     return await createApprovalRequest(input);

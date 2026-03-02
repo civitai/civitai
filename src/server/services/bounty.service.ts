@@ -843,8 +843,8 @@ export const moderatorBlockBounty = async ({
   id: number;
   moderatorId: number;
 }): Promise<{ success: true; refunded: boolean }> => {
-  // First, check if bounty exists
-  const bounty = await dbRead.bounty.findUnique({
+  // Read from primary DB to get accurate state (avoids replica lag after refund)
+  const bounty = await dbWrite.bounty.findUnique({
     where: { id },
     select: {
       id: true,
@@ -859,34 +859,30 @@ export const moderatorBlockBounty = async ({
 
   let refunded = false;
 
-  // Attempt to refund if not already refunded or completed
+  // Refund all benefactors if not already done
   if (!bounty.complete && !bounty.refunded) {
-    try {
-      await refundBounty({ id, isModerator: true });
-      refunded = true;
-    } catch (error) {
-      // If refund fails due to already being refunded/completed, continue to delete
-      // Other errors should propagate
-      const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes('already been awarded or refunded')) {
-        throw error;
-      }
-      // Already refunded, proceed to delete
-    }
+    await refundBounty({ id, isModerator: true });
+    refunded = true;
   }
 
-  // Delete the bounty
-  await deleteBountyById({ id, isModerator: true });
+  // Delete the bounty and associated files directly.
+  // We avoid deleteBountyById here because it independently reads bounty state
+  // from dbRead (replica) and may attempt a redundant creator refund if the
+  // replica hasn't caught up with the refundBounty write above.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
+    await tx.bounty.delete({ where: { id } });
+  });
 
-  // Log the moderation action
-  await logToAxiom({
+  // Log the moderation action (non-blocking to avoid masking the successful action)
+  logToAxiom({
     name: 'bounty-moderator-block',
     type: 'info',
     message: `Moderator ${moderatorId} blocked bounty ${id}`,
     bountyId: id,
     moderatorId,
     refunded,
-  });
+  }).catch(() => null);
 
   return { success: true, refunded };
 };

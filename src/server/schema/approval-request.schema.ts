@@ -15,7 +15,7 @@ export const createApprovalRequestSchema = z.object({
   reviewUrl: z.string().url().optional(),
   agentSessionId: z.string().min(1),
   agentType: z.string().min(1),
-  actionParams: z.any().optional(),
+  actionParams: z.any(),
 });
 export type CreateApprovalRequestInput = z.infer<typeof createApprovalRequestSchema>;
 

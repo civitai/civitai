@@ -17,13 +17,14 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
+  IconAlertCircle,
   IconAlertTriangle,
   IconCheck,
   IconExternalLink,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
@@ -32,7 +33,6 @@ import { Page } from '~/components/AppLayout/Page';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ApprovalRequestStatus } from '~/shared/utils/prisma/enums';
-import { createSelectStore } from '~/store/select.store';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -45,9 +45,6 @@ export const getServerSideProps = createServerSideProps({
     return { props: {} };
   },
 });
-
-// Selection store for this page
-const { useSelection, setSelected } = createSelectStore<number>('approval-request-selection');
 
 // Status badge colors
 function StatusBadge({ status }: { status: string }) {
@@ -133,10 +130,11 @@ function ApprovalRequestsContent() {
   const [statusFilter, setStatusFilter] = useState<string | null>('Pending');
   const [agentTypeFilter, setAgentTypeFilter] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState<string | null>(null);
-  const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [rejectModalOpened, { open: openRejectModal, close: closeRejectModal }] =
     useDisclosure(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  const selectedIndexRef = useRef<number>(-1);
 
   const queryUtils = trpc.useUtils();
 
@@ -145,7 +143,7 @@ function ApprovalRequestsContent() {
     ? [statusFilter as (typeof ApprovalRequestStatus)[keyof typeof ApprovalRequestStatus]]
     : undefined;
 
-  const { data, isLoading } = trpc.approvalRequest.getAll.useQuery({
+  const { data, isLoading, isError } = trpc.approvalRequest.getAll.useQuery({
     page,
     limit: 20,
     status: statusFilterArray,
@@ -153,32 +151,40 @@ function ApprovalRequestsContent() {
     action: actionFilter || undefined,
   });
 
+  // Derive the selected request from data + selectedId (avoids stale object references)
+  const selectedRequest = data?.items.find((r) => r.id === selectedId) ?? null;
+
   const decideMutation = trpc.approvalRequest.decide.useMutation({
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       const action = variables.decision === 'Approved' ? 'approved' : 'rejected';
       showSuccessNotification({
         title: 'Decision recorded',
         message: `Request has been ${action}.`,
       });
-      // Invalidate queries
-      queryUtils.approvalRequest.getAll.invalidate();
-      // Select next request or clear selection
-      selectNextRequest();
+      // Remember current position before refetch
+      const currentIndex = selectedIndexRef.current;
+      // Invalidate and wait for refetch
+      await queryUtils.approvalRequest.getAll.invalidate();
+      // Select next item by index position after refetch
+      const freshData = queryUtils.approvalRequest.getAll.getData({
+        page,
+        limit: 20,
+        status: statusFilterArray,
+        agentType: agentTypeFilter || undefined,
+        action: actionFilter || undefined,
+      });
+      const items = freshData?.items ?? [];
+      const nextItem = items[currentIndex] ?? items[currentIndex - 1] ?? null;
+      setSelectedId(nextItem?.id ?? null);
     },
     onError: (err) => {
       showErrorNotification({ title: 'Error', error: new Error(err.message) });
     },
   });
 
-  const selectNextRequest = () => {
-    if (!data?.items || !selectedRequest) {
-      setSelectedRequest(null);
-      return;
-    }
-    const currentIndex = data.items.findIndex((r) => r.id === selectedRequest.id);
-    const nextItem = data.items[currentIndex + 1] ?? data.items[currentIndex - 1] ?? null;
-    setSelectedRequest(nextItem);
-    setSelected([]);
+  const handleSelect = (request: NonNullable<typeof data>['items'][number]) => {
+    setSelectedId(request.id);
+    selectedIndexRef.current = data?.items.findIndex((r) => r.id === request.id) ?? -1;
   };
 
   const handleApprove = () => {
@@ -232,7 +238,7 @@ function ApprovalRequestsContent() {
                 onChange={(val) => {
                   setStatusFilter(val);
                   setPage(1);
-                  setSelectedRequest(null);
+                  setSelectedId(null);
                 }}
                 clearable
                 w={130}
@@ -247,7 +253,7 @@ function ApprovalRequestsContent() {
                 onChange={(val) => {
                   setAgentTypeFilter(val);
                   setPage(1);
-                  setSelectedRequest(null);
+                  setSelectedId(null);
                 }}
                 clearable
                 w={160}
@@ -264,7 +270,7 @@ function ApprovalRequestsContent() {
                 onChange={(val) => {
                   setActionFilter(val);
                   setPage(1);
-                  setSelectedRequest(null);
+                  setSelectedId(null);
                 }}
                 clearable
                 w={140}
@@ -278,6 +284,20 @@ function ApprovalRequestsContent() {
             <div className="flex justify-center py-8">
               <Loader />
             </div>
+          ) : isError ? (
+            <Stack align="center" py="xl" gap="xs">
+              <IconAlertCircle size={24} color="var(--mantine-color-red-6)" />
+              <Text c="red" ta="center">
+                Failed to load approval requests.
+              </Text>
+              <Button
+                variant="light"
+                size="xs"
+                onClick={() => queryUtils.approvalRequest.getAll.invalidate()}
+              >
+                Retry
+              </Button>
+            </Stack>
           ) : !data?.items.length ? (
             <Text c="dimmed" ta="center" py="xl">
               No approval requests found.
@@ -299,13 +319,10 @@ function ApprovalRequestsContent() {
                     {data.items.map((request) => (
                       <Table.Tr
                         key={request.id}
-                        onClick={() => {
-                          setSelectedRequest(request);
-                          setSelected([]);
-                        }}
+                        onClick={() => handleSelect(request)}
                         className={clsx(
                           'cursor-pointer',
-                          selectedRequest?.id === request.id && 'bg-blue-1 dark:bg-dark-5',
+                          selectedId === request.id && 'bg-blue-1 dark:bg-dark-5',
                           request.action === 'report-ncmec' &&
                             'bg-red-0 dark:bg-red-9/10'
                         )}
@@ -346,8 +363,7 @@ function ApprovalRequestsContent() {
                     value={page}
                     onChange={(p) => {
                       setPage(p);
-                      setSelectedRequest(null);
-                      setSelected([]);
+                      setSelectedId(null);
                     }}
                     total={totalPages}
                     size="sm"

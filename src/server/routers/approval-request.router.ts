@@ -16,6 +16,7 @@ export const approvalRequestRouter = router({
   // Create endpoint - called by agents (using mod service account)
   create: moderatorProcedure
     .input(createApprovalRequestSchema)
+    .use(isFlagProtected('moderationAgents'))
     .mutation(createApprovalRequestHandler),
 
   // Get all endpoint - for moderator queue view
@@ -33,5 +34,6 @@ export const approvalRequestRouter = router({
   // Get status endpoint - for agents to poll decision results
   getStatus: moderatorProcedure
     .input(getApprovalRequestStatusSchema)
+    .use(isFlagProtected('moderationAgents'))
     .query(getApprovalRequestStatusHandler),
 });
