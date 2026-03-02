@@ -301,6 +301,8 @@ export const completeOnboardingHandler = async ({
         break;
       }
       case OnboardingSteps.Profile: {
+        if (input.username && !isUsernamePermitted(input.username))
+          throw throwBadRequestError('Invalid username');
         await dbWrite.user.update({
           where: { id },
           data: { onboarding, username: input.username, email: input.email },
