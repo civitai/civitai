@@ -28,7 +28,7 @@ export {
   wanVersionOptions,
   ecosystemToVersionDef,
   wanAspectRatios,
-  wan21AspectRatios,
+  wan21AspectRatiosByResolution,
   wan21Resolutions,
   wan22Resolutions,
   wan225bResolutions,

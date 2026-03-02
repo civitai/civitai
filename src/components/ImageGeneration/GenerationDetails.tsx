@@ -16,10 +16,14 @@ export function GenerationDetails({
       if (typeof value === 'string') return !!value.length;
       return !!value;
     })
-    .map(([key, value]) => ({
-      label: titleCase(getDisplayName(key)),
-      value: value as any,
-    }));
+    .map(([key, value]) => {
+      let _value = value;
+      if (typeof _value === 'boolean') _value = _value ? 'true' : 'false';
+      return {
+        label: titleCase(getDisplayName(key)),
+        value: _value as any,
+      };
+    });
 
   if (!params) return null;
 
