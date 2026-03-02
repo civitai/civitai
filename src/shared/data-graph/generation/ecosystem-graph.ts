@@ -50,6 +50,7 @@ import { ltxv2Graph } from './ltxv2-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
+import { grokGraph } from './grok-graph';
 
 // =============================================================================
 // Helper Functions
@@ -233,6 +234,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
+    { values: ['Grok'] as const, graph: grokGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(

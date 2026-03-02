@@ -52,6 +52,7 @@ const EDIT_IMG_IDS = [
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
   ECO.Flux1Kontext,
+  ECO.Grok,
 ];
 
 /** Image ecosystems that support image:create */
@@ -82,6 +83,7 @@ const TXT2IMG_IDS = [
   ECO.PonyV7,
   ECO.ZImageTurbo,
   ECO.ZImageBase,
+  ECO.Grok,
 ];
 
 /** Video ecosystems that support video:create */
@@ -99,6 +101,7 @@ const TXT2VID_IDS = [
   ECO.Kling,
   // ECO.Haiper,
   // ECO.Lightricks,
+  ECO.Grok,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */

@@ -87,4 +87,5 @@ export {
   type ImageSlotConfig,
 } from './common';
 export { hiDreamGraph } from './hi-dream-graph';
+export { grokGraph, grokImageAspectRatios, grokVideoAspectRatiosByResolution } from './grok-graph';
 export type { GenerationCtx } from './context';
