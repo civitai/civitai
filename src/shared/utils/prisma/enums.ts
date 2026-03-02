@@ -947,6 +947,16 @@ export const UserRestrictionStatus = {
 
 export type UserRestrictionStatus = (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
 
+export const ApprovalRequestStatus = {
+  Pending: 'Pending',
+  Approved: 'Approved',
+  Rejected: 'Rejected',
+  Expired: 'Expired',
+  Cancelled: 'Cancelled',
+} as const;
+
+export type ApprovalRequestStatus = (typeof ApprovalRequestStatus)[keyof typeof ApprovalRequestStatus];
+
 export const StrikeReason = {
   BlockedContent: 'BlockedContent',
   RealisticMinorContent: 'RealisticMinorContent',

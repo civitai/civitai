@@ -200,6 +200,8 @@ export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy"
 
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
+export type ApprovalRequestStatus = "Pending" | "Approved" | "Rejected" | "Expired" | "Cancelled";
+
 export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
@@ -477,6 +479,7 @@ export interface User {
   strikes?: UserStrike[];
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
+  approvalRequestDecisions?: ApprovalRequest[];
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
@@ -4000,6 +4003,29 @@ export interface UserStrike {
   voidReason: string | null;
   issuedBy: number | null;
   issuedByUser?: User | null;
+}
+
+export interface ApprovalRequest {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  action: string;
+  entityType: string | null;
+  entityId: number | null;
+  targetUserId: number | null;
+  summary: string;
+  reasoning: string;
+  evidence: JsonValue | null;
+  safePreviewUrl: string | null;
+  reviewUrl: string | null;
+  agentSessionId: string;
+  agentType: string;
+  status: ApprovalRequestStatus;
+  decidedAt: Date | null;
+  decidedBy: number | null;
+  decidedByUser?: User | null;
+  rejectionReason: string | null;
+  actionParams: JsonValue;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
