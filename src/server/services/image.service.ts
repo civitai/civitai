@@ -932,6 +932,18 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   useLogicalReplica: boolean;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
+export const getMetricOrderBy = (sort: ImageSort) => {
+  if (sort === ImageSort.MostComments) {
+    return `im."commentCount" DESC, im."reactionCount" DESC, i."id" DESC`;
+  }
+  if (sort === ImageSort.MostReactions) {
+    return `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, i."id" DESC`;
+  }
+  if (sort === ImageSort.MostCollected) {
+    return `im."collectedCount" DESC, im."reactionCount" DESC, i."id" DESC`;
+  }
+  return null;
+};
 export const getAllImages = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -987,6 +999,12 @@ export const getAllImages = async (
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
+  const needsMetricSort = [
+    ImageSort.MostComments,
+    ImageSort.MostReactions,
+    ImageSort.MostCollected,
+  ].includes(sort);
+  const useMetricSort = needsMetricSort && !!(modelId || modelVersionId || reviewId);
 
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
@@ -1134,6 +1152,11 @@ export const getAllImages = async (
       // cacheTime = CacheTTL.day;
       // cacheTags.push(`images-model:${modelId}`);
     }
+  }
+  if (useMetricSort) {
+    joins.push(
+      `JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"`
+    );
   }
 
   // [x] TODO remove
@@ -1298,7 +1321,12 @@ export const getAllImages = async (
     //   orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
     //   if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
     // }
-    if (sort === ImageSort.Random) orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    const metricOrderBy = useMetricSort ? getMetricOrderBy(sort) : null;
+    if (metricOrderBy) {
+      orderBy = metricOrderBy;
+    } else if (sort === ImageSort.Random) {
+      orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    }
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
     //   orderBy = 'i."sortAt" ASC';
