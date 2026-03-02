@@ -31,6 +31,7 @@ import {
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
+  IconPuzzle,
   IconRepeat,
   IconShare3,
 } from '@tabler/icons-react';
@@ -39,7 +40,7 @@ import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
@@ -71,6 +72,8 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
@@ -106,7 +109,7 @@ import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/co
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
+import { getFileDisplayName, getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
 import {
   Availability,
   CollectionType,
@@ -150,7 +153,7 @@ function ModelVersionDetailsContent({
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [detailAccordions, setDetailAccordions] = useLocalStorage({
     key: 'model-version-details-accordions',
-    defaultValue: ['version-details'],
+    defaultValue: ['version-details', 'required-components'],
   });
   const adContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -200,6 +203,25 @@ function ModelVersionDetailsContent({
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
+
+  // Group files by variant for the download dropdown
+  const groupedFiles = useMemo(() => groupFilesByVariant(filesVisible), [filesVisible]);
+
+  // Get model files (not component files) for the download dropdown
+  const modelFilesVisible = useMemo(() => {
+    return [
+      ...groupedFiles.safeTensorVariants,
+      ...groupedFiles.ggufVariants,
+      ...groupedFiles.otherFormatVariants,
+    ];
+  }, [groupedFiles]);
+
+  // Check if this is a multi-variant model (more than 1 model file)
+  const hasMultipleModelVariants = modelFilesVisible.length > 1;
+
+  // Check if this is a component-only model (no model files, only components)
+  const isComponentOnlyModel =
+    modelFilesVisible.length === 0 && Object.keys(groupedFiles.components).length > 0;
 
   const displayCivitaiLink =
     civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
@@ -886,7 +908,8 @@ function ModelVersionDetailsContent({
                       }
                     </CivitaiLinkManageButton>
                   )}
-                  {hideDownload ? null : displayCivitaiLink || canGenerate ? (
+                  {/* Hide download button for component-only models */}
+                  {hideDownload || isComponentOnlyModel ? null : displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
                         data-tour="model:download"
@@ -1018,7 +1041,44 @@ function ModelVersionDetailsContent({
                   )}
                 </Group>
               </Group>
-              {primaryFileDetails}
+              {/* Component-only model message */}
+              {isComponentOnlyModel && (
+                <AlertWithIcon
+                  color="blue"
+                  iconColor="blue"
+                  icon={<IconPuzzle size={16} />}
+                  size="sm"
+                  mt="xs"
+                >
+                  <Text size="sm">
+                    This is a modular model - download components below
+                  </Text>
+                </AlertWithIcon>
+              )}
+              {/* Regular model file details - hide for component-only models */}
+              {!isComponentOnlyModel && primaryFileDetails}
+              {/* Variant dropdown for multiple model files - hide for component-only models */}
+              {!isComponentOnlyModel && hasMultipleModelVariants && !hideDownload && (
+                <Card withBorder p="sm" mt="sm">
+                  <DownloadVariantDropdown
+                    files={filesVisible}
+                    modelType={model.type}
+                    versionId={version.id}
+                    userPreferences={user?.filePreferences}
+                    canDownload={canDownload}
+                    downloadPrice={
+                      !hasDownloadPermissions &&
+                      !isLoadingAccess &&
+                      earlyAccessConfig?.chargeForDownload
+                        ? earlyAccessConfig?.downloadPrice
+                        : undefined
+                    }
+                    isLoadingAccess={isLoadingAccess}
+                    archived={archived}
+                    onPurchase={() => onPurchase('download')}
+                  />
+                </Card>
+              )}
             </Stack>
           )}
           {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
@@ -1308,6 +1368,26 @@ function ModelVersionDetailsContent({
                 />
               </Accordion.Panel>
             </Accordion.Item>
+            {/* Required Components Section - shows when there are component files */}
+            {isDownloadable && Object.keys(groupedFiles.components).length > 0 && (
+              <RequiredComponentsSection
+                groupedFiles={groupedFiles}
+                versionId={version.id}
+                userPreferences={user?.filePreferences}
+                canDownload={canDownload}
+                downloadPrice={
+                  !hasDownloadPermissions &&
+                  !isLoadingAccess &&
+                  earlyAccessConfig?.chargeForDownload
+                    ? earlyAccessConfig?.downloadPrice
+                    : undefined
+                }
+                isLoadingAccess={isLoadingAccess}
+                archived={archived}
+                onPurchase={() => onPurchase('download')}
+                isPrimary={isComponentOnlyModel}
+              />
+            )}
             {isDownloadable && (
               <Accordion.Item
                 value="version-files"
