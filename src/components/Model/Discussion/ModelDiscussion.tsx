@@ -11,11 +11,12 @@ type ModelDiscussionProps = {
   canDiscuss?: boolean;
   onlyEarlyAccess?: boolean;
   modelId: number;
+  modelUserId?: number;
   locked?: boolean;
 };
 
 export const ModelDiscussion = forwardRef<HTMLDivElement, ModelDiscussionProps>(
-  ({ canDiscuss, onlyEarlyAccess, modelId, locked }, ref) => {
+  ({ canDiscuss, onlyEarlyAccess, modelId, modelUserId, locked }, ref) => {
     const currentUser = useCurrentUser();
     const isMuted = currentUser?.muted ?? false;
     const showEarlyAccess = !isMuted && onlyEarlyAccess && !canDiscuss;
@@ -51,7 +52,7 @@ export const ModelDiscussion = forwardRef<HTMLDivElement, ModelDiscussionProps>(
             </JoinPopover>
           )}
         </div>
-        <ModelDiscussionV2 modelId={modelId} />
+        <ModelDiscussionV2 modelId={modelId} modelUserId={modelUserId} />
       </div>
     ) : (
       <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>

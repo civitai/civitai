@@ -108,7 +108,7 @@ export default function CommentThreadModal({
               linkToProfile
             />
             <Group gap={4} wrap="nowrap">
-              <CommentDiscussionMenu comment={comment} />
+              <CommentDiscussionMenu comment={comment} modelUserId={model?.user.id} />
               <CloseButton onClick={dialog.onClose} />
             </Group>
           </Group>
