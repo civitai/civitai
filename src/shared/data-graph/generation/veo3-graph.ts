@@ -68,6 +68,12 @@ const veo3AspectRatios = [
   { label: '9:16', value: '9:16', width: 1080, height: 1920 },
 ];
 
+/** Veo3 ref2vid aspect ratios (16:9 and 9:16 only) */
+const veo3Ref2VidAspectRatios = [
+  { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+  { label: '9:16', value: '9:16', width: 1080, height: 1920 },
+];
+
 /** Veo3 duration options */
 const veo3Durations = [
   { label: '4 seconds', value: 4 },
@@ -153,10 +159,14 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
   // Aspect ratio node - for txt2vid and ref2vid workflows (img2vid derives from source image)
   .node(
     'aspectRatio',
-    (ctx) => ({
-      ...aspectRatioNode({ options: veo3AspectRatios, defaultValue: '16:9' }),
-      when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
-    }),
+    (ctx) => {
+      const isRef2Vid = ctx.workflow === 'img2vid:ref2vid';
+      const options = isRef2Vid ? veo3Ref2VidAspectRatios : veo3AspectRatios;
+      return {
+        ...aspectRatioNode({ options, defaultValue: '16:9' }),
+        when: ctx.workflow === 'txt2vid' || isRef2Vid,
+      };
+    },
     ['workflow']
   )
 
@@ -164,20 +174,21 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
   .node(
     'duration',
     (ctx) => {
-      const isImg2Vid = ctx.workflow === 'img2vid';
+      // const isImg2Vid = ctx.workflow === 'img2vid';
+      const isRef2Vid = ctx.workflow === 'img2vid:ref2vid';
       return {
         input: z.coerce.number().optional(),
         output: z.number(),
         defaultValue: 8,
         meta: {
-          options: veo3Durations,
-          // options: isImg2Vid
-          //   ? [{ label: '8 seconds', value: 8 }] // Only show 8s option for img2vid
-          //   : veo3Durations,
-          // disabled: isImg2Vid,
+          // options: veo3Durations,
+          options: isRef2Vid
+            ? [{ label: '8 seconds', value: 8 }] // Only show 8s option for img2vid
+            : veo3Durations,
+          disabled: isRef2Vid,
         },
-        // Force duration to 8s when workflow changes to img2vid
-        transform: (value: number) => (isImg2Vid ? 8 : value),
+        // Force duration to 8s when workflow changes to ref2vid
+        transform: (value: number) => (isRef2Vid ? 8 : value),
       };
     },
     ['workflow']
