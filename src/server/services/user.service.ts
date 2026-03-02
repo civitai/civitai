@@ -1636,10 +1636,13 @@ export const createUserReferral = async ({
   loginRedirectReason?: string;
   ip?: string;
 }) => {
-  const user = await dbRead.user.findUniqueOrThrow({
+  const findArgs = {
     where: { id },
     select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
-  });
+  } as const;
+  const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() =>
+    dbWrite.user.findUniqueOrThrow(findArgs)
+  );
 
   if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
     return;
