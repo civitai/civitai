@@ -5,21 +5,34 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  computeDynamicPool,
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  resolveEventContext,
   setChallengeActive,
   updateChallengeStatus,
+  type EventContext,
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  PrizeMode,
+  PoolTrigger,
+} from '~/shared/utils/prisma/enums';
 import type {
   ChallengeConfig,
   DailyChallengeDetails,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
+  calculateWeightedScore,
+  SCORE_WEIGHTS,
   challengeToLegacyFormat,
+  deriveChallengeNsfwLevel,
   endChallenge,
   getActiveChallenges,
   getChallengeConfig,
@@ -35,9 +48,12 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
@@ -304,7 +320,7 @@ async function createChallengeFromSelection(
     theme: challengeContent.theme,
     invitation: challengeContent.invitation,
     coverImageId,
-    nsfwLevel: 1,
+    nsfwLevel: deriveChallengeNsfwLevel(sfwBrowsingLevelsFlag),
     allowedNsfwLevel: sfwBrowsingLevelsFlag,
     modelVersionIds,
     collectionId: collection.id,
@@ -320,6 +336,7 @@ async function createChallengeFromSelection(
       challengeType: config.challengeType,
       resourceUserId,
       resourceModelId: resource.modelId,
+      themeElements: challengeContent.themeElements,
     },
   });
 
@@ -560,14 +577,32 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // Get the Challenge record to check allowedNsfwLevel and judgeId
   // Fall back to PG-only (1) and default judge for old article-based challenges
   const [challengeRecord] = await dbRead.$queryRaw<
-    [{ allowedNsfwLevel: number; judgeId: number | null; judgingPrompt: string | null } | undefined]
+    [
+      | {
+          allowedNsfwLevel: number;
+          judgeId: number | null;
+          judgingPrompt: string | null;
+          prizeMode: PrizeMode;
+          basePrizePool: number;
+          buzzPerAction: number;
+          poolTrigger: PoolTrigger | null;
+          maxPrizePool: number | null;
+          prizeDistribution: number[] | null;
+          metadata: unknown;
+        }
+      | undefined
+    ]
   >`
-    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt"
+    SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
+           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
+           "metadata"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
   `;
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
+  const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
+  const themeElements = challengeMetadata.themeElements;
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
@@ -657,12 +692,95 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   });
   await limitConcurrency(notificationTasks, 3);
 
+  // Refund buzz for rejected entries that paid for per-entry guaranteed review.
+  // Flat-rate purchases are NOT refunded (you pay for all entries regardless of outcome).
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: currentChallenge.challengeId },
+    select: { reviewCostType: true, reviewCost: true },
+  });
+  if (
+    challenge &&
+    challenge.reviewCostType === ChallengeReviewCostType.PerEntry &&
+    challenge.reviewCost > 0
+  ) {
+    // Only refund per-entry purchases (notes starting with 'challenge-review-' but NOT 'challenge-review-flat-')
+    const paidRejected = await dbRead.$queryRaw<
+      { imageId: number; userId: number; note: string }[]
+    >`
+      SELECT ci."imageId", i."userId", ci.note
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'REJECTED'
+        AND ci.note LIKE 'challenge-review-%'
+        AND ci.note NOT LIKE 'challenge-review-flat-%'
+    `;
+    if (paidRejected.length > 0) {
+      log('Refunding rejected paid entries:', paidRejected.length);
+      await createBuzzTransactionMany(
+        paidRejected.map((e) => ({
+          fromAccountId: 0,
+          toAccountId: e.userId,
+          type: TransactionType.Refund,
+          amount: challenge.reviewCost,
+          description: `Challenge review refund: entry ${e.imageId}`,
+          externalTransactionId: `challenge-review-refund-${currentChallenge.challengeId}-${e.imageId}`,
+        }))
+      );
+    }
+  }
+
   // Remove rejected entries from collection
   await dbWrite.$executeRaw`
     DELETE FROM "CollectionItem"
     WHERE "collectionId" = ${currentChallenge.collectionId}
     AND status = 'REJECTED';
   `;
+
+  // Auto-tag entries from users who paid flat-rate review
+  // Check for ACCEPTED entries without reviewMeTagId or judgedTagId, then verify
+  // the user's flat-rate transaction exists via deterministic externalTransactionId
+  if (challenge && challenge.reviewCostType === ChallengeReviewCostType.Flat) {
+    const untaggedUsers = await dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT i."userId"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+        AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+    `;
+
+    if (untaggedUsers.length > 0) {
+      const paidUserIds: number[] = [];
+      await limitConcurrency(
+        untaggedUsers.map(({ userId }) => async () => {
+          const txId = `challenge-review-flat-${currentChallenge.challengeId}-${userId}`;
+          const tx = await getTransactionByExternalId(txId);
+          if (tx) paidUserIds.push(userId);
+        }),
+        5
+      );
+
+      if (paidUserIds.length > 0) {
+        const tagged = await dbWrite.$executeRaw`
+          UPDATE "CollectionItem" ci
+          SET "tagId" = ${config.reviewMeTagId},
+              "note" = 'challenge-review-flat-' || ${String(
+                currentChallenge.challengeId
+              )} || '-' || ci."imageId"
+          FROM "Image" i
+          WHERE i.id = ci."imageId"
+            AND ci."collectionId" = ${currentChallenge.collectionId}
+            AND ci.status = 'ACCEPTED'
+            AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${
+          config.judgedTagId
+        }))
+            AND i."userId" = ANY(ARRAY[${Prisma.join(paidUserIds)}])
+        `;
+        log('Auto-tagged flat-rate entries:', { users: paidUserIds.length, entries: tagged });
+      }
+    }
+  }
 
   // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
 
@@ -754,13 +872,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci."tagId" = ${config.reviewMeTagId}
   `;
   log('Requested review:', requestReview.length);
-  // Filter reviewMe entries to also respect per-user cap
+  // Paid review entries bypass per-user cap — users paid for guaranteed review
   for (const entry of requestReview) {
-    const userScored = scoredCountMap.get(entry.userId) ?? 0;
-    if (userScored >= config.maxScoredPerUser) continue;
-    if (reviewingUsers.has(entry.userId)) continue;
     toReview.push(entry);
-    reviewingUsers.add(entry.userId);
   }
 
   // Rate entries
@@ -769,6 +883,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       log('Reviewing entry:', entry);
       const review = await generateReview({
         theme: currentChallenge.theme,
+        themeElements,
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
@@ -780,6 +895,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         score: review.score,
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
+        ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
       });
       await dbWrite.$executeRaw`
         UPDATE "CollectionItem"
@@ -888,6 +1004,47 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     }
   }
 
+  // Dynamic prize pool recomputation
+  // ----------------------------------------------
+  if (
+    challengeRecord?.prizeMode === PrizeMode.Dynamic &&
+    challengeRecord.poolTrigger &&
+    challengeRecord.prizeDistribution
+  ) {
+    const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
+      SELECT
+        COUNT(*) as "entryCount",
+        COUNT(DISTINCT i."userId") as "uniqueUsers"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+    `;
+
+    const actionCount =
+      challengeRecord.poolTrigger === PoolTrigger.Entry
+        ? Number(stats.entryCount)
+        : Number(stats.uniqueUsers);
+
+    const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
+      basePrizePool: challengeRecord.basePrizePool,
+      buzzPerAction: challengeRecord.buzzPerAction,
+      actionCount,
+      maxPrizePool: challengeRecord.maxPrizePool,
+      prizeDistribution: challengeRecord.prizeDistribution,
+    });
+
+    await dbWrite.challenge.update({
+      where: { id: currentChallenge.challengeId },
+      data: {
+        prizePool: totalPool,
+        prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
+  }
+
   // Update last review time in Challenge metadata
   // ----------------------------------------------
   if (currentChallenge.challengeId) {
@@ -909,11 +1066,11 @@ export async function pickWinnersForChallenge(
 ) {
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  // Get judging config from ChallengeJudge (or cached default judge if not assigned)
+  // Get judging config and event context from Challenge
   const [challengeJudgeRow] = await dbRead.$queryRaw<
-    [{ judgeId: number | null; judgingPrompt: string | null } | undefined]
+    [{ judgeId: number | null; judgingPrompt: string | null; eventId: number | null } | undefined]
   >`
-    SELECT "judgeId", "judgingPrompt" FROM "Challenge"
+    SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
   `;
@@ -926,6 +1083,9 @@ export async function pickWinnersForChallenge(
     challengeJudgeRow?.judgingPrompt
   );
 
+  // Resolve event context for cooldown scoping
+  const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
+
   // Close challenge
   // ----------------------------------------------
   await endChallenge(currentChallenge);
@@ -934,7 +1094,7 @@ export async function pickWinnersForChallenge(
   // Pick Winners
   // ----------------------------------------------
   // Get top judged entries
-  const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config);
+  const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config, eventContext);
   if (!judgedEntries.length) {
     log('No judged entries for challenge:', currentChallenge.challengeId);
     // Still need to mark the challenge as completed even with no entries
@@ -1081,8 +1241,7 @@ export async function pickWinnersForChallenge(
       });
     }
     // Update Challenge status to Completed and store completion summary
-    const existingMetadata =
-      typeof winnerChallengeRecord.metadata === 'object' ? winnerChallengeRecord.metadata : {};
+    const existingMetadata = parseChallengeMetadata(winnerChallengeRecord.metadata);
     await dbWrite.challenge.update({
       where: { id: winnerChallengeRecord.id },
       data: {
@@ -1239,10 +1398,14 @@ export async function getCoverOfModel(modelId: number) {
   return image;
 }
 
-export async function getJudgedEntries(collectionId: number, config: ChallengeConfig) {
+export async function getJudgedEntries(
+  collectionId: number,
+  config: ChallengeConfig,
+  eventContext?: EventContext
+) {
   // Get each user's BEST entry only (by AI score), so users with many entries
   // don't have an advantage over users with fewer entries
-  const userBestEntries = await dbRead.$queryRaw<Omit<JudgedEntry, 'engagement'>[]>`
+  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
     WITH ranked AS (
       SELECT
         ci."imageId",
@@ -1252,10 +1415,10 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
         ROW_NUMBER() OVER (
           PARTITION BY i."userId"
           ORDER BY (
-            (ci.note::json->'score'->>'theme')::float +
-            (ci.note::json->'score'->>'wittiness')::float +
-            (ci.note::json->'score'->>'humor')::float +
-            (ci.note::json->'score'->>'aesthetic')::float
+            (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
+            (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
+            (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
+            (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
           ) DESC
         ) as rn
       FROM "CollectionItem" ci
@@ -1275,35 +1438,67 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     return [];
   }
 
-  // Fetch engagement metrics from Redis for best entries only
-  const imageIds = userBestEntries.map((entry) => entry.imageId);
-  const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
+  // Exclude users who won a challenge within the cooldown period, scoped by event
+  let recentWinnerIds = new Set<number>();
+  if (eventContext?.winnerCooldownDays === 0) {
+    // Event allows consecutive wins — skip cooldown entirely
+    log('Skipping winner cooldown — event cooldown set to 0', {
+      eventId: eventContext.eventId,
+    });
+  } else if (eventContext !== undefined) {
+    // Scoped cooldown: filter by event context
+    const cooldownInterval =
+      eventContext.winnerCooldownDays != null
+        ? `${eventContext.winnerCooldownDays} day`
+        : config.winnerCooldown;
+    const eventCondition =
+      eventContext.eventId != null
+        ? Prisma.sql`AND c."eventId" = ${eventContext.eventId}`
+        : Prisma.sql`AND c."eventId" IS NULL`;
+    const recentWinners = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT cw."userId"
+      FROM "ChallengeWinner" cw
+      JOIN "Challenge" c ON c.id = cw."challengeId"
+      WHERE cw."createdAt" > now() - ${cooldownInterval}::interval
+        AND c.status = 'Completed'
+        ${eventCondition}
+    `;
+    recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  } else {
+    // No event context provided — apply global cooldown (original behavior)
+    const recentWinners = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT cw."userId"
+      FROM "ChallengeWinner" cw
+      JOIN "Challenge" c ON c.id = cw."challengeId"
+      WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
+        AND c.status = 'Completed'
+    `;
+    recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
+  }
+  const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
 
-  // Calculate engagement (sum of all metrics except Buzz)
-  const entriesWithEngagement = userBestEntries.map((entry) => {
-    const metrics = metricsMap.get(entry.imageId);
-    const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
-    return { ...entry, engagement };
+  const cooldownSource =
+    eventContext?.winnerCooldownDays === 0
+      ? 'none (no cooldown)'
+      : eventContext?.winnerCooldownDays != null
+      ? `${String(eventContext.winnerCooldownDays)} day (event override)`
+      : `${String(config.winnerCooldown)} (global default)`;
+  log('Winner cooldown filter:', {
+    total: userBestEntries.length,
+    excluded: userBestEntries.length - eligibleEntries.length,
+    eligible: eligibleEntries.length,
+    cooldown: cooldownSource,
   });
 
-  // Sort entries by (rating * 0.75) and (engagement * 0.25)
-  const maxEngagement = Math.max(...entriesWithEngagement.map((entry) => entry.engagement));
-  const minEngagement = Math.min(...entriesWithEngagement.map((entry) => entry.engagement));
-  const judgedEntries = entriesWithEngagement.map(({ note, engagement, ...entry }) => {
-    const { score, summary } = JSON.parse(note);
-    // Calculate average rating
-    const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
-    // Adjust engagement to be between 0 and 10
-    const engagementNormalized =
-      ((engagement - minEngagement) / Math.max(maxEngagement - minEngagement, 1)) * 10;
-    return {
-      ...entry,
-      summary,
-      score,
-      weightedRating: rating * 0.75 + engagementNormalized * 0.25,
-    };
-  });
-  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating);
+  // Rank entries by weighted AI judge score with theme gate rules
+  const judgedEntries = eligibleEntries
+    .map(({ note, ...entry }) => {
+      const { score, summary } = JSON.parse(note);
+      const weightedRating = calculateWeightedScore(score);
+      return { ...entry, summary, score, weightedRating };
+    })
+    .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
+  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
 
   // Take top entries for final judgment (already one per user from the query)
   return judgedEntries.slice(0, config.finalReviewAmount);
@@ -1317,5 +1512,4 @@ type JudgedEntry = {
   userId: number;
   username: string;
   note: string;
-  engagement: number;
 };

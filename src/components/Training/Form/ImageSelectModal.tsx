@@ -187,7 +187,7 @@ export default function ImageSelectModal({
               ...asset,
               params: {
                 ...step.params,
-                seed: asset.seed,
+                seed: asset.seed ?? undefined,
                 completed: step.completedAt ? new Date(step.completedAt) : undefined,
                 stepName: step.name,
               },
@@ -473,7 +473,7 @@ const ImageGridMedia = ({
             url: compareKey,
             label:
               type === 'generation' && 'prompt' in img.params
-                ? img.params.prompt
+                ? (img.params.prompt as string)
                 : type === 'uploaded'
                 ? img.meta?.prompt ?? ''
                 : '',
@@ -668,8 +668,7 @@ const ImageGridMedia = ({
     );
   }
 
-  const safeParsedMeta =
-    type === 'generation' ? imageMetaSchema.safeParse(img.params) : null;
+  const safeParsedMeta = type === 'generation' ? imageMetaSchema.safeParse(img.params) : null;
 
   return (
     <div
@@ -700,7 +699,11 @@ const ImageGridMedia = ({
       {type === 'generation' || !!img.meta ? (
         <div className="absolute bottom-2 right-2">
           <ImageMetaPopover
-            meta={type === 'generation' && safeParsedMeta?.success ? safeParsedMeta.data : (img as UploadedImage).meta!}
+            meta={
+              type === 'generation' && safeParsedMeta?.success
+                ? safeParsedMeta.data
+                : (img as UploadedImage).meta!
+            }
             hideSoftware
           >
             <LegacyActionIcon variant="transparent" size="md">

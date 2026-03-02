@@ -79,10 +79,10 @@ const baseModelConfig = [
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
-  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B' },
-  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base' },
-  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B' },
-  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base' },
+  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base', ecosystem: 'flux2' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
@@ -143,6 +143,7 @@ const baseModelConfig = [
     group: 'SDXLDistilled',
     hidden: true,
   },
+  { name: 'Seedance', type: 'video', group: 'Seedance', hidden: true, engine: 'seedance' },
   { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
@@ -366,6 +367,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     family: 'StableDiffusion',
     description: 'Faster SDXL variants with reduced inference steps',
   },
+  Seedance: {
+    name: 'Seedance',
+    description: "ByteDance's video generation model",
+  },
   Seedream: {
     name: 'Seedream',
     description: "ByteDance's image generation model",
@@ -484,12 +489,6 @@ export const baseModelGroups = [...new Set(baseModelConfig.map((x) => x.group))]
 export const activeBaseModels = baseModelConfig
   .filter((x) => !('hidden' in x) || !x.hidden)
   .map((x) => x.name);
-
-export function getActiveBaseModels(isModerator?: boolean) {
-  return isModerator
-    ? baseModelConfig
-    : baseModelConfig.filter((x) => !('hidden' in x) || !x.hidden);
-}
 
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);
@@ -761,6 +760,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Flux.2 Klein 9B'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B-base'],
+      },
+    ],
   },
   {
     group: 'Flux2Klein_9B_base',
@@ -768,6 +773,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.2 Klein 9B-base'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B'],
       },
     ],
   },
@@ -779,6 +790,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Flux.2 Klein 4B'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B-base'],
+      },
+    ],
   },
   {
     group: 'Flux2Klein_4B_base',
@@ -786,6 +803,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.2 Klein 4B-base'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B'],
       },
     ],
   },

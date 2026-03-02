@@ -6,4 +6,5 @@ export { bountyExpiredReminderEmail } from './bounties/bountyExpiredReminder.ema
 export { bountyAutomaticallyAwardedEmail } from './bounties/bountyAutomaticallyAwarded.email';
 export { bountyRefundedEmail } from './bounties/bountyRefunded.email';
 export { paddleCancellationEmail } from './paddleCancellation.email';
+export { strikeIssuedEmail } from './strikeIssued.email';
 export type { Email } from './base.email';

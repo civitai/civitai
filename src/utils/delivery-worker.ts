@@ -68,6 +68,28 @@ export function isStorageResolverEnabled(): boolean {
 }
 
 /**
+ * Resolve a download URL for a file, using the storage resolver when available
+ * and falling back to the delivery worker (legacy path).
+ */
+export async function resolveDownloadUrl(
+  fileId: number,
+  fileUrl: string,
+  fileName?: string
+): Promise<DownloadInfo> {
+  if (isStorageResolverEnabled()) {
+    try {
+      return await getDownloadUrlByFileId(fileId, fileName);
+    } catch {
+      // Fall back to delivery worker when the storage resolver doesn't have
+      // this file (e.g. File table records like BountyEntry attachments that
+      // aren't synced to file_locations).
+      return getDownloadUrl(fileUrl, fileName);
+    }
+  }
+  return getDownloadUrl(fileUrl, fileName);
+}
+
+/**
  * Get download URL via the delivery worker (legacy path).
  * Used when storage resolver is not configured.
  */

@@ -98,9 +98,31 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               });
             }
             if (!data) return null;
+            // Merge civitaiResources arrays by modelVersionId instead of overwriting
+            const mergedCivitaiResources = (() => {
+              const fileResources = fileMeta?.civitaiResources as
+                | { modelVersionId: number }[]
+                | undefined;
+              const exifResources = data.meta?.civitaiResources as
+                | { modelVersionId: number }[]
+                | undefined;
+              if (!fileResources?.length) return exifResources;
+              if (!exifResources?.length) return fileResources;
+              const merged = [...fileResources];
+              for (const resource of exifResources) {
+                if (!merged.some((r) => r.modelVersionId === resource.modelVersionId)) {
+                  merged.push(resource);
+                }
+              }
+              return merged;
+            })();
             const processing: ProcessingFile = {
               ...data,
-              meta: { ...fileMeta, ...data.meta },
+              meta: {
+                ...fileMeta,
+                ...data.meta,
+                ...(mergedCivitaiResources ? { civitaiResources: mergedCivitaiResources } : {}),
+              },
               file,
             };
             const { meta } = data;

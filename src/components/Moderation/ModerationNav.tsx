@@ -12,6 +12,7 @@ export function ModerationNav() {
     () =>
       [
         { label: 'Reports', href: '/moderator/reports' },
+        { label: 'Strikes', href: '/moderator/strikes', hidden: !features.strikes },
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
@@ -40,6 +41,7 @@ export function ModerationNav() {
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
+        { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         // {
         //   label: 'Paddle Adjustments',
@@ -63,6 +65,11 @@ export function ModerationNav() {
         {
           label: 'Contests',
           href: '/moderator/contests',
+        },
+        {
+          label: 'Auctions',
+          href: '/moderator/auctions',
+          hidden: !features.auctionsMod,
         },
         {
           label: 'Generator Flagged',

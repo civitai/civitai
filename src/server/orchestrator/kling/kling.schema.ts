@@ -48,7 +48,7 @@ export const klingGenerationConfig = VideoGenerationConfig2({
     } else {
       delete data.aspectRatio;
     }
-    return data;
+    return { ...data, baseModel: 'Kling' };
   },
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {

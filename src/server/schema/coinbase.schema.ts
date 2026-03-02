@@ -8,6 +8,19 @@ export const createBuzzChargeSchema = z.object({
   buzzAmount: z.number(),
 });
 
+export type CreateCodeOrder = z.infer<typeof createCodeOrderSchema>;
+export const createCodeOrderSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('Buzz'),
+    buzzAmount: z.number().int().min(1000),
+  }),
+  z.object({
+    type: z.literal('Membership'),
+    tier: z.enum(['bronze', 'silver', 'gold']),
+    months: z.number().int().min(1).max(12),
+  }),
+]);
+
 export type GetPaginatedUserTransactionHistorySchema = z.infer<
   typeof getPaginatedUserTransactionHistorySchema
 >;

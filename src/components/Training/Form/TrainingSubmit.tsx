@@ -86,6 +86,7 @@ const maxRuns = 5;
 const prefersCaptions: TrainingBaseModelType[] = [
   'flux',
   'flux2',
+  'flux2klein',
   'sd35',
   'hunyuan',
   'wan',
@@ -189,6 +190,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         AdamW8Bit: 'adamw8bit',
         Adafactor: 'adafactor',
         Prodigy: 'prodigy',
+        Automagic: 'automagic',
       };
       const optimizerType =
         optimizerTypeMap[selectedRun.params.optimizerType] ||
@@ -212,6 +214,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         flipAugmentation: selectedRun.params.flipAugmentation || false,
         shuffleTokens: selectedRun.params.shuffleCaption,
         keepTokens: selectedRun.params.keepTokens,
+        numRepeats: selectedRun.params.numRepeats,
       } as any;
       return retData;
     }
@@ -559,6 +562,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           flipAugmentation: paramData.flipAugmentation || false,
           shuffleTokens: paramData.shuffleCaption,
           keepTokens: paramData.keepTokens,
+          numRepeats: paramData.numRepeats,
         };
       }
 
@@ -968,29 +972,33 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Text>{dryRunResult.data?.precedingJobs ?? 'Unknown'}</Text>
               )}
 
-              <Divider orientation="vertical" />
+              {selectedRun.params.engine !== 'ai-toolkit' && (
+                <>
+                  <Divider orientation="vertical" />
 
-              <Badge>
-                <Group gap={4} wrap="nowrap">
-                  <Text inherit>ETA</Text>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How long your job is expected to run</Text>
-                  </InfoPopover>
-                </Group>
-              </Badge>
+                  <Badge>
+                    <Group gap={4} wrap="nowrap">
+                      <Text inherit>ETA</Text>
+                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                        <Text size="sm">How long your job is expected to run</Text>
+                      </InfoPopover>
+                    </Group>
+                  </Badge>
 
-              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
-                <Text>{minsToHours(rapidEta)}</Text>
-              ) : dryRunResult.isLoading ? (
-                <Loader size="sm" />
-              ) : (
-                <Text>
-                  {!isDefined(dryRunResult.data?.eta)
-                    ? 'Unknown'
-                    : dryRunResult.data?.eta > 20000
-                    ? 'Forever'
-                    : minsToHours(dryRunResult.data?.eta)}
-                </Text>
+                  {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+                    <Text>{minsToHours(rapidEta)}</Text>
+                  ) : dryRunResult.isLoading ? (
+                    <Loader size="sm" />
+                  ) : (
+                    <Text>
+                      {!isDefined(dryRunResult.data?.eta)
+                        ? 'Unknown'
+                        : dryRunResult.data?.eta > 20000
+                        ? 'Forever'
+                        : minsToHours(dryRunResult.data?.eta)}
+                    </Text>
+                  )}
+                </>
               )}
 
               <Divider orientation="vertical" />

@@ -5,16 +5,12 @@ import type {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
-type GenerationResourceWithImage = GenerationResource & {
-  image: SearchIndexDataMap['models'][number]['images'][number];
-};
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
-  onSelect: (value: GenerationResourceWithImage) => void;
+  onSelect: (value: GenerationResource) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
   selectSource?: ResourceSelectSource;
@@ -74,7 +70,7 @@ export function ResourceSelectProvider({
       ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
       : filters.baseModels;
 
-  function handleSelect(value: GenerationResourceWithImage) {
+  function handleSelect(value: GenerationResource) {
     props.onSelect(value);
     dialog.onClose();
   }

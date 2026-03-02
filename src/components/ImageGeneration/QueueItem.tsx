@@ -45,13 +45,13 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -68,6 +68,10 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { useAppContext } from '~/providers/AppProvider';
 import { isDefined } from '~/utils/type-guards';
 import type { BlobData } from '~/components/ImageGeneration/utils/BlobData';
+import {
+  workflowConfigByKey,
+  workflowConfigs,
+} from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -145,19 +149,18 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const isTxt2Img = step.params.process === 'txt2img';
-    generationStore.setData({
-      resources: (step.resources as any) ?? [],
+    const isTxt2Img = step.params.workflow === 'txt2img';
+    // Params are already mapped via mapDataToGraphInput (workflow, baseModel, aspectRatio, etc.)
+    generationGraphStore.setData({
       params: {
-        ...(step.params as any),
+        ...step.metadata.params,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
       },
+      resources: step.resources,
+      runType: 'replay',
       remixOfId: step.metadata?.remixOfId,
-      type: images[0].type, // TODO - type based off type of media
-      workflow: step.params.workflow,
-      engine: (step.params as any).engine,
     });
   };
 
@@ -177,19 +180,18 @@ export function QueueItem({
   const canRemix =
     (step.params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow)) ||
-    (!!(step.params as any).engine && step.images.length > 0);
+    (!!step.params.engine && step.images.length > 0);
 
-  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
-  const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
+  // const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
+  const latestTransform =
+    step.metadata.transformations?.[step.metadata.transformations.length - 1]?.workflow;
+  const workflowDefinition =
+    workflowConfigs[
+      latestTransform ?? (step.metadata.params.workflow as keyof typeof workflowConfigs)
+    ];
 
-  const engine =
-    step.metadata.params && 'engine' in step.metadata.params
-      ? (step.metadata.params.engine as string)
-      : undefined;
-  const version =
-    step.metadata.params && 'version' in step.metadata.params
-      ? (step.metadata.params.version as string)
-      : undefined;
+  const engine = step.metadata.params.engine as string | undefined;
+  const version = step.metadata.params.version as string | undefined;
 
   const transformations = step.metadata.transformations ?? [];
 
@@ -316,16 +318,19 @@ export function QueueItem({
               )}
             </div>
             <div className="5 flex flex-col gap-0">
-              {transformations.length > 0 && (
+              {/* {transformations.length > 0 && (
                 <div className="flex items-center gap-1">
                   <Text size="sm">Transformations:</Text>
-                  {transformations.map((transformation, i) => (
-                    <Badge key={i} size="sm">
-                      {transformation.type}
-                    </Badge>
-                  ))}
+                  {transformations.map((transformation, i) => {
+                    const workflowConfig = workflowConfigByKey.get(transformation.workflow);
+                    return (
+                      <Badge key={i} size="sm">
+                        {workflowConfig?.label ?? transformation.workflow}
+                      </Badge>
+                    );
+                  })}
                 </div>
-              )}
+              )} */}
               {resources.length > 0 && (
                 <div className="flex items-center gap-1">
                   <Text size="sm">Resources:</Text>
@@ -443,7 +448,7 @@ const ResourceBadge = (props: GenerationResource) => {
         classNames={{ label: '!overflow-hidden' }}
         component={Link}
         href={`/models/${model.id}?modelVersionId=${id}`}
-        onClick={() => generationPanel.close()}
+        onClick={() => generationGraphPanel.close()}
       >
         {model.name} - {name}
       </Badge>
@@ -565,9 +570,9 @@ function SubmitBlockedImagesForReviewButton({
         href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
           currentUser.username
         )}&Prompt=${encodeURIComponent(
-          (step.params as any).prompt
+          step.params.prompt ?? ''
         )}&Negative%20Prompt=${encodeURIComponent(
-          (step.params as any).negativePrompt
+          step.params.negativePrompt ?? ''
         )}&Workflow%20ID=${workflowId}`}
       >
         <IconFlagQuestion size={20} />

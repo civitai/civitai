@@ -206,7 +206,8 @@ const TrainSteps = ({
         }
         color={
           modelVersion.trainingStatus === TrainingStatus.Failed ||
-          modelVersion.trainingStatus === TrainingStatus.Denied
+          modelVersion.trainingStatus === TrainingStatus.Denied ||
+          modelVersion.trainingStatus === TrainingStatus.Expired
             ? 'red'
             : undefined
         }

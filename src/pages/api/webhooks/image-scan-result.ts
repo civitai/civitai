@@ -535,7 +535,8 @@ async function getTagsFromIncomingTags({
     // Detect real person in prompt
     const realPersonName = includesPoi(prompt);
     if (realPersonName) {
-      const tagName = typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
+      const tagName =
+        typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
       incomingTags.push({ tag: tagName.toLowerCase(), confidence: 100 });
     }
 

@@ -6,14 +6,14 @@ import { Tracker } from '~/server/clickhouse/client';
 
 import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
   session: Session | null,
-  features: ReturnType<typeof getFeatureFlagsLazy>
+  features: FeatureAccess
 ) => {
   const domain = getRequestDomainColor(ctx.req) ?? 'blue';
   const ssg = createServerSideHelpers({
@@ -49,7 +49,7 @@ export function createServerSideProps<P>({
     const session =
       ((context.req as any)['session'] as Session | null) ??
       (useSession || !isClient ? await getServerAuthSession(context) : null);
-    const features = getFeatureFlagsLazy({ user: session?.user, req: context.req });
+    const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)

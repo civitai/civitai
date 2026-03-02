@@ -2,7 +2,7 @@ import { trpc } from '~/utils/trpc';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useMemo } from 'react';
-import { ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { isFutureDate, startOfDay } from '~/utils/date-helpers';
 
 export const useQueryChallenges = () => {
@@ -34,6 +34,8 @@ export function useGetActiveChallenges() {
   // Use new challenge endpoint with Active status filter
   const { data, isLoading } = trpc.challenge.getInfinite.useQuery({
     status: [ChallengeStatus.Active],
+    source: [ChallengeSource.System],
+    excludeEventChallenges: true,
     limit: 2,
   });
 

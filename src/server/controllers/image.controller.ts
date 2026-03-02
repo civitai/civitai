@@ -7,6 +7,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { mapToViolationType } from '~/server/common/tos-reasons';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
@@ -57,6 +58,7 @@ import type {
   GetInfiniteImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
+  SetTosViolationSchema,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
@@ -68,6 +70,7 @@ import {
   getImageContestCollectionDetails,
   getImageModerationReviewQueue,
   getImageResources,
+  getReportViolationDetailsForImages,
   getResourceIdsForImages,
   getTagNamesForImages,
   moderateImages,
@@ -89,19 +92,28 @@ export const moderateImageHandler = async ({
       moderatorId: ctx.user.id,
     });
     if (input.reviewAction === 'block') {
+      const imageIds = images.map((img) => img.id);
+      const [imageTags, imageResources, reportDetails] = await Promise.all([
+        getTagNamesForImages(imageIds),
+        getResourceIdsForImages(imageIds),
+        getReportViolationDetailsForImages(imageIds),
+      ]);
+
       await Limiter().process(images, (images) =>
         ctx.track.images(
-          images.map(({ id, userId, nsfwLevel, needsReview }) => {
-            return {
-              type: 'DeleteTOS',
-              imageId: id,
-              nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-              tags: [],
-              resources: [],
-              tosReason: needsReview ?? 'other',
-              ownerId: userId,
-            };
-          })
+          images.map(({ id, userId, nsfwLevel, needsReview }) => ({
+            type: 'DeleteTOS',
+            imageId: id,
+            nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
+            tags: imageTags[id] ?? [],
+            resources: imageResources[id] ?? [],
+            tosReason: needsReview ?? 'other',
+            violationType:
+              input.violationType ?? mapToViolationType(needsReview, reportDetails[id]),
+            violationDetails: input.violationDetails ?? reportDetails[id]?.comment ?? '',
+            ownerId: userId,
+            userId: ctx.user.id,
+          }))
         )
       );
     }
@@ -149,12 +161,12 @@ export const setTosViolationHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: SetTosViolationSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const { user, ip, fingerprint } = ctx;
-    const { id } = input;
+    const { id, violationType, violationDetails } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
     // Get details of the image
@@ -221,6 +233,10 @@ export const setTosViolationHandler = async ({
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
 
+    // Look up report details for violation type resolution
+    const reportDetails = await getReportViolationDetailsForImages([id]);
+    const resolvedViolationType = violationType ?? mapToViolationType(null, reportDetails[id]);
+
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);
     await ctx.track.images([
@@ -231,7 +247,10 @@ export const setTosViolationHandler = async ({
         tags: imageTags[id] ?? [],
         resources: imageResources[id] ?? [],
         tosReason: 'manual',
+        violationType: resolvedViolationType,
+        violationDetails: violationDetails ?? reportDetails?.[id]?.comment ?? '',
         ownerId: image.userId,
+        userId: ctx.user.id,
       },
     ]);
     return image;

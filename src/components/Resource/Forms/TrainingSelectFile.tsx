@@ -388,6 +388,8 @@ export default function TrainingSelectFile({
       ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
       : modelVersion.trainingStatus === TrainingStatus.Denied
       ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
+      : modelVersion.trainingStatus === TrainingStatus.Expired
+      ? 'The training data review was not completed in time. Please submit your training again.'
       : undefined;
   const noEpochs = !epochs || !epochs.length;
   // Allow access to epochs for failed trainings if epochs exist

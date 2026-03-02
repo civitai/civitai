@@ -37,6 +37,11 @@
   }
 }
 
+.blurred {
+  filter: blur(24px);
+  transform: scale(1.2);
+}
+
 .header, .footer {
   position: absolute;
   left: 0;

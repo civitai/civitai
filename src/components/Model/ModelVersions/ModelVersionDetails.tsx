@@ -52,6 +52,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { AnimatedCount, useLiveMetrics, MetricSubscriptionProvider } from '~/components/Metrics';
 import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
 import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -123,7 +124,15 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
 
-export function ModelVersionDetails({
+export function ModelVersionDetails(props: Props) {
+  return (
+    <MetricSubscriptionProvider entityType="ModelVersion" entityId={props.version.id}>
+      <ModelVersionDetailsContent {...props} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ModelVersionDetailsContent({
   model,
   version,
   image,
@@ -155,6 +164,15 @@ export function ModelVersionDetails({
     modelVersionId: version.id,
   });
   const mobile = useIsMobile();
+
+  // Live metrics for model version stats
+  const liveMetrics = useLiveMetrics('ModelVersion', version.id, {
+    downloadCount: version.rank?.downloadCountAllTime ?? 0,
+    generationCount: version.rank?.generationCountAllTime ?? 0,
+    thumbsUpCount: version.rank?.thumbsUpCountAllTime ?? 0,
+    thumbsDownCount: version.rank?.thumbsDownCountAllTime ?? 0,
+    earnedAmount: version.rank?.earnedAmountAllTime ?? 0,
+  });
 
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
   const downloadsDisabled =
@@ -389,7 +407,7 @@ export function ModelVersionDetails({
           {!downloadsDisabled && (
             <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Unique Downloads">
               <Text fz={11} fw="bold" inline>
-                {(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}
+                <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
               </Text>
             </IconBadge>
           )}
@@ -413,26 +431,26 @@ export function ModelVersionDetails({
             >
               <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
                 <Text fz={11} fw="bold" inline>
-                  {abbreviateNumber(version.rank?.generationCountAllTime ?? 0)}
+                  <AnimatedCount value={liveMetrics.generationCount} />
                 </Text>
               </IconBadge>
             </GenerateButton>
           ) : (
             <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
               <Text fz={11} fw="bold" inline>
-                {(version.rank?.generationCountAllTime ?? 0).toLocaleString()}
+                <AnimatedCount value={liveMetrics.generationCount} abbreviate={false} />
               </Text>
             </IconBadge>
           )}
-          {version.rank?.earnedAmountAllTime && (
+          {!!liveMetrics.earnedAmount && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
               <Text
                 fz={11}
                 fw="bold"
-                title={(version.rank?.earnedAmountAllTime).toLocaleString()}
+                title={liveMetrics.earnedAmount.toLocaleString()}
                 inline
               >
-                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+                <AnimatedCount value={liveMetrics.earnedAmount} />
               </Text>
             </IconBadge>
           )}
@@ -457,8 +475,8 @@ export function ModelVersionDetails({
         <ModelVersionReview
           modelId={model.id}
           versionId={version.id}
-          thumbsUpCount={version.rank?.thumbsUpCountAllTime ?? 0}
-          thumbsDownCount={version.rank?.thumbsDownCountAllTime ?? 0}
+          thumbsUpCount={liveMetrics.thumbsUpCount}
+          thumbsDownCount={liveMetrics.thumbsDownCount}
         />
       ),
     },

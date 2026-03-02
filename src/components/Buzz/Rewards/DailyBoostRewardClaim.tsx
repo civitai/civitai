@@ -3,35 +3,40 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-export const DailyBoostRewardClaim = () => {
+/**
+ * Hook to get daily boost reward state for conditional rendering.
+ * Returns the reward data and claim mutation for external use.
+ */
+export function useDailyBoostReward() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
-    {
-      enabled: !!currentUser,
-    }
+    { enabled: !!currentUser }
   );
-  const { mutate, isLoading } = trpc.buzz.claimDailyBoostReward.useMutation({
+  const { mutate: claim, isLoading: isClaiming } = trpc.buzz.claimDailyBoostReward.useMutation({
     onSuccess: async () => {
       await queryUtils.user.userRewardDetails.invalidate();
     },
   });
   const status = useGenerationStatus();
 
-  if (!currentUser || loadingRewards || !status?.charge) {
-    return null;
-  }
-
   const dailyBoostReward = rewards.find((reward) => reward.type === 'dailyBoost');
+  const isClaimed = dailyBoostReward ? dailyBoostReward.awarded > 0 : true;
+  const canShow = !!currentUser && !loadingRewards && !!status?.charge && !!dailyBoostReward && !isClaimed;
 
-  if (!dailyBoostReward) {
-    return null;
-  }
+  return {
+    canShow,
+    awardAmount: dailyBoostReward?.awardAmount ?? 0,
+    claim,
+    isClaiming,
+  };
+}
 
-  const isClaimed = dailyBoostReward.awarded > 0;
+export const DailyBoostRewardClaim = () => {
+  const { canShow, awardAmount, claim, isClaiming } = useDailyBoostReward();
 
-  if (isClaimed) {
+  if (!canShow) {
     return null;
   }
 
@@ -39,11 +44,11 @@ export const DailyBoostRewardClaim = () => {
     <Button
       size="compact-xs"
       color="blue.4"
-      loading={isLoading}
-      onClick={() => mutate()}
+      loading={isClaiming}
+      onClick={() => claim()}
       variant="outline"
     >
-      Claim {dailyBoostReward.awardAmount} Buzz
+      Claim {awardAmount} Buzz
     </Button>
   );
 };

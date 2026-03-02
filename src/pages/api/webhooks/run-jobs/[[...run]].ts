@@ -66,6 +66,7 @@ import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
+import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
@@ -74,6 +75,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
+import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -107,6 +109,7 @@ export const jobs: Job[] = [
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
+  searchIndexUserCleanupJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
@@ -153,6 +156,8 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  expireStrikesJob,
+  processTimedUnmutesJob,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -1,6 +1,10 @@
 import { mergeWith } from 'lodash-es';
 import * as z from 'zod';
+import type { JudgeScore } from './daily-challenge-scoring';
 import { dbRead } from '~/server/db/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
+import { Flags } from '~/shared/utils/flags';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -31,6 +35,7 @@ const judgingConfigSchema = z.object({
   userId: z.number(),
   sourceCollectionId: z.number().nullable(),
   prompts: challengePromptsSchema,
+  reviewTemplate: z.string().nullable().default(null),
 });
 
 const challengeConfigSchema = z.object({
@@ -40,6 +45,7 @@ const challengeConfigSchema = z.object({
   reviewMeTagId: z.number(),
   userCooldown: z.string(),
   resourceCooldown: z.string(),
+  winnerCooldown: z.string(),
   prizes: z.array(
     z.object({
       buzz: z.number(),
@@ -71,6 +77,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   reviewMeTagId: 301770,
   userCooldown: '14 day',
   resourceCooldown: '90 day',
+  winnerCooldown: '7 day',
   prizes: [
     { buzz: 5000, points: 150 },
     { buzz: 2500, points: 100 },
@@ -156,6 +163,7 @@ async function fetchJudgingConfigFromDb(judgeId: number): Promise<JudgingConfig 
       collectionPrompt: true,
       contentPrompt: true,
       reviewPrompt: true,
+      reviewTemplate: true,
       winnerSelectionPrompt: true,
     },
   });
@@ -174,6 +182,7 @@ async function fetchJudgingConfigFromDb(judgeId: number): Promise<JudgingConfig 
       review: judge.reviewPrompt ?? '',
       winner: judge.winnerSelectionPrompt ?? '',
     },
+    reviewTemplate: judge.reviewTemplate ?? null,
   };
 }
 
@@ -225,6 +234,7 @@ export type JudgingConfig = {
   userId: number;
   sourceCollectionId: number | null; // Collection to pick model resources from
   prompts: ChallengePrompts;
+  reviewTemplate: string | null; // JSON message template (agent-workbench format)
 };
 
 /**
@@ -249,6 +259,7 @@ export async function getJudgingConfig(
       collectionPrompt: true,
       contentPrompt: true,
       reviewPrompt: true,
+      reviewTemplate: true,
       winnerSelectionPrompt: true,
     },
   });
@@ -267,6 +278,7 @@ export async function getJudgingConfig(
       review: judgingPromptOverride ?? judge.reviewPrompt ?? '',
       winner: judge.winnerSelectionPrompt ?? '',
     },
+    reviewTemplate: judge.reviewTemplate ?? null,
   };
 }
 type ChallengeTypeRow = {
@@ -324,6 +336,15 @@ export async function getChallengeTypeConfig(type: string | undefined) {
   } as ChallengeType;
 }
 
+/**
+ * Derive a challenge's nsfwLevel from its allowedNsfwLevel bitwise flags.
+ * Returns the highest allowed NsfwLevel (most mature content permitted).
+ * Example: allowedNsfwLevel = 7 (PG|PG13|R) → nsfwLevel = 4 (R)
+ */
+export function deriveChallengeNsfwLevel(allowedNsfwLevel: number): number {
+  return Flags.maxValue(allowedNsfwLevel) || NsfwLevel.PG;
+}
+
 export type Prize = {
   buzz: number;
   points: number;
@@ -372,12 +393,26 @@ export async function getJudgePrompts(
   };
 }
 
-export type Score = {
-  theme: number; // 0-10 how well it fits the theme
-  wittiness: number; // 0-10 how witty it is
-  humor: number; // 0-10 how funny it is
-  aesthetic: number; // 0-10 how aesthetically pleasing it is
-};
+// Score types and weighted scoring utilities are defined in the dependency-free
+// daily-challenge-scoring module so they can be imported from client components.
+export type { Score, JudgeScore } from './daily-challenge-scoring';
+export {
+  SCORE_WEIGHTS,
+  THEME_DISQUALIFY_THRESHOLD,
+  THEME_GATE_THRESHOLD,
+  THEME_GATE_MAX_SCORE,
+  calculateWeightedScore,
+} from './daily-challenge-scoring';
+
+export function parseJudgeScore(note: string | null): JudgeScore | null {
+  if (!note) return null;
+  try {
+    const parsed = JSON.parse(note);
+    return parsed?.score ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export type DailyChallengeDetails = {
   challengeId: number; // Challenge table ID for status updates
@@ -401,14 +436,14 @@ export type DailyChallengeDetails = {
  * This adapter enables backward compatibility during the transition period.
  */
 export function challengeToLegacyFormat(challenge: ChallengeDetails): DailyChallengeDetails {
-  const metadata = challenge.metadata as Record<string, unknown> | null;
+  const metadata = parseChallengeMetadata(challenge.metadata);
   return {
     challengeId: challenge.id,
-    articleId: (metadata?.articleId as number) ?? 0,
-    type: (metadata?.challengeType as string) ?? 'world-morph',
+    articleId: metadata.articleId ?? 0,
+    type: metadata.challengeType ?? 'world-morph',
     date: challenge.startsAt,
     theme: challenge.theme ?? '',
-    modelId: (metadata?.resourceModelId as number) ?? (metadata?.resourceUserId as number) ?? 0,
+    modelId: metadata.resourceModelId ?? metadata.resourceUserId ?? 0,
     modelVersionIds: challenge.modelVersionIds,
     collectionId: challenge.collectionId!,
     title: challenge.title,

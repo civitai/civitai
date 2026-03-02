@@ -25,6 +25,11 @@ export const consumeRedeemableCodeSchema = z.object({
     .regex(/^[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9]{4}$/, { error: 'Invalid code format' }),
 });
 
+export type GetCodeByOrderIdInput = z.infer<typeof getCodeByOrderIdSchema>;
+export const getCodeByOrderIdSchema = z.object({
+  orderId: z.string(),
+});
+
 export const giftNoticeSchema = z.object({
   startDate: z.string(),
   endDate: z.string(),

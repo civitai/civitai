@@ -84,7 +84,7 @@ export function Wan22FormInput() {
         />
       )}
       <InputSwitch
-        name="turbo"
+        name="draft"
         className="my-2"
         labelPosition="left"
         label={

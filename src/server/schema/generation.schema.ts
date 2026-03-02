@@ -175,16 +175,16 @@ export const defaultsByTier: Record<UserTier, GenerationLimits> = {
   free: {
     quantity: 4,
     queue: 4,
-    steps: 40,
+    steps: 50,
     resources: 9,
   },
   founder: {
     quantity: 8,
     queue: 8,
-    steps: 60,
+    steps: 50,
     resources: 9,
   },
-  bronze: { quantity: 8, queue: 8, steps: 60, resources: 12 },
+  bronze: { quantity: 8, queue: 8, steps: 50, resources: 12 },
   silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
   gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
 };
@@ -274,7 +274,10 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
-const baseSchema = z.object({ generation: booleanString().default(true) });
+const baseSchema = z.object({
+  generation: booleanString().default(true),
+  withPreview: booleanString().default(false),
+});
 export type GetGenerationDataInput = z.input<typeof getGenerationDataSchema>;
 export type GetGenerationDataSchema = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
@@ -304,4 +307,9 @@ export const bulkDeleteGeneratedImagesSchema = z.object({
 export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
 export const prepareModelSchema = z.object({
   id: z.number(),
+});
+
+export type GetResourceDataByIdsInput = z.infer<typeof getResourceDataByIdsSchema>;
+export const getResourceDataByIdsSchema = z.object({
+  ids: z.array(z.number()).min(1).max(100),
 });

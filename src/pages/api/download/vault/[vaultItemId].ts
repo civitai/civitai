@@ -12,7 +12,7 @@ import { getVaultWithStorage } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import { getVaultState } from '~/utils/vault';
 
@@ -116,7 +116,7 @@ export default AuthedEndpoint(
         const files = (vaultItem.files ?? []) as VaultItemFilesSchema;
         const file = input.fileId ? files.find((f) => f.id === input.fileId) : files[0];
         if (!file || !file.url) return onError(404, 'File not found');
-        const { url } = await getDownloadUrl(file.url);
+        const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName);
         return res.redirect(url);
       }
       case 'images': {

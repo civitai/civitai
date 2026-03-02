@@ -497,7 +497,8 @@ export default function UserTrainingModels() {
                 </>
               )}
               {(mv.trainingStatus === TrainingStatus.Failed ||
-                mv.trainingStatus === TrainingStatus.Denied) && (
+                mv.trainingStatus === TrainingStatus.Denied ||
+                mv.trainingStatus === TrainingStatus.Expired) && (
                 <>
                   <Divider size="sm" orientation="vertical" />
                   <HoverCard shadow="md" width={300} zIndex={100} withArrow withinPortal>
@@ -506,9 +507,8 @@ export default function UserTrainingModels() {
                     </HoverCard.Target>
                     <HoverCard.Dropdown>
                       <Text size="sm">
-                        Training success can vary based on system conditions and
-                        configuration. Check for service updates at the top of the page or
-                        on the{' '}
+                        Training success can vary based on system conditions and configuration.
+                        Check for service updates at the top of the page or on the{' '}
                         <Anchor href="/changelog" target="_blank">
                           Updates page
                         </Anchor>{' '}

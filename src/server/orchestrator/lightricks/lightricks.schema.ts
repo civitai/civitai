@@ -68,7 +68,7 @@ export const lightricksGenerationConfig = VideoGenerationConfig2({
     if (data.sourceImage) {
       data.aspectRatio = findClosestAspectRatio(data.sourceImage, [...lightricksAspectRatios]);
     }
-    return data;
+    return { ...data, baseModel: 'Lightricks' };
   },
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {

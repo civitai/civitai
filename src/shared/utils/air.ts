@@ -1,6 +1,5 @@
 import { Air } from '@civitai/client';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { getBaseModelEcosystem } from '~/shared/constants/base-model.constants';
+import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 type CivitaiAir = {
@@ -59,6 +58,16 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.Controlnet]: 'controlnet',
 };
 
+/** Reverse map: URN type string → ModelType enum value */
+const urnToModelTypeMap = new Map(
+  Object.entries(typeUrnMap).map(([modelType, urn]) => [urn, modelType as ModelType])
+);
+
+/** Convert a lowercase URN type (from AIR) to its PascalCase ModelType equivalent */
+export function urnToModelType(urnType: string): string {
+  return urnToModelTypeMap.get(urnType) ?? urnType;
+}
+
 export function stringifyAIR({
   baseModel,
   type,
@@ -66,18 +75,21 @@ export function stringifyAIR({
   id,
   source = 'civitai',
 }: {
-  baseModel: BaseModel | string;
+  baseModel: string;
   type: ModelType;
   modelId: number | string;
   id?: number | string;
   source?: string;
 }) {
-  const ecosystem = getBaseModelEcosystem(baseModel);
+  let ecosystem = baseModel;
+  try {
+    ecosystem = getRootEcosystem(baseModel).key;
+  } catch {}
 
   const urnType = typeUrnMap[type] ?? 'unknown';
 
   return Air.stringify({
-    ecosystem: ecosystem,
+    ecosystem: ecosystem.toLowerCase(),
     type: urnType,
     source,
     id: String(modelId),

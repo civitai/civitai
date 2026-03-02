@@ -2,6 +2,7 @@ import { WorkflowStatus } from '@civitai/client';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
@@ -67,7 +68,6 @@ export default WebhookEndpoint(async (req, res) => {
           token: env.ORCHESTRATOR_ACCESS_TOKEN,
           path: { workflowId },
         });
-        console.log(workflow);
 
         const result = await updateTrainingWorkflowRecords(workflow, status);
 
@@ -118,7 +118,8 @@ export default WebhookEndpoint(async (req, res) => {
               );
           } else if (
             result.trainingStatus === TrainingStatus.Failed ||
-            result.trainingStatus === TrainingStatus.Denied
+            result.trainingStatus === TrainingStatus.Denied ||
+            result.trainingStatus === TrainingStatus.Expired
           ) {
             trainingFailEmail
               .send(emailData)

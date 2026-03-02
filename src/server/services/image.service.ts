@@ -30,6 +30,10 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import {
+  parseJudgeScore,
+  type JudgeScore,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -70,6 +74,7 @@ import type {
   ImageModerationUnblockSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
+  IngestionErrorReviewInput,
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
@@ -917,6 +922,7 @@ type GetAllImagesRaw = {
   poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
+  collectionItemNote?: string | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1235,10 +1241,11 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", "sortKey"
+          SELECT "imageId", note, "sortKey"
           FROM (
             SELECT
               ci."imageId",
+              ci.note,
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -1500,6 +1507,7 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote"' : '')}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -1616,8 +1624,10 @@ export const getAllImages = async (
       hasPositivePrompt?: boolean;
       poi?: boolean;
       minor?: boolean;
+      judgeScore?: JudgeScore | null;
     }
-  > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, ...i }) => {
+  > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
+    const judgeScore = parseJudgeScore(collectionItemNote ?? null);
     const match = imageMetrics[i.id];
     const thumbnail = thumbnails[i.id];
     const userData = userBasicData[creatorId];
@@ -1659,6 +1669,7 @@ export const getAllImages = async (
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: cosmetics?.[i.id] ?? null,
       thumbnailUrl: thumbnail?.url,
+      judgeScore,
     };
   });
 
@@ -1935,7 +1946,7 @@ export async function getImagesFromFeedSearch(
     }
 
     const feed = new ImagesFeed(
-      ({ apiKey, host }) =>
+      ({ apiKey, host }: { apiKey: string; host: string }) =>
         new MeiliSearch({
           host,
           apiKey,
@@ -5340,6 +5351,108 @@ export async function getImageRatingRequests({
   };
 }
 
+export async function getIngestionErrorImages({ cursor, limit }: IngestionErrorReviewInput) {
+  const query = Prisma.sql`
+    SELECT
+      i.id,
+      i.url,
+      i.name,
+      i."nsfwLevel",
+      i."aiNsfwLevel",
+      i."needsReview",
+      i.width,
+      i.height,
+      i.type,
+      i."createdAt",
+      i.poi
+    FROM "Image" i
+    WHERE i."createdAt" > now() - INTERVAL '2 days'
+      AND i."createdAt" < now() - INTERVAL '1 hour'
+      AND i.ingestion = 'Error'::"ImageIngestionStatus"
+      AND i."nsfwLevel" = 0
+      ${cursor ? Prisma.sql`AND i.id < ${cursor}` : Prisma.empty}
+    ORDER BY i."createdAt" DESC
+    LIMIT ${limit + 1}
+  `;
+
+  const results = await dbRead.$queryRaw<
+    {
+      id: number;
+      url: string;
+      name: string | null;
+      nsfwLevel: number;
+      aiNsfwLevel: number | null;
+      needsReview: string | null;
+      width: number | null;
+      height: number | null;
+      type: string;
+      createdAt: Date;
+      poi: boolean;
+    }[]
+  >`${query}`;
+
+  let nextCursor: number | undefined;
+  if (results.length > limit) {
+    const nextItem = results.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: results,
+  };
+}
+
+export async function resolveIngestionError({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      ingestion: true,
+      postId: true,
+      userId: true,
+      metadata: true,
+    },
+  });
+  if (!image) throw new Error('Image not found');
+
+  const metadata = (image.metadata as ImageMetadata) ?? {};
+
+  await dbWrite.image.update({
+    where: { id },
+    data: {
+      nsfwLevel,
+      nsfwLevelLocked: true,
+      ingestion: ImageIngestionStatus.Scanned,
+      scannedAt: new Date(),
+      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
+    },
+  });
+
+  // Post-scan actions matching what image-scan-result does on successful scan
+  await tagIdsForImagesCache.refresh(id);
+
+  if (image.postId) await updatePostNsfwLevel(image.postId);
+
+  await queueImageSearchIndexUpdate({
+    ids: [id],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
+  await trackModActivity(userId, {
+    entityType: 'image',
+    entityId: id,
+    activity: 'setNsfwLevel',
+  });
+}
+
 type DownleveledImageRecord = {
   imageId: number;
   originalLevel: number;
@@ -6279,4 +6392,32 @@ export async function getSeenImageIds(): Promise<number[]> {
   const key = REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES;
   const ids = await sysRedis.zRange(key, 0, -1, { REV: true });
   return ids.map((id) => parseInt(id, 10));
+}
+
+export async function getReportViolationDetailsForImages(
+  imageIds: number[]
+): Promise<Record<number, { violation?: string; comment?: string; reason?: string }>> {
+  if (!imageIds.length) return {};
+
+  const reports = await dbRead.$queryRaw<
+    { imageId: number; reason: string; details: Prisma.JsonValue }[]
+  >`
+    SELECT DISTINCT ON (ir."imageId") ir."imageId", r.reason, r.details
+    FROM "Report" r
+    JOIN "ImageReport" ir ON ir."reportId" = r.id
+    WHERE ir."imageId" IN (${Prisma.join(imageIds)})
+      AND r.reason = 'TOSViolation'
+    ORDER BY ir."imageId", r."createdAt" DESC
+  `;
+
+  const result: Record<number, { violation?: string; comment?: string; reason?: string }> = {};
+  for (const report of reports) {
+    const details = report.details as Record<string, string> | null;
+    result[report.imageId] = {
+      violation: details?.violation,
+      comment: details?.comment,
+      reason: report.reason,
+    };
+  }
+  return result;
 }

@@ -18,6 +18,7 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
     TOKEN_STORE === 'redis'
       ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
       : getEncryptedCookie(ctx, generationServiceCookie.name);
+
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
     token = await getTemporaryUserApiKey({

@@ -24,11 +24,9 @@ import type {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
-import type {
-  queryGeneratedImageWorkflows,
-  WorkflowStatusUpdate,
-  WorkflowStepFormatted,
-} from '~/server/services/orchestrator/common';
+import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
+import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
+import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,
   IWorkflowsInfinite,
@@ -38,14 +36,14 @@ import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { queryClient, trpc } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 
 export type InfiniteTextToImageRequests = InfiniteData<
-  AsyncReturnType<typeof queryGeneratedImageWorkflows>
+  AsyncReturnType<typeof queryGeneratedImageWorkflows2>
 >;
 export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
 
@@ -65,7 +63,7 @@ function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?
 export function useInvalidateWhatIf() {
   const queryUtils = trpc.useUtils();
   return function () {
-    queryUtils.orchestrator.getImageWhatIf.invalidate();
+    queryUtils.orchestrator.whatIfFromGraph.invalidate();
   };
 }
 
@@ -204,36 +202,6 @@ function updateTextToImageRequests({
   );
 }
 
-export function useSubmitCreateImage() {
-  return trpc.orchestrator.generateImage.useMutation({
-    onSuccess: (data, input) => {
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(data);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
-          }
-        },
-      });
-      // updateFromEvents();
-    },
-    // onError: (error) => {
-    //   showErrorNotification({
-    //     title: 'Failed to generate',
-    //     error: new Error(error.message),
-    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-    //   });
-    // },
-  });
-}
-
 export function useUpdateWorkflow() {
   return trpc.orchestrator.updateWorkflow.useMutation({
     onSuccess: (response, { workflowId }) => {
@@ -242,7 +210,7 @@ export function useUpdateWorkflow() {
           for (const page of data.pages) {
             const index = page.items.findIndex((x) => x.id === workflowId);
             if (index > -1) {
-              page.items[index] = response;
+              page.items[index] = response as any;
               break;
             }
           }
@@ -252,8 +220,8 @@ export function useUpdateWorkflow() {
   });
 }
 
-export function useGenerate(args?: { onError?: (e: any) => void }) {
-  return trpc.orchestrator.generate.useMutation({
+export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
+  return trpc.orchestrator.generateFromGraph.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests({
         input: { ascending: false },
@@ -270,39 +238,9 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
           }
         },
       });
-      // updateFromEvents();
     },
     ...args,
   });
-}
-
-export function useGenerateWithCost(cost = 0) {
-  const { conditionalPerformTransaction } = useBuzzTransaction({
-    message: (requiredBalance) =>
-      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
-        requiredBalance
-      )}. Buy or earn more Buzz to perform this action.`,
-    performTransactionOnPurchase: true,
-    accountTypes: buzzSpendTypes,
-  });
-
-  const generate = useGenerate();
-
-  return useMemo(() => {
-    async function mutateAsync(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, async () => {
-        return await generate.mutateAsync(...args);
-      });
-    }
-
-    function mutate(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, () => {
-        generate.mutate(...args);
-      });
-    }
-
-    return { ...generate, mutateAsync, mutate };
-  }, [cost, generate]);
 }
 
 export function useDeleteTextToImageRequest() {
@@ -544,14 +482,10 @@ export function useTextToImageSignalUpdate() {
   });
 }
 
-async function fetchSignaledWorkflow(
+export async function fetchSignaledWorkflow(
   workflowId: string
 ): Promise<WorkflowStatusUpdate | undefined> {
-  const response = await fetch(`/api/generation/workflows/${workflowId}/status-update`);
-  if (response.ok) return await response.json();
-  else {
-    // TODO - handle errors
-  }
+  return await trpcVanilla.orchestrator.statusUpdate.query({workflowId})
 }
 
 async function updateSignaledWorkflows() {

@@ -63,7 +63,9 @@ interface MeiliSearchHit {
 }
 
 async function getImagesFromDatabase(): Promise<ImageRecord[]> {
-  console.log(`Fetching images created between ${START_DATE.toISOString()} and ${END_DATE.toISOString()}...`);
+  console.log(
+    `Fetching images created between ${START_DATE.toISOString()} and ${END_DATE.toISOString()}...`
+  );
 
   const images = await prisma.$queryRaw<ImageRecord[]>`
     SELECT
@@ -88,9 +90,13 @@ async function getImagesFromDatabase(): Promise<ImageRecord[]> {
   return images;
 }
 
-async function checkMeiliSearchStatus(imageIds: number[]): Promise<Map<number, MeiliSearchHit | null>> {
+async function checkMeiliSearchStatus(
+  imageIds: number[]
+): Promise<Map<number, MeiliSearchHit | null>> {
   if (!metricsSearchClient) {
-    throw new Error('Meilisearch client not initialized. Check METRICS_SEARCH_HOST and METRICS_SEARCH_API_KEY env vars.');
+    throw new Error(
+      'Meilisearch client not initialized. Check METRICS_SEARCH_HOST and METRICS_SEARCH_API_KEY env vars.'
+    );
   }
 
   const result = new Map<number, MeiliSearchHit | null>();
@@ -129,7 +135,10 @@ async function checkMeiliSearchStatus(imageIds: number[]): Promise<Map<number, M
   return result;
 }
 
-function shouldReindex(dbImage: ImageRecord, meiliHit: MeiliSearchHit | null): { reindex: boolean; reason: string } {
+function shouldReindex(
+  dbImage: ImageRecord,
+  meiliHit: MeiliSearchHit | null
+): { reindex: boolean; reason: string } {
   // Case 1: Image doesn't exist in Meilisearch
   if (!meiliHit) {
     return { reindex: true, reason: 'missing_from_index' };
@@ -189,7 +198,9 @@ async function main() {
 
   if (!metricsSearchClient) {
     console.error('ERROR: Meilisearch client not initialized.');
-    console.error('Please set METRICS_SEARCH_HOST and METRICS_SEARCH_API_KEY environment variables.');
+    console.error(
+      'Please set METRICS_SEARCH_HOST and METRICS_SEARCH_API_KEY environment variables.'
+    );
     process.exit(1);
   }
 
@@ -223,7 +234,11 @@ async function main() {
       const batch = batches[i];
       const batchIds = batch.map((img) => img.id);
 
-      console.log(`Batch ${i + 1}/${batches.length}: Checking ${batch.length} images (IDs ${batchIds[0]} - ${batchIds[batchIds.length - 1]})`);
+      console.log(
+        `Batch ${i + 1}/${batches.length}: Checking ${batch.length} images (IDs ${batchIds[0]} - ${
+          batchIds[batchIds.length - 1]
+        })`
+      );
 
       // Check Meilisearch status for this batch
       const meiliStatus = await checkMeiliSearchStatus(batchIds);
@@ -285,14 +300,20 @@ async function main() {
 
     // Step 4: Queue for re-indexing
     if (stats.toReindex.length > 0) {
-      console.log(`${isDryRun ? '[DRY RUN] Would queue' : 'Queueing'} ${stats.toReindex.length} images for re-indexing...`);
+      console.log(
+        `${isDryRun ? '[DRY RUN] Would queue' : 'Queueing'} ${
+          stats.toReindex.length
+        } images for re-indexing...`
+      );
 
       // Queue in batches to avoid overwhelming Redis
       const queueBatches = chunk(stats.toReindex, 5000);
       for (let i = 0; i < queueBatches.length; i++) {
         await queueForReindex(queueBatches[i]);
         if (!isDryRun) {
-          console.log(`  Queued batch ${i + 1}/${queueBatches.length} (${queueBatches[i].length} images)`);
+          console.log(
+            `  Queued batch ${i + 1}/${queueBatches.length} (${queueBatches[i].length} images)`
+          );
         }
       }
 

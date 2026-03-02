@@ -379,7 +379,7 @@ export const mapWorkflowStatusToTrainingStatus: { [key in WorkflowStatus]: Train
   scheduled: TrainingStatus.Submitted,
   processing: TrainingStatus.Processing,
   failed: TrainingStatus.Failed,
-  expired: TrainingStatus.Failed,
+  expired: TrainingStatus.Expired,
   canceled: TrainingStatus.Failed,
   succeeded: TrainingStatus.InReview,
 };
@@ -462,7 +462,12 @@ export async function updateTrainingWorkflowRecords(
   }
 
   if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
-  else if (moderationStatus === 'rejected') trainingStatus = TrainingStatus.Denied;
+  else if (moderationStatus === 'rejected') {
+    // If the workflow expired, the rejection was due to timeout, not a moderator decision
+    if (trainingStatus !== TrainingStatus.Expired) {
+      trainingStatus = TrainingStatus.Denied;
+    }
+  }
 
   const modelFile = await dbWrite.modelFile.findFirst({
     where: { id: modelFileId },

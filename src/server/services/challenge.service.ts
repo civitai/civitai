@@ -6,24 +6,36 @@ import {
   createChallengeWinner,
   getChallengeById,
   getChallengeWinners,
+  resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import {
+  ChallengeParticipation,
   ChallengeSort,
-  type ChallengeCompletionSummary,
+  parseChallengeMetadata,
   type ChallengeDetail,
+  type ChallengeEventListItem,
   type ChallengeListItem,
   type GetInfiniteChallengesInput,
   type GetModeratorChallengesInput,
+  type GetChallengeEventsInput,
   type ImageEligibilityResult,
   type UpcomingTheme,
   type UpsertChallengeInput,
+  type UpsertChallengeEventInput,
   type UpdateChallengeConfigInput,
+  type UpsertJudgeInput,
+  type PlaygroundGenerateContentInput,
+  type PlaygroundReviewImageInput,
+  type PlaygroundPickWinnersInput,
+  type UserChallengeEntriesResult,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
+  ChallengeReviewCostType,
   ChallengeStatus,
+  CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
@@ -35,20 +47,35 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
+  deriveChallengeNsfwLevel,
   getChallengeConfig,
   setChallengeConfig,
   getJudgingConfig,
+  refreshDefaultJudgeCache,
   type JudgingConfig,
+  type ChallengePrompts,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { generateWinners } from '~/server/games/daily-challenge/generative-content';
-import { getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  generateArticle,
+  generateReview,
+  generateThemeElements,
+  generateWinners,
+} from '~/server/games/daily-challenge/generative-content';
+import { reviewTemplateSchema } from '~/server/games/daily-challenge/template-engine';
+import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { AIModel } from '~/server/services/ai/openrouter';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 
@@ -69,50 +96,82 @@ async function getJudgingConfigForChallenge(
   return getJudgingConfig(judgeId, judgingPromptOverride);
 }
 
-// Helper to parse composite cursor (format: "sortValue:id")
+// Helper to parse composite cursor (format: "status:sortValue:id")
 function parseChallengeCursor(
   cursor: string | undefined,
   sort: ChallengeSort
-): { sortValue: string | number | Date; id: number } | null {
+): { status: ChallengeStatus; sortValue: string | number | Date; id: number } | null {
   if (!cursor) return null;
-  const [sortValueStr, idStr] = cursor.split(':');
+  // Split into at most 3 parts: status, sortValue (may contain colons for ISO dates), id
+  const firstColon = cursor.indexOf(':');
+  if (firstColon === -1) return null;
+  const status = cursor.slice(0, firstColon) as ChallengeStatus;
+
+  const rest = cursor.slice(firstColon + 1);
+  const lastColon = rest.lastIndexOf(':');
+  if (lastColon === -1) return null;
+  const sortValueStr = rest.slice(0, lastColon);
+  const idStr = rest.slice(lastColon + 1);
+
   const id = parseInt(idStr, 10);
   if (isNaN(id)) return null;
 
   switch (sort) {
     case ChallengeSort.EndingSoon:
     case ChallengeSort.Newest:
-      return { sortValue: new Date(sortValueStr), id };
+      return { status, sortValue: new Date(sortValueStr), id };
     case ChallengeSort.MostEntries:
     case ChallengeSort.HighestPrize:
-      return { sortValue: parseInt(sortValueStr, 10), id };
+      return { status, sortValue: parseInt(sortValueStr, 10), id };
     default:
-      return { sortValue: sortValueStr, id };
+      return { status, sortValue: sortValueStr, id };
   }
 }
 
-// Helper to build composite cursor
+// Helper to build composite cursor (format: "status:sortValue:id")
 function buildChallengeCursor(
-  item: { id: number; startsAt: Date; endsAt: Date; prizePool: number; entryCount: number },
+  item: {
+    id: number;
+    status: ChallengeStatus;
+    startsAt: Date;
+    endsAt: Date;
+    prizePool: number;
+    entryCount: number;
+  },
   sort: ChallengeSort
 ): string {
   switch (sort) {
     case ChallengeSort.EndingSoon:
-      return `${item.endsAt.toISOString()}:${item.id}`;
+      return `${item.status}:${item.endsAt.toISOString()}:${item.id}`;
     case ChallengeSort.MostEntries:
-      return `${item.entryCount}:${item.id}`;
+      return `${item.status}:${item.entryCount}:${item.id}`;
     case ChallengeSort.HighestPrize:
-      return `${item.prizePool}:${item.id}`;
+      return `${item.status}:${item.prizePool}:${item.id}`;
     case ChallengeSort.Newest:
     default:
-      return `${item.startsAt.toISOString()}:${item.id}`;
+      return `${item.status}:${item.startsAt.toISOString()}:${item.id}`;
   }
 }
 
 // Service functions
-export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
-  const { query, status, source, sort, userId, modelVersionId, includeEnded, limit, cursor } =
-    input;
+export async function getInfiniteChallenges(
+  input: GetInfiniteChallengesInput & { currentUserId?: number }
+) {
+  const {
+    query,
+    status,
+    source,
+    sort,
+    userId,
+    modelVersionId,
+    participation,
+    includeEnded,
+    excludeEventChallenges,
+    browsingLevel,
+    limit,
+    cursor,
+    currentUserId,
+  } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
   const conditions: Prisma.Sql[] = [];
@@ -152,77 +211,140 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     conditions.push(Prisma.sql`${modelVersionId} = ANY(c."modelVersionIds")`);
   }
 
-  // Composite cursor for stable keyset pagination across all sort types
-  const parsedCursor = parseChallengeCursor(cursor, sort);
-  if (parsedCursor) {
-    const { sortValue, id } = parsedCursor;
-    // Keyset pagination: (sortValue > cursor) OR (sortValue = cursor AND id < cursorId)
-    // This ensures stable pagination even when sort values change
-    switch (sort) {
-      case ChallengeSort.EndingSoon:
-        // ORDER BY endsAt ASC, id DESC - so we want endsAt > cursor OR (endsAt = cursor AND id < cursorId)
+  // Exclude challenges that belong to an event (shown in featured section instead)
+  if (excludeEventChallenges) {
+    conditions.push(Prisma.sql`c."eventId" IS NULL`);
+  }
+
+  // Content level filter - only show challenges whose nsfwLevel is within the browsing level
+  if (browsingLevel) {
+    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+  }
+
+  // User participation filter (requires logged-in user)
+  if (participation && currentUserId) {
+    switch (participation) {
+      case ChallengeParticipation.Entered:
         conditions.push(
-          Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${
-            sortValue as Date
-          } AND c.id < ${id}))`
-        );
-        break;
-      case ChallengeSort.MostEntries:
-        // ORDER BY entryCount DESC, id DESC - entryCount < cursor OR (entryCount = cursor AND id < cursorId)
-        // Note: entryCount is a subquery, so we need to use a CTE or HAVING clause
-        // For simplicity, we'll filter by id only for ties and use a subquery for the count comparison
-        conditions.push(
-          Prisma.sql`(
-            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${
-              sortValue as number
-            }
-            OR (
-              (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${
-                sortValue as number
-              }
-              AND c.id < ${id}
-            )
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "CollectionItem" ci
+            WHERE ci."collectionId" = c."collectionId"
+              AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
+              AND ci."addedById" = ${currentUserId}
           )`
         );
         break;
-      case ChallengeSort.HighestPrize:
-        // ORDER BY prizePool DESC, id DESC
+      case ChallengeParticipation.NotEntered:
         conditions.push(
-          Prisma.sql`(c."prizePool" < ${sortValue as number} OR (c."prizePool" = ${
-            sortValue as number
-          } AND c.id < ${id}))`
+          Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "CollectionItem" ci
+            WHERE ci."collectionId" = c."collectionId"
+              AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
+              AND ci."addedById" = ${currentUserId}
+          )`
         );
         break;
-      case ChallengeSort.Newest:
-      default:
-        // ORDER BY startsAt DESC, id DESC
+      case ChallengeParticipation.Won:
         conditions.push(
-          Prisma.sql`(c."startsAt" < ${sortValue as Date} OR (c."startsAt" = ${
-            sortValue as Date
-          } AND c.id < ${id}))`
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "ChallengeWinner" cw
+            WHERE cw."challengeId" = c.id
+              AND cw."userId" = ${currentUserId}
+          )`
         );
         break;
     }
+  }
+
+  // Composite cursor for stable keyset pagination across all sort types
+  // The primary sort dimension is status priority (Active=0 < Scheduled=1 < others=2),
+  // so cursor conditions must account for status group transitions.
+  const parsedCursor = parseChallengeCursor(cursor, sort);
+  if (parsedCursor) {
+    const { status: cursorStatus, sortValue, id } = parsedCursor;
+
+    // Status priority CASE fragments for keyset comparison
+    const statusPriority = Prisma.sql`CASE c.status WHEN 'Active' THEN 0 WHEN 'Scheduled' THEN 1 ELSE 2 END`;
+    const cursorStatusPriority = Prisma.sql`CASE ${cursorStatus}::"ChallengeStatus" WHEN 'Active' THEN 0 WHEN 'Scheduled' THEN 1 ELSE 2 END`;
+
+    let sortKeysetCondition: Prisma.Sql;
+    switch (sort) {
+      case ChallengeSort.EndingSoon:
+        sortKeysetCondition = Prisma.sql`(c."endsAt" > ${sortValue as Date} OR (c."endsAt" = ${
+          sortValue as Date
+        } AND c.id < ${id}))`;
+        break;
+      case ChallengeSort.MostEntries:
+        sortKeysetCondition = Prisma.sql`(
+          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') < ${
+            sortValue as number
+          }
+          OR (
+            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') = ${
+              sortValue as number
+            }
+            AND c.id < ${id}
+          )
+        )`;
+        break;
+      case ChallengeSort.HighestPrize:
+        sortKeysetCondition = Prisma.sql`(c."prizePool" < ${
+          sortValue as number
+        } OR (c."prizePool" = ${sortValue as number} AND c.id < ${id}))`;
+        break;
+      case ChallengeSort.Newest:
+      default:
+        // Scheduled challenges sort soonest-first (ASC), others sort newest-first (DESC)
+        if (cursorStatus === 'Scheduled') {
+          sortKeysetCondition = Prisma.sql`(c."startsAt" > ${
+            sortValue as Date
+          } OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        } else {
+          sortKeysetCondition = Prisma.sql`(c."startsAt" < ${
+            sortValue as Date
+          } OR (c."startsAt" = ${sortValue as Date} AND c.id < ${id}))`;
+        }
+        break;
+    }
+
+    // Combined keyset: status priority changed OR (same status group AND existing sort logic)
+    conditions.push(
+      Prisma.sql`(
+        ${statusPriority} > ${cursorStatusPriority}
+        OR (
+          c.status = ${cursorStatus}::"ChallengeStatus"
+          AND ${sortKeysetCondition}
+        )
+      )`
+    );
   }
 
   const whereClause =
     conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
   // Build ORDER BY (safe - not user input)
+  // Primary sort: status priority (Active before Scheduled before others)
+  const statusOrderPrefix = Prisma.sql`CASE c.status WHEN 'Active' THEN 0 WHEN 'Scheduled' THEN 1 ELSE 2 END ASC`;
   let orderByClause: Prisma.Sql;
   switch (sort) {
     case ChallengeSort.EndingSoon:
-      orderByClause = Prisma.sql`c."endsAt" ASC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, c."endsAt" ASC, c.id DESC`;
       break;
     case ChallengeSort.MostEntries:
-      orderByClause = Prisma.sql`"entryCount" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, "entryCount" DESC, c.id DESC`;
       break;
     case ChallengeSort.HighestPrize:
-      orderByClause = Prisma.sql`c."prizePool" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`${statusOrderPrefix}, c."prizePool" DESC, c.id DESC`;
       break;
     case ChallengeSort.Newest:
     default:
-      orderByClause = Prisma.sql`c."startsAt" DESC, c.id DESC`;
+      // Scheduled challenges sort soonest-first (ASC), others sort newest-first (DESC)
+      orderByClause = Prisma.sql`${statusOrderPrefix},
+        CASE WHEN c.status = 'Scheduled'
+          THEN EXTRACT(EPOCH FROM c."startsAt")
+          ELSE -EXTRACT(EPOCH FROM c."startsAt")
+        END ASC,
+        c.id DESC`;
       break;
   }
 
@@ -240,9 +362,12 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
+      commentCount: bigint;
       modelVersionIds: number[] | null;
       modelId: number | null;
       modelName: string | null;
+      nsfwLevel: number;
+      allowedNsfwLevel: number;
       collectionId: number | null;
       createdById: number;
       creatorUsername: string | null;
@@ -266,6 +391,9 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.source,
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
+      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      c."nsfwLevel",
+      c."allowedNsfwLevel",
       c."modelVersionIds",
       (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
       (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
@@ -329,8 +457,11 @@ export async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       status: item.status,
       source: item.source,
       prizePool: item.prizePool,
+      nsfwLevel: item.nsfwLevel,
+      allowedNsfwLevel: item.allowedNsfwLevel,
       collectionId: item.collectionId,
       entryCount: Number(item.entryCount),
+      commentCount: Number(item.commentCount),
       coverImage: coverImage
         ? {
             id: coverImage.id,
@@ -367,6 +498,8 @@ export async function getChallengeDetail(
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
+  const eventId = challenge.eventId;
+
   // Visibility check: only show challenges that are visible to the public
   // unless bypassVisibility is true (for moderators)
   if (!bypassVisibility) {
@@ -392,6 +525,13 @@ export async function getChallengeDetail(
     entryCount = Number(countResult.count);
   }
 
+  // Get comment count from the challenge's thread
+  const commentThread = await dbRead.thread.findUnique({
+    where: { challengeId: id },
+    select: { commentCount: true },
+  });
+  const commentCount = commentThread?.commentCount ?? 0;
+
   // Get creator info with profile picture and cosmetics
   const [creator] = await dbRead.$queryRaw<
     [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
@@ -415,6 +555,7 @@ export async function getChallengeDetail(
       select: {
         id: true,
         name: true,
+        baseModel: true,
         model: { select: { id: true, name: true } },
       },
     });
@@ -429,6 +570,7 @@ export async function getChallengeDetail(
         name: v.model.name,
         versionId: v.id,
         versionName: v.name,
+        baseModel: v.baseModel,
         image: img
           ? {
               id: img.id,
@@ -523,10 +665,13 @@ export async function getChallengeDetail(
     displayCosmetics = cosmetics;
   }
 
-  // Extract completion summary from metadata
-  const metadata = challenge.metadata as Record<string, unknown> | null;
-  const completionSummary =
-    (metadata?.completionSummary as ChallengeCompletionSummary | undefined) ?? null;
+  // Extract structured fields from metadata
+  const metadata = parseChallengeMetadata(challenge.metadata);
+  const completionSummary = metadata.completionSummary ?? null;
+  const themeElements = metadata.themeElements ?? null;
+
+  // Get challenge config for judgedTagId
+  const challengeConfig = await getChallengeConfig();
 
   return {
     id: challenge.id,
@@ -550,6 +695,7 @@ export async function getChallengeDetail(
     visibleAt: challenge.visibleAt,
     status: challenge.status,
     source: challenge.source,
+    eventId,
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
     modelVersionIds: challenge.modelVersionIds,
@@ -562,8 +708,17 @@ export async function getChallengeDetail(
     entryPrize: challenge.entryPrize,
     entryPrizeRequirement: challenge.entryPrizeRequirement,
     prizePool: challenge.prizePool,
+    prizeMode: challenge.prizeMode,
+    basePrizePool: challenge.basePrizePool,
+    buzzPerAction: challenge.buzzPerAction,
+    poolTrigger: challenge.poolTrigger,
+    maxPrizePool: challenge.maxPrizePool,
+    prizeDistribution: challenge.prizeDistribution,
     operationBudget: challenge.operationBudget,
+    reviewCostType: challenge.reviewCostType,
+    reviewCost: challenge.reviewCost,
     entryCount,
+    commentCount,
     createdBy: {
       ...displayUser,
       profilePicture: displayProfilePics[displayUserId] ?? null,
@@ -571,7 +726,9 @@ export async function getChallengeDetail(
     },
     judge,
     winners,
+    themeElements,
     completionSummary,
+    judgedTagId: challengeConfig.judgedTagId ?? null,
   };
 }
 
@@ -649,6 +806,8 @@ export async function getModeratorChallenges(input: GetModeratorChallengesInput)
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
+      reviewCostType: ChallengeReviewCostType;
+      reviewCost: number;
       collectionId: number;
       createdById: number;
       creatorUsername: string | null;
@@ -664,6 +823,8 @@ export async function getModeratorChallenges(input: GetModeratorChallengesInput)
       c.status,
       c.source,
       c."prizePool",
+      c."reviewCostType",
+      c."reviewCost",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       c."collectionId",
       c."createdById",
@@ -694,7 +855,7 @@ export async function upsertChallenge({
   userId,
   ...input
 }: UpsertChallengeInput & { userId: number }) {
-  const { id, coverImage, judgeId, ...data } = input;
+  const { id, coverImage, judgeId, eventId, themeElements: inputThemeElements, ...data } = input;
 
   // Defense-in-depth: validate endsAt > startsAt (also validated by Zod schema)
   if (data.endsAt <= data.startsAt) {
@@ -715,6 +876,18 @@ export async function upsertChallenge({
     coverImageId = result.id;
   }
 
+  // Helper: resolve judging config and generate theme elements.
+  async function tryGenerateThemeElements(theme: string): Promise<string[] | undefined> {
+    const challengeConfig = await getChallengeConfig();
+    const resolvedJudgeId = judgeId ?? challengeConfig.defaultJudgeId;
+    if (!resolvedJudgeId) return undefined;
+
+    const judgingConfig = await getJudgingConfig(resolvedJudgeId);
+    const elements = await generateThemeElements({ theme, config: judgingConfig });
+
+    return elements.length ? elements : undefined;
+  }
+
   if (id) {
     // Update existing challenge
     const challenge = await dbRead.challenge.findUnique({
@@ -729,6 +902,12 @@ export async function upsertChallenge({
         source: true,
         maxEntriesPerUser: true,
         entryPrizeRequirement: true,
+        prizeMode: true,
+        basePrizePool: true,
+        buzzPerAction: true,
+        poolTrigger: true,
+        maxPrizePool: true,
+        prizeDistribution: true,
       },
     });
     if (!challenge) throw throwNotFoundError('Challenge not found');
@@ -753,6 +932,12 @@ export async function upsertChallenge({
       data.source = challenge.source as typeof data.source;
       data.maxEntriesPerUser = challenge.maxEntriesPerUser;
       data.entryPrizeRequirement = challenge.entryPrizeRequirement;
+      data.prizeMode = challenge.prizeMode as typeof data.prizeMode;
+      data.basePrizePool = challenge.basePrizePool;
+      data.buzzPerAction = challenge.buzzPerAction;
+      data.poolTrigger = challenge.poolTrigger as typeof data.poolTrigger;
+      data.maxPrizePool = challenge.maxPrizePool;
+      data.prizeDistribution = challenge.prizeDistribution as typeof data.prizeDistribution;
 
       // Validate endsAt > now() for Active challenges (can't set end date to the past)
       if (data.endsAt <= new Date()) {
@@ -763,6 +948,18 @@ export async function upsertChallenge({
       }
     }
 
+    // Resolve theme elements: use provided ones, keep existing, or auto-generate
+    const existingMetadata = parseChallengeMetadata(challenge.metadata);
+    const existingThemeElements = existingMetadata.themeElements;
+    let themeElements: string[] | undefined;
+    if (inputThemeElements?.length) {
+      // Explicitly provided by the form — use as-is
+      themeElements = inputThemeElements;
+    } else if (data.theme && !existingThemeElements?.length) {
+      // No existing elements and none provided — auto-generate
+      themeElements = await tryGenerateThemeElements(data.theme);
+    }
+
     // Use transaction to update both challenge and collection metadata atomically
     const updatedChallenge = await dbWrite.$transaction(async (tx) => {
       // Update the challenge
@@ -770,11 +967,19 @@ export async function upsertChallenge({
         where: { id },
         data: {
           ...data,
+          nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
           coverImageId,
           judgeId: judgeId ?? null,
+          eventId: eventId ?? null,
           modelVersionIds: data.modelVersionIds ?? [],
           prizes: data.prizes,
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
+          prizeDistribution: data.prizeDistribution
+            ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+          ...(themeElements && {
+            metadata: { ...existingMetadata, themeElements },
+          }),
         },
       });
 
@@ -808,6 +1013,13 @@ export async function upsertChallenge({
     // Auto-activate if startsAt is in the past or now
     const status = data.startsAt <= new Date() ? ChallengeStatus.Active : data.status;
 
+    // Resolve theme elements: use provided ones or auto-generate
+    const newThemeElements = inputThemeElements?.length
+      ? inputThemeElements
+      : data.theme
+      ? await tryGenerateThemeElements(data.theme)
+      : undefined;
+
     // Create new challenge with a Contest Collection for entries
     const challenge = await dbWrite.$transaction(async (tx) => {
       // First create the collection with proper Contest Mode settings
@@ -837,8 +1049,10 @@ export async function upsertChallenge({
         data: {
           ...data,
           status,
+          nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
           coverImageId,
           judgeId: judgeId ?? null,
+          eventId: eventId ?? null,
           collectionId: collection.id,
           createdById: userId,
           modelVersionIds: data.modelVersionIds ?? [],
@@ -846,6 +1060,10 @@ export async function upsertChallenge({
           entryPrizeRequirement: data.entryPrizeRequirement ?? 10,
           prizes: data.prizes,
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
+          prizeDistribution: data.prizeDistribution
+            ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+          ...(newThemeElements && { metadata: { themeElements: newThemeElements } }),
         },
       });
     });
@@ -923,6 +1141,166 @@ export async function getUserEntryCount(challengeId: number, userId: number) {
   return { count };
 }
 
+// =============================================================================
+// Paid Review
+// =============================================================================
+
+/**
+ * Pay Buzz to guarantee entries get reviewed by the AI judge.
+ * Tags entries with reviewMeTagId so the next job run picks them up.
+ */
+export async function requestReview(
+  challengeId: number,
+  imageIds: number[] | undefined,
+  userId: number
+) {
+  // 1. Get challenge with reviewCostType + reviewCost
+  const challenge = await getChallengeById(challengeId);
+  if (!challenge) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+  if (challenge.status !== ChallengeStatus.Active) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Challenge is not active',
+    });
+  }
+  const isFlat = challenge.reviewCostType === ChallengeReviewCostType.Flat;
+  if (challenge.reviewCostType === ChallengeReviewCostType.None || challenge.reviewCost <= 0) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Paid review is not available for this challenge',
+    });
+  }
+  if (!challenge.collectionId) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Challenge has no collection',
+    });
+  }
+
+  // 2. Find eligible entries (not already queued/judged)
+  const config = await getChallengeConfig();
+  const eligibleEntries = await dbRead.$queryRaw<{ imageId: number }[]>`
+    SELECT ci."imageId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${challenge.collectionId}
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
+      AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
+      AND i."userId" = ${userId}
+      ${
+        imageIds?.length
+          ? Prisma.sql`AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])`
+          : Prisma.empty
+      }
+  `;
+
+  if (!isFlat && imageIds?.length && eligibleEntries.length !== imageIds.length) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Some entries are not eligible for review (already judged, queued, or not yours)',
+    });
+  }
+
+  // 3. Charge buzz
+  const eligibleImageIds = eligibleEntries.map((e) => e.imageId);
+  let totalCost: number;
+
+  if (isFlat) {
+    // Flat rate: single transaction for all entries (covers future entries too)
+    totalCost = challenge.reviewCost;
+    await createBuzzTransaction({
+      fromAccountId: userId,
+      toAccountId: 0,
+      type: TransactionType.Purchase,
+      amount: totalCost,
+      description: `Challenge review: all entries (flat rate)`,
+      externalTransactionId: `challenge-review-flat-${challengeId}-${userId}`,
+    });
+  } else {
+    if (eligibleEntries.length === 0) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'No eligible entries to review',
+      });
+    }
+    // Per-entry: individual transactions for refund tracking
+    totalCost = challenge.reviewCost * eligibleEntries.length;
+    await createBuzzTransactionMany(
+      eligibleEntries.map((e) => ({
+        fromAccountId: userId,
+        toAccountId: 0,
+        type: TransactionType.Purchase,
+        amount: challenge.reviewCost,
+        description: `Challenge review: entry ${e.imageId}`,
+        externalTransactionId: `challenge-review-${challengeId}-${e.imageId}`,
+      }))
+    );
+  }
+
+  // 4. Tag eligible entries with reviewMeTagId and store note for tracking
+  if (eligibleImageIds.length > 0) {
+    const notePrefix = isFlat ? 'challenge-review-flat' : 'challenge-review';
+    await dbWrite.$executeRaw`
+      UPDATE "CollectionItem"
+      SET "tagId" = ${config.reviewMeTagId},
+          "note" = ${notePrefix} || '-' || ${String(challengeId)} || '-' || "imageId"
+      WHERE "collectionId" = ${challenge.collectionId}
+        AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
+    `;
+  }
+
+  return { queued: eligibleEntries.length, totalCost };
+}
+
+/**
+ * Get user's entries that haven't been judged or queued for review yet.
+ */
+export async function getUserUnjudgedEntries(
+  challengeId: number,
+  userId: number
+): Promise<UserChallengeEntriesResult> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { collectionId: true, reviewCostType: true, reviewCost: true },
+  });
+
+  if (!challenge?.collectionId) return { entries: [], hasFlatRatePurchase: false };
+
+  const config = await getChallengeConfig();
+  const entries = await dbRead.$queryRaw<{ imageId: number; url: string; tagId: number | null }[]>`
+    SELECT ci."imageId", i.url, ci."tagId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${challenge.collectionId}
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
+      AND i."userId" = ${userId}
+    ORDER BY ci."createdAt" DESC
+  `;
+
+  // Check if user has already purchased flat rate review
+  let hasFlatRatePurchase = false;
+  if (challenge.reviewCostType === ChallengeReviewCostType.Flat) {
+    const txId = `challenge-review-flat-${challengeId}-${userId}`;
+    const tx = await getTransactionByExternalId(txId);
+    hasFlatRatePurchase = !!tx;
+  }
+
+  return {
+    entries: entries.map((e) => ({
+      ...e,
+      reviewStatus:
+        e.tagId === config.judgedTagId
+          ? ('reviewed' as const)
+          : e.tagId === config.reviewMeTagId
+          ? ('queued' as const)
+          : ('pending' as const),
+    })),
+    hasFlatRatePurchase,
+  };
+}
+
 const log = createLogger('challenge-service', 'blue');
 
 /**
@@ -975,7 +1353,10 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
   }
 
-  const judgedEntries = await getJudgedEntries(challenge.collectionId, config);
+  // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
+  const eventContext = await resolveEventContext(challenge.eventId);
+
+  const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
   if (!judgedEntries.length) {
     // No judged entries, just mark as completed
     await dbWrite.challenge.update({
@@ -1118,7 +1499,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
   }
 
   // Update challenge status to Completed and store completion summary
-  const existingMetadata = typeof challenge.metadata === 'object' ? challenge.metadata : {};
+  const existingMetadata = parseChallengeMetadata(challenge.metadata);
   await dbWrite.challenge.update({
     where: { id: challengeId },
     data: {
@@ -1307,4 +1688,464 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 
   await setChallengeConfig({ defaultJudgeId: input.defaultJudgeId });
   return getChallengeSystemConfig();
+}
+
+// --- Challenge Events ---
+
+/**
+ * Get active challenge events with their challenges.
+ * Returns events where active=true and endDate >= now, ordered by startDate.
+ */
+export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
+  const events = await dbRead.challengeEvent.findMany({
+    where: {
+      active: true,
+      endDate: { gte: new Date() },
+    },
+    orderBy: { startDate: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      titleColor: true,
+      startDate: true,
+      endDate: true,
+      challenges: {
+        where: {
+          visibleAt: { lte: new Date() },
+          status: { not: ChallengeStatus.Cancelled },
+        },
+        orderBy: { startsAt: 'asc' },
+        select: {
+          id: true,
+          title: true,
+          theme: true,
+          invitation: true,
+          coverImageId: true,
+          startsAt: true,
+          endsAt: true,
+          status: true,
+          source: true,
+          nsfwLevel: true,
+          allowedNsfwLevel: true,
+          prizePool: true,
+          modelVersionIds: true,
+          collectionId: true,
+          createdById: true,
+          judgeId: true,
+        },
+      },
+    },
+  });
+
+  // Batch-enrich all challenges across all events
+  const allChallenges = events.flatMap((e) => e.challenges);
+  if (allChallenges.length === 0) {
+    return events.map((e) => ({ ...e, challenges: [] }));
+  }
+
+  // Get judge user IDs for challenges that have judges
+  const judgeIds = [...new Set(allChallenges.map((c) => c.judgeId).filter(isDefined))];
+  const judgeUserMap = new Map<number, number>();
+  if (judgeIds.length > 0) {
+    const judges = await dbRead.challengeJudge.findMany({
+      where: { id: { in: judgeIds } },
+      select: { id: true, userId: true },
+    });
+    for (const j of judges) judgeUserMap.set(j.id, j.userId);
+  }
+
+  // Collect all display user IDs (judge user or creator)
+  const displayUserIds = [
+    ...new Set(
+      allChallenges.map((c) => (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById)
+    ),
+  ];
+
+  // Batch-fetch users, profile pictures, cosmetics, cover images, entry counts
+  const [users, profilePictures, cosmetics] = await Promise.all([
+    dbRead.user
+      .findMany({
+        where: { id: { in: displayUserIds } },
+        select: { id: true, username: true, image: true, deletedAt: true },
+      })
+      .then((u) => new Map(u.map((x) => [x.id, x]))),
+    getProfilePicturesForUsers(displayUserIds),
+    getCosmeticsForUsers(displayUserIds),
+  ]);
+
+  const coverImageIds = allChallenges.map((c) => c.coverImageId).filter(isDefined);
+  const coverImages =
+    coverImageIds.length > 0
+      ? await dbRead.image
+          .findMany({ where: { id: { in: coverImageIds } }, select: imageSelect })
+          .then((imgs) => new Map(imgs.map((img) => [img.id, img])))
+      : new Map();
+
+  // Get entry counts for all challenges
+  const collectionIds = allChallenges.map((c) => c.collectionId).filter(isDefined);
+  const entryCounts = new Map<number, number>();
+  if (collectionIds.length > 0) {
+    const counts = await dbRead.$queryRaw<
+      Array<{ collectionId: number; count: bigint }>
+    >`SELECT "collectionId", COUNT(*) as count FROM "CollectionItem" WHERE "collectionId" IN (${Prisma.join(
+      collectionIds
+    )}) AND status = 'ACCEPTED' GROUP BY "collectionId"`;
+    for (const row of counts) entryCounts.set(row.collectionId, Number(row.count));
+  }
+
+  // Get comment counts for all challenges
+  const allChallengeIds = allChallenges.map((c) => c.id);
+  const commentCounts = new Map<number, number>();
+  if (allChallengeIds.length > 0) {
+    const counts = await dbRead.$queryRaw<
+      Array<{ challengeId: number; commentCount: number }>
+    >`SELECT "challengeId", "commentCount" FROM "Thread" WHERE "challengeId" IN (${Prisma.join(
+      allChallengeIds
+    )})`;
+    for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
+  }
+
+  return events.map((event) => ({
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    titleColor: event.titleColor,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    challenges: event.challenges.map((c) => {
+      const displayUserId = (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById;
+      const user = users.get(displayUserId);
+      const coverImage = c.coverImageId ? coverImages.get(c.coverImageId) : null;
+
+      return {
+        id: c.id,
+        title: c.title,
+        theme: c.theme,
+        invitation: c.invitation,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        status: c.status,
+        source: c.source,
+        nsfwLevel: c.nsfwLevel,
+        allowedNsfwLevel: c.allowedNsfwLevel,
+        prizePool: c.prizePool,
+        collectionId: c.collectionId,
+        entryCount: c.collectionId ? entryCounts.get(c.collectionId) ?? 0 : 0,
+        commentCount: commentCounts.get(c.id) ?? 0,
+        coverImage: coverImage
+          ? {
+              id: coverImage.id,
+              url: coverImage.url,
+              nsfwLevel: coverImage.nsfwLevel,
+              hash: coverImage.hash,
+              width: coverImage.width,
+              height: coverImage.height,
+              type: coverImage.type,
+            }
+          : null,
+        modelVersionIds: c.modelVersionIds ?? [],
+        createdBy: {
+          id: displayUserId,
+          username: user?.username ?? null,
+          image: user?.image ?? null,
+          profilePicture: profilePictures[displayUserId] ?? null,
+          cosmetics: cosmetics[displayUserId] ?? null,
+          deletedAt: user?.deletedAt ?? null,
+        },
+      };
+    }),
+  }));
+}
+
+/**
+ * Get all challenge events (for moderator management).
+ */
+export async function getChallengeEvents(input: GetChallengeEventsInput) {
+  const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
+  return dbRead.challengeEvent.findMany({
+    where,
+    orderBy: { startDate: 'desc' },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      titleColor: true,
+      startDate: true,
+      endDate: true,
+      active: true,
+      winnerCooldownDays: true,
+      createdAt: true,
+      _count: { select: { challenges: true } },
+    },
+  });
+}
+
+/**
+ * Create or update a challenge event.
+ */
+export async function upsertChallengeEvent({
+  userId,
+  ...input
+}: UpsertChallengeEventInput & { userId: number }) {
+  const { id, ...data } = input;
+
+  if (data.endDate <= data.startDate) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'End date must be after start date',
+    });
+  }
+
+  return dbWrite.$transaction(async (tx) => {
+    if (id) {
+      return tx.challengeEvent.update({
+        where: { id },
+        data,
+      });
+    }
+
+    return tx.challengeEvent.create({
+      data: {
+        ...data,
+        createdById: userId,
+      },
+    });
+  });
+}
+
+/**
+ * Delete a challenge event.
+ * The FK on Challenge.eventId is defined with onDelete: SetNull,
+ * so linked challenges are automatically unlinked by the DB.
+ */
+export async function deleteChallengeEvent(id: number) {
+  await dbWrite.challengeEvent.delete({ where: { id } });
+  return { success: true };
+}
+
+// --- Judge Playground ---
+
+/**
+ * Get a single judge by ID with all prompt fields.
+ */
+export async function getJudgeById(id: number) {
+  const judge = await dbRead.challengeJudge.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      bio: true,
+      active: true,
+      sourceCollectionId: true,
+      systemPrompt: true,
+      collectionPrompt: true,
+      contentPrompt: true,
+      reviewPrompt: true,
+      reviewTemplate: true,
+      winnerSelectionPrompt: true,
+    },
+  });
+  if (!judge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Judge not found' });
+  return judge;
+}
+
+/**
+ * Create or update a ChallengeJudge.
+ * If the saved judge is the current default, refresh the cached config in Redis.
+ */
+export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) {
+  const { id, userId, ...data } = input;
+
+  // Validate reviewTemplate JSON if provided
+  if (data.reviewTemplate) {
+    try {
+      const parsed = JSON.parse(data.reviewTemplate);
+      reviewTemplateSchema.parse(parsed);
+    } catch (e) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Invalid review template: ${e instanceof Error ? e.message : 'Invalid JSON'}`,
+      });
+    }
+  }
+
+  const judge = await dbWrite.challengeJudge.upsert({
+    where: { id: id ?? -1 },
+    create: {
+      userId,
+      name: data.name,
+      bio: data.bio ?? null,
+      sourceCollectionId: data.sourceCollectionId ?? null,
+      systemPrompt: data.systemPrompt ?? null,
+      collectionPrompt: data.collectionPrompt ?? null,
+      contentPrompt: data.contentPrompt ?? null,
+      reviewPrompt: data.reviewPrompt ?? null,
+      reviewTemplate: data.reviewTemplate ?? null,
+      winnerSelectionPrompt: data.winnerSelectionPrompt ?? null,
+      active: data.active ?? true,
+    },
+    update: {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.bio !== undefined && { bio: data.bio }),
+      ...(data.sourceCollectionId !== undefined && {
+        sourceCollectionId: data.sourceCollectionId,
+      }),
+      ...(data.systemPrompt !== undefined && { systemPrompt: data.systemPrompt }),
+      ...(data.collectionPrompt !== undefined && { collectionPrompt: data.collectionPrompt }),
+      ...(data.contentPrompt !== undefined && { contentPrompt: data.contentPrompt }),
+      ...(data.reviewPrompt !== undefined && { reviewPrompt: data.reviewPrompt }),
+      ...(data.reviewTemplate !== undefined && { reviewTemplate: data.reviewTemplate }),
+      ...(data.winnerSelectionPrompt !== undefined && {
+        winnerSelectionPrompt: data.winnerSelectionPrompt,
+      }),
+      ...(data.active !== undefined && { active: data.active }),
+    },
+  });
+
+  // Refresh Redis cache if this judge is the current default
+  const config = await getChallengeConfig();
+  if (config.defaultJudgeId === judge.id) {
+    await refreshDefaultJudgeCache();
+  }
+
+  return judge;
+}
+
+/**
+ * Apply prompt overrides to a JudgingConfig, returning a new config.
+ */
+function applyPromptOverrides(
+  config: JudgingConfig,
+  overrides?: Partial<ChallengePrompts>
+): JudgingConfig {
+  if (!overrides) return config;
+  return {
+    ...config,
+    prompts: {
+      ...config.prompts,
+      ...(overrides.systemMessage !== undefined && { systemMessage: overrides.systemMessage }),
+      ...(overrides.collection !== undefined && { collection: overrides.collection }),
+      ...(overrides.content !== undefined && { content: overrides.content }),
+      ...(overrides.review !== undefined && { review: overrides.review }),
+      ...(overrides.winner !== undefined && { winner: overrides.winner }),
+    },
+  };
+}
+
+/**
+ * Playground: Generate challenge content for a model version.
+ */
+export async function playgroundGenerateContent(input: PlaygroundGenerateContentInput) {
+  // Get judge config
+  const config = await getChallengeConfig();
+  const judgeId = input.judgeId ?? config.defaultJudgeId ?? 1;
+  let judgingConfig = await getJudgingConfig(judgeId);
+
+  // Apply prompt overrides
+  judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
+
+  // Get model version info
+  const modelVersion = await dbRead.modelVersion.findUnique({
+    where: { id: input.modelVersionId },
+    select: {
+      id: true,
+      model: { select: { id: true, name: true, user: { select: { username: true } } } },
+    },
+  });
+  if (!modelVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'Model version not found' });
+
+  const coverImage = await getCoverOfModel(modelVersion.model.id);
+
+  const result = await generateArticle({
+    resource: {
+      modelId: modelVersion.model.id,
+      title: modelVersion.model.name,
+      creator: modelVersion.model.user.username ?? 'Unknown',
+    },
+    image: coverImage,
+    challengeDate: new Date(),
+    prizes: config.prizes,
+    entryPrizeRequirement: config.entryPrizeRequirement,
+    entryPrize: config.entryPrize,
+    allowedNsfwLevel: 1,
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+  });
+
+  return result;
+}
+
+/**
+ * Playground: Review an image with a judge.
+ */
+export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
+  const config = await getChallengeConfig();
+  const judgeId = input.judgeId ?? config.defaultJudgeId ?? 1;
+  let judgingConfig = await getJudgingConfig(judgeId);
+
+  judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
+
+  // Apply reviewTemplate override from playground draft
+  if (input.reviewTemplate != null) {
+    judgingConfig = { ...judgingConfig, reviewTemplate: input.reviewTemplate || null };
+  }
+
+  // Resolve imageId to an image URL
+  const image = await dbRead.image.findUnique({
+    where: { id: input.imageId },
+    select: { url: true, user: { select: { username: true } } },
+  });
+  if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+  const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image', optimized: true });
+
+  const result = await generateReview({
+    theme: input.theme,
+    themeElements: input.themeElements,
+    creator: input.creator ?? image.user?.username ?? 'Unknown',
+    imageUrl,
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+  });
+
+  return result;
+}
+
+/**
+ * Playground: Pick winners from a challenge's judged entries.
+ */
+export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
+  const challengeConfig = await getChallengeConfig();
+  const judgeId = input.judgeId ?? challengeConfig.defaultJudgeId ?? 1;
+  let judgingConfig = await getJudgingConfig(judgeId);
+
+  judgingConfig = applyPromptOverrides(judgingConfig, input.promptOverrides);
+
+  const challenge = await getChallengeById(input.challengeId);
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  if (!challenge.collectionId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no collection' });
+
+  const entries = await getJudgedEntries(challenge.collectionId, challengeConfig);
+  if (entries.length < 3)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Need at least 3 judged entries, found ${entries.length}`,
+    });
+
+  const result = await generateWinners({
+    entries: entries.map((e) => ({
+      creatorId: e.userId,
+      creator: e.username,
+      summary: e.summary,
+      score: e.score,
+    })),
+    theme: challenge.theme ?? 'Unknown',
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+  });
+
+  return result;
 }

@@ -8,7 +8,8 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { generationFormStore, generationPanel } from '~/store/generation.store';
+import { generationFormStore } from '~/store/generation-form.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { formatDate, isFutureDate, startOfDay } from '~/utils/date-helpers';
 
 export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
@@ -76,13 +77,12 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
 function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClose: () => void }) {
   function handleAccept() {
     if (props.resources.length) {
-      generationPanel.open({
+      generationGraphPanel.open({
         type: 'modelVersions',
         ids: props.resources,
       });
-    } else {
-      generationPanel.open();
     }
+    else generationGraphPanel.open();
 
     generationFormStore.setType('image');
 

@@ -195,24 +195,6 @@ export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
 }
 
-type CivitaiAir = {
-  source: 'civitai';
-  version: number;
-  model: number;
-};
-
-type OrchestratorAir = {
-  source: 'orchestrator';
-  jobId: string;
-  fileName: string;
-};
-
-type AIR = {
-  ecosystem: string;
-  type: string;
-  format?: string | undefined;
-} & (CivitaiAir | OrchestratorAir);
-
 export function parseAIR(identifier: string) {
   const { id, version, ...value } = Air.parse(identifier);
   return { ...value, model: Number(id), version: Number(version) };

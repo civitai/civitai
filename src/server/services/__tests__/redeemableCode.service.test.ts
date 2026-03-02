@@ -1,68 +1,72 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
-import type { SubscriptionMetadata, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type {
+  SubscriptionMetadata,
+  SubscriptionProductMetadata,
+} from '~/server/schema/subscriptions.schema';
 
 dayjs.extend(utc);
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
-const { mockDbWrite, mockDbRead, mockCreateBuzzTransaction, mockDeliverMonthlyCosmetics } = vi.hoisted(() => {
-  const mockRedeemableCode = {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-    createMany: vi.fn(),
-    delete: vi.fn(),
-  };
+const { mockDbWrite, mockDbRead, mockCreateBuzzTransaction, mockDeliverMonthlyCosmetics } =
+  vi.hoisted(() => {
+    const mockRedeemableCode = {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      createMany: vi.fn(),
+      delete: vi.fn(),
+    };
 
-  const mockCustomerSubscription = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    updateManyAndReturn: vi.fn(),
-  };
+    const mockCustomerSubscription = {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      updateManyAndReturn: vi.fn(),
+    };
 
-  const mockPrice = {
-    findUnique: vi.fn(),
-  };
+    const mockPrice = {
+      findUnique: vi.fn(),
+    };
 
-  const mockProduct = {
-    findMany: vi.fn(),
-  };
+    const mockProduct = {
+      findMany: vi.fn(),
+    };
 
-  const mockKeyValue = {
-    findUnique: vi.fn(),
-  };
+    const mockKeyValue = {
+      findUnique: vi.fn(),
+    };
 
-  return {
-    mockDbWrite: {
-      redeemableCode: mockRedeemableCode,
-      customerSubscription: mockCustomerSubscription,
-      price: mockPrice,
-      product: mockProduct,
-      keyValue: mockKeyValue,
-      $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
-        return callback({
-          redeemableCode: mockRedeemableCode,
-          customerSubscription: mockCustomerSubscription,
-          price: mockPrice,
-          product: mockProduct,
-          keyValue: mockKeyValue,
-        });
-      }),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-    mockDbRead: {
-      keyValue: {
-        findUnique: vi.fn(),
+    return {
+      mockDbWrite: {
+        redeemableCode: mockRedeemableCode,
+        customerSubscription: mockCustomerSubscription,
+        price: mockPrice,
+        product: mockProduct,
+        keyValue: mockKeyValue,
+        $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
+          return callback({
+            redeemableCode: mockRedeemableCode,
+            customerSubscription: mockCustomerSubscription,
+            price: mockPrice,
+            product: mockProduct,
+            keyValue: mockKeyValue,
+          });
+        }),
+        $queryRaw: vi.fn(),
+        $executeRaw: vi.fn(),
       },
-    },
-    mockCreateBuzzTransaction: vi.fn().mockResolvedValue({ success: true }),
-    mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
-  };
-});
+      mockDbRead: {
+        keyValue: {
+          findUnique: vi.fn(),
+        },
+      },
+      mockCreateBuzzTransaction: vi.fn().mockResolvedValue({ success: true }),
+      mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
+    };
+  });
 
 // Mock modules
 vi.mock('~/env/server', () => ({
@@ -184,7 +188,9 @@ const createMockRedeemableCode = (
   priceId: 'price_test_123',
   price: createMockPrice({
     interval: 'month',
-    product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+    product: createMockProduct({
+      metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+    }),
   }),
   redeemedAt: null,
   expiresAt: null,
@@ -192,9 +198,7 @@ const createMockRedeemableCode = (
   ...overrides,
 });
 
-const createMockSubscription = (
-  overrides: Partial<MockSubscription> = {}
-): MockSubscription => ({
+const createMockSubscription = (overrides: Partial<MockSubscription> = {}): MockSubscription => ({
   id: 'sub_test_123',
   userId: 1,
   productId: 'prod_test_123',
@@ -367,7 +371,9 @@ describe('redeemableCode.service', () => {
       it('should grant immediate buzz based on product monthlyBuzz', async () => {
         const mockCode = createMockRedeemableCode({
           price: createMockPrice({
-            product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+            product: createMockProduct({
+              metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+            }),
           }),
         });
 
@@ -429,12 +435,16 @@ describe('redeemableCode.service', () => {
           unitValue: 3,
           price: createMockPrice({
             interval: 'month',
-            product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+            product: createMockProduct({
+              metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+            }),
           }),
         });
 
         const existingSub = createMockSubscription({
-          product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+          product: createMockProduct({
+            metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+          }),
           metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
         });
 
@@ -463,12 +473,16 @@ describe('redeemableCode.service', () => {
           unitValue: 3,
           price: createMockPrice({
             interval: 'month',
-            product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+            product: createMockProduct({
+              metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+            }),
           }),
         });
 
         const existingSub = createMockSubscription({
-          product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+          product: createMockProduct({
+            metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+          }),
           metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
         });
 
@@ -503,13 +517,17 @@ describe('redeemableCode.service', () => {
           unitValue: 2,
           price: createMockPrice({
             interval: 'month',
-            product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+            product: createMockProduct({
+              metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+            }),
           }),
         });
 
         const existingSub = createMockSubscription({
           currentPeriodEnd: new Date('2024-02-15'),
-          product: createMockProduct({ metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' } }),
+          product: createMockProduct({
+            metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+          }),
           metadata: { prepaids: { gold: 1 }, buzzTransactionIds: ['tx1'] },
         });
 
@@ -539,7 +557,6 @@ describe('redeemableCode.service', () => {
         const expectedEnd = dayjs.utc('2024-02-15').add(2, 'month').toDate();
         expect(updatedSubscription.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
       });
-
     });
 
     describe('Downgrade (User has higher tier)', () => {

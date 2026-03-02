@@ -31,7 +31,7 @@ export interface BlockedPromptEntry {
   time: string;
 }
 
-const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours
+const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours — ClickHouse seed is a cold-start fallback only
 const RESET_MARKER = '__RESET__';
 
 function getBlockedPromptsKey(userId: number) {
@@ -58,7 +58,7 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
   }>`
     SELECT prompt, negativePrompt, source, time
     FROM prohibitedRequests
-    WHERE toDate(time) = today() AND userId = ${userId}
+    WHERE time > subtractHours(now(), 24) AND userId = ${userId}
     ORDER BY time ASC
   `;
 
@@ -114,7 +114,8 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   }
 
   await sysRedis.lPush(key, JSON.stringify(entry));
-  await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
+  // Don't reset TTL here — let the key expire on its natural schedule
+  // so re-seeding from ClickHouse keeps the rolling 24h window accurate.
 
   // Return count (lLen is faster than fetching all entries)
   return await sysRedis.lLen(key);

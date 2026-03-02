@@ -20,7 +20,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageGenerationProcess } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { fromJson } from '~/utils/json-helpers';
 import { encodeMetadata } from '~/utils/metadata';
 import { titleCase } from '~/utils/string-helpers';
@@ -222,7 +222,7 @@ export function ImageMeta({
                 leftSection={<IconBrush size={16} />}
                 data-activity="remix:image-meta"
                 onClick={() => {
-                  generationPanel.open({ type: 'image', id: imageId ?? 0 });
+                  generationGraphPanel.open({ type: 'image', id: imageId ?? 0 });
                   onCreateClick?.();
                 }}
                 style={{ flex: 1 }}

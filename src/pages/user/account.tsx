@@ -15,16 +15,18 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
+import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
+import { StrikesCard } from '~/components/Account/StrikesCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
 import dynamic from 'next/dynamic';
 
 const NotificationsCard = dynamic(() => import('~/components/Account/NotificationsCard'));
 
 export default function Account() {
-  const { apiKeys, canViewNsfw } = useFeatureFlags();
+  const { apiKeys, canViewNsfw, strikes } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
   return (
@@ -50,9 +52,11 @@ export default function Account() {
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <PaymentMethodsCard />
+          <PurchasedCodesCard />
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />
           {apiKeys && <ApiKeysCard />}
+          {strikes && <StrikesCard />}
           <RefreshSessionCard />
           <DeleteCard />
         </Stack>
