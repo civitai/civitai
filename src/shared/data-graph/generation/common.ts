@@ -37,7 +37,10 @@ function getEcosystemKeyForBaseModel(baseModelName: string): string | undefined 
 
 /** Snap a value to the nearest step multiple and clamp to [min, max]. */
 function snapToStep(val: number, step: number, min: number, max: number): number {
-  return Math.min(Math.max(Math.round(val / step) * step, min), max);
+  const precision = Math.max(0, -Math.floor(Math.log10(step)));
+  const snapped = Math.round(val / step) * step;
+  const rounded = parseFloat(snapped.toFixed(precision));
+  return Math.min(Math.max(rounded, min), max);
 }
 
 // =============================================================================
