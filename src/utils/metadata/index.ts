@@ -1,6 +1,7 @@
 import ExifReader from 'exifreader';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
+import { decodeUserCommentToParams } from '~/utils/encoding-helpers';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
 import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
@@ -26,9 +27,16 @@ export async function ExifParser(file: File | string) {
     return acc;
   }, {} as Record<string, any>); //eslint-disable-line
 
-  if (exif.UserComment) {
+  if (exif.UserComment && typeof exif.UserComment !== 'string') {
     // @ts-ignore - this is a hack to not have to rework our downstream code
     exif.userComment = Int32Array.from(exif.UserComment);
+  }
+
+  // WebP and JPEG store metadata in EXIF UserComment
+  // Normalize so parsers that expect exif.parameters / exif.generationDetails can find it.
+  if (!exif.parameters && !exif.generationDetails && (exif.userComment ?? exif.UserComment)) {
+    const fromUserComment = decodeUserCommentToParams(exif.userComment ?? exif.UserComment);
+    if (fromUserComment) exif.parameters = fromUserComment;
   }
 
   const [name, parser] = Object.entries(parsers).find(([name, x]) => x.canParse(exif)) ?? [];
