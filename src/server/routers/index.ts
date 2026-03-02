@@ -82,6 +82,7 @@ import { coinbaseRouter } from './coinbase.router';
 import { emerchantpayRouter } from './emerchantpay.router';
 import { comicsRouter } from './comics.router';
 import { strikeRouter } from '~/server/routers/strike.router';
+import { approvalRequestRouter } from '~/server/routers/approval-request.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -167,6 +168,7 @@ export const appRouter = router({
   emerchantpay: emerchantpayRouter,
   comics: comicsRouter,
   strike: strikeRouter,
+  approvalRequest: approvalRequestRouter,
 });
 
 // export type definition of API
