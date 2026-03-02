@@ -255,7 +255,8 @@ export const ecosystemGraph = new DataGraph<
       const images = 'images' in ctx ? (ctx.images as unknown[]) : undefined;
       // const multiShot = 'multiShot' in ctx ? (ctx.multiShot as boolean) : false;
       const isKlingV3 = ctx.ecosystem === 'Kling' && ctx.model?.id === klingVersionIds.v3;
-      return { ...promptNode({ required: !images?.length || isKlingV3 }) };
+      const isGrok = ctx.ecosystem === 'Grok';
+      return { ...promptNode({ required: !images?.length || isKlingV3 || isGrok }) };
     },
     ['images', 'multiShot']
   )

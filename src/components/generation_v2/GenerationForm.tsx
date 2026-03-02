@@ -65,7 +65,12 @@ import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter } from './FormFooter';
-import { ResourceAlerts, ExperimentalModelAlert, ReadyAlert } from './ResourceAlerts';
+import {
+  ResourceAlerts,
+  ExperimentalModelAlert,
+  GrokEcosystemAlert,
+  ReadyAlert,
+} from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -457,7 +462,12 @@ export function GenerationForm() {
           <Controller
             graph={graph}
             name="ecosystem"
-            render={({ value }) => <ExperimentalModelAlert ecosystem={value} />}
+            render={({ value }) => (
+              <>
+                <ExperimentalModelAlert ecosystem={value} />
+                <GrokEcosystemAlert ecosystem={value} />
+              </>
+            )}
           />
 
           {/* Ready State Alert - Resources need downloading */}

@@ -180,6 +180,31 @@ export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProp
 }
 
 // =============================================================================
+// Grok Ecosystem Alert
+// =============================================================================
+
+interface GrokEcosystemAlertProps {
+  ecosystem?: string;
+}
+
+/**
+ * Displays a warning when the Grok ecosystem is selected, informing users
+ * that violations of xAI terms will still be charged.
+ */
+export function GrokEcosystemAlert({ ecosystem }: GrokEcosystemAlertProps) {
+  if (ecosystem !== 'Grok') return null;
+
+  return (
+    <Alert color="yellow" radius="md">
+      <Text size="xs">
+        When the request is deemed to be in violation of xAI terms the generation of the request
+        will still be charged.
+      </Text>
+    </Alert>
+  );
+}
+
+// =============================================================================
 // Ready Alert
 // =============================================================================
 
