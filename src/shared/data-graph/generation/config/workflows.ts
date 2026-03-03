@@ -523,20 +523,24 @@ export function getWorkflowLabelForEcosystem(
 type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
 
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
-  // Kling V3 on standard video workflows (legacy only supports V1.6, V2, V2.5)
+  // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
   [
     'txt2vid',
     (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) || ecoId === ECO.Grok,
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
+      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
+      ecoId === ECO.Grok,
   ],
   [
     'img2vid',
     (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) || ecoId === ECO.Grok,
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
+      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
+      ecoId === ECO.Grok,
   ],
 
-  // ref2vid: legacy forms for Kling and Veo3 don't support this workflow
-  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3],
+  // ref2vid: legacy forms for Kling, Veo3, and LTXV2 don't support this workflow
+  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.LTXV2],
 
   // NanoBanana V2 - only available in new form
   [
