@@ -2,7 +2,7 @@
  * LTXV2 Ecosystem Handler
  *
  * Handles LTXV2 video generation workflows using videoGen step type.
- * Supports txt2vid/img2vid (createVideo) and ref2vid (firstLastFrameToVideo) workflows.
+ * Supports txt2vid (createVideo) and img2vid (firstLastFrameToVideo) workflows.
  */
 
 import type {
@@ -26,7 +26,7 @@ export const createLTXV2Input = defineHandler<
   LTXV2Ctx,
   ComfyLtx2CreateVideoInput | ComfyLtx2FirstLastFrameToVideoInput
 >((data, ctx) => {
-  if (data.workflow === 'img2vid:ref2vid') {
+  if (data.workflow === 'img2vid') {
     return createFirstLastFrameInput(data, ctx);
   }
   return createVideoInput(data, ctx);
@@ -43,7 +43,7 @@ function buildLoras(data: LTXV2Ctx, ctx: Parameters<Parameters<typeof defineHand
   return Object.keys(loras).length > 0 ? loras : undefined;
 }
 
-/** Creates createVideo input for txt2vid/img2vid workflows */
+/** Creates createVideo input for txt2vid workflow */
 function createVideoInput(
   data: LTXV2Ctx,
   ctx: Parameters<Parameters<typeof defineHandler>[0]>[1]
@@ -66,7 +66,7 @@ function createVideoInput(
   }) as ComfyLtx2CreateVideoInput;
 }
 
-/** Creates firstLastFrameToVideo input for ref2vid workflow */
+/** Creates firstLastFrameToVideo input for img2vid workflow */
 function createFirstLastFrameInput(
   data: LTXV2Ctx,
   ctx: Parameters<Parameters<typeof defineHandler>[0]>[1]

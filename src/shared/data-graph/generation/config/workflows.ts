@@ -234,7 +234,7 @@ export const workflowConfigs: WorkflowConfigs = {
       {
         label: 'First/Last Frame',
         description: 'Generate video from start and end images',
-        ecosystemIds: [ECO.Vidu, ECO.Kling],
+        ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2],
         excludeModelVersionIds: [viduVersionIds.q3],
       },
     ],
@@ -244,7 +244,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV2],
+    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling],
   },
 
   // ===========================================================================
@@ -539,8 +539,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.Grok,
   ],
 
-  // ref2vid: legacy forms for Kling, Veo3, and LTXV2 don't support this workflow
-  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.LTXV2],
+  // ref2vid: legacy forms for Kling and Veo3 don't support this workflow
+  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3],
 
   // NanoBanana V2 - only available in new form
   [

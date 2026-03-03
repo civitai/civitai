@@ -70,15 +70,14 @@ type LTXV2Ctx = { ecosystem: string; workflow: string };
  *
  * Workflow-specific behavior:
  * - txt2vid: Text to video with optional LoRA support
- * - img2vid: Source image to video
- * - img2vid:ref2vid: First/last frame guided generation with frameGuideStrength
+ * - img2vid: First/last frame guided generation with frameGuideStrength
  */
 export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
-  // Images node - workflow-dependent config
+  // Images node - first/last frame slots for img2vid, hidden for txt2vid
   .node(
     'images',
     (ctx) => {
-      if (ctx.workflow === 'img2vid:ref2vid') {
+      if (ctx.workflow === 'img2vid') {
         return {
           ...imagesNode({
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
@@ -87,10 +86,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
           when: true,
         };
       }
-      return {
-        ...imagesNode({ warnOnMissingAiMetadata: true }),
-        when: !ctx.workflow.startsWith('txt'),
-      };
+      return { ...imagesNode(), when: false };
     },
     ['workflow']
   )
@@ -145,7 +141,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
     })
   )
 
-  // Frame guide strength - ref2vid only
+  // Frame guide strength - img2vid only (first/last frame conditioning)
   .node(
     'frameGuideStrength',
     (ctx) => ({
@@ -160,7 +156,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
           { label: 'Strong', value: 1 },
         ],
       }),
-      when: ctx.workflow === 'img2vid:ref2vid',
+      when: ctx.workflow === 'img2vid' && ctx.images?.length === 2, // Only show if both first and last frames are provided
     }),
     ['workflow']
   )
