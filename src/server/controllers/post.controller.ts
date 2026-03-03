@@ -34,6 +34,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   AddPostTagInput,
@@ -570,7 +571,7 @@ export const addPostTagHandler = async ({
 }) => {
   try {
     const result = await addPostTag({ ...input });
-    const post = await dbRead.post.findFirstOrThrow({
+    const postFindArgs = {
       where: {
         id: input.id,
       },
@@ -586,7 +587,13 @@ export const addPostTagHandler = async ({
           },
         },
       },
-    });
+    } as const;
+    const post = await dbRead.post
+      .findFirstOrThrow(postFindArgs)
+      .catch(() => {
+        dbReadFallbackCounter.inc({ entity: 'post', caller: 'addPostTagHandler' });
+        return dbWrite.post.findFirstOrThrow(postFindArgs);
+      });
     await ctx.track.post({
       type: 'Tags',
       postId: input.id,

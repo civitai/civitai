@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
@@ -607,9 +608,15 @@ export async function voidStrike(input: VoidStrikeInput & { voidedBy: number }) 
   }
 
   // Fetch the updated strike for return value and userId
-  const strike = await dbRead.userStrike.findUniqueOrThrow({
+  const strikeFindArgs = {
     where: { id: strikeId },
-  });
+  } as const;
+  const strike = await dbRead.userStrike
+    .findUniqueOrThrow(strikeFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'userStrike', caller: 'voidStrike' });
+      return dbWrite.userStrike.findUniqueOrThrow(strikeFindArgs);
+    });
 
   // Send notification — createNotification handles its own error logging
   await createNotification({
