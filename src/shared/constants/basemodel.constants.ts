@@ -605,7 +605,7 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 212,
     // txt2vid + img2vid (no vid2vid support currently)
   },
-  { id: ECO.Grok, key: 'Grok', name: 'grok', displayName: 'Grok', sortOrder: 216 },
+  { id: ECO.Grok, key: 'Grok', name: 'grok', displayName: 'Grok', familyId: 13, sortOrder: 216 },
   {
     id: ECO.Haiper,
     key: 'Haiper',
@@ -1670,6 +1670,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 12,
     name: 'ByteDance',
     description: "ByteDance's image and video generation models",
+  },
+  {
+    id: 13,
+    name: 'xAI',
+    description: "xAI's image and video generation models",
   },
 ];
 
