@@ -4,12 +4,19 @@
  * Controls for LTX Video 2 generation ecosystem.
  * Advanced video generation model from Lightricks.
  *
+ * Workflows:
+ * - txt2vid: Text to video generation
+ * - img2vid: Image to video with optional source image
+ * - img2vid:ref2vid: First/last frame guided video generation
+ *
  * Nodes:
+ * - images: Workflow-dependent image input
  * - seed: Optional seed for reproducibility
  * - aspectRatio: Output aspect ratio
  * - cfgScale: CFG scale for generation control
  * - duration: Video duration
  * - steps: Number of inference steps
+ * - frameGuideStrength: Frame guide conditioning strength (ref2vid only)
  * - resources: Additional LoRAs
  */
 
@@ -61,16 +68,30 @@ type LTXV2Ctx = { ecosystem: string; workflow: string };
 /**
  * LTXV2 video generation controls.
  *
- * Txt2vid with optional LoRA support.
+ * Workflow-specific behavior:
+ * - txt2vid: Text to video with optional LoRA support
+ * - img2vid: Source image to video
+ * - img2vid:ref2vid: First/last frame guided generation with frameGuideStrength
  */
 export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
-  // Images node - shown for img2vid, hidden for txt2vid
+  // Images node - workflow-dependent config
   .node(
     'images',
-    (ctx) => ({
-      ...imagesNode({ warnOnMissingAiMetadata: true }),
-      when: !ctx.workflow.startsWith('txt'),
-    }),
+    (ctx) => {
+      if (ctx.workflow === 'img2vid:ref2vid') {
+        return {
+          ...imagesNode({
+            slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
+            warnOnMissingAiMetadata: true,
+          }),
+          when: true,
+        };
+      }
+      return {
+        ...imagesNode({ warnOnMissingAiMetadata: true }),
+        when: !ctx.workflow.startsWith('txt'),
+      };
+    },
     ['workflow']
   )
 
@@ -122,6 +143,26 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
         { label: 'Quality', value: 50 },
       ],
     })
+  )
+
+  // Frame guide strength - ref2vid only
+  .node(
+    'frameGuideStrength',
+    (ctx) => ({
+      ...sliderNode({
+        min: 0,
+        max: 1,
+        step: 0.05,
+        defaultValue: 1,
+        presets: [
+          { label: 'Subtle', value: 0.3 },
+          { label: 'Moderate', value: 0.6 },
+          { label: 'Strong', value: 1 },
+        ],
+      }),
+      when: ctx.workflow === 'img2vid:ref2vid',
+    }),
+    ['workflow']
   )
 
   // Resources node (LoRAs)

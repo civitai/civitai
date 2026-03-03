@@ -584,7 +584,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.Vidu,
     key: 'Vidu',
     name: 'vidu',
-    displayName: 'Vidu Q1',
+    displayName: 'Vidu',
     sortOrder: 210,
     // txt2vid + img2vid (no vid2vid support currently)
   },

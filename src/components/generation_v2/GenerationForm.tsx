@@ -1092,7 +1092,21 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Wan: Draft mode toggle (v2.2-5b) */}
+            {/* Vidu Q3: Enable audio toggle */}
+            <Controller
+              graph={graph}
+              name="enableAudio"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Generate audio"
+                  description="Generate audio along with the video"
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
             <Controller
               graph={graph}
               name="draft"
@@ -1101,7 +1115,7 @@ export function GenerationForm() {
                   checked={value}
                   onChange={(e) => onChange(e.target.checked)}
                   label="Draft Mode"
-                  description="Generate faster at lower quality"
+                  description="Generate faster at with optimized settings (may reduce quality)"
                 />
               )}
             />
