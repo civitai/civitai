@@ -55,6 +55,7 @@ import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from 
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { PanelCard, SortablePanel } from '~/components/Comics/PanelCard';
@@ -65,6 +66,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getImageDimensions } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatGenreLabel } from '~/utils/comic-helpers';
 import { ComicChapterStatus, ComicGenre } from '~/shared/utils/prisma/enums';
@@ -252,8 +254,10 @@ function ProjectWorkspace() {
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
 
-  // Panel mode: Generate (prompt from scratch) vs Enhance (start from image) vs Bulk
-  const [panelMode, setPanelMode] = useState<'generate' | 'enhance' | 'bulk'>('generate');
+  // Panel mode: Generate (prompt from scratch) vs Enhance (start from image) vs Bulk vs Import
+  const [panelMode, setPanelMode] = useState<'generate' | 'enhance' | 'bulk' | 'import'>(
+    'generate'
+  );
   const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
     url: string;
     previewUrl: string;
@@ -279,6 +283,13 @@ function ProjectWorkspace() {
   const [bulkEnhance, setBulkEnhance] = useState(true);
   const [bulkUploading, setBulkUploading] = useState(false);
   const { uploadToCF: uploadBulkToCF, resetFiles: resetBulkFiles } = useCFImageUpload();
+
+  // Import tab state
+  const [importUploading, setImportUploading] = useState(false);
+  const [importSelected, setImportSelected] = useState<
+    { url: string; cfId: string; width: number; height: number; preview: string }[]
+  >([]);
+  const { uploadToCF: uploadImportToCF } = useCFImageUpload();
 
   // Chapter rename state
   const [editingChapterPosition, setEditingChapterPosition] = useState<number | null>(null);
@@ -483,6 +494,7 @@ function ProjectWorkspace() {
       closePanelModal();
       setBulkItems([]);
       resetBulkFiles();
+      setImportSelected([]);
       setInsertAtPosition(null);
       setPanelMode('generate');
       refetch();
@@ -517,7 +529,7 @@ function ProjectWorkspace() {
       } catch {
         /* ignore */
       }
-    }, 3000);
+    }, 1500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generatingPanelIds.join(','), utils, refetch]);
@@ -635,6 +647,7 @@ function ProjectWorkspace() {
     setBulkItems([]);
     setBulkEnhance(true);
     resetBulkFiles();
+    setImportSelected([]);
   };
 
   const handleGeneratePanel = async () => {
@@ -887,6 +900,80 @@ function ProjectWorkspace() {
     });
   };
 
+  // ── Import tab: select from generator and create panels directly ──
+  const handleImportSelect = () => {
+    dialogStore.trigger({
+      component: ImageSelectModal,
+      props: {
+        title: 'Import Images as Panels',
+        selectSource: 'generation' as const,
+        videoAllowed: false,
+        importedUrls: importSelected.map((s) => s.url),
+        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
+          if (selected.length === 0) return;
+          setImportUploading(true);
+          try {
+            const newItems: typeof importSelected = [];
+            for (const img of selected) {
+              const width = (img.meta?.width as number) ?? 512;
+              const height = (img.meta?.height as number) ?? 512;
+              try {
+                const edgeUrl = getEdgeUrl(img.url, { original: true }) ?? img.url;
+                const response = await fetch(edgeUrl);
+                const blob = await response.blob();
+                const file = new File([blob], `import_${Date.now()}.jpg`, { type: blob.type });
+                const result = await uploadImportToCF(file);
+                newItems.push({
+                  url: result.id,
+                  cfId: result.id,
+                  width,
+                  height,
+                  preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
+                });
+              } catch (err) {
+                console.error('Failed to upload import image:', err);
+              }
+            }
+            setImportSelected((prev) => [...prev, ...newItems]);
+          } finally {
+            setImportUploading(false);
+          }
+        },
+      },
+    });
+  };
+
+  const handleImportRemove = (idx: number) => {
+    setImportSelected((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleImportSubmit = () => {
+    if (!activeChapter || importSelected.length === 0 || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      bulkCreateMutation.mutate(
+        {
+          projectId,
+          chapterPosition: activeChapter.position,
+          panels: importSelected.map((img) => ({
+            sourceImageUrl: img.url,
+            sourceImageWidth: img.width,
+            sourceImageHeight: img.height,
+            aspectRatio: '3:4',
+          })),
+        },
+        {
+          onSettled: () => {
+            setIsSubmitting(false);
+            setImportSelected([]);
+          },
+        }
+      );
+    } catch {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleBulkRemoveItem = (itemId: string) => {
     setBulkItems((prev) => prev.filter((item) => item.id !== itemId));
   };
@@ -1043,9 +1130,27 @@ function ProjectWorkspace() {
 
   const handleCoverDrop = async (files: File[]) => {
     if (files.length === 0) return;
-    const result = await uploadToCF(files[0]);
-    setEditCoverUrl(result.id);
-    setEditCoverImageId(null); // New upload — backend will create Image record
+    const file = files[0];
+    const url = URL.createObjectURL(file);
+    const { width, height } = await getImageDimensions(url);
+    dialogStore.trigger({
+      id: 'comic-cover-crop',
+      component: ImageCropModal,
+      props: {
+        images: [{ url, width, height }],
+        aspectRatios: ['3:4'] as `${number}:${number}`[],
+        onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
+          const blob = output[0]?.cropped;
+          if (blob) {
+            const result = await uploadToCF(blob);
+            setEditCoverUrl(result.id);
+            setEditCoverImageId(null);
+          }
+          URL.revokeObjectURL(url);
+        },
+        onCancel: () => URL.revokeObjectURL(url),
+      },
+    });
   };
 
   const handleHeroDrop = async (files: File[]) => {
@@ -1775,6 +1880,19 @@ function ProjectWorkspace() {
               />
               Bulk Add
             </button>
+            <button
+              className={clsx(
+                styles.panelModeTab,
+                panelMode === 'import' && styles.panelModeTabActive
+              )}
+              onClick={() => setPanelMode('import')}
+            >
+              <IconPhoto
+                size={14}
+                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
+              />
+              Import
+            </button>
           </div>
         )}
 
@@ -1991,7 +2109,7 @@ function ProjectWorkspace() {
               )}
             </Group>
           </Stack>
-        ) : (
+        ) : panelMode === 'bulk' ? (
           /* ── Bulk Add tab ─── */
           <Stack gap="md">
             <Dropzone
@@ -2121,6 +2239,66 @@ function ProjectWorkspace() {
                   Add {bulkItems.length} Panel{bulkItems.length !== 1 ? 's' : ''}
                 </Button>
               )}
+            </Group>
+          </Stack>
+        ) : (
+          /* ── Import tab ─── */
+          <Stack gap="md">
+            <Text size="sm" c="dimmed">
+              Select images from your generator history to import as panels.
+            </Text>
+
+            <Button
+              variant="light"
+              leftSection={<IconPhotoUp size={14} />}
+              onClick={handleImportSelect}
+              loading={importUploading}
+            >
+              {importUploading ? 'Uploading...' : 'Select Images'}
+            </Button>
+
+            {importSelected.length > 0 && (
+              <ScrollArea.Autosize mah={320}>
+                <div className="flex flex-wrap gap-2">
+                  {importSelected.map((img, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={img.preview}
+                        alt={`Import ${idx + 1}`}
+                        className="w-20 h-20 object-cover rounded"
+                      />
+                      <ActionIcon
+                        variant="filled"
+                        color="dark"
+                        size="xs"
+                        className="absolute top-0.5 right-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleImportRemove(idx)}
+                      >
+                        <IconX size={12} />
+                      </ActionIcon>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea.Autosize>
+            )}
+
+            {importSelected.length > 0 && (
+              <Text size="xs" c="dimmed">
+                {importSelected.length} image{importSelected.length !== 1 ? 's' : ''} ready to import
+              </Text>
+            )}
+
+            <Group justify="flex-end">
+              <Button variant="default" onClick={handlePanelModalClose}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleImportSubmit}
+                loading={isSubmitting || bulkCreateMutation.isPending}
+                disabled={importSelected.length === 0}
+              >
+                Import {importSelected.length} Panel{importSelected.length !== 1 ? 's' : ''}
+              </Button>
             </Group>
           </Stack>
         )}

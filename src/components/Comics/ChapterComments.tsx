@@ -3,6 +3,7 @@ import { IconSend } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { CommentReactions } from '~/components/CommentsV2/Comment/CommentReactions';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatRelativeDate } from '~/utils/comic-helpers';
@@ -94,6 +95,7 @@ export function ChapterComments({
                   <span className="text-xs text-gray-400">{formatRelativeDate(c.createdAt)}</span>
                 </div>
                 <p className="text-sm mt-0.5 whitespace-pre-wrap break-words">{c.content}</p>
+                {c.reactions && <CommentReactions comment={c as any} />}
               </div>
             </div>
           ))}

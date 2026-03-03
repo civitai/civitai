@@ -12,6 +12,7 @@ import {
   IconArrowLeft,
   IconBell,
   IconBellOff,
+  IconBolt,
   IconBook,
   IconCheck,
   IconChevronLeft,
@@ -30,7 +31,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { ChapterComments } from '~/components/Comics/ChapterComments';
 import { Page } from '~/components/AppLayout/Page';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -80,6 +86,7 @@ function PublicComicReader() {
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
   );
+  const tippedAmount = useBuzzTippingStore({ entityType: 'ComicProject', entityId: projectId });
 
   if (isLoading) {
     return (
@@ -241,12 +248,26 @@ function ComicOverview({ project }: { project: Project }) {
                 </Tooltip>
                 {currentUser.id !== project.user.id && (
                   <>
-                    <TipBuzzButton
+                    <InteractiveTipBuzzButton
                       toUserId={project.user.id}
                       entityId={project.id}
                       entityType="ComicProject"
-                      size="compact-md"
-                    />
+                    >
+                      <IconBadge
+                        radius="sm"
+                        style={{ cursor: 'pointer' }}
+                        color="gray"
+                        size="lg"
+                        h={28}
+                        icon={<IconBolt />}
+                      >
+                        <span className="text-sm">
+                          {abbreviateNumber(
+                            (project.tippedAmountCount ?? 0) + tippedAmount
+                          )}
+                        </span>
+                      </IconBadge>
+                    </InteractiveTipBuzzButton>
                     <LoginRedirect reason="report-comic">
                       <ActionIcon
                         variant="subtle"
@@ -300,8 +321,15 @@ function ComicOverview({ project }: { project: Project }) {
             )}
           </div>
 
-          {/* Title */}
-          <h1 className={styles.overviewTitle}>{project.name}</h1>
+          {/* Title + content rating */}
+          <div className="flex items-center gap-2">
+            <h1 className={styles.overviewTitle}>{project.name}</h1>
+            {project.nsfwLevel > 0 && (
+              <Badge size="sm" color="red" variant="filled">
+                {getBrowsingLevelLabel(project.nsfwLevel)}
+              </Badge>
+            )}
+          </div>
 
           {/* Creator */}
           <div className={styles.overviewCreatorRow}>

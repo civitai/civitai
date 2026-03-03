@@ -839,6 +839,14 @@ export const comicsRouter = router({
         throw throwNotFoundError('Comic not found');
       }
 
+      // Aggregate tip total from BuzzTip table
+      const tipResult = await dbRead.$queryRaw<[{ total: number }]>`
+        SELECT COALESCE(SUM(amount), 0)::int AS total
+        FROM "BuzzTip"
+        WHERE "entityType" = 'ComicProject' AND "entityId" = ${project.id}
+      `;
+      const tippedAmountCount = tipResult?.[0]?.total ?? 0;
+
       return {
         id: project.id,
         name: project.name,
@@ -849,6 +857,7 @@ export const comicsRouter = router({
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
+        tippedAmountCount,
         chapters,
       };
     }),
@@ -3048,6 +3057,7 @@ export const comicsRouter = router({
               content: true,
               createdAt: true,
               user: { select: userWithCosmeticsSelect },
+              reactions: { select: { userId: true, reaction: true } },
             },
           },
         },
