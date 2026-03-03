@@ -177,14 +177,15 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 
   // Pending submit: when the user clicks the loading button while prompt is dirty,
   // we queue the submit and auto-fire it once the whatIf resolves with fresh pricing.
-  const pendingSubmitRef = useRef(false);
+  // Uses state (not a ref) so that setting it triggers a re-render and the effect re-evaluates.
+  const [pendingSubmit, setPendingSubmit] = useState(false);
 
   useEffect(() => {
-    if (pendingSubmitRef.current && !isWhatIfLoading && !isSubmitting) {
-      pendingSubmitRef.current = false;
+    if (pendingSubmit && !isWhatIfLoading && !isSubmitting) {
+      setPendingSubmit(false);
       onSubmit?.();
     }
-  }, [isWhatIfLoading, isSubmitting, onSubmit]);
+  }, [pendingSubmit, isWhatIfLoading, isSubmitting, onSubmit]);
 
   // Get values from graph for tip calculation
   const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };
@@ -226,7 +227,11 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
     <div
       className="absolute inset-0 z-10 cursor-pointer"
       onClick={() => {
-        pendingSubmitRef.current = true;
+        // Blur the active element (e.g. prompt textarea) to trigger the whatIf refresh
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setPendingSubmit(true);
       }}
     />
   ) : null;
