@@ -20,6 +20,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
 import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
+import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
 import {
   type WorkflowCategory,
   type WorkflowConfig,
@@ -231,6 +232,7 @@ export const workflowConfigs: WorkflowConfigs = {
         label: 'First/Last Frame',
         description: 'Generate video from start and end images',
         ecosystemIds: [ECO.Vidu, ECO.Kling],
+        excludeModelVersionIds: [viduVersionIds.q3],
       },
     ],
   },
@@ -309,6 +311,8 @@ export type WorkflowOption = {
   enhancement?: boolean;
   /** If true, this workflow requires membership */
   memberOnly?: boolean;
+  /** Model version IDs that should NOT see this option */
+  excludeModelVersionIds?: number[];
 };
 
 /**
@@ -340,6 +344,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     ecosystemSpecific: alias.ecosystemIds.length === 1,
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
+    excludeModelVersionIds: alias.excludeModelVersionIds,
   }));
 
   return [primary, ...aliases];
@@ -366,11 +371,17 @@ export function isWorkflowAvailable(workflowId: string, ecosystemId: number): bo
 /**
  * Get workflows available for a specific ecosystem.
  * Uses per-entry ecosystemIds (not aggregated) so aliases filter correctly.
+ * Optionally filters out options excluded for a specific model version.
  */
-export function getWorkflowsForEcosystem(ecosystemId: number): WorkflowOption[] {
+export function getWorkflowsForEcosystem(
+  ecosystemId: number,
+  modelVersionId?: number
+): WorkflowOption[] {
   return workflowOptions.filter((w) => {
     if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
-    return w.ecosystemIds.includes(ecosystemId);
+    if (!w.ecosystemIds.includes(ecosystemId)) return false;
+    if (modelVersionId && w.excludeModelVersionIds?.includes(modelVersionId)) return false;
+    return true;
   });
 }
 
@@ -465,11 +476,19 @@ export function isEnhancementWorkflow(workflowId: string): boolean {
  * Get the display label for a workflow on a specific ecosystem (alias-aware).
  * Returns the alias label when the ecosystem matches an alias entry,
  * otherwise returns the primary config label.
+ * Skips aliases excluded for the given model version.
  */
-export function getWorkflowLabelForEcosystem(graphKey: string, ecosystemId?: number): string {
+export function getWorkflowLabelForEcosystem(
+  graphKey: string,
+  ecosystemId?: number,
+  modelVersionId?: number
+): string {
   if (ecosystemId !== undefined) {
     const match = workflowOptions.find(
-      (o) => o.graphKey === graphKey && o.ecosystemIds.includes(ecosystemId)
+      (o) =>
+        o.graphKey === graphKey &&
+        o.ecosystemIds.includes(ecosystemId) &&
+        !(modelVersionId && o.excludeModelVersionIds?.includes(modelVersionId))
     );
     if (match) return match.label;
   }

@@ -61,6 +61,8 @@ export interface WorkflowConfig {
     label: string;
     description?: string;
     ecosystemIds: number[];
+    /** Model version IDs that should NOT see this alias (e.g., Q3 doesn't support First/Last Frame) */
+    excludeModelVersionIds?: number[];
   }[];
 }
 
