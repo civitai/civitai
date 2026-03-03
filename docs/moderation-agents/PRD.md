@@ -32,34 +32,52 @@ This PRD consolidates and supersedes the working docs. They remain as references
 ### High-Level Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Agent Runner (external repo)             │
-│                                                                 │
-│  ┌─────────────┐   ┌─────────────┐   ┌──────────────────────┐  │
-│  │ Flagged User │   │ Report      │   │ Model / Bounty /     │  │
-│  │ Agent        │   │ Triage Agent│   │ Article / Dataset    │  │
-│  │              │   │             │   │ Review Agents        │  │
-│  └──────┬───────┘   └──────┬──────┘   └──────────┬───────────┘  │
-│         │                  │                     │              │
-│         └──────────┬───────┴─────────────────────┘              │
-│                    │                                            │
-│         ┌──────────▼──────────┐                                 │
-│         │  Skills (tool-use)  │                                 │
-│         │  review/*           │                                 │
-│         │  orchestrator/*     │                                 │
-│         │  moderation/*       │                                 │
-│         │  processing/*       │                                 │
-│         └──────────┬──────────┘                                 │
-│                    │                                            │
-│         ┌──────────▼──────────┐                                 │
-│         │  Shared Libraries   │                                 │
-│         │  civitai-api.ts     │───── tRPC (Bearer token) ──────►│ Civitai API
-│         │  civitai-db.ts      │───── Postgres (read-only) ─────►│ Civitai DB
-│         │  clickhouse.ts      │───── ClickHouse ───────────────►│ Analytics
-│         │  orchestrator.ts    │───── @civitai/client ──────────►│ Orchestrator
-│         │  retool-db.ts       │───── Postgres ─────────────────►│ Retool DB
-│         └─────────────────────┘                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Civitai (this repo)                            │
+│                                                                         │
+│  report.service ──┐                                                     │
+│  image-scan-result┤  emitAgentEvent()     ┌──────────────┐              │
+│  strike.service ──┤─────────────────────► │  AgentEvent   │              │
+│  model-version ───┤      INSERT           │  table        │              │
+│  article.service ─┤                       └──────┬───────┘              │
+│  bounty.service ──┤                              │                      │
+│  training.router ─┘                    send-agent-events job            │
+│                                          (every 1 min)                  │
+│                                              │                          │
+│                                         POST /events                    │
+└──────────────────────────────────────────────┼──────────────────────────┘
+                                               │
+                                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Agent Runner (external repo)                     │
+│                                                                         │
+│  POST /events ── dispatch ──┬─────────────────────────────────┐         │
+│                             │                                 │         │
+│  ┌─────────────┐   ┌───────┴─────┐   ┌──────────────────────┐│         │
+│  │ Flagged User │   │ Report      │   │ Model / Bounty /     ││         │
+│  │ Agent        │   │ Triage Agent│   │ Article / Dataset    ││         │
+│  │              │   │             │   │ Review Agents        ││         │
+│  └──────┬───────┘   └──────┬──────┘   └──────────┬───────────┘│         │
+│         │                  │                     │            │         │
+│         └──────────┬───────┴─────────────────────┘            │         │
+│                    │                                          │         │
+│         ┌──────────▼──────────┐                               │         │
+│         │  Skills (tool-use)  │                               │         │
+│         │  review/*           │                               │         │
+│         │  orchestrator/*     │                               │         │
+│         │  moderation/*       │                               │         │
+│         │  processing/*       │                               │         │
+│         └──────────┬──────────┘                               │         │
+│                    │                                          │         │
+│         ┌──────────▼──────────┐                               │         │
+│         │  Shared Libraries   │                               │         │
+│         │  civitai-api.ts     │───── tRPC (Bearer token) ─────┼────────►│ Civitai API
+│         │  civitai-db.ts      │───── Postgres (read-only) ────┼────────►│ Civitai DB
+│         │  clickhouse.ts      │───── ClickHouse ──────────────┼────────►│ Analytics
+│         │  orchestrator.ts    │───── @civitai/client ─────────┼────────►│ Orchestrator
+│         │  retool-db.ts       │───── Postgres ────────────────┼────────►│ Retool DB
+│         └─────────────────────┘                               │         │
+└───────────────────────────────────────────────────────────────┘         │
 ```
 
 ### Where Things Live
@@ -70,9 +88,71 @@ This PRD consolidates and supersedes the working docs. They remain as references
 | Skills | External repo | Standalone scripts: `execute(input) => output` |
 | Shared libraries | External repo | `civitai-api.ts`, `civitai-db.ts`, `clickhouse.ts`, `orchestrator.ts` (wraps `@civitai/client`), `retool-db.ts` |
 | API endpoints | **This repo** | tRPC routers called by skills via `civitai-api.ts` |
+| Event system | **This repo** | `AgentEvent` model + `emitAgentEvent()` + delivery job → pushes events to agent runner |
 | ApprovalRequest system | **This repo** | New Prisma model, router, moderator UI |
 | Strike system | **This repo** | Already implemented — `UserStrike` model, `strike.*` router, escalation engine |
 | Moderator UI pages | **This repo** | Existing pages + new `/moderator/approval-requests` |
+
+### Event Flow — How Agents Get Triggered
+
+Agents are triggered by events that happen in the Civitai codebase (report created, image flagged, model published, etc.). Events flow through a **persistent event table** with a delivery job:
+
+```
+Event occurs in Civitai service code
+    │
+    ▼
+emitAgentEvent() → INSERT INTO AgentEvent (persisted, never lost)
+    │
+    ▼
+send-agent-events job (runs every 1 min)
+    │
+    ▼
+POST /events → Agent Runner (batch of undelivered events)
+    │
+    ├── report.created    → spawn Report Triage Agent
+    ├── image.flagged     → spawn Dataset Review Agent
+    ├── model.published   → spawn Model Review Agent
+    ├── user.strike-flagged → spawn Flagged User Agent
+    └── ...
+```
+
+Full specification in Section 7. Scaling path: event table → Redis Streams → Kafka/SQS (see Section 7.7).
+
+### External Repo Structure
+
+The agent runner, skills, and shared libraries live in a separate repository:
+
+```
+moderation-agents/                    # External repo (e.g., civitai/moderation-agents)
+├── lib/
+│   ├── civitai-api.ts                # tRPC HTTP client (Bearer token auth)
+│   ├── civitai-db.ts                 # Direct Postgres (read-only)
+│   ├── clickhouse.ts                 # ClickHouse client
+│   ├── orchestrator.ts               # @civitai/client wrapper
+│   ├── retool-db.ts                  # Retool Postgres client
+│   └── types.ts                      # Shared input/output types
+├── skills/
+│   ├── review/                       # 12 read-only data retrieval skills
+│   ├── orchestrator/                 # 5 external service skills (@civitai/client)
+│   ├── moderation/                   # 9 state-changing action skills
+│   └── processing/                   # 3 communication/note skills
+├── bounds/
+│   └── config.ts                     # Threshold values from PRD Section 5
+├── agents/                           # Agent definitions (Phase 3)
+│   ├── flagged-user.ts               # System prompt + tool list
+│   ├── report-triage.ts
+│   ├── report-processing.ts
+│   ├── model-review.ts
+│   ├── bounty-review.ts
+│   ├── article-review.ts
+│   └── dataset-review.ts
+├── runner/                           # Agent execution engine (Phase 3)
+│   ├── index.ts                      # POST /events endpoint + dispatch
+│   ├── session.ts                    # Agent session management
+│   └── dedup.ts                      # Deduplication logic
+├── package.json
+└── .env                              # API keys, DB connection strings
+```
 
 ### Auth Model
 
@@ -951,9 +1031,217 @@ When a skill returns `{ requiresApproval: true }`:
 
 ---
 
-## 7. Implementation in This Repo
+## 7. Event System — Agent Triggers
 
-### 7.1 New: ApprovalRequest Model + Router + UI — ✅ Complete
+Agents need to be triggered when moderation-relevant events occur (image flagged, report created, model published, etc.). Rather than polling the database, the Civitai repo **pushes events** to the agent runner via a lightweight event table and delivery job.
+
+### 7.1 Why Event Table (Not Polling or Message Queue)
+
+| Approach | Pros | Cons | Verdict |
+|----------|------|------|---------|
+| **DB polling** (agent runner queries Civitai DB) | Zero changes in this repo | Wasteful at scale, slow at low intervals, agent runner needs DB access | Too slow for production volume |
+| **Fire-and-forget webhooks** (POST from service code) | Real-time | Events lost if runner is down, no retry, no audit trail | Too fragile |
+| **Event table + delivery job** | Persistent, retryable, auditable, fits existing patterns | 1-min delivery latency | **Best fit for current scale** |
+| **Redis Streams / SQS** | Consumer groups, sub-second latency | New infrastructure to operate | Overkill now; natural evolution path if needed later |
+
+### 7.2 Data Schema
+
+```prisma
+model AgentEvent {
+  id          Int       @id @default(autoincrement())
+  createdAt   DateTime  @default(now())
+
+  // What happened
+  type        String    // "report.created", "image.flagged", "model.published", etc.
+  entityType  String?   // "report", "image", "model", "user", etc.
+  entityId    Int?
+  userId      Int?      // User involved (uploader, reported user, etc.)
+  payload     Json?     // Extra context the agent needs (scan results, flags, etc.)
+
+  // Delivery tracking
+  deliveredAt DateTime? // null = not yet delivered to agent runner
+  attempts    Int       @default(0)
+
+  @@index([deliveredAt, createdAt])  // Fast query: undelivered events ordered by time
+  @@index([type, createdAt])         // Debugging: filter by event type
+}
+```
+
+### 7.3 Event Emitter
+
+A one-liner service that writes to the event table:
+
+```typescript
+// src/server/services/agent-event.service.ts
+import { dbWrite } from '~/server/db/client';
+
+export async function emitAgentEvent(event: {
+  type: string;
+  entityType?: string;
+  entityId?: number;
+  userId?: number;
+  payload?: any;
+}) {
+  // Guard: only emit if feature flag is enabled
+  await dbWrite.agentEvent.create({ data: event });
+}
+```
+
+### 7.4 Trigger Points
+
+Each event is emitted by adding a single `emitAgentEvent()` call at the relevant code path:
+
+| Event Type | Emitted From | Line/Area | Agent Triggered |
+|---|---|---|---|
+| `report.created` | `src/server/services/report.service.ts` → `createReport()` | After report INSERT (~line 173) | Report Triage |
+| `image.flagged` | `src/pages/api/webhooks/image-scan-result.ts` | When `needsReview` is set (~line 264) | Dataset Review / Report Processing |
+| `image.blocked` | `src/pages/api/webhooks/image-scan-result.ts` | When `ingestion = Blocked` (~line 284) | (Audit only — auto-handled) |
+| `model.published` | `src/server/services/model-version.service.ts` | On status change to Published (~line 583) | Model Review |
+| `article.published` | `src/server/services/article.service.ts` → `upsertArticle()` | On publish (~line 681) | Article Review |
+| `bounty.created` | `src/server/services/bounty.service.ts` → `upsertBounty()` | After bounty INSERT (~line 400) | Bounty Review |
+| `training.submitted` | `src/server/routers/training.router.ts` | `createTrainingRequest` mutation (~line 44) | Dataset Review |
+| `user.strike-flagged` | `src/server/services/strike.service.ts` → `evaluateStrikeEscalation()` | When `strikeFlaggedForReview = true` (~line 369) | Flagged User |
+| `user.multi-reported` | `src/server/services/report.service.ts` → `validateReportCreation()` | When report count threshold met (~line 86) | Flagged User |
+
+**Example instrumentation** (one line per trigger):
+
+```typescript
+// In report.service.ts → createReport(), after the report is created:
+await emitAgentEvent({
+  type: 'report.created',
+  entityType: 'report',
+  entityId: report.id,
+  userId: report.userId,
+  payload: { reason: report.reason, reportedEntityType, reportedEntityId },
+});
+
+// In image-scan-result.ts → when needsReview is set:
+await emitAgentEvent({
+  type: 'image.flagged',
+  entityType: 'image',
+  entityId: image.id,
+  userId: image.userId,
+  payload: { reviewKey, scanResults: { isMinor, isBlocked, nsfwLevel } },
+});
+
+// In strike.service.ts → evaluateStrikeEscalation(), when flagged for review:
+await emitAgentEvent({
+  type: 'user.strike-flagged',
+  entityType: 'user',
+  entityId: userId,
+  userId,
+  payload: { totalActivePoints, flaggedForReview: true },
+});
+```
+
+### 7.5 Delivery Job
+
+A background job that batches undelivered events and POSTs them to the agent runner:
+
+```typescript
+// src/server/jobs/send-agent-events.ts
+export const sendAgentEventsJob = createJob(
+  'send-agent-events',
+  '*/1 * * * *', // every minute
+  async () => {
+    const events = await dbWrite.agentEvent.findMany({
+      where: { deliveredAt: null, attempts: { lt: 5 } },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+
+    if (!events.length) return;
+
+    const response = await fetch(env.AGENT_RUNNER_URL + '/events', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.AGENT_RUNNER_SECRET}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ events }),
+    });
+
+    if (response.ok) {
+      await dbWrite.agentEvent.updateMany({
+        where: { id: { in: events.map((e) => e.id) } },
+        data: { deliveredAt: new Date() },
+      });
+    } else {
+      await dbWrite.agentEvent.updateMany({
+        where: { id: { in: events.map((e) => e.id) } },
+        data: { attempts: { increment: 1 } },
+      });
+    }
+  }
+);
+```
+
+**Delivery guarantees**:
+- Events persist in Postgres — nothing lost if agent runner is down
+- Failed deliveries retry up to 5 times (next job tick picks them up)
+- `deliveredAt` index makes the "undelivered" query fast even with millions of rows
+- Batch size capped at 100 per tick to avoid overwhelming the runner
+
+### 7.6 Agent Runner Side (External Repo)
+
+The agent runner exposes a simple HTTP endpoint that receives event batches and dispatches:
+
+```typescript
+// Agent runner: POST /events handler
+app.post('/events', authMiddleware, async (req, res) => {
+  const { events } = req.body;
+
+  for (const event of events) {
+    // Deduplicate — don't spawn a second agent for the same entity
+    if (await isAlreadyProcessing(event.entityType, event.entityId)) continue;
+
+    switch (event.type) {
+      case 'report.created':
+        await spawnAgent('report-triage', { reportId: event.entityId });
+        break;
+      case 'image.flagged':
+        await spawnAgent('dataset-review', { imageId: event.entityId, ...event.payload });
+        break;
+      case 'model.published':
+        await spawnAgent('model-review', { modelId: event.entityId });
+        break;
+      case 'article.published':
+        await spawnAgent('article-review', { articleId: event.entityId });
+        break;
+      case 'bounty.created':
+        await spawnAgent('bounty-review', { bountyId: event.entityId });
+        break;
+      case 'training.submitted':
+        await spawnAgent('dataset-review', { modelVersionId: event.entityId });
+        break;
+      case 'user.strike-flagged':
+      case 'user.multi-reported':
+        await spawnAgent('flagged-user', { userId: event.entityId });
+        break;
+    }
+  }
+
+  res.json({ ok: true, processed: events.length });
+});
+```
+
+### 7.7 Scaling Path
+
+The event table approach handles ~50-100 events/min comfortably. If volume grows or latency requirements tighten:
+
+| Scale | Approach | Migration Effort |
+|-------|----------|-----------------|
+| Current (~50-100 events/min) | `AgentEvent` table + 1-min delivery job | Already planned |
+| Medium (~500+ events/min) | **Redis Streams** — replace `INSERT` with `XADD`, delivery job becomes stream consumer with consumer groups | Small — Redis already in stack |
+| High (~10K+ events/min) | Kafka or SQS — unlikely needed for moderation volume | Large — new infrastructure |
+
+Redis Streams is the natural next step because: Redis is already in the stack, consumer groups solve multi-instance scaling, and `XADD` is persistent (unlike pub/sub).
+
+---
+
+## 8. Implementation in This Repo
+
+### 8.1 New: ApprovalRequest Model + Router + UI — ✅ Complete
 
 | Component | File Path | Status |
 |-----------|-----------|--------|
@@ -970,7 +1258,7 @@ When a skill returns `{ requiresApproval: true }`:
 - Execute `actionParams` on approval (agents poll via `getStatus` and execute themselves for now)
 - Agent session notification on decision (webhook/polling TBD)
 
-### 7.2 New: Bounty Blocking Endpoint — ✅ Complete
+### 8.2 New: Bounty Blocking Endpoint — ✅ Complete
 
 **Decision: refund buzz + delete** — implemented as `bounty.moderatorBlock`:
 
@@ -986,14 +1274,14 @@ When a skill returns `{ requiresApproval: true }`:
 - `logToAxiom` is non-blocking (`.catch(() => null)`) to avoid masking successful actions
 - Returns `{ success: true, refunded: boolean }`
 
-### 7.3 New: Feature Flag + Nav Entry — ✅ Complete
+### 8.3 New: Feature Flag + Nav Entry — ✅ Complete
 
 | Component | File Path | Status |
 |-----------|-----------|--------|
 | Feature flag | `src/server/services/feature-flags.service.ts` | ✅ `moderationAgents: ['dev', 'granted']` |
 | Nav entry | `src/components/Moderation/ModerationNav.tsx` | ✅ After Strikes, hidden when `!features.moderationAgents` |
 
-### 7.4 Existing Endpoints Called by Agents
+### 8.4 Existing Endpoints Called by Agents
 
 These already exist and work. The agent skills call them via tRPC:
 
@@ -1013,7 +1301,7 @@ These already exist and work. The agent skills call them via tRPC:
 | `mod.trainingData.approve` | `src/server/routers/moderator/index.ts` | Approve training |
 | `mod.trainingData.deny` | `src/server/routers/moderator/index.ts` | Deny training |
 
-### 7.5 Existing: Strike System (Fully Implemented)
+### 8.5 Existing: Strike System (Fully Implemented)
 
 The strike system is complete and ready for agent integration:
 
@@ -1031,7 +1319,7 @@ The strike system is complete and ready for agent integration:
 
 ---
 
-## 8. Implementation Phases
+## 9. Implementation Phases
 
 ### Phase 1: Core Infrastructure (This Repo) — ✅ COMPLETE
 
@@ -1046,36 +1334,59 @@ All items implemented on the `moderation-enhancements` branch. Typecheck passes.
 
 **Branch**: `moderation-enhancements` — needs DB migration before merge.
 
-### Phase 2: Agent Skills (External Repo) — ⏳ Next
+### Phase 2: Event System + Agent Skills — ⏳ Next
 
-7. Implement shared libraries (`civitai-api.ts`, `civitai-db.ts`, `clickhouse.ts`, `orchestrator.ts` via `@civitai/client`, `retool-db.ts`)
-8. Implement review skills (12 skills)
-9. Implement orchestrator skills (5 skills using `@civitai/client`)
-10. Implement moderation skills (9 skills) with bounds checking
-11. Implement processing skills (3 skills)
-12. Define bounds configuration (values from Section 5)
+Phase 2 has two parallel workstreams: the event system (this repo) and agent skills (external repo).
+
+#### Phase 2a: Event System (This Repo)
+
+7. Add `AgentEvent` model to `prisma/schema.full.prisma` (see Section 7.2)
+8. Create `emitAgentEvent()` service (see Section 7.3)
+9. Instrument trigger points — add `emitAgentEvent()` calls at each code path (see Section 7.4):
+   - `report.service.ts` → `createReport()`
+   - `image-scan-result.ts` → when `needsReview` is set
+   - `strike.service.ts` → `evaluateStrikeEscalation()` when flagged
+   - `model-version.service.ts` → on publish
+   - `article.service.ts` → `upsertArticle()` on publish
+   - `bounty.service.ts` → `upsertBounty()` on create
+   - `training.router.ts` → `createTrainingRequest`
+10. Create `send-agent-events` delivery job (see Section 7.5)
+11. Add `AGENT_RUNNER_URL` and `AGENT_RUNNER_SECRET` env vars
+
+#### Phase 2b: Agent Skills (External Repo)
+
+12. Set up external repo (`civitai/moderation-agents` or similar)
+13. Implement shared libraries (`civitai-api.ts`, `civitai-db.ts`, `clickhouse.ts`, `orchestrator.ts` via `@civitai/client`, `retool-db.ts`)
+14. Implement review skills (12 skills)
+15. Implement orchestrator skills (5 skills using `@civitai/client`)
+16. Implement moderation skills (9 skills) with bounds checking
+17. Implement processing skills (3 skills)
+18. Define bounds configuration (values from Section 5)
 
 ### Phase 3: Agent Runner Integration — ⏳ After Phase 2
 
-13. Build agent runner with system prompts for each of the 7 agents
-14. Wire skills as tool-use definitions
-15. Implement agent session pause/resume on approval request submission
-16. Add pending count badge to moderator nav (real-time or polling)
-17. Test end-to-end flows: report → triage → action/escalation → approval
-18. **Wire `actionParams` execution on approval** — currently agents poll `getStatus` and execute themselves; Phase 3 can add server-side execution if needed
+19. Build agent runner with `POST /events` endpoint to receive events from delivery job (see Section 7.6)
+20. Implement event → agent dispatch logic (deduplication, routing)
+21. Build agent runner with system prompts for each of the 7 agents
+22. Wire skills as tool-use definitions
+23. Implement agent session pause/resume on approval request submission
+24. Add pending count badge to moderator nav (real-time or polling)
+25. Test end-to-end flows: event emitted → agent spawned → investigation → action/escalation → approval
+26. **Wire `actionParams` execution on approval** — currently agents poll `getStatus` and execute themselves; Phase 3 can add server-side execution if needed
 
 ### Phase 4: Polish — ⏳ After Phase 3
 
-19. Bulk approve/reject in UI (migrate to `createSelectStore` for multi-select)
-20. Auto-expire old requests (24h timeout → status = Expired)
-21. Notifications to mods when high-priority requests arrive (NCMEC, ban requests)
-22. Audit log dashboard for all agent actions
-23. Tune bounds based on observed agent accuracy
-24. Expand auto-action bounds as confidence increases
+27. Bulk approve/reject in UI (migrate to `createSelectStore` for multi-select)
+28. Auto-expire old requests (24h timeout → status = Expired)
+29. Notifications to mods when high-priority requests arrive (NCMEC, ban requests)
+30. Audit log dashboard for all agent actions
+31. Tune bounds based on observed agent accuracy
+32. Expand auto-action bounds as confidence increases
+33. **Evaluate scaling path** — if event volume or latency requirements outgrow the event table, migrate to Redis Streams (see Section 7.7)
 
 ---
 
-## 9. Open Questions
+## 10. Open Questions
 
 | # | Question | Affects | Status |
 |---|----------|---------|--------|
@@ -1083,10 +1394,16 @@ All items implemented on the `moderation-enhancements` branch. Typecheck passes.
 | 2 | Bounty blocking approach: soft-delete status or refund+delete? | `moderation/block-content`, Phase 1 endpoint | **Resolved** — refund buzz + delete (implemented as `bounty.moderatorBlock`) |
 | 3 | Agent session pause/resume mechanism — webhook, polling, or suspension? | Approval request flow, Phase 3 | **Open** — depends on agent runner architecture. Phase 1 supports polling via `getStatus` |
 | 4 | DB migration for `ApprovalRequest` model | Phase 1 merge to main | **Needs action** — run `pnpm run db:migrate:empty` and write migration SQL before merging `moderation-enhancements` |
+| 5 | Should expired approval requests auto-escalate to a lead mod? | Approval request system | **Open** — product decision |
+| 6 | Should approved actions execute server-side immediately or on next agent tick? | Approval request system | **Leaning immediate** — simpler, more reliable |
+| 7 | Where should the ApprovalRequest table live? | Schema design | **Resolved** — main Civitai Postgres (ties into User model and moderator flow) |
+| 8 | External repo name and hosting | Phase 2b setup | **Open** — `civitai/moderation-agents`? Or subfolder in existing internal tools repo? |
+| 9 | Agent runner auth — how does the delivery job authenticate with the runner? | Phase 2a/3 | **Proposed** — shared secret via `AGENT_RUNNER_SECRET` env var (simple Bearer token). Can upgrade to mTLS later if needed |
+| 10 | Should `emitAgentEvent()` be gated behind the `moderationAgents` feature flag? | Phase 2a | **Leaning yes** — no-op when flag is off, avoids filling the table before the runner exists |
 
 ---
 
-## 10. Phase 1 Pickup Notes
+## 11. Phase 1 Pickup Notes
 
 If resuming work on this branch, here's what's left before Phase 1 can merge:
 
@@ -1119,6 +1436,3 @@ src/server/services/bounty.service.ts              # moderatorBlockBounty()
 src/server/controllers/bounty.controller.ts        # moderatorBlockBountyHandler()
 src/server/routers/bounty.router.ts                # bounty.moderatorBlock endpoint
 ```
-| 4 | Should expired approval requests auto-escalate to a lead mod? | Approval request system | **Open** — product decision |
-| 5 | Should approved actions execute server-side immediately or on next agent tick? | Approval request system | **Leaning immediate** — simpler, more reliable |
-| 6 | Where should the ApprovalRequest table live? | Schema design | **Resolved** — main Civitai Postgres (ties into User model and moderator flow) |
