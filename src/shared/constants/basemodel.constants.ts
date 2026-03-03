@@ -2592,6 +2592,28 @@ export function isModelSupported(
 }
 
 /**
+ * Check if a base model or ecosystem supports generation for a given model type.
+ * Accepts either a base model name (e.g., 'SDXL 1.0') or an ecosystem key (e.g., 'SDXL').
+ */
+export function isBaseModelGenerationSupported(
+  baseModelOrEcosystem: string,
+  modelType: ModelType
+): boolean {
+  // Try base model name first
+  const model = baseModelByName.get(baseModelOrEcosystem);
+  if (model) return isModelSupported(model.id, 'generation', modelType);
+
+  // Fall back to ecosystem key
+  const ecosystem = ecosystemByKey.get(baseModelOrEcosystem);
+  if (!ecosystem) return false;
+
+  const support = getEcosystemSupport(ecosystem.id, 'generation');
+  if (!support || support.disabled) return false;
+
+  return support.modelTypes.includes(modelType);
+}
+
+/**
  * Get generation support level between two ecosystems
  */
 export function getGenerationSupport(
