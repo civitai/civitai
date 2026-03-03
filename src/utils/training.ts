@@ -355,17 +355,46 @@ export const getTrainingFields = {
 };
 
 /**
- * Get AI Toolkit ecosystem for a training model
- * Reads from the centralized trainingModelInfo structure
+ * Map from TrainingBaseModelType to the AI Toolkit ecosystem string.
+ * Used as a fallback for custom models where the base model key
+ * is an AIR URN rather than a key in trainingModelInfo.
  */
-export function getAiToolkitEcosystem(baseModel: string): string | null {
+const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
+  sd15: 'sd1',
+  sdxl: 'sdxl',
+  flux: 'flux1',
+  sd35: 'sd3',
+  hunyuan: 'wan',
+  wan: 'wan',
+  chroma: 'chroma',
+  qwen: 'qwen',
+  zimage: 'zimageturbo',
+  flux2klein: 'flux2klein',
+  ltx2: 'ltx2',
+};
+
+/**
+ * Get AI Toolkit ecosystem for a training model
+ * Reads from the centralized trainingModelInfo structure.
+ * Falls back to baseType mapping for custom models where
+ * baseModel is an AIR URN instead of a trainingModelInfo key.
+ */
+export function getAiToolkitEcosystem(
+  baseModel: string,
+  baseType?: TrainingBaseModelType
+): string | null {
   const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
 
   if (modelInfo?.aiToolkit) {
     return modelInfo.aiToolkit.ecosystem;
   }
 
-  // For custom models, we can't determine the ecosystem
+  // Fallback for custom models: derive ecosystem from baseType
+  if (baseType) {
+    const ecosystem = baseTypeToEcosystem[baseType];
+    if (ecosystem) return ecosystem;
+  }
+
   console.warn(`No AI Toolkit ecosystem configured for: ${baseModel}`);
   return null;
 }

@@ -171,11 +171,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
     // Transform parameters for AI Toolkit
     if (selectedRun.params.engine === 'ai-toolkit') {
-      const ecosystem = getAiToolkitEcosystem(formBaseModel);
+      const ecosystem = getAiToolkitEcosystem(formBaseModel, selectedRun.baseType);
       const modelVariant = getAiToolkitModelVariant(formBaseModel as TrainingDetailsBaseModelList);
 
       if (!ecosystem) {
-        console.error('Failed to determine ecosystem for AI Toolkt whatIf query');
+        console.error('Failed to determine ecosystem for AI Toolkit whatIf query');
         return null;
       }
 
@@ -515,7 +515,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       // Transform params for AI Toolkit if needed
       let finalParams: any = paramData;
       if (paramData.engine === 'ai-toolkit') {
-        const ecosystem = getAiToolkitEcosystem(base);
+        const ecosystem = getAiToolkitEcosystem(base, baseType);
         const modelVariant = getAiToolkitModelVariant(base as TrainingDetailsBaseModelList);
 
         if (!ecosystem) {
