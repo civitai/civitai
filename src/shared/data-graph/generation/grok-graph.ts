@@ -87,7 +87,14 @@ const grokImageGraph = new DataGraph<GrokImageCtx, GenerationCtx>()
     }),
     ['workflow']
   )
-  .node('aspectRatio', aspectRatioNode({ options: grokImageAspectRatios, defaultValue: '1:1' }));
+  .node(
+    'aspectRatio',
+    (ctx) => ({
+      ...aspectRatioNode({ options: grokImageAspectRatios, defaultValue: '1:1' }),
+      when: ctx.workflow !== 'img2img:edit',
+    }),
+    ['workflow']
+  );
 
 // =============================================================================
 // Video Subgraph
