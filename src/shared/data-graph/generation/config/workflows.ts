@@ -53,6 +53,7 @@ const EDIT_IMG_IDS = [
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
   ECO.Flux1Kontext,
+  ECO.Grok,
 ];
 
 /** Image ecosystems that support image:create */
@@ -83,6 +84,7 @@ const TXT2IMG_IDS = [
   ECO.PonyV7,
   ECO.ZImageTurbo,
   ECO.ZImageBase,
+  ECO.Grok,
 ];
 
 /** Video ecosystems that support video:create */
@@ -100,6 +102,7 @@ const TXT2VID_IDS = [
   ECO.Kling,
   // ECO.Haiper,
   // ECO.Lightricks,
+  ECO.Grok,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -262,6 +265,13 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'video',
     enhancement: true,
     ecosystemIds: [],
+  },
+
+  'vid2vid:edit': {
+    label: 'Edit Video',
+    description: 'Edit a video with AI',
+    category: 'video',
+    ecosystemIds: [ECO.Grok],
   },
 };
 
@@ -514,18 +524,34 @@ type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolea
 
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
   // Kling V3 on standard video workflows (legacy only supports V1.6, V2, V2.5)
-  ['txt2vid', (ecoId, modelId) => ecoId === ECO.Kling && modelId === klingVersionIds.v3],
-  ['img2vid', (ecoId, modelId) => ecoId === ECO.Kling && modelId === klingVersionIds.v3],
+  [
+    'txt2vid',
+    (ecoId, modelId) =>
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) || ecoId === ECO.Grok,
+  ],
+  [
+    'img2vid',
+    (ecoId, modelId) =>
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) || ecoId === ECO.Grok,
+  ],
 
   // ref2vid: legacy forms for Kling and Veo3 don't support this workflow
   ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3],
 
   // NanoBanana V2 - only available in new form
-  ['txt2img', (ecoId, modelId) => ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2],
+  [
+    'txt2img',
+    (ecoId, modelId) =>
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) || ecoId === ECO.Grok,
+  ],
   [
     'img2img:edit',
-    (ecoId, modelId) => ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2,
+    (ecoId, modelId) =>
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) || ecoId === ECO.Grok,
   ],
+
+  // Grok vid2vid:edit - no legacy equivalent
+  ['vid2vid:edit', true],
 ]);
 
 /**
@@ -558,7 +584,7 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
 ];

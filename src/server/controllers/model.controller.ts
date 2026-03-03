@@ -2,10 +2,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
-import {
-  getBaseModelGenerationSupported,
-  type BaseModel,
-} from '~/shared/constants/base-model.constants';
+import { type BaseModel } from '~/shared/constants/base-model.constants';
+import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -231,7 +229,7 @@ export const getModelHandler = async ({
         (version) =>
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1 &&
-          getBaseModelGenerationSupported(version.baseModel, model.type)
+          isBaseModelGenerationSupported(version.baseModel, model.type)
       ),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta
@@ -265,7 +263,7 @@ export const getModelHandler = async ({
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1 &&
-          getBaseModelGenerationSupported(version.baseModel, model.type);
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -1399,7 +1397,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const canGenerate =
           !!version.covered &&
           !unavailableGenResources.includes(version.id) &&
-          getBaseModelGenerationSupported(version.baseModel, model.type);
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,

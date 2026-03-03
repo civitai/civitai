@@ -48,6 +48,7 @@ import { createLTXV2Input } from './ltxv2.handler';
 import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
+import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 
 // =============================================================================
 // Types - Derived from GenerationGraph
@@ -147,6 +148,9 @@ export type SoraCtx = EcosystemGraphOutput & { ecosystem: 'Sora2' };
 /** Veo3 context */
 export type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 
+/** Grok context */
+export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
+
 // =============================================================================
 // Exports - Individual handlers
 // =============================================================================
@@ -176,6 +180,7 @@ export { createLTXV2Input } from './ltxv2.handler';
 export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
+export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 
 // Shared utilities
 export { createComfyInput } from './comfy-input';
@@ -342,6 +347,21 @@ async function createEcosystemStep(
     // Veo3
     case 'Veo3':
       return { $type: 'videoGen', input: await createVeo3Input(normalizedData, handlerCtx) };
+
+    // Grok (image + video)
+    case 'Grok': {
+      const isVideo =
+        normalizedData.workflow.startsWith('txt2vid') ||
+        normalizedData.workflow.startsWith('img2vid') ||
+        normalizedData.workflow.startsWith('vid2vid');
+      if (isVideo) {
+        return {
+          $type: 'videoGen',
+          input: await createGrokVideoInput(normalizedData, handlerCtx),
+        };
+      }
+      return { $type: 'imageGen', input: await createGrokImageInput(normalizedData, handlerCtx) };
+    }
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

@@ -108,7 +108,13 @@ export const deleteUserReferralCode = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
-  const userReferralCode = await dbRead.userReferralCode.findUniqueOrThrow({ where: { id } });
+  const referralCodeFindArgs = { where: { id } } as const;
+  const userReferralCode = await dbRead.userReferralCode
+    .findUniqueOrThrow(referralCodeFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'userReferralCode', caller: 'deleteUserReferralCode' });
+      return dbWrite.userReferralCode.findUniqueOrThrow(referralCodeFindArgs);
+    });
 
   if (userReferralCode.userId !== userId && !isModerator) {
     throw throwBadRequestError('You do not have permission to delete this referral code');

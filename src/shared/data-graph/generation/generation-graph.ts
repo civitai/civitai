@@ -98,6 +98,7 @@ const NEW_TO_OLD: Record<string, string> = {
   'video:ref2vid': 'img2vid:ref2vid',
   'video:upscale': 'vid2vid:upscale',
   'video:interpolate': 'vid2vid:interpolate',
+  'video:edit': 'vid2vid:edit',
 };
 
 /** Migrate stored workflow key to current format */
@@ -222,6 +223,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         'txt2vid',
         'img2vid',
         'img2vid:ref2vid',
+        'vid2vid:edit',
       ] as const,
       graph: ecosystemGraph,
     },

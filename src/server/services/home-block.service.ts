@@ -3,6 +3,7 @@ import type { SessionUser } from 'next-auth';
 import { CacheTTL } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -130,7 +131,7 @@ export const getHomeBlockById = async ({
   // SessionUser required because it's passed down to getHomeBlockData
   user?: SessionUser;
 }) => {
-  const homeBlock = await dbRead.homeBlock.findUniqueOrThrow({
+  const homeBlockFindArgs = {
     select: {
       id: true,
       metadata: true,
@@ -141,7 +142,13 @@ export const getHomeBlockById = async ({
     where: {
       id,
     },
-  });
+  } as const;
+  const homeBlock = await dbRead.homeBlock
+    .findUniqueOrThrow(homeBlockFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
+      return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
+    });
 
   if (!homeBlock) {
     return null;
