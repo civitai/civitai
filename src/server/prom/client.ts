@@ -131,6 +131,13 @@ export const userUpdateCounter = registerCounterWithLabels({
   labelNames: ['location'] as const,
 });
 
+// CDC replication lag fallback metrics
+export const dbReadFallbackCounter = registerCounterWithLabels({
+  name: 'dbread_fallback_total',
+  help: 'Number of times a dbRead query fell back to dbWrite due to CDC replication lag',
+  labelNames: ['entity', 'caller'] as const,
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;

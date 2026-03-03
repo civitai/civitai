@@ -15,7 +15,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
-import { userUpdateCounter } from '~/server/prom/client';
+import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -1640,9 +1640,10 @@ export const createUserReferral = async ({
     where: { id },
     select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
   } as const;
-  const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() =>
-    dbWrite.user.findUniqueOrThrow(findArgs)
-  );
+  const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'user', caller: 'createUserReferral' });
+    return dbWrite.user.findUniqueOrThrow(findArgs);
+  });
 
   if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
     return;
