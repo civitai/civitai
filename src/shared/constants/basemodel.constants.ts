@@ -92,7 +92,7 @@ export type BaseModelRecord = {
   id: number;
   name: string;
   description?: string;
-  type: MediaType;
+  type: MediaType | MediaType[];
   ecosystemId: number; // Direct reference to ecosystem
   hidden?: boolean;
   disabled?: boolean; // Disables ALL support types (generation, training, auction, etc.)
@@ -166,6 +166,7 @@ export const ECO = {
   Lightricks: 51,
   Seedance: 60,
   Anima: 59,
+  Grok: 61,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -604,6 +605,7 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 212,
     // txt2vid + img2vid (no vid2vid support currently)
   },
+  { id: ECO.Grok, key: 'Grok', name: 'grok', displayName: 'Grok', familyId: 13, sortOrder: 216 },
   {
     id: ECO.Haiper,
     key: 'Haiper',
@@ -747,6 +749,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Grok - checkpoint only
+  { ecosystemId: ECO.Grok, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Seedream - checkpoint only
   { ecosystemId: ECO.Seedream, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1073,6 +1078,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Seedance,
     defaults: {
       model: { id: 2623856 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Grok,
+    defaults: {
+      model: { id: 2738377 },
       modelLocked: true,
     },
   },
@@ -1421,6 +1433,7 @@ export const BM = {
   Kling: 69,
   Seedance: 70,
   Anima: 77,
+  Grok: 78,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -1584,6 +1597,11 @@ export const licenses: LicenseRecord[] = [
     notice:
       'The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  {
+    id: 26,
+    name: 'Grok',
+    url: 'https://x.ai/legal/terms-of-service',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -1652,6 +1670,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 12,
     name: 'ByteDance',
     description: "ByteDance's image and video generation models",
+  },
+  {
+    id: 13,
+    name: 'xAI',
+    description: "xAI's image and video generation models",
   },
 ];
 
@@ -1776,6 +1799,16 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B_base,
     licenseId: 14,
+  },
+
+  // Grok
+  {
+    id: BM.Grok,
+    name: 'Grok',
+    description: 'Image and video generation model from xAI',
+    type: ['image', 'video'],
+    ecosystemId: ECO.Grok,
+    licenseId: 26,
   },
 
   // HiDream
@@ -2743,7 +2776,7 @@ export function getGenerationEcosystemsForMediaType(mediaType: MediaType): strin
   // Get all base models that support generation and match the media type
   const validModels = baseModels.filter((m) => {
     if (m.disabled) return false;
-    if (m.type !== mediaType) return false;
+    if (Array.isArray(m.type) ? !m.type.includes(mediaType) : m.type !== mediaType) return false;
     // Check if ecosystem supports generation
     const support = getEcosystemSupport(m.ecosystemId, 'generation');
     return support && !support.disabled;

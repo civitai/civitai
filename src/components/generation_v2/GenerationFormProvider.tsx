@@ -260,7 +260,9 @@ function InnerProvider({
             : undefined;
           const isVideoEco =
             remixEcoEntry &&
-            getBaseModelsByEcosystemId(remixEcoEntry.id).some((m) => m.type === 'video');
+            getBaseModelsByEcosystemId(remixEcoEntry.id).some((m) =>
+              Array.isArray(m.type) ? m.type.includes('video') : m.type === 'video'
+            );
           resolvedWorkflow = isVideoEco ? 'txt2vid' : 'txt2img';
         }
 
