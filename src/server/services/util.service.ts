@@ -1,4 +1,5 @@
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 
 export const entityExists = async ({
   entityType,
@@ -10,15 +11,23 @@ export const entityExists = async ({
   // always use findUniqueOrThrow. This will throw an error if the entity does not exist.
 
   if (entityType === 'Model') {
-    await dbRead.model.findUniqueOrThrow({
-      where: { id: entityId },
-    });
+    const modelFindArgs = { where: { id: entityId } } as const;
+    await dbRead.model
+      .findUniqueOrThrow(modelFindArgs)
+      .catch(() => {
+        dbReadFallbackCounter.inc({ entity: 'model', caller: 'entityExists' });
+        return dbWrite.model.findUniqueOrThrow(modelFindArgs);
+      });
   }
 
   if (entityType === 'Image') {
-    await dbRead.image.findUniqueOrThrow({
-      where: { id: entityId },
-    });
+    const imageFindArgs = { where: { id: entityId } } as const;
+    await dbRead.image
+      .findUniqueOrThrow(imageFindArgs)
+      .catch(() => {
+        dbReadFallbackCounter.inc({ entity: 'image', caller: 'entityExists' });
+        return dbWrite.image.findUniqueOrThrow(imageFindArgs);
+      });
   }
 
   // TODO: Add more entities as needed here.

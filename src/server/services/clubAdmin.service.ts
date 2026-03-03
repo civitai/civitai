@@ -1,6 +1,7 @@
 import dayjs from '~/shared/utils/dayjs';
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import type {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
@@ -96,10 +97,16 @@ export const acceptClubAdminInvite = async ({
 }: {
   input: AcceptClubAdminInviteInput & { userId: number };
 }) => {
-  const clubAdminInvite = await dbRead.clubAdminInvite.findUniqueOrThrow({
+  const clubAdminInviteFindArgs = {
     where: { id: id },
     select: { clubId: true, expiresAt: true, permissions: true },
-  });
+  } as const;
+  const clubAdminInvite = await dbRead.clubAdminInvite
+    .findUniqueOrThrow(clubAdminInviteFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'clubAdminInvite', caller: 'acceptClubAdminInvite' });
+      return dbWrite.clubAdminInvite.findUniqueOrThrow(clubAdminInviteFindArgs);
+    });
 
   if (clubAdminInvite.expiresAt && dayjs(clubAdminInvite.expiresAt).isBefore(dayjs())) {
     throw throwBadRequestError('Invite has expired');

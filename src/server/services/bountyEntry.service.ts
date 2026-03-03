@@ -19,6 +19,7 @@ import {
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
 import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -515,14 +516,20 @@ export const getBountyEntryFilteredFiles = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const bountyEntry = await dbRead.bountyEntry.findUniqueOrThrow({
+  const bountyEntryFindArgs = {
     where: { id },
     select: {
       id: true,
       userId: true,
       bountyId: true,
     },
-  });
+  } as const;
+  const bountyEntry = await dbRead.bountyEntry
+    .findUniqueOrThrow(bountyEntryFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'bountyEntry', caller: 'getBountyEntryFilteredFiles' });
+      return dbWrite.bountyEntry.findUniqueOrThrow(bountyEntryFindArgs);
+    });
 
   const files = await getFilesByEntity({ id: bountyEntry.id, type: 'BountyEntry' });
 
@@ -577,7 +584,7 @@ export const deleteBountyEntry = async ({
   id: number;
   isModerator: boolean;
 }) => {
-  const entry = await dbRead.bountyEntry.findUniqueOrThrow({
+  const entryFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -589,7 +596,13 @@ export const deleteBountyEntry = async ({
         },
       },
     },
-  });
+  } as const;
+  const entry = await dbRead.bountyEntry
+    .findUniqueOrThrow(entryFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'bountyEntry', caller: 'deleteBountyEntry' });
+      return dbWrite.bountyEntry.findUniqueOrThrow(entryFindArgs);
+    });
 
   if (!entry) {
     throw throwBadRequestError('Bounty entry does not exist');

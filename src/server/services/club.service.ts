@@ -3,6 +3,7 @@ import { Availability, ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -418,7 +419,7 @@ export const deleteClubTier = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
-  const clubTier = await dbRead.clubTier.findUniqueOrThrow({
+  const clubTierFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -442,7 +443,13 @@ export const deleteClubTier = async ({
         },
       },
     },
-  });
+  } as const;
+  const clubTier = await dbRead.clubTier
+    .findUniqueOrThrow(clubTierFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'clubTier', caller: 'deleteClubTier' });
+      return dbWrite.clubTier.findUniqueOrThrow(clubTierFindArgs);
+    });
 
   const [userClub] = await userContributingClubs({ userId, clubIds: [clubTier.clubId] });
 
