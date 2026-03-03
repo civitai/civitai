@@ -443,7 +443,7 @@ export const deleteClubTier = async ({
         },
       },
     },
-  } as const;
+  };
   const clubTier = await dbRead.clubTier
     .findUniqueOrThrow(clubTierFindArgs)
     .catch(() => {
