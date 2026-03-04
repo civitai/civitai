@@ -1,15 +1,17 @@
 /**
- * Qwen Family Graph V2
+ * Qwen Family Graph
  *
- * Controls for Qwen ecosystem.
- * Meta contains only dynamic props - static props defined in components.
+ * Controls for Qwen and Qwen 2 ecosystems.
+ * Uses ecosystem discriminator to select between Qwen and Qwen 2 subgraphs.
  *
- * Supports txt2img and img2img:edit workflows with model version selection.
- * Model versions differ per workflow:
- * - txt2img: v2509, v2512 (default)
- * - img2img:edit: v2509, v2511
+ * Qwen (sdcpp engine):
+ * - Supports txt2img and img2img:edit workflows with model version selection
+ * - Model versions differ per workflow: txt2img (v2509, v2512), img2img:edit (v2509, v2511)
+ * - Nodes: aspectRatio, cfgScale, steps, seed, resources
  *
- * Note: Qwen doesn't use negative prompts, samplers, or CLIP skip.
+ * Qwen 2 (fal engine):
+ * - Supports txt2img and img2img:edit workflows with locked model
+ * - Nodes: aspectRatio (mapped to imageSize in handler), seed, enablePromptExpansion
  */
 
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -18,13 +20,14 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   imagesNode,
+  negativePromptNode,
   resourcesNode,
   seedNode,
   sliderNode,
 } from './common';
 
 // =============================================================================
-// Model Versions
+// Qwen Constants
 // =============================================================================
 
 /** Qwen model version IDs */
@@ -59,10 +62,6 @@ const qwenWorkflowVersions = {
   },
 };
 
-// =============================================================================
-// Aspect Ratios
-// =============================================================================
-
 /** Qwen aspect ratios (1024px based) */
 const qwenAspectRatios = [
   { label: '2:3', value: '2:3', width: 832, height: 1216 },
@@ -71,28 +70,70 @@ const qwenAspectRatios = [
 ];
 
 // =============================================================================
-// Qwen Graph V2
+// Qwen 2 Constants
 // =============================================================================
 
-/**
- * Qwen family controls.
- *
- * Meta only contains dynamic props - static props like label are in components.
- * Note: Qwen doesn't use negative prompts, samplers, or CLIP skip.
- */
-export const qwenGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
-  // Merge checkpoint graph with workflow-specific versions
-  // modelLocked: true ensures stale stored values are forced to valid version IDs
-  // Automatically syncs model version when workflow changes (txt2img ↔ img2img:edit)
+/** Qwen 2 aspect ratios (mapped to imageSize enum in the handler) */
+const qwen2AspectRatios = [
+  { label: '16:9', value: '16:9', width: 1024, height: 576 },
+  { label: '4:3', value: '4:3', width: 1024, height: 768 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', value: '3:4', width: 768, height: 1024 },
+  { label: '9:16', value: '9:16', width: 576, height: 1024 },
+];
+
+// =============================================================================
+// Types
+// =============================================================================
+
+type QwenCtx = { ecosystem: string; workflow: string };
+
+// =============================================================================
+// Qwen Subgraph (sdcpp engine)
+// =============================================================================
+
+const qwenSubGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .merge(
     (ctx) =>
       createCheckpointGraph({
         workflowVersions: qwenWorkflowVersions,
         currentWorkflow: ctx.workflow,
-        modelLocked: true,
       }),
     ['workflow']
   )
+  .node(
+    'resources',
+    (_ctx, ext) =>
+      resourcesNode({
+        ecosystem: 'Qwen',
+        limit: ext.limits.maxResources,
+      }),
+    []
+  )
+  .node('aspectRatio', aspectRatioNode({ options: qwenAspectRatios, defaultValue: '1:1' }))
+  .node('cfgScale', sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5 }))
+  .node('steps', sliderNode({ min: 20, max: 50, defaultValue: 25 }));
+
+// =============================================================================
+// Qwen 2 Subgraph (fal engine)
+// =============================================================================
+
+const qwen2SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
+  .merge(() => createCheckpointGraph(), [])
+  .node('aspectRatio', aspectRatioNode({ options: qwen2AspectRatios, defaultValue: '1:1' }))
+  .node('negativePrompt', negativePromptNode());
+
+// =============================================================================
+// Qwen Family Graph
+// =============================================================================
+
+/**
+ * Qwen family controls.
+ *
+ * Shared nodes (images, seed) defined at this level.
+ * Ecosystem discriminator selects Qwen or Qwen 2 subgraph for ecosystem-specific nodes.
+ */
+export const qwenGraph = new DataGraph<QwenCtx, GenerationCtx>()
   // Images node - shown for img2img variants, hidden for txt2img
   .node(
     'images',
@@ -102,19 +143,15 @@ export const qwenGraph = new DataGraph<{ ecosystem: string; workflow: string }, 
     }),
     ['workflow']
   )
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
-  .node('aspectRatio', aspectRatioNode({ options: qwenAspectRatios, defaultValue: '1:1' }))
-  .node(
-    'cfgScale',
-    sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5 })
-  )
-  .node('steps', sliderNode({ min: 20, max: 50, defaultValue: 25 }))
-  .node('seed', seedNode());
+
+  // Seed - shared across both ecosystems
+  .node('seed', seedNode())
+
+  // Discriminate between Qwen and Qwen 2
+  .discriminator('ecosystem', {
+    Qwen: qwenSubGraph,
+    Qwen2: qwen2SubGraph,
+  });
+
+// Export constants for use in components and handlers
+export { qwenAspectRatios, qwen2AspectRatios };

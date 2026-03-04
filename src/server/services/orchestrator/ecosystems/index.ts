@@ -285,8 +285,9 @@ async function createEcosystemStep(
     case 'Flux1Kontext':
       return { $type: 'imageGen', input: await createFluxKontextInput(normalizedData, handlerCtx) };
 
-    // Qwen
+    // Qwen family
     case 'Qwen':
+    case 'Qwen2':
       return { $type: 'imageGen', input: await createQwenInput(normalizedData, handlerCtx) };
 
     // Seedream

@@ -44,6 +44,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 /** Image ecosystems that support image:edit (accept optional/required images for editing) */
 const EDIT_IMG_IDS = [
   ECO.Qwen,
+  ECO.Qwen2,
   ECO.Seedream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -76,6 +77,7 @@ const TXT2IMG_IDS = [
   // Other image ecosystems
   ECO.Chroma,
   ECO.Qwen,
+  ECO.Qwen2,
   ECO.HiDream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -547,12 +549,16 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
   [
     'txt2img',
     (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) || ecoId === ECO.Grok,
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Grok ||
+      ecoId === ECO.Qwen2,
   ],
   [
     'img2img:edit',
     (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) || ecoId === ECO.Grok,
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Grok ||
+      ecoId === ECO.Qwen2,
   ],
 
   // Grok vid2vid:edit - no legacy equivalent
