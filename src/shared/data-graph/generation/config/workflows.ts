@@ -20,6 +20,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
 import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
+import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
 import {
   type WorkflowCategory,
   type WorkflowConfig,
@@ -233,7 +234,7 @@ export const workflowConfigs: WorkflowConfigs = {
       {
         label: 'First/Last Frame',
         description: 'Generate video from start and end images',
-        ecosystemIds: [ECO.Vidu, ECO.Kling],
+        ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2],
       },
     ],
   },
@@ -243,6 +244,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video using a reference image',
     category: 'video',
     ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling],
+    excludeModelVersionIds: [viduVersionIds.q3],
   },
 
   // ===========================================================================
@@ -319,6 +321,8 @@ export type WorkflowOption = {
   enhancement?: boolean;
   /** If true, this workflow requires membership */
   memberOnly?: boolean;
+  /** Model version IDs that should NOT see this option */
+  excludeModelVersionIds?: number[];
 };
 
 /**
@@ -337,6 +341,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     ecosystemSpecific: w.ecosystemIds.length === 1,
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
+    excludeModelVersionIds: w.excludeModelVersionIds,
   };
 
   const aliases: WorkflowOption[] = (w.aliases ?? []).map((alias, i) => ({
@@ -350,6 +355,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     ecosystemSpecific: alias.ecosystemIds.length === 1,
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
+    excludeModelVersionIds: alias.excludeModelVersionIds,
   }));
 
   return [primary, ...aliases];
@@ -376,11 +382,17 @@ export function isWorkflowAvailable(workflowId: string, ecosystemId: number): bo
 /**
  * Get workflows available for a specific ecosystem.
  * Uses per-entry ecosystemIds (not aggregated) so aliases filter correctly.
+ * Optionally filters out options excluded for a specific model version.
  */
-export function getWorkflowsForEcosystem(ecosystemId: number): WorkflowOption[] {
+export function getWorkflowsForEcosystem(
+  ecosystemId: number,
+  modelVersionId?: number
+): WorkflowOption[] {
   return workflowOptions.filter((w) => {
     if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
-    return w.ecosystemIds.includes(ecosystemId);
+    if (!w.ecosystemIds.includes(ecosystemId)) return false;
+    if (modelVersionId && w.excludeModelVersionIds?.includes(modelVersionId)) return false;
+    return true;
   });
 }
 
@@ -475,11 +487,19 @@ export function isEnhancementWorkflow(workflowId: string): boolean {
  * Get the display label for a workflow on a specific ecosystem (alias-aware).
  * Returns the alias label when the ecosystem matches an alias entry,
  * otherwise returns the primary config label.
+ * Skips aliases excluded for the given model version.
  */
-export function getWorkflowLabelForEcosystem(graphKey: string, ecosystemId?: number): string {
+export function getWorkflowLabelForEcosystem(
+  graphKey: string,
+  ecosystemId?: number,
+  modelVersionId?: number
+): string {
   if (ecosystemId !== undefined) {
     const match = workflowOptions.find(
-      (o) => o.graphKey === graphKey && o.ecosystemIds.includes(ecosystemId)
+      (o) =>
+        o.graphKey === graphKey &&
+        o.ecosystemIds.includes(ecosystemId) &&
+        !(modelVersionId && o.excludeModelVersionIds?.includes(modelVersionId))
     );
     if (match) return match.label;
   }
@@ -504,20 +524,24 @@ export function getWorkflowLabelForEcosystem(graphKey: string, ecosystemId?: num
 type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
 
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
-  // Kling V3 on standard video workflows (legacy only supports V1.6, V2, V2.5)
+  // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
   [
     'txt2vid',
     (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) || ecoId === ECO.Grok,
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
+      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
+      ecoId === ECO.Grok,
   ],
   [
     'img2vid',
     (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) || ecoId === ECO.Grok,
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
+      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
+      ecoId === ECO.Grok,
   ],
 
-  // ref2vid: legacy forms for Kling and Veo3 don't support this workflow
-  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3],
+  // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
+  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.Vidu],
 
   // NanoBanana V2 - only available in new form
   [
@@ -578,7 +602,8 @@ export const workflowGroups: WorkflowGroup[] = [
  */
 export function getWorkflowModes(
   workflowId: string,
-  ecosystemKey: string
+  ecosystemKey: string,
+  modelVersionId?: number
 ): { label: string; value: string; description?: string }[] {
   const group = workflowGroups.find((g) => g.workflows.includes(workflowId));
   if (!group) return [];
@@ -588,9 +613,16 @@ export function getWorkflowModes(
 
   // Check for ecosystem-specific override first
   const override = group.overrides?.find((o) => o.ecosystemIds.includes(ecosystem.id));
-  const availableWorkflows = override
-    ? override.workflows
-    : group.workflows.filter((wfId) => isWorkflowAvailable(wfId, ecosystem.id));
+  const availableWorkflows = (
+    override
+      ? override.workflows
+      : group.workflows.filter((wfId) => isWorkflowAvailable(wfId, ecosystem.id))
+  ).filter((wfId) => {
+    // Filter out workflows excluded for this model version
+    if (!modelVersionId) return true;
+    const config = workflowConfigByKey.get(wfId);
+    return !config?.excludeModelVersionIds?.includes(modelVersionId);
+  });
 
   const modes = availableWorkflows.map((wfId) => {
     const config = workflowConfigByKey.get(wfId);

@@ -68,12 +68,6 @@ const veo3AspectRatios = [
   { label: '9:16', value: '9:16', width: 1080, height: 1920 },
 ];
 
-/** Veo3 ref2vid aspect ratios (16:9 and 9:16 only) */
-const veo3Ref2VidAspectRatios = [
-  { label: '16:9', value: '16:9', width: 1920, height: 1080 },
-  { label: '9:16', value: '9:16', width: 1080, height: 1920 },
-];
-
 /** Veo3 duration options */
 const veo3Durations = [
   { label: '4 seconds', value: 4 },
@@ -122,10 +116,23 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
     'images',
     (ctx) => {
       if (ctx.workflow === 'img2vid:ref2vid') {
-        return { ...imagesNode({ max: 7, warnOnMissingAiMetadata: true }), when: true };
+        return {
+          ...imagesNode({
+            max: 7,
+            warnOnMissingAiMetadata: true,
+            aspectRatios: ['16:9', '9:16'],
+          }),
+          when: true,
+        };
       }
       if (ctx.workflow === 'img2vid') {
-        return { ...imagesNode({ warnOnMissingAiMetadata: true }), when: true };
+        return {
+          ...imagesNode({
+            warnOnMissingAiMetadata: true,
+            aspectRatios: ['16:9', '9:16'],
+          }),
+          when: true,
+        };
       }
       return { ...imagesNode(), when: false };
     },
@@ -160,11 +167,9 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
   .node(
     'aspectRatio',
     (ctx) => {
-      const isRef2Vid = ctx.workflow === 'img2vid:ref2vid';
-      const options = isRef2Vid ? veo3Ref2VidAspectRatios : veo3AspectRatios;
       return {
-        ...aspectRatioNode({ options, defaultValue: '16:9' }),
-        when: ctx.workflow === 'txt2vid' || isRef2Vid,
+        ...aspectRatioNode({ options: veo3AspectRatios, defaultValue: '16:9' }),
+        when: ctx.workflow === 'txt2vid',
       };
     },
     ['workflow']

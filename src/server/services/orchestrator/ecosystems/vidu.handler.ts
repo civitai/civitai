@@ -1,13 +1,16 @@
 /**
  * Vidu Ecosystem Handler
  *
- * Handles Vidu Q1 video generation workflows using videoGen step type.
- * Supports txt2vid, img2vid (with first/last frame), and ref2vid workflows.
+ * Handles Vidu video generation workflows using videoGen step type.
+ * Supports Q1 and Q3 model versions with different engine types.
+ * Q1: txt2vid, img2vid (first/last frame), ref2vid
+ * Q3: txt2vid, img2vid, ref2vid with resolution/turbo/audio options
  */
 
-import type { ViduVideoGenInput } from '@civitai/client';
+import type { ViduVideoGenInput, ViduQ3VideoGenInput } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -16,9 +19,22 @@ type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 
 /**
  * Creates videoGen input for Vidu ecosystem.
- * Supports txt2vid, img2vid (first/last frame), and img2vid:ref2vid workflows.
+ * Routes to Q1 (engine: 'vidu') or Q3 (engine: 'vidu-q3') based on selected model version.
  */
-export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, ctx) => {
+export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput | ViduQ3VideoGenInput>(
+  (data, ctx) => {
+    const modelId = data.model?.id;
+    const isQ3 = modelId === viduVersionIds.q3;
+
+    if (isQ3) {
+      return createQ3Input(data);
+    }
+    return createQ1Input(data);
+  }
+);
+
+/** Creates Q1 videoGen input (engine: 'vidu') */
+function createQ1Input(data: ViduCtx): ViduVideoGenInput {
   const images = data.images;
   const isRef2Vid = data.workflow === 'img2vid:ref2vid';
   const isFirstLastFrame = data.workflow === 'img2vid';
@@ -51,4 +67,32 @@ export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>((data, 
     seed: data.seed,
     enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
   }) as ViduVideoGenInput;
-});
+}
+
+/** Creates Q3 videoGen input (engine: 'vidu-q3') */
+function createQ3Input(data: ViduCtx): ViduQ3VideoGenInput {
+  const images = data.images;
+  const isRef2Vid = data.workflow === 'img2vid:ref2vid';
+
+  // For ref2vid: generate placeholder prompt if user didn't provide one
+  const prompt =
+    isRef2Vid && !data.prompt.length && images?.length
+      ? images.map((_, index) => `[@image${index + 1}]`).join()
+      : data.prompt;
+
+  // Q3 uses images array for all image workflows
+  const imageUrls = images?.length ? images.map((x) => x.url) : undefined;
+
+  return removeEmpty({
+    engine: 'vidu-q3',
+    prompt,
+    aspectRatio: data.aspectRatio?.value as ViduQ3VideoGenInput['aspectRatio'],
+    resolution:
+      'resolution' in data ? (data.resolution as ViduQ3VideoGenInput['resolution']) : undefined,
+    turbo: 'draft' in data ? data.draft : undefined,
+    enableAudio: 'enableAudio' in data ? data.enableAudio : undefined,
+    images: imageUrls,
+    quantity: data.quantity ?? 1,
+    seed: data.seed,
+  }) as ViduQ3VideoGenInput;
+}

@@ -12,7 +12,10 @@ import clsx from 'clsx';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { workflowOptionById } from '~/shared/data-graph/generation/config/workflows';
+import {
+  workflowOptionById,
+  getEcosystemsForWorkflow,
+} from '~/shared/data-graph/generation/config/workflows';
 import {
   ecosystemById,
   ecosystemByKey,
@@ -349,4 +352,40 @@ export function openCompatibilityConfirmModal(props: CompatibilityConfirmModalPr
     component: CompatibilityConfirmModalContent,
     props,
   });
+}
+
+/**
+ * Builds a workflow-type PendingChange for the compatibility modal.
+ * Resolves compatible ecosystems and a default ecosystem key for the given workflow.
+ *
+ * @param workflowId - The target workflow graph key
+ * @param currentEcosystem - The ecosystem that is incompatible
+ * @param optionId - Workflow option ID (e.g., 'img2vid#0' for aliases). Defaults to workflowId.
+ * @param defaultEcosystemKey - Override the default ecosystem key. If omitted, uses the first compatible ecosystem.
+ */
+export function buildWorkflowPendingChange({
+  workflowId,
+  currentEcosystem,
+  optionId,
+  defaultEcosystemKey,
+}: {
+  workflowId: string;
+  currentEcosystem: string;
+  optionId?: string;
+  defaultEcosystemKey?: string;
+}): Extract<PendingChange, { type: 'workflow' }> {
+  const compatibleEcosystemIds = getEcosystemsForWorkflow(workflowId);
+  const resolvedDefault =
+    defaultEcosystemKey ??
+    (compatibleEcosystemIds[0] ? ecosystemById.get(compatibleEcosystemIds[0])?.key : undefined) ??
+    '';
+
+  return {
+    type: 'workflow',
+    value: workflowId,
+    optionId: optionId ?? workflowId,
+    currentEcosystem,
+    compatibleEcosystemIds,
+    defaultEcosystemKey: resolvedDefault,
+  };
 }
