@@ -5,6 +5,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  claimChallengeForCompletion,
   computeDynamicPool,
   createChallengeRecord,
   createChallengeWinner,
@@ -132,7 +133,7 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
       SELECT DISTINCT
         cast(c.metadata->'resourceUserId' as int) as "userId"
       FROM "Challenge" c
-      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+      WHERE c."status" IN ('Scheduled', 'Active', 'Completing', 'Completed')
       AND c."startsAt" > now() - ${config.userCooldown}::interval
     `,
     dbRead.$queryRaw<{ modelId: number }[]>`
@@ -140,7 +141,7 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
       FROM "Challenge" c
       JOIN unnest(c."modelVersionIds") AS mvid ON TRUE
       JOIN "ModelVersion" mv ON mv.id = mvid
-      WHERE c."status" IN ('Scheduled', 'Active', 'Completed')
+      WHERE c."status" IN ('Scheduled', 'Active', 'Completing', 'Completed')
       AND c."startsAt" > now() - ${config.resourceCooldown}::interval
     `,
   ]);
@@ -384,7 +385,7 @@ export async function createChallengesBatch(targetDates: Date[]) {
       const existingForDate = await dbRead.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Challenge"
         WHERE DATE_TRUNC('day', "startsAt") = DATE_TRUNC('day', ${targetDate}::timestamp)
-        AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+        AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus")
         LIMIT 1
       `;
       if (existingForDate.length > 0) {
@@ -473,7 +474,7 @@ export async function createUpcomingChallenge(targetDate?: Date) {
     const existingForDate = await dbRead.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Challenge"
       WHERE DATE_TRUNC('day', "startsAt") = DATE_TRUNC('day', ${targetDate}::timestamp)
-      AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus")
+      AND status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus")
       LIMIT 1
     `;
     if (existingForDate.length > 0) {
@@ -1059,6 +1060,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
 /**
  * Pick winners for a single challenge.
+ *
+ * Operation order (race-condition safe):
+ * 1. Atomic claim (Active → Completing)
+ * 2. Close collection + get judging config
+ * 3. LLM judgment + map winners
+ * 4. Create ChallengeWinner records + set Completed (before buzz)
+ * 5. Distribute winner buzz prizes
+ * 6. Distribute entry participation prizes
+ * 7. Send notifications (non-critical, last)
  */
 export async function pickWinnersForChallenge(
   currentChallenge: DailyChallengeDetails,
@@ -1066,172 +1076,84 @@ export async function pickWinnersForChallenge(
 ) {
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  // Get judging config and event context from Challenge
-  const [challengeJudgeRow] = await dbRead.$queryRaw<
-    [{ judgeId: number | null; judgingPrompt: string | null; eventId: number | null } | undefined]
-  >`
-    SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
-    WHERE id = ${currentChallenge.challengeId}
-    LIMIT 1
-  `;
-  const judgeId = challengeJudgeRow?.judgeId ?? config.defaultJudgeId;
-  if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
-  // Use cached default judge if applicable, otherwise fetch from DB
-  const judgingConfig = await getJudgingConfigForChallenge(
-    judgeId,
-    config.defaultJudge,
-    challengeJudgeRow?.judgingPrompt
-  );
-
-  // Resolve event context for cooldown scoping
-  const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
-
-  // Close challenge
-  // ----------------------------------------------
-  await endChallenge(currentChallenge);
-  log('Collection closed');
-
-  // Pick Winners
-  // ----------------------------------------------
-  // Get top judged entries
-  const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config, eventContext);
-  if (!judgedEntries.length) {
-    log('No judged entries for challenge:', currentChallenge.challengeId);
-    // Still need to mark the challenge as completed even with no entries
-    await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
-    log('Challenge marked as completed (no entries)');
+  // 1. Atomic claim — prevent duplicate processing
+  const claimed = await claimChallengeForCompletion(currentChallenge.challengeId);
+  if (!claimed) {
+    log('Challenge already claimed for completion, skipping:', currentChallenge.challengeId);
     return;
   }
+  log('Challenge claimed for completion');
 
-  // Send to LLM for final judgment
-  log('Sending entries for final judgment');
-  const { winners, process, outcome } = await generateWinners({
-    theme: currentChallenge.theme,
-    entries: judgedEntries.map((entry) => ({
-      creator: entry.username,
-      creatorId: entry.userId,
-      summary: entry.summary,
-      score: entry.score,
-    })),
-    config: judgingConfig,
-  });
-
-  // Map winners to entries
-  const winningEntries = winners
-    .map((winner, i) => {
-      const entry = judgedEntries.find(
-        (e) =>
-          e.username.toLowerCase() === winner.creator.toLowerCase() || e.userId === winner.creatorId
-      );
-      if (!entry) return null;
-      return {
-        ...entry,
-        position: i + 1,
-        prize: currentChallenge.prizes[i].buzz,
-        reason: winner.reason,
-      };
-    })
-    .filter(isDefined);
-  // Send notifications to winners
-  const notificationKey = currentChallenge.challengeId ?? currentChallenge.collectionId;
-  for (const entry of winningEntries) {
-    await createNotification({
-      type: 'challenge-winner',
-      category: NotificationCategory.System,
-      key: `challenge-winner:${notificationKey}:${entry.position}`,
-      userId: entry.userId,
-      details: {
-        challengeId: currentChallenge.challengeId,
-        challengeName: currentChallenge.title,
-        position: entry.position,
-        prize: entry.prize,
-      },
-    });
-  }
-  log('Winners notified');
-
-  // Send prizes to winners
-  // ----------------------------------------------
-  await withRetries(() =>
-    createBuzzTransactionMany(
-      winningEntries.map((entry, i) => ({
-        type: TransactionType.Reward,
-        toAccountId: entry.userId,
-        fromAccountId: 0, // central bank
-        amount: currentChallenge.prizes[i].buzz,
-        description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
-        externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
-        toAccountType: 'yellow',
-      }))
-    )
-  );
-  log('Prizes sent');
-
-  // Send entry participation prizes to all eligible users
-  // ----------------------------------------------
-  if (currentChallenge.entryPrize && currentChallenge.entryPrize.buzz > 0) {
-    const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
-      SELECT DISTINCT i."userId"
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE ci."collectionId" = ${currentChallenge.collectionId}
-        AND ci.status = 'ACCEPTED'
-      GROUP BY i."userId"
-      HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement}
+  try {
+    // 2. Get judging config and event context from Challenge
+    const [challengeJudgeRow] = await dbRead.$queryRaw<
+      [{ judgeId: number | null; judgingPrompt: string | null; eventId: number | null } | undefined]
+    >`
+      SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
+      WHERE id = ${currentChallenge.challengeId}
+      LIMIT 1
     `;
+    const judgeId = challengeJudgeRow?.judgeId ?? config.defaultJudgeId;
+    if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+    const judgingConfig = await getJudgingConfigForChallenge(
+      judgeId,
+      config.defaultJudge,
+      challengeJudgeRow?.judgingPrompt
+    );
 
-    if (earnedEntryPrizes.length > 0) {
-      const winnerUserIds = winningEntries.map((e) => e.userId);
-      // Exclude winners from entry prizes (they get winner prizes instead)
-      const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+    const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
 
-      if (entryPrizeUsers.length > 0) {
-        await withRetries(() =>
-          createBuzzTransactionMany(
-            entryPrizeUsers.map(({ userId }) => ({
-              type: TransactionType.Reward,
-              toAccountId: userId,
-              fromAccountId: 0, // central bank
-              amount: currentChallenge.entryPrize.buzz,
-              description: `Challenge Entry Prize: ${currentChallenge.title}`,
-              externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
-              toAccountType: 'blue',
-            }))
-          )
-        );
-        log('Entry participation prizes sent:', entryPrizeUsers.length);
+    // Close challenge collection
+    await endChallenge(currentChallenge);
+    log('Collection closed');
 
-        // Notify entry prize recipients
-        const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
-        await createNotification({
-          type: 'challenge-participation',
-          category: NotificationCategory.System,
-          key: `challenge-participation:${participationKeyId}:final`,
-          userIds: entryPrizeUsers.map((e) => e.userId),
-          details: {
-            challengeId: currentChallenge.challengeId,
-            challengeName: currentChallenge.title,
-            prize: currentChallenge.entryPrize.buzz,
-          },
-        });
-        log('Entry prize users notified');
-      }
+    // 3. Get judged entries + LLM judgment
+    const judgedEntries = await getJudgedEntries(
+      currentChallenge.collectionId,
+      config,
+      eventContext
+    );
+    if (!judgedEntries.length) {
+      log('No judged entries for challenge:', currentChallenge.challengeId);
+      await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
+      log('Challenge marked as completed (no entries)');
+      return;
     }
-  }
 
-  // Create ChallengeWinner records (new system - dual write during transition)
-  // Find the Challenge by collectionId
-  const winnerChallengeRecords = await dbRead.$queryRaw<{ id: number; metadata: unknown }[]>`
-    SELECT id, metadata FROM "Challenge"
-    WHERE id = ${currentChallenge.challengeId}
-    AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
-    LIMIT 1
-  `;
-  const winnerChallengeRecord = winnerChallengeRecords[0];
-  if (winnerChallengeRecord) {
+    log('Sending entries for final judgment');
+    const { winners, process, outcome } = await generateWinners({
+      theme: currentChallenge.theme,
+      entries: judgedEntries.map((entry) => ({
+        creator: entry.username,
+        creatorId: entry.userId,
+        summary: entry.summary,
+        score: entry.score,
+      })),
+      config: judgingConfig,
+    });
+
+    // Map winners to entries
+    const winningEntries = winners
+      .map((winner, i) => {
+        const entry = judgedEntries.find(
+          (e) =>
+            e.username.toLowerCase() === winner.creator.toLowerCase() ||
+            e.userId === winner.creatorId
+        );
+        if (!entry) return null;
+        return {
+          ...entry,
+          position: i + 1,
+          prize: currentChallenge.prizes[i].buzz,
+          reason: winner.reason,
+        };
+      })
+      .filter(isDefined);
+
+    // 4. Create ChallengeWinner records (idempotent via P2002 handling)
     for (const entry of winningEntries) {
       await createChallengeWinner({
-        challengeId: winnerChallengeRecord.id,
+        challengeId: currentChallenge.challengeId,
         userId: entry.userId,
         imageId: entry.imageId,
         place: entry.position,
@@ -1240,10 +1162,79 @@ export async function pickWinnersForChallenge(
         reason: entry.reason,
       });
     }
-    // Update Challenge status to Completed and store completion summary
-    const existingMetadata = parseChallengeMetadata(winnerChallengeRecord.metadata);
+    log('ChallengeWinner records created');
+
+    // 5. Distribute winner buzz prizes
+    await withRetries(() =>
+      createBuzzTransactionMany(
+        winningEntries.map((entry, i) => ({
+          type: TransactionType.Reward,
+          toAccountId: entry.userId,
+          fromAccountId: 0, // central bank
+          amount: currentChallenge.prizes[i].buzz,
+          description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
+          externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
+          toAccountType: 'yellow',
+        }))
+      )
+    );
+    log('Prizes sent');
+
+    // 6. Distribute entry participation prizes
+    if (currentChallenge.entryPrize && currentChallenge.entryPrize.buzz > 0) {
+      const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
+        SELECT DISTINCT i."userId"
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${currentChallenge.collectionId}
+          AND ci.status = 'ACCEPTED'
+        GROUP BY i."userId"
+        HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement}
+      `;
+
+      if (earnedEntryPrizes.length > 0) {
+        const winnerUserIds = winningEntries.map((e) => e.userId);
+        const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+
+        if (entryPrizeUsers.length > 0) {
+          await withRetries(() =>
+            createBuzzTransactionMany(
+              entryPrizeUsers.map(({ userId }) => ({
+                type: TransactionType.Reward,
+                toAccountId: userId,
+                fromAccountId: 0, // central bank
+                amount: currentChallenge.entryPrize.buzz,
+                description: `Challenge Entry Prize: ${currentChallenge.title}`,
+                externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
+                toAccountType: 'blue',
+              }))
+            )
+          );
+          log('Entry participation prizes sent:', entryPrizeUsers.length);
+
+          // Notify entry prize recipients
+          const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
+          await createNotification({
+            type: 'challenge-participation',
+            category: NotificationCategory.System,
+            key: `challenge-participation:${participationKeyId}:final`,
+            userIds: entryPrizeUsers.map((e) => e.userId),
+            details: {
+              challengeId: currentChallenge.challengeId,
+              challengeName: currentChallenge.title,
+              prize: currentChallenge.entryPrize.buzz,
+            },
+          });
+          log('Entry prize users notified');
+        }
+      }
+    }
+
+    // 7. Set Completed status + store summary (AFTER all prizes distributed)
+    const challengeRecord = await getChallengeById(currentChallenge.challengeId);
+    const existingMetadata = parseChallengeMetadata(challengeRecord?.metadata);
     await dbWrite.challenge.update({
-      where: { id: winnerChallengeRecord.id },
+      where: { id: currentChallenge.challengeId },
       data: {
         metadata: {
           ...existingMetadata,
@@ -1256,7 +1247,29 @@ export async function pickWinnersForChallenge(
         status: ChallengeStatus.Completed,
       },
     });
-    log('ChallengeWinner records created and status updated to Completed');
+    log('Challenge status updated to Completed');
+
+    // 8. Send notifications to winners (non-critical, last)
+    const notificationKey = currentChallenge.challengeId ?? currentChallenge.collectionId;
+    for (const entry of winningEntries) {
+      await createNotification({
+        type: 'challenge-winner',
+        category: NotificationCategory.System,
+        key: `challenge-winner:${notificationKey}:${entry.position}`,
+        userId: entry.userId,
+        details: {
+          challengeId: currentChallenge.challengeId,
+          challengeName: currentChallenge.title,
+          position: entry.position,
+          prize: entry.prize,
+        },
+      });
+    }
+    log('Winners notified');
+  } catch (error) {
+    // On failure, challenge stays in 'Completing' for recovery to handle
+    log('Error during winner picking, challenge stays in Completing for recovery:', error);
+    throw error;
   }
 }
 

@@ -182,6 +182,7 @@ export async function getVisibleChallenges(limit = 30) {
     ORDER BY
       CASE
         WHEN status = ${ChallengeStatus.Active}::"ChallengeStatus" THEN 1
+        WHEN status = ${ChallengeStatus.Completing}::"ChallengeStatus" THEN 1
         WHEN status = ${ChallengeStatus.Scheduled}::"ChallengeStatus" THEN 2
         ELSE 3
       END,

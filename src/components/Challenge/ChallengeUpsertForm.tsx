@@ -133,6 +133,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const isEditing = !!challenge;
   const isActive = challenge?.status === ChallengeStatus.Active;
   const isTerminal =
+    challenge?.status === ChallengeStatus.Completing ||
     challenge?.status === ChallengeStatus.Completed ||
     challenge?.status === ChallengeStatus.Cancelled;
 
@@ -205,10 +206,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    // Convert display dates back to real UTC before validation and submission
-    const startsAt = fromDisplayUTC(data.startsAt);
-    const endsAt = fromDisplayUTC(data.endsAt);
-    const visibleAt = fromDisplayUTC(data.visibleAt);
+    // Convert display dates back to real UTC and snap to exact hours
+    const startsAt = dayjs(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
+    const endsAt = dayjs(fromDisplayUTC(data.endsAt)).startOf('hour').toDate();
+    const visibleAt = dayjs(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
 
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
     if (endsAt <= startsAt) {
@@ -442,6 +443,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When challenge appears in feed"
                 valueFormat="lll"
                 disabled={isTerminal}
+                timeInputProps={{ step: 3600 }}
               />
 
               <InputDateTimePicker
@@ -450,6 +452,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When submissions open"
                 valueFormat="lll"
                 disabled={isActive || isTerminal}
+                timeInputProps={{ step: 3600 }}
               />
 
               <InputDateTimePicker
@@ -458,6 +461,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When submissions close"
                 valueFormat="lll"
                 disabled={isTerminal}
+                timeInputProps={{ step: 3600 }}
               />
             </SimpleGrid>
           </Stack>

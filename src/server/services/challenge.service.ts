@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  claimChallengeForCompletion,
   closeChallengeCollection,
   createChallengeWinner,
   getChallengeById,
@@ -185,7 +186,7 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c.status IN (${Prisma.join(statusValues)})`);
   } else if (!includeEnded) {
     conditions.push(
-      Prisma.sql`c.status NOT IN ('Completed'::"ChallengeStatus", 'Cancelled'::"ChallengeStatus")`
+      Prisma.sql`c.status NOT IN ('Completing'::"ChallengeStatus", 'Completed'::"ChallengeStatus", 'Cancelled'::"ChallengeStatus")`
     );
   }
 
@@ -912,8 +913,9 @@ export async function upsertChallenge({
     });
     if (!challenge) throw throwNotFoundError('Challenge not found');
 
-    // Block edits to terminal challenges
+    // Block edits to terminal/completing challenges
     if (
+      challenge.status === ChallengeStatus.Completing ||
       challenge.status === ChallengeStatus.Completed ||
       challenge.status === ChallengeStatus.Cancelled
     ) {
@@ -1324,6 +1326,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
   }
 
+  // Atomic claim to prevent concurrent processing
+  const claimed = await claimChallengeForCompletion(challengeId);
+  if (!claimed) {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'Challenge is already being completed by another process.',
+    });
+  }
+
   // Get challenge config for judging
   const config = await getChallengeConfig();
   const judgeId = challenge.judgeId ?? config.defaultJudgeId;
@@ -1341,182 +1352,189 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
   log('Ending challenge and picking winners:', challengeId);
 
-  // Close the collection
-  await closeChallengeCollection(challenge);
-  log('Collection closed');
+  try {
+    // Close the collection
+    await closeChallengeCollection(challenge);
+    log('Collection closed');
 
-  // Get judged entries
-  if (!challenge.collectionId) {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'Challenge has no collection for entries.',
+    // Get judged entries
+    if (!challenge.collectionId) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Challenge has no collection for entries.',
+      });
+    }
+
+    // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
+    const eventContext = await resolveEventContext(challenge.eventId);
+
+    const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
+    if (!judgedEntries.length) {
+      // No judged entries, just mark as completed
+      await dbWrite.challenge.update({
+        where: { id: challengeId },
+        data: { status: ChallengeStatus.Completed },
+      });
+      log('No judged entries, challenge marked as completed without winners');
+      return { success: true, winnersCount: 0 };
+    }
+
+    // Run LLM winner picking
+    log('Sending entries for final judgment');
+    const { winners, process, outcome } = await generateWinners({
+      theme: challenge.theme || 'Creative Challenge',
+      entries: judgedEntries.map((entry) => ({
+        creator: entry.username,
+        creatorId: entry.userId,
+        summary: entry.summary,
+        score: entry.score,
+      })),
+      config: judgingConfig,
     });
-  }
 
-  // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
-  const eventContext = await resolveEventContext(challenge.eventId);
-
-  const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
-  if (!judgedEntries.length) {
-    // No judged entries, just mark as completed
-    await dbWrite.challenge.update({
-      where: { id: challengeId },
-      data: { status: ChallengeStatus.Completed },
-    });
-    log('No judged entries, challenge marked as completed without winners');
-    return { success: true, winnersCount: 0 };
-  }
-
-  // Run LLM winner picking
-  log('Sending entries for final judgment');
-  const { winners, process, outcome } = await generateWinners({
-    theme: challenge.theme || 'Creative Challenge',
-    entries: judgedEntries.map((entry) => ({
-      creator: entry.username,
-      creatorId: entry.userId,
-      summary: entry.summary,
-      score: entry.score,
-    })),
-    config: judgingConfig,
-  });
-
-  // Map winners to entries
-  const winningEntries = winners
-    .map((winner, i) => {
-      const entry = judgedEntries.find(
-        (e) =>
-          e.username.toLowerCase() === winner.creator.toLowerCase() || e.userId === winner.creatorId
-      );
-      if (!entry) return null;
-      return {
-        ...entry,
-        position: i + 1,
-        prize: challenge.prizes[i]?.buzz ?? 0,
-        reason: winner.reason,
-      };
-    })
-    .filter(isDefined);
-
-  // Create ChallengeWinner records
-  for (const entry of winningEntries) {
-    await createChallengeWinner({
-      challengeId,
-      userId: entry.userId,
-      imageId: entry.imageId,
-      place: entry.position,
-      buzzAwarded: entry.prize,
-      pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
-      reason: entry.reason,
-    });
-  }
-  log('ChallengeWinner records created');
-
-  // Send prizes to winners
-  // Note: externalTransactionId uses challengeId-userId-place pattern for idempotency
-  // This ensures retries don't create duplicate payments
-  await withRetries(() =>
-    createBuzzTransactionMany(
-      winningEntries.map((entry) => ({
-        type: TransactionType.Reward,
-        toAccountId: entry.userId,
-        fromAccountId: 0, // central bank
-        amount: entry.prize,
-        description: `Challenge Winner Prize #${entry.position}: ${challenge.title}`,
-        externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
-        toAccountType: 'yellow',
-      }))
-    )
-  );
-  log('Prizes sent');
-
-  // Notify winners
-  for (const entry of winningEntries) {
-    await createNotification({
-      type: 'challenge-winner',
-      category: NotificationCategory.System,
-      key: `challenge-winner:${challengeId}:${entry.position}`,
-      userId: entry.userId,
-      details: {
-        challengeId,
-        challengeName: challenge.title,
-        position: entry.position,
-        prize: entry.prize,
-      },
-    });
-  }
-  log('Winners notified');
-
-  // Send entry participation prizes to all eligible users
-  if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
-    const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
-      SELECT DISTINCT i."userId"
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE ci."collectionId" = ${challenge.collectionId}
-        AND ci.status = 'ACCEPTED'
-      GROUP BY i."userId"
-      HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
-    `;
-
-    if (earnedEntryPrizes.length > 0) {
-      const winnerUserIds = winningEntries.map((e) => e.userId);
-      // Exclude winners from entry prizes (they get winner prizes instead)
-      const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
-
-      if (entryPrizeUsers.length > 0) {
-        // Note: externalTransactionId uses challengeId-userId pattern for idempotency
-        // This ensures retries don't create duplicate payments
-        await withRetries(() =>
-          createBuzzTransactionMany(
-            entryPrizeUsers.map(({ userId }) => ({
-              type: TransactionType.Reward,
-              toAccountId: userId,
-              fromAccountId: 0, // central bank
-              amount: challenge.entryPrize!.buzz,
-              description: `Challenge Entry Prize: ${challenge.title}`,
-              externalTransactionId: `challenge-entry-prize-${challengeId}-${userId}`,
-              toAccountType: 'blue',
-            }))
-          )
+    // Map winners to entries
+    const winningEntries = winners
+      .map((winner, i) => {
+        const entry = judgedEntries.find(
+          (e) =>
+            e.username.toLowerCase() === winner.creator.toLowerCase() ||
+            e.userId === winner.creatorId
         );
-        log('Entry participation prizes sent:', entryPrizeUsers.length);
+        if (!entry) return null;
+        return {
+          ...entry,
+          position: i + 1,
+          prize: challenge.prizes[i]?.buzz ?? 0,
+          reason: winner.reason,
+        };
+      })
+      .filter(isDefined);
 
-        // Notify entry prize recipients
-        await createNotification({
-          type: 'challenge-participation',
-          category: NotificationCategory.System,
-          key: `challenge-participation:${challengeId}:final`,
-          userIds: entryPrizeUsers.map((e) => e.userId),
-          details: {
-            challengeId,
-            challengeName: challenge.title,
-            prize: challenge.entryPrize!.buzz,
-          },
-        });
-        log('Entry prize users notified');
+    // Create ChallengeWinner records (idempotent via P2002 handling)
+    for (const entry of winningEntries) {
+      await createChallengeWinner({
+        challengeId,
+        userId: entry.userId,
+        imageId: entry.imageId,
+        place: entry.position,
+        buzzAwarded: entry.prize,
+        pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
+        reason: entry.reason,
+      });
+    }
+    log('ChallengeWinner records created');
+
+    // Send prizes to winners
+    // Note: externalTransactionId uses challengeId-userId-place pattern for idempotency
+    // This ensures retries don't create duplicate payments
+    await withRetries(() =>
+      createBuzzTransactionMany(
+        winningEntries.map((entry) => ({
+          type: TransactionType.Reward,
+          toAccountId: entry.userId,
+          fromAccountId: 0, // central bank
+          amount: entry.prize,
+          description: `Challenge Winner Prize #${entry.position}: ${challenge.title}`,
+          externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
+          toAccountType: 'yellow',
+        }))
+      )
+    );
+    log('Prizes sent');
+
+    // Send entry participation prizes to all eligible users
+    if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
+      const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
+        SELECT DISTINCT i."userId"
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${challenge.collectionId}
+          AND ci.status = 'ACCEPTED'
+        GROUP BY i."userId"
+        HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
+      `;
+
+      if (earnedEntryPrizes.length > 0) {
+        const winnerUserIds = winningEntries.map((e) => e.userId);
+        // Exclude winners from entry prizes (they get winner prizes instead)
+        const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+
+        if (entryPrizeUsers.length > 0) {
+          // Note: externalTransactionId uses challengeId-userId pattern for idempotency
+          // This ensures retries don't create duplicate payments
+          await withRetries(() =>
+            createBuzzTransactionMany(
+              entryPrizeUsers.map(({ userId }) => ({
+                type: TransactionType.Reward,
+                toAccountId: userId,
+                fromAccountId: 0, // central bank
+                amount: challenge.entryPrize!.buzz,
+                description: `Challenge Entry Prize: ${challenge.title}`,
+                externalTransactionId: `challenge-entry-prize-${challengeId}-${userId}`,
+                toAccountType: 'blue',
+              }))
+            )
+          );
+          log('Entry participation prizes sent:', entryPrizeUsers.length);
+
+          // Notify entry prize recipients
+          await createNotification({
+            type: 'challenge-participation',
+            category: NotificationCategory.System,
+            key: `challenge-participation:${challengeId}:final`,
+            userIds: entryPrizeUsers.map((e) => e.userId),
+            details: {
+              challengeId,
+              challengeName: challenge.title,
+              prize: challenge.entryPrize!.buzz,
+            },
+          });
+          log('Entry prize users notified');
+        }
       }
     }
-  }
 
-  // Update challenge status to Completed and store completion summary
-  const existingMetadata = parseChallengeMetadata(challenge.metadata);
-  await dbWrite.challenge.update({
-    where: { id: challengeId },
-    data: {
-      metadata: {
-        ...existingMetadata,
-        completionSummary: {
-          judgingProcess: process,
-          outcome: outcome,
-          completedAt: new Date().toISOString(),
+    // Set Completed status + store summary (AFTER all prizes distributed)
+    const existingMetadata = parseChallengeMetadata(challenge.metadata);
+    await dbWrite.challenge.update({
+      where: { id: challengeId },
+      data: {
+        metadata: {
+          ...existingMetadata,
+          completionSummary: {
+            judgingProcess: process,
+            outcome: outcome,
+            completedAt: new Date().toISOString(),
+          },
         },
+        status: ChallengeStatus.Completed,
       },
-      status: ChallengeStatus.Completed,
-    },
-  });
-  log('Challenge status updated to Completed');
+    });
+    log('Challenge status updated to Completed');
 
-  return { success: true, winnersCount: winningEntries.length };
+    // Notify winners (non-critical, last)
+    for (const entry of winningEntries) {
+      await createNotification({
+        type: 'challenge-winner',
+        category: NotificationCategory.System,
+        key: `challenge-winner:${challengeId}:${entry.position}`,
+        userId: entry.userId,
+        details: {
+          challengeId,
+          challengeName: challenge.title,
+          position: entry.position,
+          prize: entry.prize,
+        },
+      });
+    }
+    log('Winners notified');
+
+    return { success: true, winnersCount: winningEntries.length };
+  } catch (error) {
+    // On failure, challenge stays in 'Completing' for recovery to handle
+    log('Error during manual winner picking, challenge stays in Completing for recovery:', error);
+    throw error;
+  }
 }
 
 /**

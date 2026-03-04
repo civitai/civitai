@@ -5,13 +5,20 @@ import {
   getEndedActiveChallenges,
   getChallengeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { resetStuckCompletingChallenges } from '~/server/games/daily-challenge/challenge-helpers';
 import { pickWinnersForChallenge } from './daily-challenge-processing';
 import { logToAxiom } from '~/server/logging/client';
 
 const log = createLogger('jobs:challenge-completion', 'blue');
 
-export const challengeCompletionJob = createJob('challenge-completion', '* * * * *', async () => {
+export const challengeCompletionJob = createJob('challenge-completion', '0 * * * *', async () => {
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) return;
+
+  // Recovery: reset challenges stuck in Completing for more than 10 minutes
+  const resetCount = await resetStuckCompletingChallenges(10);
+  if (resetCount > 0) {
+    log(`Recovery: reset ${resetCount} stuck Completing challenge(s) back to Active`);
+  }
 
   const endedChallenges = await getEndedActiveChallenges();
   if (!endedChallenges.length) return;
