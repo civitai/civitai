@@ -78,7 +78,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, QwenFamilyInput>((da
       engine: 'fal' as const,
       model: 'qwen2' as const,
       prompt: data.prompt,
-      negativePrompt: data.negativePrompt,
+      negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
       imageSize,
       quantity,
       seed: data.seed,
