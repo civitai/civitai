@@ -170,8 +170,8 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:edit': {
-    label: 'Edit Image',
-    description: 'Edit an image with AI',
+    label: 'Image to Image',
+    description: 'Generate or edit using reference images',
     category: 'image',
     ecosystemIds: EDIT_IMG_IDS,
   },

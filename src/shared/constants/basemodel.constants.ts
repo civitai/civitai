@@ -2614,6 +2614,52 @@ export function isBaseModelGenerationSupported(
 }
 
 /**
+ * Check if a base model or ecosystem has any generation support at all.
+ * Accepts either a base model name (e.g., 'SDXL 1.0') or an ecosystem key (e.g., 'SDXL').
+ * Unlike isBaseModelGenerationSupported, this does not require a specific modelType.
+ */
+export function hasGenerationSupport(baseModelOrEcosystem: string): boolean {
+  // Try base model name first
+  const model = baseModelByName.get(baseModelOrEcosystem);
+  if (model) return isModelSupported(model.id, 'generation');
+
+  // Fall back to ecosystem key
+  const ecosystem = ecosystemByKey.get(baseModelOrEcosystem);
+  if (!ecosystem) return false;
+
+  const support = getEcosystemSupport(ecosystem.id, 'generation');
+  return !!support && !support.disabled;
+}
+
+/**
+ * Check if a resource's base model is compatible with a primary ecosystem for generation.
+ * Accepts base model names or ecosystem keys for both the primary and resource parameters.
+ *
+ * @param primaryBaseModelOrEcosystem - The checkpoint's base model name or ecosystem key
+ * @param resourceBaseModel - The resource's base model name
+ * @param resourceModelType - The resource's model type (e.g., 'LORA', 'Checkpoint')
+ * @returns The support level ('full' | 'partial') or null if not compatible
+ */
+export function getResourceGenerationSupport(
+  primaryBaseModelOrEcosystem: string,
+  resourceBaseModel: string,
+  resourceModelType: ModelType
+): SupportLevel | null {
+  // Resolve primary ecosystem
+  const primaryModel = baseModelByName.get(primaryBaseModelOrEcosystem);
+  const primaryEcosystem = primaryModel
+    ? ecosystemById.get(primaryModel.ecosystemId)
+    : ecosystemByKey.get(primaryBaseModelOrEcosystem);
+  if (!primaryEcosystem) return null;
+
+  // Resolve resource ecosystem
+  const resourceModel = baseModelByName.get(resourceBaseModel);
+  if (!resourceModel) return null;
+
+  return getGenerationSupport(primaryEcosystem.id, resourceModel.ecosystemId, resourceModelType);
+}
+
+/**
  * Get generation support level between two ecosystems
  */
 export function getGenerationSupport(

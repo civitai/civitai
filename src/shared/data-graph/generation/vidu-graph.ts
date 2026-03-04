@@ -27,7 +27,14 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, enumNode, imagesNode, createCheckpointGraph } from './common';
+import {
+  seedNode,
+  aspectRatioNode,
+  enumNode,
+  imagesNode,
+  sliderNode,
+  createCheckpointGraph,
+} from './common';
 import type { AspectRatioOption } from './common';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 
@@ -291,6 +298,20 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
           defaultValue: 'auto',
         }),
         when: isQ1,
+      };
+    },
+    ['model']
+  )
+
+  // Duration node - Q3 only (seconds)
+  .node(
+    'duration',
+    (ctx) => {
+      const model = ctx.model as { id?: number } | undefined;
+      const isQ3 = model?.id === viduVersionIds.q3;
+      return {
+        ...sliderNode({ min: 1, max: 16, defaultValue: 5 }),
+        when: isQ3,
       };
     },
     ['model']

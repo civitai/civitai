@@ -38,7 +38,6 @@ import {
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
-  getBaseModelSetType,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -54,8 +53,11 @@ import {
   getBaseModelEngine,
   getBaseModelMediaType,
   getBaseModelsByGroup,
-  getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
+import {
+  hasGenerationSupport,
+  getResourceGenerationSupport,
+} from '~/shared/constants/basemodel.constants';
 import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
 import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
@@ -343,13 +345,10 @@ async function getMediaGenerationData({
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
   const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
-  const supportedResources = normalized.baseModel
-    ? getGenerationBaseModelGroup(normalized.baseModel)
-    : undefined;
-  const resources = !supportedResources
+  const resources = !normalized.ecosystem
     ? allResources
-    : allResources.filter((x) =>
-        supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
+    : allResources.filter(
+        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
       );
 
   // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
@@ -746,10 +745,6 @@ export async function getResourceData(
 
   // TODO - check if resource id is in "EcosystemCheckpoint" table
   return generation
-    ? resources.filter((resource) => {
-        const baseModel = getBaseModelSetType(resource.baseModel);
-        const size = getGenerationBaseModelGroup(baseModel)?.supportMap.size;
-        return !!size;
-      })
+    ? resources.filter((resource) => hasGenerationSupport(resource.baseModel))
     : resources;
 }

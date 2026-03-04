@@ -1080,13 +1080,6 @@ export function getGenerationBaseModels(group: string, modelType: ModelType) {
   return match?.supportMap.get(modelType)?.map((x) => x.baseModel) ?? [];
 }
 
-export function getBaseModelGenerationSupported(baseModel: string, modelType: ModelType) {
-  const group = getGenerationBaseModelGroup(baseModel);
-  if (!group) return false;
-  const support = group.supportMap.get(modelType)?.find((x) => x.baseModel === baseModel);
-  return !!support;
-}
-
 export function getGenerationBaseModelAssociatedGroups(group: string, modelType: ModelType) {
   const baseModels = getGenerationBaseModels(group, modelType);
   return [
