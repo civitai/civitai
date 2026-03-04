@@ -121,6 +121,7 @@ export const ECO = {
   Flux2Klein_4B: 56,
   Flux2Klein_4B_base: 57,
   Qwen: 10,
+  Qwen2: 62,
   Chroma: 11,
   HyDit1: 12,
   AuraFlow: 13,
@@ -522,6 +523,14 @@ export const ecosystems: EcosystemRecord[] = [
 
   // Qwen Family (familyId: 10)
   { id: ECO.Qwen, key: 'Qwen', name: 'qwen', displayName: 'Qwen', familyId: 10, sortOrder: 90 },
+  {
+    id: ECO.Qwen2,
+    key: 'Qwen2',
+    name: 'qwen2',
+    displayName: 'Qwen 2',
+    familyId: 10,
+    sortOrder: 91,
+  },
 
   // ZImage Family (familyId: 11)
   {
@@ -703,6 +712,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Qwen - checkpoint and LORA
   { ecosystemId: ECO.Qwen, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Qwen, supportType: 'training', modelTypes: [ModelType.LORA] },
+
+  // Qwen 2 - checkpoint only
+  { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 
   // HyV1 (Hunyuan Video) - LORA only
   { ecosystemId: ECO.HyV1, supportType: 'generation', modelTypes: loraOnly },
@@ -892,6 +904,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Qwen,
     defaults: {
       model: { id: 2552908 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Qwen2,
+    defaults: {
+      model: { id: 2744101 },
       modelLocked: true,
     },
   },
@@ -1434,6 +1453,7 @@ export const BM = {
   Seedance: 70,
   Anima: 77,
   Grok: 78,
+  Qwen2: 79,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -2015,6 +2035,14 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.Qwen,
     licenseId: 13,
     experimental: true,
+  },
+  {
+    id: BM.Qwen2,
+    name: 'Qwen 2',
+    description: 'Next-generation Qwen image generation model',
+    type: 'image',
+    ecosystemId: ECO.Qwen2,
+    licenseId: 13,
   },
 
   // Stable Cascade

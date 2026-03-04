@@ -1008,6 +1008,7 @@ export function GenerationForm() {
                   checked={value}
                   onChange={(e) => onChange(e.target.checked)}
                   label="Enhanced Compatibility"
+                  description="We've updated our generation engine for better performance, but older prompts may look different. Turn this on to make new generations look more like your originals."
                 />
               )}
             />
