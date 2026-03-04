@@ -1,10 +1,14 @@
 import {
   ActionIcon,
   Badge,
+  Button,
   Container,
   CopyButton,
   SegmentedControl,
   Select,
+  Stack,
+  Text,
+  Title,
   Tooltip,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
@@ -20,6 +24,7 @@ import {
   IconColumns,
   IconFlag,
   IconLayoutList,
+  IconLock,
   IconLink,
   IconPencil,
   IconPhoto,
@@ -31,6 +36,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -406,6 +412,15 @@ function ComicOverview({ project }: { project: Project }) {
                 const isRead = readPositions ? readPositions.includes(ch.position) : false;
                 const isNsfw = ch.nsfwLevel > 0 && Flags.hasFlag(blurLevels, ch.nsfwLevel);
                 const isBlurred = isNsfw && !unblurredChapters.has(ch.position);
+                const daysUntilFree = ch.earlyAccessEndsAt
+                  ? Math.max(
+                      0,
+                      Math.ceil(
+                        (new Date(ch.earlyAccessEndsAt).getTime() - Date.now()) /
+                          (1000 * 60 * 60 * 24)
+                      )
+                    )
+                  : 0;
 
                 return (
                   <Link
@@ -452,6 +467,17 @@ function ComicOverview({ project }: { project: Project }) {
                             Draft
                           </Badge>
                         )}
+                        {ch.isLocked && (
+                          <Badge
+                            size="xs"
+                            variant="light"
+                            color="yellow"
+                            ml={4}
+                            leftSection={<IconLock size={10} />}
+                          >
+                            {ch.earlyAccessConfig?.buzzPrice} Buzz
+                          </Badge>
+                        )}
                         {isNsfw && (
                           <button
                             className={styles.chapterRatingPill}
@@ -463,8 +489,17 @@ function ComicOverview({ project }: { project: Project }) {
                         )}
                       </p>
                       <p className={styles.chapterPanelCount}>
-                        {ch.panels.length} {ch.panels.length === 1 ? 'page' : 'pages'}
-                        {ch.publishedAt && ` · ${formatRelativeDate(ch.publishedAt)}`}
+                        {ch.isLocked ? (
+                          <>
+                            Early access · free in {daysUntilFree}{' '}
+                            {daysUntilFree === 1 ? 'day' : 'days'}
+                          </>
+                        ) : (
+                          <>
+                            {ch.panelCount} {ch.panelCount === 1 ? 'page' : 'pages'}
+                            {ch.publishedAt && ` · ${formatRelativeDate(ch.publishedAt)}`}
+                          </>
+                        )}
                       </p>
                     </div>
                     <IconChevronRight size={18} className={styles.chapterArrow} />
@@ -568,11 +603,19 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Auto-mark chapter as read
   const markRead = trpc.comics.markChapterRead.useMutation();
   useEffect(() => {
-    if (currentUser && activeChapter) {
+    if (currentUser && activeChapter && !activeChapter.isLocked) {
       markRead.mutate({ projectId: project.id, chapterPosition: activeChapter.position });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChapter?.position, currentUser?.id]);
+  }, [activeChapter?.position, activeChapter?.isLocked, currentUser?.id]);
+
+  // Early access purchase
+  const queryUtils = trpc.useUtils();
+  const purchaseAccessMutation = trpc.comics.purchaseChapterAccess.useMutation({
+    onSuccess: () => {
+      queryUtils.comics.getPublicProjectForReader.invalidate({ id: project.id });
+    },
+  });
 
   // Keyboard navigation
   useEffect(() => {
@@ -620,6 +663,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
     if (!panel.imageUrl) return null;
+    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200 });
 
     if (panel.image) {
       return (
@@ -632,7 +676,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             {(safe) =>
               safe ? (
                 <img
-                  src={panel.imageUrl!}
+                  src={panelSrc}
                   alt={panel.prompt}
                   loading="lazy"
                   className={styles.readerPanel}
@@ -640,14 +684,14 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
               ) : (
                 <div className={styles.readerPanelBlurWrap}>
                   <img
-                    src={panel.imageUrl!}
+                    src={panelSrc}
                     alt={panel.prompt}
                     loading="lazy"
                     className={styles.readerPanel}
                     aria-hidden
                   />
                   <img
-                    src={panel.imageUrl!}
+                    src={panelSrc}
                     alt={panel.prompt}
                     loading="lazy"
                     className={styles.readerPanelBlurred}
@@ -663,7 +707,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     return (
       <img
         key={panel.id}
-        src={panel.imageUrl}
+        src={panelSrc}
         alt={panel.prompt}
         loading="lazy"
         className={styles.readerPanel}
@@ -812,47 +856,100 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           </Container>
         </div>
 
-        {/* Top nav */}
-        {panels.length > 0 && (
-          <Container size="sm">
-            {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
-          </Container>
-        )}
-
-        {/* Panel content */}
-        <Container size={readerMode === 'pages' ? 'lg' : 'sm'} p={0}>
-          {panels.length === 0 ? (
-            <div className={styles.readerEmpty}>
-              <IconPhotoOff size={48} />
-              <p>No panels in this chapter</p>
+        {activeChapter?.isLocked ? (
+          /* ── Paywall screen ── */
+          <Container size="sm" py="xl">
+            <Stack align="center" gap="lg" py={60}>
+              <IconLock size={64} style={{ color: '#605e6e' }} />
+              <Title order={3} ta="center">
+                {activeChapter.name}
+              </Title>
+              <Text c="dimmed" ta="center" maw={400}>
+                This chapter is in early access.
+                {activeChapter.earlyAccessEndsAt && (
+                  <>
+                    {' '}
+                    It will become free in{' '}
+                    {Math.max(
+                      0,
+                      Math.ceil(
+                        (new Date(activeChapter.earlyAccessEndsAt).getTime() - Date.now()) /
+                          (1000 * 60 * 60 * 24)
+                      )
+                    )}{' '}
+                    days.
+                  </>
+                )}
+              </Text>
+              <BuzzTransactionButton
+                buzzAmount={activeChapter.earlyAccessConfig?.buzzPrice ?? 0}
+                label={`Unlock for ${activeChapter.earlyAccessConfig?.buzzPrice ?? 0} Buzz`}
+                onPerformTransaction={() =>
+                  purchaseAccessMutation.mutate({ chapterId: activeChapter.id })
+                }
+                loading={purchaseAccessMutation.isLoading}
+                error={purchaseAccessMutation.error?.message}
+                size="lg"
+              />
               <Link href={`/comics/${project.id}/${projectSlug}`} className={styles.notFoundLink}>
                 <IconArrowLeft size={16} />
                 Back to overview
               </Link>
-            </div>
-          ) : readerMode === 'pages' ? (
-            <div className={styles.readerPagesSpread}>
-              {visiblePanels.map((panel) => renderPanel(panel))}
-            </div>
-          ) : (
-            <div className={styles.readerPanels}>
-              {visiblePanels.map((panel) => renderPanel(panel))}
-            </div>
-          )}
-        </Container>
-
-        {/* Bottom nav */}
-        {panels.length > 0 && (
-          <Container size="sm">
-            {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
+            </Stack>
+            {/* Chapter navigation below paywall */}
+            <ChapterNav />
           </Container>
-        )}
+        ) : (
+          <>
+            {/* Top nav */}
+            {panels.length > 0 && (
+              <Container size="sm">
+                {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
+              </Container>
+            )}
 
-        {/* Comments section */}
-        {activeChapter && (
-          <Container size="sm" py="xl">
-            <ChapterComments projectId={project.id} chapterPosition={activeChapter.position} />
-          </Container>
+            {/* Panel content */}
+            <Container size={readerMode === 'pages' ? 'lg' : 'sm'} p={0}>
+              {panels.length === 0 ? (
+                <div className={styles.readerEmpty}>
+                  <IconPhotoOff size={48} />
+                  <p>No panels in this chapter</p>
+                  <Link
+                    href={`/comics/${project.id}/${projectSlug}`}
+                    className={styles.notFoundLink}
+                  >
+                    <IconArrowLeft size={16} />
+                    Back to overview
+                  </Link>
+                </div>
+              ) : readerMode === 'pages' ? (
+                <div className={styles.readerPagesSpread}>
+                  {visiblePanels.map((panel) => renderPanel(panel))}
+                </div>
+              ) : (
+                <div className={styles.readerPanels}>
+                  {visiblePanels.map((panel) => renderPanel(panel))}
+                </div>
+              )}
+            </Container>
+
+            {/* Bottom nav */}
+            {panels.length > 0 && (
+              <Container size="sm">
+                {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
+              </Container>
+            )}
+
+            {/* Comments section */}
+            {activeChapter && (
+              <Container size="sm" py="xl">
+                <ChapterComments
+                  projectId={project.id}
+                  chapterPosition={activeChapter.position}
+                />
+              </Container>
+            )}
+          </>
         )}
       </div>
     </>

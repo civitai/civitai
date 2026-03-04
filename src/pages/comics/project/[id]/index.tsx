@@ -7,6 +7,7 @@ import {
   Loader,
   Modal,
   NativeSelect,
+  NumberInput,
   Paper,
   ScrollArea,
   SegmentedControl,
@@ -28,6 +29,7 @@ import {
   IconBook,
   IconEyeOff,
   IconGripVertical,
+  IconLock,
   IconPencil,
   IconPhoto,
   IconPhotoUp,
@@ -246,6 +248,11 @@ function ProjectWorkspace() {
 
   const [panelModalOpened, { open: openPanelModal, close: closePanelModal }] = useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
+  const [publishModalOpened, { open: openPublishModal, close: closePublishModal }] =
+    useDisclosure(false);
+  const [publishEaEnabled, setPublishEaEnabled] = useState(false);
+  const [publishEaBuzzPrice, setPublishEaBuzzPrice] = useState<number | string>(100);
+  const [publishEaTimeframe, setPublishEaTimeframe] = useState<number | string>(7);
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [useContext, setUseContext] = useState(true);
@@ -291,10 +298,14 @@ function ProjectWorkspace() {
   >([]);
   const { uploadToCF: uploadImportToCF } = useCFImageUpload();
 
-  // Chapter rename state
-  const [editingChapterPosition, setEditingChapterPosition] = useState<number | null>(null);
-  const [editChapterName, setEditChapterName] = useState('');
-  const chapterInputRef = useRef<HTMLInputElement>(null);
+  // Chapter settings modal state
+  const [chapterSettingsOpened, { open: openChapterSettings, close: closeChapterSettings }] =
+    useDisclosure(false);
+  const [chapterSettingsPosition, setChapterSettingsPosition] = useState<number | null>(null);
+  const [chapterSettingsName, setChapterSettingsName] = useState('');
+  const [chapterSettingsEaEnabled, setChapterSettingsEaEnabled] = useState(false);
+  const [chapterSettingsEaBuzzPrice, setChapterSettingsEaBuzzPrice] = useState<number | string>(100);
+  const [chapterSettingsEaTimeframe, setChapterSettingsEaTimeframe] = useState<number | string>(7);
 
   // Settings modal state
   const [editName, setEditName] = useState('');
@@ -443,6 +454,11 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const updateChapterEaMutation = trpc.comics.updateChapterEarlyAccess.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
+
   const deleteChapterMutation = trpc.comics.deleteChapter.useMutation({
     onSuccess: () => refetch(),
     onError: handleMutationError,
@@ -558,13 +574,19 @@ function ProjectWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [processingReferenceIds.join(','), utils, refetch]);
 
-  // Focus chapter rename input
-  useEffect(() => {
-    if (editingChapterPosition != null && chapterInputRef.current) {
-      chapterInputRef.current.focus();
-      chapterInputRef.current.select();
-    }
-  }, [editingChapterPosition]);
+  // Open chapter settings modal
+  const handleOpenChapterSettings = (chapter: NonNullable<typeof project>['chapters'][number]) => {
+    const eaConfig = chapter.earlyAccessConfig as {
+      buzzPrice: number;
+      timeframe: number;
+    } | null;
+    setChapterSettingsPosition(chapter.position);
+    setChapterSettingsName(chapter.name);
+    setChapterSettingsEaEnabled(eaConfig != null);
+    setChapterSettingsEaBuzzPrice(eaConfig?.buzzPrice ?? 100);
+    setChapterSettingsEaTimeframe(eaConfig?.timeframe ?? 7);
+    openChapterSettings();
+  };
 
   // Build reference name map for panel cards
   const referenceNameMap = useMemo(() => {
@@ -1025,15 +1047,46 @@ function ProjectWorkspace() {
   const bulkGenerationCount = bulkItems.filter((item) => item.prompt.trim() !== '').length;
   const bulkTotalCost = bulkGenerationCount * (panelCost + (bulkEnhance ? enhanceCost : 0));
 
-  const handleSaveChapterName = () => {
-    if (editingChapterPosition == null || !editChapterName.trim()) {
-      setEditingChapterPosition(null);
-      return;
+  const handleSaveChapterSettings = () => {
+    if (chapterSettingsPosition == null || !chapterSettingsName.trim()) return;
+
+    const chapter = project.chapters.find((ch) => ch.position === chapterSettingsPosition);
+    if (!chapter) return;
+
+    // Save name if changed
+    if (chapterSettingsName.trim() !== chapter.name) {
+      updateChapterMutation.mutate({
+        projectId,
+        chapterPosition: chapterSettingsPosition,
+        name: chapterSettingsName.trim(),
+      });
     }
-    updateChapterMutation.mutate(
-      { projectId, chapterPosition: editingChapterPosition, name: editChapterName.trim() },
-      { onSettled: () => setEditingChapterPosition(null) }
-    );
+
+    // Save EA config if chapter is published
+    if (chapter.status === ComicChapterStatus.Published) {
+      const newEaConfig = chapterSettingsEaEnabled
+        ? {
+            buzzPrice: Number(chapterSettingsEaBuzzPrice),
+            timeframe: Number(chapterSettingsEaTimeframe),
+          }
+        : null;
+      const currentEaConfig = chapter.earlyAccessConfig as {
+        buzzPrice: number;
+        timeframe: number;
+      } | null;
+
+      const configChanged =
+        JSON.stringify(newEaConfig) !== JSON.stringify(currentEaConfig);
+      if (configChanged) {
+        updateChapterEaMutation.mutate({
+          projectId,
+          chapterPosition: chapterSettingsPosition,
+          earlyAccessConfig: newEaConfig,
+        });
+      }
+    }
+
+    closeChapterSettings();
   };
 
   const handleDeleteChapter = (chapterPosition: number, chapterName: string) => {
@@ -1074,8 +1127,27 @@ function ProjectWorkspace() {
         },
       });
     } else {
-      publishChapterMutation.mutate({ projectId, chapterPosition });
+      // Open publish modal with EA options
+      setActiveChapterPosition(chapterPosition);
+      setPublishEaEnabled(false);
+      setPublishEaBuzzPrice(100);
+      setPublishEaTimeframe(7);
+      openPublishModal();
     }
+  };
+
+  const handleConfirmPublish = () => {
+    if (activeChapterPosition == null) return;
+    publishChapterMutation.mutate(
+      {
+        projectId,
+        chapterPosition: activeChapterPosition,
+        earlyAccessConfig: publishEaEnabled
+          ? { buzzPrice: Number(publishEaBuzzPrice), timeframe: Number(publishEaTimeframe) }
+          : null,
+      },
+      { onSuccess: () => closePublishModal() }
+    );
   };
 
   const handleDeleteReference = (referenceId: number, referenceName: string) => {
@@ -1318,58 +1390,71 @@ function ProjectWorkspace() {
                   const isActive =
                     (activeChapterPosition ?? project.chapters[0]?.position) === chapter.position;
                   const panelCount = chapter.panels.length;
+                  const eaConfig = chapter.earlyAccessConfig as {
+                    buzzPrice: number;
+                    timeframe: number;
+                  } | null;
+                  const isPaywalled =
+                    chapter.status === ComicChapterStatus.Published &&
+                    eaConfig != null &&
+                    chapter.earlyAccessEndsAt != null &&
+                    new Date(chapter.earlyAccessEndsAt) > new Date();
+                  const isDeleting =
+                    deleteChapterMutation.isLoading &&
+                    deleteChapterMutation.variables?.chapterPosition === chapter.position;
+                  const isUpdating =
+                    (updateChapterMutation.isLoading &&
+                      updateChapterMutation.variables?.chapterPosition === chapter.position) ||
+                    (updateChapterEaMutation.isLoading &&
+                      updateChapterEaMutation.variables?.chapterPosition === chapter.position);
+                  const isBusy = isDeleting || isUpdating;
 
                   return (
                     <div
                       key={`${chapter.projectId}-${chapter.position}`}
                       className={clsx(styles.chapterItem, isActive && styles.chapterItemActive)}
-                      onClick={() => {
-                        if (editingChapterPosition !== chapter.position)
-                          setActiveChapterPosition(chapter.position);
-                      }}
+                      style={isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
+                      onClick={() => setActiveChapterPosition(chapter.position)}
                     >
-                      <span className={styles.chapterItemNumber}>{idx + 1}</span>
+                      <span className={styles.chapterItemNumber}>
+                        {isBusy ? <Loader size={12} /> : idx + 1}
+                      </span>
                       <div className={styles.chapterItemInfo}>
-                        {editingChapterPosition === chapter.position ? (
-                          <input
-                            ref={chapterInputRef}
-                            className={styles.chapterItemInput}
-                            value={editChapterName}
-                            onChange={(e) => setEditChapterName(e.target.value)}
-                            onBlur={handleSaveChapterName}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveChapterName();
-                              if (e.key === 'Escape') setEditingChapterPosition(null);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <>
-                            <p className={styles.chapterItemName}>{chapter.name}</p>
-                            <p className={styles.chapterItemCount}>
-                              <Tooltip
-                                label={
-                                  chapter.status === ComicChapterStatus.Published
-                                    ? 'Published'
-                                    : 'Draft'
-                                }
-                                withArrow
-                                position="right"
-                              >
-                                <span
-                                  className="inline-block w-1.5 h-1.5 rounded-full mr-1"
-                                  style={{
-                                    background:
-                                      chapter.status === ComicChapterStatus.Published
-                                        ? 'var(--mantine-color-green-5)'
-                                        : 'var(--mantine-color-gray-5)',
-                                  }}
-                                />
-                              </Tooltip>
-                              {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
-                            </p>
-                          </>
-                        )}
+                        <p className={styles.chapterItemName}>
+                          {chapter.name}
+                          {isPaywalled && (
+                            <IconLock
+                              size={11}
+                              className="inline-block ml-1 opacity-60"
+                              style={{ verticalAlign: 'middle', color: 'var(--mantine-color-yellow-5)' }}
+                            />
+                          )}
+                        </p>
+                        <p className={styles.chapterItemCount}>
+                          <Tooltip
+                            label={
+                              chapter.status === ComicChapterStatus.Published
+                                ? isPaywalled
+                                  ? `Paywalled · ${eaConfig!.buzzPrice} Buzz`
+                                  : 'Published'
+                                : 'Draft'
+                            }
+                            withArrow
+                            position="right"
+                          >
+                            <span
+                              className="inline-block w-1.5 h-1.5 rounded-full mr-1"
+                              style={{
+                                background: isPaywalled
+                                  ? 'var(--mantine-color-yellow-5)'
+                                  : chapter.status === ComicChapterStatus.Published
+                                  ? 'var(--mantine-color-green-5)'
+                                  : 'var(--mantine-color-gray-5)',
+                              }}
+                            />
+                          </Tooltip>
+                          {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
+                        </p>
                       </div>
                       <span className={styles.chapterItemActions}>
                         <ActionIcon
@@ -1378,25 +1463,11 @@ function ProjectWorkspace() {
                           c="dimmed"
                           onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
-                            setEditingChapterPosition(chapter.position);
-                            setEditChapterName(chapter.name);
+                            handleOpenChapterSettings(chapter);
                           }}
                         >
-                          <IconPencil size={12} />
+                          <IconSettings size={12} />
                         </ActionIcon>
-                        {project.chapters.length > 1 && (
-                          <ActionIcon
-                            variant="transparent"
-                            size="xs"
-                            color="red"
-                            onClick={(e: React.MouseEvent) => {
-                              e.stopPropagation();
-                              handleDeleteChapter(chapter.position, chapter.name);
-                            }}
-                          >
-                            <IconX size={12} />
-                          </ActionIcon>
-                        )}
                       </span>
                     </div>
                   );
@@ -1405,9 +1476,14 @@ function ProjectWorkspace() {
                 <button
                   className={styles.chapterAddBtn}
                   onClick={() => createChapterMutation.mutate({ projectId })}
+                  disabled={createChapterMutation.isLoading}
                 >
-                  <IconPlus size={14} />
-                  Add Chapter
+                  {createChapterMutation.isLoading ? (
+                    <Loader size={14} />
+                  ) : (
+                    <IconPlus size={14} />
+                  )}
+                  {createChapterMutation.isLoading ? 'Adding...' : 'Add Chapter'}
                 </button>
 
                 {activeReferences.length > 0 && (
@@ -1429,69 +1505,96 @@ function ProjectWorkspace() {
             {/* ── Main: Panels ───────────────────── */}
             <div>
               {/* Active chapter title + publish toggle */}
-              {activeChapter && (
-                <Group justify="space-between" align="center" mb="md">
-                  <Group gap="sm">
-                    <Title order={4} style={{ fontWeight: 700 }}>
-                      {activeChapter.name}
-                    </Title>
-                    <Badge
-                      size="sm"
-                      variant="light"
-                      color={
-                        activeChapter.status === ComicChapterStatus.Published ? 'green' : 'gray'
-                      }
-                    >
-                      {activeChapter.status === ComicChapterStatus.Published
-                        ? 'Published'
-                        : 'Draft'}
-                    </Badge>
+              {activeChapter && (() => {
+                const activeEaConfig = activeChapter.earlyAccessConfig as {
+                  buzzPrice: number;
+                  timeframe: number;
+                } | null;
+                const isActivePaywalled =
+                  activeChapter.status === ComicChapterStatus.Published &&
+                  activeEaConfig != null &&
+                  activeChapter.earlyAccessEndsAt != null &&
+                  new Date(activeChapter.earlyAccessEndsAt) > new Date();
+                const isPublishing =
+                  (publishChapterMutation.isLoading &&
+                    publishChapterMutation.variables?.chapterPosition ===
+                      activeChapter.position) ||
+                  (unpublishChapterMutation.isLoading &&
+                    unpublishChapterMutation.variables?.chapterPosition ===
+                      activeChapter.position);
+                const isDraft = activeChapter.status !== ComicChapterStatus.Published;
+
+                return (
+                  <Group justify="space-between" align="center" mb="md">
+                    <Group gap="sm">
+                      <Title order={4} style={{ fontWeight: 700 }}>
+                        {activeChapter.name}
+                      </Title>
+                      <Badge
+                        size="sm"
+                        variant="light"
+                        color={
+                          isActivePaywalled ? 'yellow' : isDraft ? 'gray' : 'green'
+                        }
+                        leftSection={isActivePaywalled ? <IconLock size={10} /> : undefined}
+                      >
+                        {isActivePaywalled
+                          ? `Paywalled · ${activeEaConfig!.buzzPrice} Buzz`
+                          : isDraft
+                          ? 'Draft'
+                          : 'Published'}
+                      </Badge>
+                    </Group>
+                    <Group gap="xs">
+                      {isDraft && (
+                        <Tooltip label="Publish with a Buzz paywall">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="yellow"
+                            leftSection={<IconLock size={14} />}
+                            disabled={activeChapter.panels.length === 0}
+                            loading={isPublishing}
+                            onClick={() => {
+                              setActiveChapterPosition(activeChapter.position);
+                              setPublishEaEnabled(true);
+                              setPublishEaBuzzPrice(100);
+                              setPublishEaTimeframe(7);
+                              openPublishModal();
+                            }}
+                          >
+                            Paywall
+                          </Button>
+                        </Tooltip>
+                      )}
+                      <Tooltip
+                        label="Add panels before publishing"
+                        disabled={!isDraft || activeChapter.panels.length > 0}
+                      >
+                        <Button
+                          size="xs"
+                          variant={isDraft ? 'filled' : 'light'}
+                          color={isDraft ? 'green' : 'yellow'}
+                          leftSection={
+                            isDraft ? (
+                              <IconWorld size={14} />
+                            ) : (
+                              <IconEyeOff size={14} />
+                            )
+                          }
+                          disabled={isDraft && activeChapter.panels.length === 0}
+                          loading={isPublishing}
+                          onClick={() =>
+                            handleTogglePublish(activeChapter.position, activeChapter.status)
+                          }
+                        >
+                          {isDraft ? 'Publish' : 'Unpublish'}
+                        </Button>
+                      </Tooltip>
+                    </Group>
                   </Group>
-                  <Tooltip
-                    label="Add panels before publishing"
-                    disabled={
-                      activeChapter.status === ComicChapterStatus.Published ||
-                      activeChapter.panels.length > 0
-                    }
-                  >
-                    <Button
-                      size="xs"
-                      variant={
-                        activeChapter.status === ComicChapterStatus.Published ? 'light' : 'filled'
-                      }
-                      color={
-                        activeChapter.status === ComicChapterStatus.Published ? 'yellow' : 'green'
-                      }
-                      leftSection={
-                        activeChapter.status === ComicChapterStatus.Published ? (
-                          <IconEyeOff size={14} />
-                        ) : (
-                          <IconWorld size={14} />
-                        )
-                      }
-                      disabled={
-                        activeChapter.status !== ComicChapterStatus.Published &&
-                        activeChapter.panels.length === 0
-                      }
-                      loading={
-                        (publishChapterMutation.isLoading &&
-                          publishChapterMutation.variables?.chapterPosition ===
-                            activeChapter.position) ||
-                        (unpublishChapterMutation.isLoading &&
-                          unpublishChapterMutation.variables?.chapterPosition ===
-                            activeChapter.position)
-                      }
-                      onClick={() =>
-                        handleTogglePublish(activeChapter.position, activeChapter.status)
-                      }
-                    >
-                      {activeChapter.status === ComicChapterStatus.Published
-                        ? 'Unpublish'
-                        : 'Publish'}
-                    </Button>
-                  </Tooltip>
-                </Group>
-              )}
+                );
+              })()}
 
               {activeChapter && activeChapter.panels.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
@@ -2460,7 +2563,168 @@ function ProjectWorkspace() {
         )}
       </Modal>
 
-      {/* ── Settings Modal ───────────────────────── */}
+      {/* ── Chapter Settings Modal ── */}
+      <Modal
+        opened={chapterSettingsOpened}
+        onClose={closeChapterSettings}
+        title="Chapter Settings"
+        size="sm"
+      >
+        {chapterSettingsPosition != null && (() => {
+          const settingsChapter = project.chapters.find(
+            (ch) => ch.position === chapterSettingsPosition
+          );
+          if (!settingsChapter) return null;
+          const isPublished = settingsChapter.status === ComicChapterStatus.Published;
+          const currentEaConfig = settingsChapter.earlyAccessConfig as {
+            buzzPrice: number;
+            timeframe: number;
+          } | null;
+
+          return (
+            <Stack gap="md">
+              <TextInput
+                label="Chapter Name"
+                value={chapterSettingsName}
+                onChange={(e) => setChapterSettingsName(e.currentTarget.value)}
+              />
+
+              {isPublished && (
+                <>
+                  <Switch
+                    label="Early Access Paywall"
+                    description="Require Buzz payment to read this chapter"
+                    checked={chapterSettingsEaEnabled}
+                    onChange={(e) => setChapterSettingsEaEnabled(e.currentTarget.checked)}
+                  />
+
+                  {chapterSettingsEaEnabled && (
+                    <>
+                      <NumberInput
+                        label="Buzz Price"
+                        description={
+                          currentEaConfig
+                            ? `Current: ${currentEaConfig.buzzPrice} Buzz (can only reduce)`
+                            : 'Amount of Buzz readers must pay'
+                        }
+                        value={chapterSettingsEaBuzzPrice}
+                        onChange={(val) => setChapterSettingsEaBuzzPrice(val)}
+                        min={1}
+                        max={currentEaConfig?.buzzPrice}
+                        leftSection={<IconLock size={16} />}
+                      />
+                      <NumberInput
+                        label="Early Access Period (days)"
+                        description={
+                          currentEaConfig
+                            ? `Current: ${currentEaConfig.timeframe} days (can only reduce)`
+                            : 'After this many days the chapter becomes free'
+                        }
+                        value={chapterSettingsEaTimeframe}
+                        onChange={(val) => setChapterSettingsEaTimeframe(val)}
+                        min={1}
+                        max={currentEaConfig?.timeframe ?? 365}
+                      />
+                    </>
+                  )}
+                </>
+              )}
+
+              <Group justify="space-between">
+                {project.chapters.length > 1 ? (
+                  <Button
+                    variant="subtle"
+                    color="red"
+                    size="xs"
+                    leftSection={<IconTrash size={14} />}
+                    loading={deleteChapterMutation.isLoading}
+                    onClick={() => {
+                      closeChapterSettings();
+                      handleDeleteChapter(settingsChapter.position, settingsChapter.name);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                ) : (
+                  <div />
+                )}
+                <Group gap="xs">
+                  <Button variant="default" onClick={closeChapterSettings}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleSaveChapterSettings}
+                    loading={updateChapterMutation.isLoading || updateChapterEaMutation.isLoading}
+                    disabled={!chapterSettingsName.trim()}
+                  >
+                    Save
+                  </Button>
+                </Group>
+              </Group>
+            </Stack>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Publish Modal ── */}
+      <Modal
+        opened={publishModalOpened}
+        onClose={closePublishModal}
+        title="Publish Chapter"
+        size="sm"
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Publishing will make this chapter visible to all readers.
+          </Text>
+
+          <Switch
+            label="Enable Early Access Paywall"
+            description="Require Buzz payment to read this chapter during the early access period"
+            checked={publishEaEnabled}
+            onChange={(e) => setPublishEaEnabled(e.currentTarget.checked)}
+          />
+
+          {publishEaEnabled && (
+            <>
+              <NumberInput
+                label="Buzz Price"
+                description="Amount of Buzz readers must pay to unlock this chapter"
+                value={publishEaBuzzPrice}
+                onChange={(val) => setPublishEaBuzzPrice(val)}
+                min={1}
+                leftSection={<IconLock size={16} />}
+              />
+              <NumberInput
+                label="Early Access Period (days)"
+                description="After this many days the chapter becomes free for everyone"
+                value={publishEaTimeframe}
+                onChange={(val) => setPublishEaTimeframe(val)}
+                min={1}
+                max={365}
+              />
+            </>
+          )}
+
+          <Group justify="flex-end">
+            <Button variant="default" onClick={closePublishModal}>
+              Cancel
+            </Button>
+            <Button
+              color="green"
+              loading={publishChapterMutation.isLoading}
+              disabled={
+                publishEaEnabled &&
+                (Number(publishEaBuzzPrice) < 1 || Number(publishEaTimeframe) < 1)
+              }
+              onClick={handleConfirmPublish}
+            >
+              Publish
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Modal opened={settingsOpened} onClose={closeSettings} title="Project Settings" size="md">
         <Stack gap="md">
           <TextInput

@@ -11,9 +11,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  Availability,
   ComicReferenceStatus,
   ComicChapterStatus,
   ComicEngagementType,
@@ -38,9 +40,19 @@ import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  EntityAccessPermission,
+  NotificationCategory,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { comicsSearchIndex } from '~/server/search-index';
 import { nanoBananaProSizes } from '~/server/common/constants';
+import { hasEntityAccess } from '~/server/services/common.service';
+import {
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 // Feature flag gate — all procedures require the comicCreator flag
 const comicFlag = isFlagProtected('comicCreator');
@@ -255,6 +267,13 @@ const updateProjectSchema = z.object({
 const deleteReferenceSchema = z.object({
   referenceId: z.number().int(),
 });
+
+const chapterEarlyAccessConfigSchema = z
+  .object({
+    buzzPrice: z.number().int().min(1),
+    timeframe: z.number().int().min(1).max(365),
+  })
+  .nullable();
 
 // Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: number) {
@@ -792,12 +811,16 @@ export const comicsRouter = router({
             ...(!isOwnerOrMod ? { where: { status: ComicChapterStatus.Published } } : {}),
             orderBy: { position: 'asc' },
             select: {
+              id: true,
               projectId: true,
               position: true,
               name: true,
               status: true,
               nsfwLevel: true,
               publishedAt: true,
+              availability: true,
+              earlyAccessConfig: true,
+              earlyAccessEndsAt: true,
               panels: {
                 where: {
                   status: ComicPanelStatus.Ready,
@@ -829,15 +852,66 @@ export const comicsRouter = router({
 
       // Filter out draft chapters for non-owner, non-mod viewers
       // Also filter out chapters with no ready panels
-      const chapters = project.chapters.filter((ch) => {
+      const filteredChapters = project.chapters.filter((ch) => {
         if (ch.panels.length === 0) return false;
         if (ch.status !== ComicChapterStatus.Published && !canViewDrafts) return false;
         return true;
       });
 
-      if (chapters.length === 0 && !canViewDrafts) {
+      if (filteredChapters.length === 0 && !canViewDrafts) {
         throw throwNotFoundError('Comic not found');
       }
+
+      // Check early access for chapters that are currently in EA
+      const now = new Date();
+      const eaChapters = filteredChapters.filter(
+        (ch) =>
+          ch.availability === Availability.EarlyAccess &&
+          ch.earlyAccessEndsAt &&
+          ch.earlyAccessEndsAt > now
+      );
+
+      let accessMap = new Map<number, boolean>();
+      if (eaChapters.length > 0 && !canViewDrafts) {
+        const eaChapterIds = eaChapters.map((ch) => ch.id);
+        const accessResults = await hasEntityAccess({
+          entityType: 'ComicChapter',
+          entityIds: eaChapterIds,
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        });
+        for (const result of accessResults) {
+          accessMap.set(result.entityId, result.hasAccess);
+        }
+      }
+
+      const chapters = filteredChapters.map((ch) => {
+        const isEa =
+          ch.availability === Availability.EarlyAccess &&
+          ch.earlyAccessEndsAt &&
+          ch.earlyAccessEndsAt > now;
+        const isLocked = isEa && !canViewDrafts && !accessMap.get(ch.id);
+        const eaConfig = ch.earlyAccessConfig as {
+          buzzPrice: number;
+          timeframe: number;
+        } | null;
+
+        return {
+          id: ch.id,
+          projectId: ch.projectId,
+          position: ch.position,
+          name: ch.name,
+          status: ch.status,
+          nsfwLevel: ch.nsfwLevel,
+          publishedAt: ch.publishedAt,
+          availability: ch.availability,
+          earlyAccessConfig: eaConfig,
+          earlyAccessEndsAt: ch.earlyAccessEndsAt,
+          isLocked: !!isLocked,
+          panelCount: ch.panels.length,
+          panels: isLocked ? [] : ch.panels,
+        };
+      });
 
       // Aggregate tip total from BuzzTip table
       const tipResult = await dbRead.$queryRaw<[{ total: number }]>`
@@ -2081,7 +2155,13 @@ export const comicsRouter = router({
   // ──── Phase 3: Publish/Unpublish ────
 
   publishChapter: comicProtectedProcedure
-    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+        earlyAccessConfig: chapterEarlyAccessConfigSchema.optional(),
+      })
+    )
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       const chapter = await dbRead.comicChapter.findUnique({
@@ -2139,6 +2219,9 @@ export const comicsRouter = router({
         data: {
           status: ComicChapterStatus.Published,
           ...(isFirstPublish ? { publishedAt: new Date() } : {}),
+          ...(input.earlyAccessConfig !== undefined
+            ? { earlyAccessConfig: input.earlyAccessConfig ?? undefined }
+            : {}),
         },
       });
 
@@ -2191,6 +2274,20 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
+      // Block unpublish if anyone has purchased early access
+      const purchaseCount = await dbRead.entityAccess.count({
+        where: {
+          accessToId: chapter.id,
+          accessToType: 'ComicChapter',
+          accessorType: 'User',
+        },
+      });
+      if (purchaseCount > 0) {
+        throw throwBadRequestError(
+          'This chapter cannot be unpublished because readers have purchased early access to it.'
+        );
+      }
+
       const updated = await dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
@@ -2204,6 +2301,160 @@ export const comicsRouter = router({
       ]);
 
       return updated;
+    }),
+
+  purchaseChapterAccess: comicProtectedProcedure
+    .input(
+      z.object({
+        chapterId: z.number().int(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        select: {
+          id: true,
+          name: true,
+          availability: true,
+          earlyAccessConfig: true,
+          earlyAccessEndsAt: true,
+          status: true,
+          project: { select: { id: true, name: true, userId: true } },
+        },
+      });
+
+      if (!chapter) throw throwNotFoundError('Chapter not found.');
+      if (chapter.project.userId === ctx.user.id) {
+        throw throwBadRequestError('You cannot purchase access to your own chapter.');
+      }
+      if (chapter.status !== ComicChapterStatus.Published) {
+        throw throwBadRequestError('Chapter is not published.');
+      }
+
+      const eaConfig = chapter.earlyAccessConfig as {
+        buzzPrice: number;
+        timeframe: number;
+      } | null;
+
+      if (
+        !eaConfig ||
+        chapter.availability !== Availability.EarlyAccess ||
+        !chapter.earlyAccessEndsAt ||
+        chapter.earlyAccessEndsAt <= new Date()
+      ) {
+        throw throwBadRequestError('This chapter is not in early access.');
+      }
+
+      // Check if user already has access
+      const [access] = await hasEntityAccess({
+        entityIds: [chapter.id],
+        entityType: 'ComicChapter',
+        userId: ctx.user.id,
+      });
+
+      if (access?.hasAccess) {
+        throw throwBadRequestError('You already have access to this chapter.');
+      }
+
+      let buzzTransactionId: string | undefined;
+      try {
+        const externalTransactionIdPrefix = `comic-ea-${chapter.id}-${ctx.user.id}`;
+        const data = await createMultiAccountBuzzTransaction({
+          fromAccountId: ctx.user.id,
+          toAccountId: chapter.project.userId,
+          amount: eaConfig.buzzPrice,
+          type: TransactionType.Purchase,
+          description: `Early access: ${chapter.project.name} - ${chapter.name}`,
+          details: { comicChapterId: chapter.id, earlyAccessPurchase: true },
+          externalTransactionIdPrefix,
+          fromAccountTypes: ['yellow'],
+        });
+
+        if (data?.transactionCount === 0) {
+          throw throwBadRequestError('Failed to create Buzz transaction.');
+        }
+
+        buzzTransactionId = externalTransactionIdPrefix;
+
+        await dbWrite.$transaction(async (tx) => {
+          await tx.entityAccess.create({
+            data: {
+              accessToId: chapter.id,
+              accessToType: 'ComicChapter',
+              accessorId: ctx.user.id,
+              accessorType: 'User',
+              permissions:
+                EntityAccessPermission.EarlyAccessDownload +
+                EntityAccessPermission.EarlyAccessGeneration,
+              meta: { buzzTransactionId },
+              addedById: ctx.user.id,
+            },
+          });
+        });
+
+        return { success: true };
+      } catch (error) {
+        if (buzzTransactionId) {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: buzzTransactionId,
+            description: `Refund early access: ${chapter.project.name} - ${chapter.name}`,
+          });
+        }
+        throw throwDbError(error);
+      }
+    }),
+
+  updateChapterEarlyAccess: comicProtectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+        earlyAccessConfig: chapterEarlyAccessConfigSchema,
+      })
+    )
+    .use(isChapterOwner)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        select: {
+          status: true,
+          earlyAccessConfig: true,
+          project: { select: { userId: true } },
+        },
+      });
+
+      if (!chapter || chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+      if (chapter.status !== ComicChapterStatus.Published) {
+        throw throwBadRequestError('Chapter must be published to update early access.');
+      }
+
+      const currentConfig = chapter.earlyAccessConfig as {
+        buzzPrice: number;
+        timeframe: number;
+      } | null;
+
+      // If chapter already has EA config, only allow reducing price/timeframe
+      if (currentConfig && input.earlyAccessConfig) {
+        if (input.earlyAccessConfig.buzzPrice > currentConfig.buzzPrice) {
+          throw throwBadRequestError('Cannot increase Buzz price after publishing.');
+        }
+        if (input.earlyAccessConfig.timeframe > currentConfig.timeframe) {
+          throw throwBadRequestError('Cannot increase timeframe after publishing.');
+        }
+      }
+
+      return dbWrite.comicChapter.update({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        data: {
+          earlyAccessConfig: input.earlyAccessConfig ?? undefined,
+        },
+      });
     }),
 
   // ──── Phase 3: Comic Engagement (Follow/Hide) ────
