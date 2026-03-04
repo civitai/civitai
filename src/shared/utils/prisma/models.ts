@@ -172,7 +172,7 @@ export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
 export type ChallengeSource = "System" | "Mod" | "User";
 
-export type ChallengeStatus = "Scheduled" | "Active" | "Completed" | "Cancelled";
+export type ChallengeStatus = "Scheduled" | "Active" | "Completing" | "Completed" | "Cancelled";
 
 export type PrizeMode = "Fixed" | "Dynamic";
 

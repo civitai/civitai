@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
@@ -412,20 +413,34 @@ export type CreateWinnerInput = {
   reason?: string;
 };
 
-export async function createChallengeWinner(input: CreateWinnerInput): Promise<number> {
-  const winner = await dbWrite.challengeWinner.create({
-    data: {
-      challengeId: input.challengeId,
-      userId: input.userId,
-      imageId: input.imageId,
-      place: input.place,
-      buzzAwarded: input.buzzAwarded,
-      pointsAwarded: input.pointsAwarded,
-      reason: input.reason,
-    },
-    select: { id: true },
-  });
-  return winner.id;
+export async function createChallengeWinner(input: CreateWinnerInput): Promise<number | null> {
+  try {
+    const winner = await dbWrite.challengeWinner.create({
+      data: {
+        challengeId: input.challengeId,
+        userId: input.userId,
+        imageId: input.imageId,
+        place: input.place,
+        buzzAwarded: input.buzzAwarded,
+        pointsAwarded: input.pointsAwarded,
+        reason: input.reason,
+      },
+      select: { id: true },
+    });
+    return winner.id;
+  } catch (error) {
+    // P2002 = unique constraint violation — record already exists (idempotent on recovery retry)
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      logToAxiom({
+        type: 'info',
+        name: 'challenge-winner-duplicate',
+        message: `Duplicate winner skipped (recovery retry): challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
+        challengeId: input.challengeId,
+      });
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function getChallengeWinners(challengeId: number): Promise<
@@ -481,6 +496,35 @@ export async function getChallengeWinners(challengeId: number): Promise<
     ...row,
     judgeScore: parseJudgeScore(collectionItemNote),
   }));
+}
+
+/**
+ * Check if ChallengeWinner records already exist for a challenge.
+ * Used to short-circuit LLM winner generation on retry — if winners were already
+ * picked in a previous (failed) run, reuse them instead of re-running the LLM.
+ */
+export async function getExistingWinnersForRetry(challengeId: number): Promise<
+  Array<{
+    userId: number;
+    imageId: number;
+    place: number;
+    buzzAwarded: number;
+    pointsAwarded: number;
+    reason: string | null;
+  }>
+> {
+  return dbRead.$queryRaw`
+    SELECT
+      cw."userId",
+      cw."imageId",
+      cw.place,
+      cw."buzzAwarded",
+      cw."pointsAwarded",
+      cw.reason
+    FROM "ChallengeWinner" cw
+    WHERE cw."challengeId" = ${challengeId}
+    ORDER BY cw.place ASC
+  `;
 }
 
 // =============================================================================
@@ -565,6 +609,48 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
     SET "operationSpent" = "operationSpent" + ${amount}
     WHERE id = ${challengeId}
   `;
+}
+
+// =============================================================================
+// Atomic Claim Helpers (Race Condition Prevention)
+// =============================================================================
+
+/**
+ * Atomically claim a challenge for completion processing.
+ * Uses UPDATE ... WHERE status='Active' to prevent duplicate processing.
+ * Returns true if this process owns the challenge, false if already claimed.
+ */
+export async function claimChallengeForCompletion(challengeId: number): Promise<boolean> {
+  const result = await dbWrite.$executeRaw`
+    UPDATE "Challenge"
+    SET status = ${ChallengeStatus.Completing}::"ChallengeStatus",
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('completingClaimedAt', ${new Date().toISOString()})
+    WHERE id = ${challengeId}
+    AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
+  `;
+  return result > 0;
+}
+
+/**
+ * Reset challenges stuck in 'Completing' status back to 'Active' for retry.
+ * A challenge is considered stuck if it has been in Completing for longer than timeoutMinutes.
+ */
+export async function resetStuckCompletingChallenges(timeoutMinutes = 10): Promise<number> {
+  const result = await dbWrite.$executeRaw`
+    UPDATE "Challenge"
+    SET status = ${ChallengeStatus.Active}::"ChallengeStatus"
+    WHERE status = ${ChallengeStatus.Completing}::"ChallengeStatus"
+    AND (metadata->>'completingClaimedAt')::timestamptz < now() - ${`${timeoutMinutes} minutes`}::interval
+  `;
+  if (result > 0) {
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-completion-recovery',
+      message: `Reset ${result} stuck Completing challenge(s) back to Active`,
+      count: result,
+    });
+  }
+  return result;
 }
 
 // =============================================================================
