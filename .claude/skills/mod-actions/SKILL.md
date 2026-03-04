@@ -1,11 +1,11 @@
 ---
 name: mod-actions
-description: Take moderator actions on users - ban, mute, remove content, manage leaderboard eligibility. Use when you need to ban a user, mute them, or take other moderation actions.
+description: Take moderator actions on users - ban, mute, remove content, manage leaderboard eligibility, send DMs. Use when you need to ban a user, mute them, send direct messages, or take other moderation actions.
 ---
 
 # Moderator Actions
 
-Take moderator actions on Civitai users including banning, muting, removing content, and managing leaderboard eligibility.
+Take moderator actions on Civitai users including banning, muting, removing content, managing leaderboard eligibility, and sending direct messages.
 
 This skill uses the Civitai tRPC API with API key authentication, ensuring all actions go through the proper service layer with full side effects (session invalidation, search index updates, activity tracking, etc.).
 
@@ -48,6 +48,7 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 | `mute <id\|username>` | Mute a user (toggle - will unmute if already muted) |
 | `leaderboard <id\|username> <true\|false>` | Set leaderboard eligibility |
 | `remove-content <id\|username>` | Remove all content from a user |
+| `dm <id\|username>` | Send a DM to a user (requires `--message`) |
 
 ### Ban Reason Codes
 
