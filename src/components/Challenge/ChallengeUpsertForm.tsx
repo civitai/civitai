@@ -207,9 +207,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     // Convert display dates back to real UTC and snap to exact hours
-    const startsAt = dayjs(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
-    const endsAt = dayjs(fromDisplayUTC(data.endsAt)).startOf('hour').toDate();
-    const visibleAt = dayjs(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
+    const startsAt = dayjs.utc(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
+    const endsAt = dayjs.utc(fromDisplayUTC(data.endsAt)).startOf('hour').toDate();
+    const visibleAt = dayjs.utc(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
 
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
     if (endsAt <= startsAt) {

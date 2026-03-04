@@ -10,6 +10,7 @@ import {
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  getExistingWinnersForRetry,
   resolveEventContext,
   setChallengeActive,
   updateChallengeStatus,
@@ -1064,11 +1065,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
  * Operation order (race-condition safe):
  * 1. Atomic claim (Active → Completing)
  * 2. Close collection + get judging config
- * 3. LLM judgment + map winners
- * 4. Create ChallengeWinner records + set Completed (before buzz)
+ * 3. LLM judgment + map winners (skipped on retry if winners already exist)
+ * 4. Create ChallengeWinner records
  * 5. Distribute winner buzz prizes
  * 6. Distribute entry participation prizes
- * 7. Send notifications (non-critical, last)
+ * 7. Set challenge status to Completed
+ * 8. Send notifications (non-critical, last)
  */
 export async function pickWinnersForChallenge(
   currentChallenge: DailyChallengeDetails,
@@ -1085,84 +1087,118 @@ export async function pickWinnersForChallenge(
   log('Challenge claimed for completion');
 
   try {
-    // 2. Get judging config and event context from Challenge
-    const [challengeJudgeRow] = await dbRead.$queryRaw<
-      [{ judgeId: number | null; judgingPrompt: string | null; eventId: number | null } | undefined]
-    >`
-      SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
-      WHERE id = ${currentChallenge.challengeId}
-      LIMIT 1
-    `;
-    const judgeId = challengeJudgeRow?.judgeId ?? config.defaultJudgeId;
-    if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
-    const judgingConfig = await getJudgingConfigForChallenge(
-      judgeId,
-      config.defaultJudge,
-      challengeJudgeRow?.judgingPrompt
-    );
+    // Check if winners already exist from a previous (failed) run.
+    // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
+    const existingWinners = await getExistingWinnersForRetry(currentChallenge.challengeId);
 
-    const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
+    let winningEntries: Array<{
+      userId: number;
+      imageId: number;
+      position: number;
+      prize: number;
+      reason: string | null;
+    }>;
+    let process: string | undefined;
+    let outcome: string | undefined;
 
-    // Close challenge collection
-    await endChallenge(currentChallenge);
-    log('Collection closed');
+    if (existingWinners.length > 0) {
+      log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
+      winningEntries = existingWinners.map((w) => ({
+        userId: w.userId,
+        imageId: w.imageId,
+        position: w.place,
+        prize: w.buzzAwarded,
+        reason: w.reason,
+      }));
 
-    // 3. Get judged entries + LLM judgment
-    const judgedEntries = await getJudgedEntries(
-      currentChallenge.collectionId,
-      config,
-      eventContext
-    );
-    if (!judgedEntries.length) {
-      log('No judged entries for challenge:', currentChallenge.challengeId);
-      await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
-      log('Challenge marked as completed (no entries)');
-      return;
-    }
+      // Still close the collection if not already closed
+      await endChallenge(currentChallenge);
+    } else {
+      // 2. Get judging config and event context from Challenge
+      const [challengeJudgeRow] = await dbRead.$queryRaw<
+        [
+          | { judgeId: number | null; judgingPrompt: string | null; eventId: number | null }
+          | undefined,
+        ]
+      >`
+        SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
+        WHERE id = ${currentChallenge.challengeId}
+        LIMIT 1
+      `;
+      const judgeId = challengeJudgeRow?.judgeId ?? config.defaultJudgeId;
+      if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+      const judgingConfig = await getJudgingConfigForChallenge(
+        judgeId,
+        config.defaultJudge,
+        challengeJudgeRow?.judgingPrompt
+      );
 
-    log('Sending entries for final judgment');
-    const { winners, process, outcome } = await generateWinners({
-      theme: currentChallenge.theme,
-      entries: judgedEntries.map((entry) => ({
-        creator: entry.username,
-        creatorId: entry.userId,
-        summary: entry.summary,
-        score: entry.score,
-      })),
-      config: judgingConfig,
-    });
+      const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
 
-    // Map winners to entries
-    const winningEntries = winners
-      .map((winner, i) => {
-        const entry = judgedEntries.find(
-          (e) =>
-            e.username.toLowerCase() === winner.creator.toLowerCase() ||
-            e.userId === winner.creatorId
-        );
-        if (!entry) return null;
-        return {
-          ...entry,
-          position: i + 1,
-          prize: currentChallenge.prizes[i].buzz,
-          reason: winner.reason,
-        };
-      })
-      .filter(isDefined);
+      // Close challenge collection
+      await endChallenge(currentChallenge);
+      log('Collection closed');
 
-    // 4. Create ChallengeWinner records (idempotent via P2002 handling)
-    for (const entry of winningEntries) {
-      await createChallengeWinner({
-        challengeId: currentChallenge.challengeId,
-        userId: entry.userId,
-        imageId: entry.imageId,
-        place: entry.position,
-        buzzAwarded: entry.prize,
-        pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
-        reason: entry.reason,
+      // 3. Get judged entries + LLM judgment
+      const judgedEntries = await getJudgedEntries(
+        currentChallenge.collectionId,
+        config,
+        eventContext
+      );
+      if (!judgedEntries.length) {
+        log('No judged entries for challenge:', currentChallenge.challengeId);
+        await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
+        log('Challenge marked as completed (no entries)');
+        return;
+      }
+
+      log('Sending entries for final judgment');
+      const generated = await generateWinners({
+        theme: currentChallenge.theme,
+        entries: judgedEntries.map((entry) => ({
+          creator: entry.username,
+          creatorId: entry.userId,
+          summary: entry.summary,
+          score: entry.score,
+        })),
+        config: judgingConfig,
       });
+      process = generated.process;
+      outcome = generated.outcome;
+
+      // Map winners to entries
+      winningEntries = generated.winners
+        .map((winner, i) => {
+          const entry = judgedEntries.find(
+            (e) =>
+              e.username.toLowerCase() === winner.creator.toLowerCase() ||
+              e.userId === winner.creatorId
+          );
+          if (!entry) return null;
+          return {
+            userId: entry.userId,
+            imageId: entry.imageId,
+            position: i + 1,
+            prize: currentChallenge.prizes[i].buzz,
+            reason: winner.reason,
+          };
+        })
+        .filter(isDefined);
+
+      // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+      for (const entry of winningEntries) {
+        await createChallengeWinner({
+          challengeId: currentChallenge.challengeId,
+          userId: entry.userId,
+          imageId: entry.imageId,
+          place: entry.position,
+          buzzAwarded: entry.prize,
+          pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
+          reason: entry.reason ?? undefined,
+        });
+      }
+      log('ChallengeWinner records created');
     }
-    log('ChallengeWinner records created');
 
     // 5. Distribute winner buzz prizes
     await withRetries(() =>

@@ -7,6 +7,7 @@ import {
   createChallengeWinner,
   getChallengeById,
   getChallengeWinners,
+  getExistingWinnersForRetry,
   resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
@@ -1357,72 +1358,100 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     await closeChallengeCollection(challenge);
     log('Collection closed');
 
-    // Get judged entries
-    if (!challenge.collectionId) {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: 'Challenge has no collection for entries.',
+    // Check if winners already exist from a previous (failed) run.
+    // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
+    const existingWinners = await getExistingWinnersForRetry(challengeId);
+
+    let winningEntries: Array<{
+      userId: number;
+      imageId: number;
+      position: number;
+      prize: number;
+      reason: string | null;
+    }>;
+    let process: string | undefined;
+    let outcome: string | undefined;
+
+    if (existingWinners.length > 0) {
+      log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
+      winningEntries = existingWinners.map((w) => ({
+        userId: w.userId,
+        imageId: w.imageId,
+        position: w.place,
+        prize: w.buzzAwarded,
+        reason: w.reason,
+      }));
+    } else {
+      // Get judged entries
+      if (!challenge.collectionId) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Challenge has no collection for entries.',
+        });
+      }
+
+      // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
+      const eventContext = await resolveEventContext(challenge.eventId);
+
+      const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
+      if (!judgedEntries.length) {
+        // No judged entries, just mark as completed
+        await dbWrite.challenge.update({
+          where: { id: challengeId },
+          data: { status: ChallengeStatus.Completed },
+        });
+        log('No judged entries, challenge marked as completed without winners');
+        return { success: true, winnersCount: 0 };
+      }
+
+      // Run LLM winner picking
+      log('Sending entries for final judgment');
+      const generated = await generateWinners({
+        theme: challenge.theme || 'Creative Challenge',
+        entries: judgedEntries.map((entry) => ({
+          creator: entry.username,
+          creatorId: entry.userId,
+          summary: entry.summary,
+          score: entry.score,
+        })),
+        config: judgingConfig,
       });
+      process = generated.process;
+      outcome = generated.outcome;
+
+      // Map winners to entries
+      winningEntries = generated.winners
+        .map((winner, i) => {
+          const entry = judgedEntries.find(
+            (e) =>
+              e.username.toLowerCase() === winner.creator.toLowerCase() ||
+              e.userId === winner.creatorId
+          );
+          if (!entry) return null;
+          return {
+            userId: entry.userId,
+            imageId: entry.imageId,
+            position: i + 1,
+            prize: challenge.prizes[i]?.buzz ?? 0,
+            reason: winner.reason,
+          };
+        })
+        .filter(isDefined);
+
+      // Create ChallengeWinner records (idempotent via P2002 handling)
+      for (const entry of winningEntries) {
+        await createChallengeWinner({
+          challengeId,
+          userId: entry.userId,
+          imageId: entry.imageId,
+          place: entry.position,
+          buzzAwarded: entry.prize,
+          pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
+          reason: entry.reason ?? undefined,
+        });
+      }
+      log('ChallengeWinner records created');
     }
-
-    // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
-    const eventContext = await resolveEventContext(challenge.eventId);
-
-    const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
-    if (!judgedEntries.length) {
-      // No judged entries, just mark as completed
-      await dbWrite.challenge.update({
-        where: { id: challengeId },
-        data: { status: ChallengeStatus.Completed },
-      });
-      log('No judged entries, challenge marked as completed without winners');
-      return { success: true, winnersCount: 0 };
-    }
-
-    // Run LLM winner picking
-    log('Sending entries for final judgment');
-    const { winners, process, outcome } = await generateWinners({
-      theme: challenge.theme || 'Creative Challenge',
-      entries: judgedEntries.map((entry) => ({
-        creator: entry.username,
-        creatorId: entry.userId,
-        summary: entry.summary,
-        score: entry.score,
-      })),
-      config: judgingConfig,
-    });
-
-    // Map winners to entries
-    const winningEntries = winners
-      .map((winner, i) => {
-        const entry = judgedEntries.find(
-          (e) =>
-            e.username.toLowerCase() === winner.creator.toLowerCase() ||
-            e.userId === winner.creatorId
-        );
-        if (!entry) return null;
-        return {
-          ...entry,
-          position: i + 1,
-          prize: challenge.prizes[i]?.buzz ?? 0,
-          reason: winner.reason,
-        };
-      })
-      .filter(isDefined);
-
-    // Create ChallengeWinner records (idempotent via P2002 handling)
-    for (const entry of winningEntries) {
-      await createChallengeWinner({
-        challengeId,
-        userId: entry.userId,
-        imageId: entry.imageId,
-        place: entry.position,
-        buzzAwarded: entry.prize,
-        pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
-        reason: entry.reason,
-      });
-    }
-    log('ChallengeWinner records created');
 
     // Send prizes to winners
     // Note: externalTransactionId uses challengeId-userId-place pattern for idempotency

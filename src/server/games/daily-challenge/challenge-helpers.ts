@@ -498,6 +498,35 @@ export async function getChallengeWinners(challengeId: number): Promise<
   }));
 }
 
+/**
+ * Check if ChallengeWinner records already exist for a challenge.
+ * Used to short-circuit LLM winner generation on retry — if winners were already
+ * picked in a previous (failed) run, reuse them instead of re-running the LLM.
+ */
+export async function getExistingWinnersForRetry(challengeId: number): Promise<
+  Array<{
+    userId: number;
+    imageId: number;
+    place: number;
+    buzzAwarded: number;
+    pointsAwarded: number;
+    reason: string | null;
+  }>
+> {
+  return dbRead.$queryRaw`
+    SELECT
+      cw."userId",
+      cw."imageId",
+      cw.place,
+      cw."buzzAwarded",
+      cw."pointsAwarded",
+      cw.reason
+    FROM "ChallengeWinner" cw
+    WHERE cw."challengeId" = ${challengeId}
+    ORDER BY cw.place ASC
+  `;
+}
+
 // =============================================================================
 // Collection Helpers
 // =============================================================================
