@@ -4,6 +4,7 @@ import {
   router,
   protectedProcedure,
   publicProcedure,
+  moderatorProcedure,
   middleware,
   isFlagProtected,
 } from '~/server/trpc';
@@ -53,11 +54,13 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { trackModActivity } from '~/server/services/moderator.service';
 
 // Feature flag gate — all procedures require the comicCreator flag
 const comicFlag = isFlagProtected('comicCreator');
 const comicProtectedProcedure = protectedProcedure.use(comicFlag);
 const comicPublicProcedure = publicProcedure.use(comicFlag);
+const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
 // Constants
 const NANOBANANA_VERSION_ID = 2436219;
@@ -620,6 +623,7 @@ export const comicsRouter = router({
       // Build where clause
       const where: any = {
         status: ComicProjectStatus.Active,
+        tosViolation: false,
         chapters: {
           some: {
             status: ComicChapterStatus.Published,
@@ -803,6 +807,7 @@ export const comicsRouter = router({
           genre: true,
           nsfwLevel: true,
           status: true,
+          tosViolation: true,
           user: {
             select: userWithCosmeticsSelect,
           },
@@ -843,6 +848,13 @@ export const comicsRouter = router({
       });
 
       if (!project || project.status === ComicProjectStatus.Deleted) {
+        throw throwNotFoundError('Comic not found');
+      }
+
+      // Block TOS-violated projects for non-owner, non-mod
+      const isOwnerOrModViewer =
+        ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
+      if (project.tosViolation && !isOwnerOrModViewer) {
         throw throwNotFoundError('Comic not found');
       }
 
@@ -931,6 +943,7 @@ export const comicsRouter = router({
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
+        tosViolation: project.tosViolation,
         tippedAmountCount,
         chapters,
       };
@@ -2455,6 +2468,105 @@ export const comicsRouter = router({
           earlyAccessConfig: input.earlyAccessConfig ?? undefined,
         },
       });
+    }),
+
+  // ──── Moderator Tools ────
+
+  setTosViolation: comicModeratorProcedure
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: { id: true, userId: true, name: true, tosViolation: true },
+      });
+
+      if (!project) throw throwNotFoundError('Comic not found');
+
+      await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data: { tosViolation: !project.tosViolation },
+      });
+
+      // Notify the creator
+      await createNotification({
+        userId: project.userId,
+        type: 'tos-violation',
+        key: `tos-violation:comicProject:${input.id}`,
+        category: NotificationCategory.System,
+        details: {
+          entityType: 'ComicProject',
+          entityId: input.id,
+          entityName: project.name,
+        },
+      }).catch((e) => console.error('Failed to send TOS violation notification:', e));
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.id,
+        activity: 'tosViolation',
+      });
+
+      // Remove from search index if flagged
+      await comicsSearchIndex.queueUpdate([
+        {
+          id: input.id,
+          action: !project.tosViolation
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+        },
+      ]);
+
+      return { success: true, tosViolation: !project.tosViolation };
+    }),
+
+  moderatorUnpublishChapter: comicModeratorProcedure
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        include: { project: { select: { userId: true, name: true } } },
+      });
+
+      if (!chapter) throw throwNotFoundError('Chapter not found');
+
+      await dbWrite.comicChapter.update({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        data: { status: ComicChapterStatus.Draft },
+      });
+
+      // Notify the creator
+      await createNotification({
+        userId: chapter.project.userId,
+        type: 'tos-violation',
+        key: `mod-unpublish:comicChapter:${input.projectId}:${input.chapterPosition}`,
+        category: NotificationCategory.System,
+        details: {
+          entityType: 'ComicChapter',
+          entityId: input.projectId,
+          entityName: `${chapter.project.name} - ${chapter.name}`,
+        },
+      }).catch((e) => console.error('Failed to send mod unpublish notification:', e));
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.projectId,
+        activity: 'unpublishChapter',
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return { success: true };
     }),
 
   // ──── Phase 3: Comic Engagement (Follow/Hide) ────

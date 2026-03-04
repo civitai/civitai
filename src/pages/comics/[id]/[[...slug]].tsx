@@ -1,9 +1,11 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
   Button,
   Container,
   CopyButton,
+  Menu,
   SegmentedControl,
   Select,
   Stack,
@@ -14,6 +16,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowLeft,
+  IconBan,
   IconBell,
   IconBellOff,
   IconBolt,
@@ -92,8 +95,6 @@ function PublicComicReader() {
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
   );
-  const tippedAmount = useBuzzTippingStore({ entityType: 'ComicProject', entityId: projectId });
-
   if (isLoading) {
     return (
       <div className={styles.loadingCenter} style={{ minHeight: '60vh' }}>
@@ -145,8 +146,15 @@ function ComicOverview({ project }: { project: Project }) {
     });
   }, []);
 
+  const isMod = currentUser?.isModerator === true;
+  const tippedAmount = useBuzzTippingStore({ entityType: 'ComicProject', entityId: project.id });
+
   const deleteProject = trpc.comics.deleteProject.useMutation({
     onSuccess: () => void router.push('/comics'),
+  });
+
+  const setTosViolation = trpc.comics.setTosViolation.useMutation({
+    onSuccess: () => void utils.comics.getPublicProjectForReader.invalidate({ id: project.id }),
   });
 
   // Hero image for the wide banner, fallback to cover, then first panel
@@ -228,6 +236,13 @@ function ComicOverview({ project }: { project: Project }) {
 
         {/* Content overlapping hero */}
         <Container size="sm" className={styles.overviewContent}>
+          {/* TOS violation banner */}
+          {project.tosViolation && (
+            <Alert color="red" mb="md" icon={<IconBan size={18} />}>
+              This comic has been flagged as a TOS violation and is hidden from public listings.
+            </Alert>
+          )}
+
           {/* Back link */}
           <div className={styles.overviewMeta}>
             <Link href="/comics" className={styles.overviewBackBtn}>
@@ -322,6 +337,44 @@ function ComicOverview({ project }: { project: Project }) {
                       </ActionIcon>
                     </Tooltip>
                   </>
+                )}
+                {isMod && (
+                  <Menu position="bottom-end" withinPortal>
+                    <Menu.Target>
+                      <Tooltip label="Moderator actions">
+                        <ActionIcon variant="subtle" color="yellow">
+                          <IconBan size={18} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Label>Moderator</Menu.Label>
+                      <Menu.Item
+                        leftSection={<IconBan size={14} stroke={1.5} />}
+                        color={project.tosViolation ? 'green' : 'red'}
+                        onClick={() =>
+                          openConfirmModal({
+                            title: project.tosViolation
+                              ? 'Remove TOS Violation Flag'
+                              : 'Flag as TOS Violation',
+                            children: project.tosViolation
+                              ? 'This will remove the TOS violation flag and make the comic visible again.'
+                              : 'This will flag the comic as a TOS violation and hide it from public listings. The creator will be notified.',
+                            labels: {
+                              confirm: project.tosViolation ? 'Remove Flag' : 'Flag',
+                              cancel: 'Cancel',
+                            },
+                            confirmProps: {
+                              color: project.tosViolation ? 'green' : 'red',
+                            },
+                            onConfirm: () => setTosViolation.mutate({ id: project.id }),
+                          })
+                        }
+                      >
+                        {project.tosViolation ? 'Remove TOS Flag' : 'Flag as TOS Violation'}
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
                 )}
               </>
             )}
@@ -609,9 +662,18 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChapter?.position, activeChapter?.isLocked, currentUser?.id]);
 
+  const isMod = currentUser?.isModerator === true;
+
   // Early access purchase
   const queryUtils = trpc.useUtils();
   const purchaseAccessMutation = trpc.comics.purchaseChapterAccess.useMutation({
+    onSuccess: () => {
+      queryUtils.comics.getPublicProjectForReader.invalidate({ id: project.id });
+    },
+  });
+
+  // Moderator: unpublish chapter
+  const modUnpublishMutation = trpc.comics.moderatorUnpublishChapter.useMutation({
     onSuccess: () => {
       queryUtils.comics.getPublicProjectForReader.invalidate({ id: project.id });
     },
@@ -851,6 +913,58 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     </Tooltip>
                   )}
                 </CopyButton>
+                {currentUser && currentUser.id !== project.user.id && (
+                  <LoginRedirect reason="report-comic">
+                    <Tooltip label="Report comic">
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        onClick={() =>
+                          openReportModal({
+                            entityType: ReportEntity.ComicProject,
+                            entityId: project.id,
+                          })
+                        }
+                      >
+                        <IconFlag size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </LoginRedirect>
+                )}
+                {isMod && activeChapter?.status === ComicChapterStatus.Published && (
+                  <Menu position="bottom-end" withinPortal>
+                    <Menu.Target>
+                      <Tooltip label="Moderator actions">
+                        <ActionIcon variant="subtle" color="yellow">
+                          <IconBan size={18} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Label>Moderator</Menu.Label>
+                      <Menu.Item
+                        leftSection={<IconBan size={14} stroke={1.5} />}
+                        color="red"
+                        onClick={() =>
+                          openConfirmModal({
+                            title: 'Unpublish Chapter',
+                            children:
+                              'This will unpublish the chapter and revert it to draft. The creator will be notified.',
+                            labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+                            confirmProps: { color: 'red' },
+                            onConfirm: () =>
+                              modUnpublishMutation.mutate({
+                                projectId: project.id,
+                                chapterPosition: activeChapter.position,
+                              }),
+                          })
+                        }
+                      >
+                        Unpublish Chapter
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
               </div>
             </div>
           </Container>

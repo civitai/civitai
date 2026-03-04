@@ -4997,6 +4997,7 @@ model ComicProject {
   heroImage         Image?             @relation("comicProjectHero", fields: [heroImageId], references: [id], onDelete: SetNull)
   heroImagePosition Int                @default(50)
   status            ComicProjectStatus @default(Active)
+  tosViolation  Boolean            @default(false)
   baseModel     String?            @db.VarChar(50)
   genre         ComicGenre?
   nsfwLevel     Int                @default(0)

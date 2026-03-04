@@ -6,3 +6,6 @@ ALTER TABLE "ComicChapter" ADD CONSTRAINT "ComicChapter_id_key" UNIQUE ("id");
 ALTER TABLE "ComicChapter" ADD COLUMN "availability" "Availability" NOT NULL DEFAULT 'Public';
 ALTER TABLE "ComicChapter" ADD COLUMN "earlyAccessConfig" JSONB;
 ALTER TABLE "ComicChapter" ADD COLUMN "earlyAccessEndsAt" TIMESTAMP(3);
+
+-- Add moderation fields
+ALTER TABLE "ComicProject" ADD COLUMN "tosViolation" BOOLEAN NOT NULL DEFAULT false;

@@ -3866,6 +3866,7 @@ export interface ComicProject {
   heroImage?: Image | null;
   heroImagePosition: number;
   status: ComicProjectStatus;
+  tosViolation: boolean;
   baseModel: string | null;
   genre: ComicGenre | null;
   nsfwLevel: number;
