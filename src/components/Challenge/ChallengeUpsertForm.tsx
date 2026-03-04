@@ -435,6 +435,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>Schedule</Title>
+            <Text size="sm" c="dimmed">
+              Times are snapped to the nearest hour (UTC).
+            </Text>
 
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
               <InputDateTimePicker
@@ -444,6 +447,14 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 valueFormat="lll"
                 disabled={isTerminal}
                 timeInputProps={{ step: 3600 }}
+                onChange={(val) => {
+                  // Snap after field.onChange overwrites (withController calls field.onChange after this)
+                  if (val)
+                    setTimeout(
+                      () => form.setValue('visibleAt', dayjs(val).startOf('hour').toDate()),
+                      0
+                    );
+                }}
               />
 
               <InputDateTimePicker
@@ -453,6 +464,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 valueFormat="lll"
                 disabled={isActive || isTerminal}
                 timeInputProps={{ step: 3600 }}
+                onChange={(val) => {
+                  if (val)
+                    setTimeout(
+                      () => form.setValue('startsAt', dayjs(val).startOf('hour').toDate()),
+                      0
+                    );
+                }}
               />
 
               <InputDateTimePicker
@@ -462,6 +480,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 valueFormat="lll"
                 disabled={isTerminal}
                 timeInputProps={{ step: 3600 }}
+                onChange={(val) => {
+                  if (val)
+                    setTimeout(
+                      () => form.setValue('endsAt', dayjs(val).startOf('hour').toDate()),
+                      0
+                    );
+                }}
               />
             </SimpleGrid>
           </Stack>
