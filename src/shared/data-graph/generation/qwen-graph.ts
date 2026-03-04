@@ -138,7 +138,7 @@ export const qwenGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 7 }),
+      ...imagesNode({ max: 3 }),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']
