@@ -154,7 +154,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
         };
       }
       // txt2vid — hide images node entirely
-      return { ...imagesNode(), when: false };
+      return { ...imagesNode() };
     },
     ['workflow']
   )
