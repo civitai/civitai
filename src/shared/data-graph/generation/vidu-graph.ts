@@ -18,7 +18,7 @@
  * - enablePromptEnhancer: Toggle for prompt enhancement (Q1 only)
  * - style: Video style (General/Anime) - only visible for Q1 txt2vid
  * - resolution: Video resolution (Q3 only)
- * - aspectRatio: Output aspect ratio - Q3: all workflows; Q1: txt2vid and ref2vid
+ * - aspectRatio: Output aspect ratio - hidden for img2vid (auto-resolved from first image)
  * - movementAmplitude: Movement intensity control (Q1 only)
  * - draft: Draft mode toggle (Q3 only, maps to 'turbo' in API)
  * - enableAudio: Audio generation toggle (Q3 only)
@@ -27,14 +27,9 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import {
-  seedNode,
-  aspectRatioNode,
-  enumNode,
-  imagesNode,
-  createCheckpointGraph,
-} from './common';
+import { seedNode, aspectRatioNode, enumNode, imagesNode, createCheckpointGraph } from './common';
 import type { AspectRatioOption } from './common';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 
 // =============================================================================
 // Constants
@@ -102,6 +97,23 @@ function getViduQ3AspectRatios(resolution: string): AspectRatioOption[] {
 }
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+/** Resolve closest aspect ratio from the first uploaded image's dimensions */
+function resolveAspectRatioFromImage(
+  ctx: Record<string, unknown>,
+  options: AspectRatioOption[]
+): AspectRatioOption {
+  const images = ctx.images as Array<{ width?: number; height?: number }> | undefined;
+  const first = images?.[0];
+  if (first?.width && first?.height) {
+    return findClosestAspectRatio({ width: first.width, height: first.height }, options);
+  }
+  return options.find((o) => o.value === '1:1') ?? options[0];
+}
+
+// =============================================================================
 // Vidu Graph
 // =============================================================================
 
@@ -134,13 +146,11 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
             warnOnMissingAiMetadata: true,
           }),
-          when: true,
         };
       }
       if (ctx.workflow === 'img2vid:ref2vid') {
         return {
           ...imagesNode({ max: 7, warnOnMissingAiMetadata: true }),
-          when: true,
         };
       }
       // txt2vid — hide images node entirely
@@ -157,6 +167,17 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
         defaultModelId: viduVersionIds.q1,
       }),
     []
+  )
+
+  // Q3 doesn't support ref2vid — auto-switch to img2vid when Q3 is selected
+  .effect(
+    (ctx, _ext, set) => {
+      const model = ctx.model as { id?: number } | undefined;
+      if (model?.id === viduVersionIds.q3 && ctx.workflow === 'img2vid:ref2vid') {
+        set('workflow', 'img2vid');
+      }
+    },
+    ['model']
   )
 
   // Seed node
@@ -212,21 +233,38 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
     ['model']
   )
 
-  // Aspect ratio node - Q3: resolution-dependent dimensions; Q1: fixed dimensions
+  // Aspect ratio node - hidden for img2vid (auto-resolved from first image)
   .node(
     'aspectRatio',
     (ctx) => {
       const model = ctx.model as { id?: number } | undefined;
       const isQ3 = model?.id === viduVersionIds.q3;
+      const isImg2Vid = ctx.workflow === 'img2vid';
 
       if (isQ3) {
         const resolution = 'resolution' in ctx ? (ctx.resolution as string) : '720p';
+        const options = getViduQ3AspectRatios(resolution);
+
+        if (isImg2Vid) {
+          return {
+            ...aspectRatioNode({ options, defaultValue: '1:1' }),
+            when: false,
+            transform: () => resolveAspectRatioFromImage(ctx, options),
+          };
+        }
+
         return {
-          ...aspectRatioNode({
-            options: getViduQ3AspectRatios(resolution),
-            defaultValue: '1:1',
-          }),
+          ...aspectRatioNode({ options, defaultValue: '1:1' }),
           when: true,
+        };
+      }
+
+      // Q1: img2vid auto-resolves from first image
+      if (isImg2Vid) {
+        return {
+          ...aspectRatioNode({ options: viduAspectRatios, defaultValue: '1:1' }),
+          when: false,
+          transform: () => resolveAspectRatioFromImage(ctx, viduAspectRatios),
         };
       }
 
@@ -236,7 +274,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
         when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
       };
     },
-    ['workflow', 'model', 'resolution']
+    ['workflow', 'model', 'resolution', 'images']
   )
 
   // Movement amplitude node - Q1 only

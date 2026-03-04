@@ -87,7 +87,8 @@ function createQ3Input(data: ViduCtx): ViduQ3VideoGenInput {
     engine: 'vidu-q3',
     prompt,
     aspectRatio: data.aspectRatio?.value as ViduQ3VideoGenInput['aspectRatio'],
-    resolution: 'resolution' in data ? (data.resolution as ViduQ3VideoGenInput['resolution']) : undefined,
+    resolution:
+      'resolution' in data ? (data.resolution as ViduQ3VideoGenInput['resolution']) : undefined,
     turbo: 'draft' in data ? data.draft : undefined,
     enableAudio: 'enableAudio' in data ? data.enableAudio : undefined,
     images: imageUrls,

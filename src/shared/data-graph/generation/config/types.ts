@@ -47,6 +47,9 @@ export interface WorkflowConfig {
   /** Ecosystem IDs that support this workflow */
   ecosystemIds: number[];
 
+  /** Model version IDs that should NOT see this workflow */
+  excludeModelVersionIds?: number[];
+
   /** Whether this is an enhancement workflow (e.g. upscale, remove-background) */
   enhancement?: boolean;
 

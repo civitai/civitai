@@ -105,17 +105,23 @@ export function GenerationForm() {
   const currentUser = useCurrentUser();
   const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
-  const snapshot = graph.getSnapshot() as { workflow?: string; ecosystem?: string };
-  // Force re-render when workflow or ecosystem changes
-  // Use loose typing for subscribe since ecosystem is in a discriminated branch
+  const snapshot = graph.getSnapshot() as {
+    workflow?: string;
+    ecosystem?: string;
+    model?: { id?: number };
+  };
+  // Force re-render when workflow, ecosystem, or model changes
+  // Use loose typing for subscribe since ecosystem/model are in discriminated branches
   const [, forceUpdate] = useState({});
   useEffect(() => {
     const unsubWorkflow = graph.subscribe('workflow', () => forceUpdate({}));
     type LooseGraph = { subscribe: (key: string, cb: () => void) => () => void };
     const unsubEcosystem = (graph as LooseGraph).subscribe('ecosystem', () => forceUpdate({}));
+    const unsubModel = (graph as LooseGraph).subscribe('model', () => forceUpdate({}));
     return () => {
       unsubWorkflow();
       unsubEcosystem();
+      unsubModel();
     };
   }, [graph]);
 
@@ -296,7 +302,7 @@ export function GenerationForm() {
             name="workflow"
             render={({ value }) => {
               const modes = snapshot.ecosystem
-                ? getWorkflowModes(value as string, snapshot.ecosystem)
+                ? getWorkflowModes(value as string, snapshot.ecosystem, snapshot.model?.id)
                 : [];
 
               return (
