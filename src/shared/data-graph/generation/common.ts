@@ -974,6 +974,15 @@ export interface ImagesNodeConfig {
    * Used for video generation flows where source image metadata improves output quality.
    */
   warnOnMissingAiMetadata?: boolean;
+  /**
+   * Allowed aspect ratios for image cropping.
+   * When provided, images are cropped to fit one of these aspect ratios on upload.
+   */
+  aspectRatios?: `${number}:${number}`[];
+  /**
+   * When true, crops subsequent images to match the first image's aspect ratio.
+   */
+  cropToFirstImage?: boolean;
 }
 
 /**
@@ -1001,6 +1010,8 @@ export function imagesNode({
   slots,
   modes,
   warnOnMissingAiMetadata,
+  aspectRatios,
+  cropToFirstImage,
 }: ImagesNodeConfig = {}) {
   // When slots are provided, max is derived from slots length
   const effectiveMax = slots?.length ?? max;
@@ -1042,6 +1053,8 @@ export function imagesNode({
       slots,
       modes,
       warnOnMissingAiMetadata,
+      aspectRatios,
+      cropToFirstImage,
     },
   };
 }

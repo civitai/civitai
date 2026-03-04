@@ -493,6 +493,8 @@ export function GenerationForm() {
                 error={error?.message}
                 enableDrawing={snapshot.workflow === 'img2img:edit'}
                 warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
+                aspectRatios={meta?.aspectRatios}
+                cropToFirstImage={meta?.cropToFirstImage}
               />
             )}
           />

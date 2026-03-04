@@ -146,15 +146,17 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
             warnOnMissingAiMetadata: true,
           }),
+          when: true,
         };
       }
       if (ctx.workflow === 'img2vid:ref2vid') {
         return {
           ...imagesNode({ max: 7, warnOnMissingAiMetadata: true }),
+          when: true,
         };
       }
       // txt2vid — hide images node entirely
-      return { ...imagesNode() };
+      return { ...imagesNode(), when: false };
     },
     ['workflow']
   )
