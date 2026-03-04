@@ -20,11 +20,11 @@ export const baseModelFamilyConfig: Record<
   { name: string; description: string; disabled?: boolean }
 > = {
   Flux: {
-    name: 'Flux',
+    name: 'Black Forest Labs',
     description: "Black Forest Labs' family of state-of-the-art image generation models",
   },
   StableDiffusion: {
-    name: 'Stable Diffusion',
+    name: 'Stability AI',
     description: "Stability AI's foundational open-source diffusion models",
   },
   SDXLCommunity: {
@@ -32,11 +32,11 @@ export const baseModelFamilyConfig: Record<
     description: 'Community-trained models built on the SDXL architecture',
   },
   Hunyuan: {
-    name: 'Hunyuan',
+    name: 'Tencent',
     description: "Tencent's family of image and video generation models",
   },
   WanVideo: {
-    name: 'Wan Video',
+    name: 'Alibaba',
     description: "Alibaba's video generation model series with various sizes and modes",
   },
   PixArt: {
@@ -56,12 +56,12 @@ export const baseModelFamilyConfig: Record<
     description: 'Community models with extensive tag-based prompt support',
   },
   Qwen: {
-    name: 'Qwen',
+    name: 'Alibaba',
     description: "Alibaba's multimodal model family with image generation capabilities",
     disabled: true,
   },
   ZImage: {
-    name: 'ZImage',
+    name: 'Alibaba - Tongyi Lab',
     description: 'Z Image generation models',
   },
 };

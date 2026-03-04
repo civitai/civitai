@@ -580,8 +580,22 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 203,
   },
   { id: ECO.Kolors, key: 'Kolors', name: 'kolors', displayName: 'Kolors', sortOrder: 204 },
-  { id: ECO.LTXV, key: 'LTXV', name: 'ltxv', displayName: 'LTX Video', sortOrder: 205 },
-  { id: ECO.LTXV2, key: 'LTXV2', name: 'ltxv2', displayName: 'LTX Video 2', sortOrder: 206 },
+  {
+    id: ECO.LTXV,
+    key: 'LTXV',
+    name: 'ltxv',
+    displayName: 'LTX Video',
+    familyId: 16,
+    sortOrder: 205,
+  },
+  {
+    id: ECO.LTXV2,
+    key: 'LTXV2',
+    name: 'ltxv2',
+    displayName: 'LTX Video 2',
+    familyId: 16,
+    sortOrder: 206,
+  },
   { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 207 },
   {
     id: ECO.Mochi,
@@ -595,6 +609,7 @@ export const ecosystems: EcosystemRecord[] = [
     key: 'Vidu',
     name: 'vidu',
     displayName: 'Vidu',
+    familyId: 15,
     sortOrder: 210,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -611,6 +626,7 @@ export const ecosystems: EcosystemRecord[] = [
     key: 'Kling',
     name: 'kling',
     displayName: 'Kling',
+    familyId: 14,
     sortOrder: 212,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -628,6 +644,7 @@ export const ecosystems: EcosystemRecord[] = [
     key: 'Lightricks',
     name: 'lightricks',
     displayName: 'Lightricks',
+    familyId: 16,
     sortOrder: 214,
     // txt2vid + img2vid
   },
@@ -1633,12 +1650,12 @@ export const licenseById = new Map(licenses.map((l) => [l.id, l]));
 export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   {
     id: 1,
-    name: 'Flux',
+    name: 'Black Forest Labs',
     description: "Black Forest Labs' family of state-of-the-art image generation models",
   },
   {
     id: 2,
-    name: 'Stable Diffusion',
+    name: 'Stability AI',
     description: "Stability AI's foundational open-source diffusion models",
   },
   {
@@ -1648,12 +1665,12 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   },
   {
     id: 4,
-    name: 'Hunyuan',
+    name: 'Tencent',
     description: "Tencent's family of image and video generation models",
   },
   {
     id: 5,
-    name: 'Wan Video',
+    name: 'Alibaba',
     description: "Alibaba's video generation model series with various sizes and modes",
   },
   {
@@ -1678,12 +1695,12 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   },
   {
     id: 10,
-    name: 'Qwen',
+    name: 'Alibaba',
     description: "Alibaba's multimodal model family with image generation capabilities",
   },
   {
     id: 11,
-    name: 'ZImage',
+    name: 'Alibaba - Tongyi Lab',
     description: 'Z Image generation models',
   },
   {
@@ -1695,6 +1712,21 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 13,
     name: 'xAI',
     description: "xAI's image and video generation models",
+  },
+  {
+    id: 14,
+    name: 'Kuaishou',
+    description: "Kuaishou's video generation models",
+  },
+  {
+    id: 15,
+    name: 'ShengShu Technology',
+    description: "ShengShu Technology's video generation models",
+  },
+  {
+    id: 16,
+    name: 'Lightricks',
+    description: "Lightricks' video generation models",
   },
 ];
 
