@@ -6,6 +6,7 @@
  * Usage:
  *   node .claude/skills/meilisearch-admin/query.mjs health
  *   node .claude/skills/meilisearch-admin/query.mjs stats
+ *   node .claude/skills/meilisearch-admin/query.mjs task-summary
  *   node .claude/skills/meilisearch-admin/query.mjs tasks [--status enqueued|processing|succeeded|failed]
  *   node .claude/skills/meilisearch-admin/query.mjs task <taskId>
  *   node .claude/skills/meilisearch-admin/query.mjs indexes
@@ -94,6 +95,7 @@ if (!command) {
 Commands:
   health                     Check Meilisearch health
   stats                      Get overall stats
+  task-summary               Task count breakdown by status
   tasks                      List tasks (use --status to filter)
   task <id>                  Get specific task details
   indexes                    List all indexes
@@ -185,6 +187,25 @@ async function main() {
           for (const [name, stats] of Object.entries(data.indexes)) {
             console.log(`  ${name}: ${stats.numberOfDocuments.toLocaleString()} docs, ${stats.isIndexing ? 'INDEXING' : 'ready'}`);
           }
+        }
+        break;
+      }
+
+      case 'task-summary': {
+        const statuses = ['enqueued', 'processing', 'succeeded', 'failed', 'canceled'];
+        const counts = await Promise.all(
+          statuses.map(s => request(`/tasks?statuses=${s}&limit=0`).then(d => ({ status: s, total: d.total })))
+        );
+        const grand = counts.reduce((sum, c) => sum + c.total, 0);
+        if (jsonOutput) {
+          console.log(JSON.stringify({ total: grand, statuses: Object.fromEntries(counts.map(c => [c.status, c.total])) }, null, 2));
+        } else {
+          console.log('Task Summary\n');
+          for (const c of counts) {
+            console.log(`  ${c.status.padEnd(12)} ${c.total.toLocaleString()}`);
+          }
+          console.log(`  ${'─'.repeat(24)}`);
+          console.log(`  ${'total'.padEnd(12)} ${grand.toLocaleString()}`);
         }
         break;
       }

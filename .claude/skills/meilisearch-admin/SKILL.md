@@ -19,6 +19,7 @@ node .claude/skills/meilisearch-admin/query.mjs <command> [options]
 |---------|-------------|
 | `health` | Check if Meilisearch is healthy |
 | `stats` | Get overall stats and list indexes |
+| `task-summary` | Task count breakdown by status |
 | `tasks` | List recent tasks |
 | `task <id>` | Get details of a specific task |
 | `indexes` | List all indexes |
@@ -45,6 +46,9 @@ node .claude/skills/meilisearch-admin/query.mjs health
 
 # Get overall stats
 node .claude/skills/meilisearch-admin/query.mjs stats
+
+# Task count summary by status
+node .claude/skills/meilisearch-admin/query.mjs task-summary
 
 # Check failed tasks
 node .claude/skills/meilisearch-admin/query.mjs tasks --status failed
