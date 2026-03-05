@@ -55,11 +55,18 @@ import {
   type ResourceData,
 } from './common';
 import { removeEmpty } from '~/utils/object-helpers';
-import { klingVersionIds } from './version-ids';
 
 // =============================================================================
 // Constants
 // =============================================================================
+
+/** Kling model version IDs */
+const klingVersionIds = {
+  v1_6: 2623815,
+  v2: 2623817,
+  v2_5_turbo: 2623821,
+  v3: 2698632,
+} as const;
 
 /** Options for Kling model selector */
 const klingVersionOptions = [
