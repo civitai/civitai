@@ -208,6 +208,7 @@ export const orchestratorRouter = router({
         creatorTip,
         tags: inputTags,
         sourceMetadata,
+        sourceMetadataMap,
         remixOfId,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
@@ -237,6 +238,7 @@ export const orchestratorRouter = router({
         creatorTip,
         tags,
         sourceMetadata,
+        sourceMetadataMap,
         remixOfId,
       });
     }),
@@ -346,7 +348,9 @@ export const orchestratorRouter = router({
     .mutation(({ input, ctx }) =>
       reviewConsumerStrikes({ consumerId: `civitai-${input.userId}`, moderatorId: ctx.user.id })
     ),
-  statusUpdate: orchestratorGuardedProcedure.input(workflowIdSchema).query(({ ctx, input }) =>
-    getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
-  ),
+  statusUpdate: orchestratorGuardedProcedure
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+    ),
 });

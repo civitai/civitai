@@ -40,7 +40,6 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
-import type { TextToImageSteps } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -59,7 +58,7 @@ import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { ImageGetMyInfinite, RecentTrainingData } from '~/types/router';
@@ -82,11 +81,6 @@ export type SelectedImage = {
   meta?: Record<string, unknown>;
 };
 
-type GennedMedia = NormalizedGeneratedImage & {
-  params: TextToImageSteps[number]['params'];
-  resources: TextToImageSteps[number]['resources'];
-  completed?: Date;
-};
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
 type TrainedData = Omit<RecentTrainingData[number], 'metadata' | 'modelVersion'> & {
   metadata: FileMetadata | null;
@@ -139,7 +133,7 @@ export default function ImageSelectModal({
   });
 
   const {
-    steps,
+    data: generationData,
     isFetching: isLoadingGenerations,
     isFetchingNextPage: isFetchingNextPageGenerations,
     hasNextPage: hasNextPageGenerations,
@@ -177,26 +171,8 @@ export default function ImageSelectModal({
   });
 
   const generatedMedia = useMemo(
-    () =>
-      steps.flatMap((step) =>
-        step.images
-          .filter((x) => x.status === 'succeeded' && x.available && !x.blockedReason)
-          .map((asset) => {
-            if (!asset.available || asset.status !== 'succeeded') return null;
-            return {
-              ...asset,
-              params: {
-                ...step.params,
-                seed: asset.seed ?? undefined,
-                completed: step.completedAt ? new Date(step.completedAt) : undefined,
-                stepName: step.name,
-              },
-              resources: step.resources,
-            };
-          })
-          .filter(isDefined)
-      ),
-    [steps]
+    () => (generationData ?? []).flatMap((wf) => wf.succeededImages.filter((x) => x.available)),
+    [generationData]
   );
 
   const uploadedMedia = useMemo(
@@ -346,7 +322,7 @@ const ImageGrid = ({
   type,
   data,
 }:
-  | { type: 'generation'; data: GennedMedia[] }
+  | { type: 'generation'; data: BlobData[] }
   | { type: 'uploaded'; data: UploadedImage[] }
   | { type: 'training'; data: TrainedData[] }) => {
   if (!data || !data.length)
@@ -354,16 +330,16 @@ const ImageGrid = ({
 
   const grouped =
     type === 'generation'
-      ? // ? groupBy(data, ({ workflowId }) => workflowId)
-        groupBy(data, ({ completed }) =>
-          !!completed
+      ? groupBy(data, (img) => {
+          const completed = img.step.completedAt ? new Date(img.step.completedAt) : undefined;
+          return completed
             ? completed.toLocaleString(undefined, {
                 day: 'numeric',
                 month: 'short',
                 year: 'numeric',
               })
-            : 'Unknown Date'
-        )
+            : 'Unknown Date';
+        })
       : type === 'uploaded'
       ? groupBy(data, ({ createdAt }) =>
           !!createdAt
@@ -414,7 +390,7 @@ const ImageGrid = ({
             }
           >
             {type === 'generation'
-              ? imgs.map((img: GennedMedia) => (
+              ? imgs.map((img: BlobData) => (
                   <ImageGridMedia
                     key={`${img.workflowId}_${img.stepName}_${img.id}`}
                     type={type}
@@ -439,7 +415,7 @@ const ImageGridMedia = ({
   type,
   img,
 }:
-  | { type: 'generation'; img: GennedMedia }
+  | { type: 'generation'; img: BlobData }
   | { type: 'uploaded'; img: UploadedImage }
   | { type: 'training'; img: TrainedData }) => {
   const { selected, setSelected, importedUrls } = useImageSelectContext();
@@ -458,11 +434,7 @@ const ImageGridMedia = ({
         // Build meta for generation images using getStepMeta pattern
         let meta: Record<string, unknown> | undefined;
         if (type === 'generation') {
-          meta = getStepMeta({
-            params: img.params,
-            resources: img.resources,
-            metadata: {},
-          } as any);
+          meta = getStepMeta(img.step);
         } else if (type === 'uploaded' && img.meta) {
           meta = img.meta as Record<string, unknown>;
         }
@@ -472,8 +444,8 @@ const ImageGridMedia = ({
           {
             url: compareKey,
             label:
-              type === 'generation' && 'prompt' in img.params
-                ? (img.params.prompt as string)
+              type === 'generation'
+                ? ((img.step.params as any)?.prompt as string) ?? ''
                 : type === 'uploaded'
                 ? img.meta?.prompt ?? ''
                 : '',
@@ -668,7 +640,7 @@ const ImageGridMedia = ({
     );
   }
 
-  const safeParsedMeta = type === 'generation' ? imageMetaSchema.safeParse(img.params) : null;
+  const safeParsedMeta = type === 'generation' ? imageMetaSchema.safeParse(img.step.params) : null;
 
   return (
     <div

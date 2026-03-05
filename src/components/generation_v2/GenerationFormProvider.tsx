@@ -366,6 +366,22 @@ function InnerProvider({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
           graph.set(remixValues as any);
         }
+      } else if (data.runType === 'append') {
+        // Append: merge incoming images with existing, dedup by URL, cap at max
+        const snapshot = graph.getSnapshot() as Record<string, unknown>;
+        const existingImages = ((snapshot.images ?? []) as Array<{ url: string }>) || [];
+        const incomingImages =
+          ((data.params.images ?? []) as Array<{ url: string; width: number; height: number }>) ||
+          [];
+
+        // Deduplicate by URL
+        const existingUrls = new Set(existingImages.map((img) => img.url));
+        const newImages = incomingImages.filter((img) => !existingUrls.has(img.url));
+        const mergedImages = [...existingImages, ...newImages];
+
+        // Set workflow (in case we're switching to upscale) and merged images
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        graph.set({ workflow: data.params.workflow, images: mergedImages } as any);
       } else {
         // Run/Patch: model/vae overwrite, resources merge with existing
         const snapshot = graph.getSnapshot() as Record<string, unknown>;

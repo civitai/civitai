@@ -7,7 +7,10 @@ import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { UserTier } from '~/server/schema/user.schema';
-import type { NormalizedGeneratedImageResponse } from '~/server/services/orchestrator';
+import {
+  type WorkflowData,
+  type NormalizedGeneratedImageResponse,
+} from '~/server/services/orchestrator';
 import type { WorkflowStatus } from '@civitai/client';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
@@ -64,12 +67,10 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const opened = useGenerationPanelStore((state) => state.opened);
-  const {
-    data: requests,
-    steps,
-    images,
-    isLoading,
-  } = useGetTextToImageRequests(undefined, { enabled: opened, includeTags: false });
+  const { data: requests, isLoading } = useGetTextToImageRequests(undefined, {
+    enabled: opened,
+    includeTags: false,
+  });
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]
@@ -118,16 +119,16 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     if (!store) return;
     const { limits, available } = generationStatus;
     const queuedRequests = queued.map((request) => {
-      const images = request.steps.flatMap((s) => s.images);
-      const quantity = request.steps.reduce(
-        (acc, step) => acc + (step.params.quantity ?? 1),
+      const wf = request as unknown as WorkflowData;
+      const quantity = wf.steps.reduce(
+        (acc, step) => acc + ((step.params?.quantity as number) ?? 1),
         0
       );
       return {
         id: request.id,
-        complete: images.filter((x) => x.status === 'succeeded').length,
-        processing: images.filter((x) => x.status === 'processing').length,
-        quantity: quantity,
+        complete: wf.completedCount,
+        processing: wf.processingCount,
+        quantity,
         status: request.status,
       };
     });
@@ -146,7 +147,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
         canGenerate: requestsRemaining > 0 && available,
       };
     });
-  }, [queued, steps, generationStatus, isLoading]);
+  }, [queued, requests, generationStatus, isLoading]);
 
   useEffect(() => {
     const store = storeRef.current;
@@ -162,8 +163,9 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const store = storeRef.current;
     if (!store) return;
-    store.setState({ requestsLoading: isLoading, hasGeneratedImages: images.length > 0 });
-  }, [images, isLoading]);
+    const hasGeneratedImages = requests.some((r) => r.steps.some((s) => s.images.length > 0));
+    store.setState({ requestsLoading: isLoading, hasGeneratedImages });
+  }, [requests, isLoading]);
   // #endregion
 
   if (!storeRef.current) storeRef.current = createGenerationStore();

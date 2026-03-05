@@ -3,7 +3,7 @@ import { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
-import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
+import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -264,9 +264,14 @@ export const isMadeOnSite = (meta: ImageMetaProps | null) => {
   return false;
 };
 
-export function getStepMeta(step?: Omit<NormalizedGeneratedImageStep, 'images'>): any {
+export function getStepMeta(step?: {
+  params?: Partial<NormalizedWorkflowMetadata['params']>;
+  resources?: NormalizedWorkflowMetadata['resources'];
+}): any {
   if (!step) return;
-  const civitaiResources = step?.resources?.map((args): CivitaiResource => {
+  const metaParams = step.params;
+  const metaResources = step.resources;
+  const civitaiResources = metaResources?.map((args): CivitaiResource => {
     if ('air' in args && typeof args.air === 'string') {
       const { version, type } = parseAIR(args.air);
       return { modelVersionId: version, type, weight: args.strength };
@@ -275,12 +280,13 @@ export function getStepMeta(step?: Omit<NormalizedGeneratedImageStep, 'images'>)
     }
   });
   // remove 'resources' due to property being set on video gen
-  const { resources, ...params } = step.params as typeof step.params & { resources: any };
+  const { resources, ...params } = (metaParams ?? {}) as Record<string, unknown> & {
+    resources: any;
+  };
 
   return removeEmpty({
     ...params,
     civitaiResources,
-    transformations: step.metadata.transformations,
   });
 }
 

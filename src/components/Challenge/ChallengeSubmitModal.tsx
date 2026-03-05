@@ -33,7 +33,6 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ChallengeSelectableImageCardMemoized } from '~/components/Challenge/ChallengeSelectableImageCard';
-import type { TextToImageSteps } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -61,7 +60,8 @@ import {
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { isDefined } from '~/utils/type-guards';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import type { NormalizedStepMetadata } from '~/server/services/orchestrator';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import clsx from 'clsx';
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ type GeneratorImage = {
   label: string;
   type: 'image' | 'video';
   meta?: Record<string, unknown>;
-  resources?: TextToImageSteps[number]['resources'];
+  resources?: NormalizedStepMetadata['resources'];
 };
 
 type GeneratorStoreState = {
@@ -647,35 +647,15 @@ function useChallengeContext() {
 // ---------------------------------------------------------------------------
 // Generator Tab
 // ---------------------------------------------------------------------------
-type GennedMedia = NormalizedGeneratedImage & {
-  params: TextToImageSteps[number]['params'];
-  resources: TextToImageSteps[number]['resources'];
-  completed?: Date;
-};
-
 function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
   const currentUser = useCurrentUser();
 
-  const { steps, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } =
+  const { data, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } =
     useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser });
 
   const generatedMedia = useMemo(
-    () =>
-      steps.flatMap((step) =>
-        step.images
-          .filter((x) => x.status === 'succeeded' && x.available && !x.blockedReason)
-          .map((asset) => ({
-            ...asset,
-            params: {
-              ...step.params,
-              seed: asset.seed ?? undefined,
-              completed: step.completedAt ? new Date(step.completedAt) : undefined,
-              stepName: step.name,
-            },
-            resources: step.resources,
-          }))
-      ),
-    [steps]
+    () => data.flatMap((wf) => wf.succeededImages.filter((x) => x.available)),
+    [data]
   );
 
   if (isFetching && !isFetchingNextPage) {
@@ -722,9 +702,11 @@ function GeneratorImageCard({
   image,
   challenge,
 }: {
-  image: GennedMedia;
+  image: BlobData;
   challenge?: ChallengeDetail;
 }) {
+  const stepParams = image.step.params;
+  const stepResources = image.step.resources;
   const toggleSelected = useGeneratorStore((state) => state.toggleSelected);
   const isSelected = useGeneratorStore(
     useCallback((state) => state.selected.some((s) => s.url === image.url), [image.url])
@@ -752,7 +734,7 @@ function GeneratorImageCard({
 
     // Check model version requirement
     if (challenge && challenge.modelVersionIds.length > 0) {
-      const imageResourceIds = (image.resources ?? [])
+      const imageResourceIds = (stepResources ?? [])
         .map((r) => ('id' in r && typeof r.id === 'number' ? r.id : null))
         .filter(isDefined);
 
@@ -766,23 +748,19 @@ function GeneratorImageCard({
     }
 
     return { eligible: reasons.length === 0, reasons };
-  }, [challenge, image.resources, numericNsfwLevel]);
+  }, [challenge, stepResources, numericNsfwLevel]);
 
   const handleClick = () => {
     if (!eligibility.eligible) return;
 
-    const meta = getStepMeta({
-      params: image.params,
-      resources: image.resources,
-      metadata: {},
-    } as any);
+    const meta = getStepMeta(image.step);
 
     toggleSelected({
       url: image.url,
-      label: 'prompt' in image.params ? (image.params.prompt as string) : '',
+      label: (stepParams as any)?.prompt ?? '',
       type: image.type === 'video' ? 'video' : 'image',
       meta,
-      resources: image.resources,
+      resources: stepResources,
     });
   };
 

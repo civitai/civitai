@@ -25,11 +25,7 @@ import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQ
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
-import type {
-  NormalizedGeneratedImage,
-  NormalizedGeneratedImageResponse,
-  NormalizedGeneratedImageStep,
-} from '~/server/services/orchestrator';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 
@@ -43,24 +39,20 @@ import GeneratedImageLightbox from '~/components/ImageGeneration/GeneratedImageL
 // );
 
 export type GeneratedImageProps = {
-  image: NormalizedGeneratedImage;
-  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: Omit<NormalizedGeneratedImageStep, 'images'>;
+  image: BlobData;
 };
 
 export function GeneratedImage({
   image,
-  request,
-  step,
   isLightbox,
   isActiveSlide,
 }: {
-  image: NormalizedGeneratedImage;
-  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: Omit<NormalizedGeneratedImageStep, 'images'>;
+  image: BlobData;
   isLightbox?: boolean;
   isActiveSlide?: boolean;
 }) {
+  const step = image.step;
+  const request = image.workflow;
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
@@ -278,12 +270,7 @@ export function GeneratedImage({
                 </div>
               </Menu.Target>
               <Menu.Dropdown className={classes.scrollableDropdown}>
-                <GeneratedItemWorkflowMenu
-                  step={step}
-                  image={image}
-                  workflowId={request.id}
-                  isLightbox={isLightbox}
-                />
+                <GeneratedItemWorkflowMenu image={image} isLightbox={isLightbox} />
               </Menu.Dropdown>
             </Menu>
           )}
@@ -291,8 +278,6 @@ export function GeneratedImage({
           {!image.blockedReason && (
             <GeneratedImageActions
               image={image}
-              step={step}
-              workflowId={request.id}
               state={state}
               isLightbox={isLightbox}
               onToggleFavorite={handleToggleFavorite}
@@ -326,16 +311,12 @@ export function GeneratedImage({
 
 function GeneratedImageActions({
   image,
-  step,
-  workflowId,
   state,
   isLightbox,
   onToggleFavorite,
   onToggleFeedback,
 }: {
-  image: NormalizedGeneratedImage;
-  step: Omit<NormalizedGeneratedImageStep, 'images'>;
-  workflowId: string;
+  image: BlobData;
   state: { favorite?: boolean; feedback?: string };
   isLightbox?: boolean;
   onToggleFavorite: (value: boolean) => void;
@@ -382,13 +363,7 @@ function GeneratedImageActions({
           </LegacyActionIcon>
         </Menu.Target>
         <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
-          <GeneratedItemWorkflowMenu
-            step={step}
-            image={image}
-            workflowId={workflowId}
-            workflowsOnly
-            isLightbox={isLightbox}
-          />
+          <GeneratedItemWorkflowMenu image={image} workflowsOnly isLightbox={isLightbox} />
         </Menu.Dropdown>
       </Menu>
 

@@ -62,6 +62,13 @@ export interface WorkflowConfig {
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
 
+  /**
+   * How to display steps in the queue item.
+   * - `'inline'` (default) — all step images in a single flat grid (e.g. batch upscale)
+   * - `'separate'` — each step gets its own labeled section (e.g. generate → upscale pipeline)
+   */
+  stepDisplay?: 'inline' | 'separate';
+
   /** UI-only aliases — appear as additional entries in the workflow dropdown, all map to this key */
   aliases?: {
     label: string;

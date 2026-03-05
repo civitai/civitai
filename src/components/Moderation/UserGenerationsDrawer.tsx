@@ -4,16 +4,12 @@ import { useMemo } from 'react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
-import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useAppContext } from '~/providers/AppProvider';
-import type {
-  NormalizedGeneratedImageResponse,
-  NormalizedGeneratedImageStep,
-} from '~/server/services/orchestrator';
+import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -48,27 +44,7 @@ export function UserGenerationsDrawer({
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
-        (x.items ?? []).map((workflow) => {
-          const steps = workflow.steps.map((step) => {
-            const images = step.images
-              .filter((image) => {
-                const imageMeta = step.metadata?.images?.[image.id];
-                return !imageMeta?.hidden;
-              })
-              .map(
-                (image) =>
-                  new BlobData({
-                    data: image,
-                    step: step,
-                    allowMatureContent: workflow.allowMatureContent,
-                    domain,
-                    nsfwEnabled: true, // Moderators should see all content
-                  })
-              );
-            return { ...step, images };
-          });
-          return { ...workflow, steps };
-        })
+        (x.items ?? []).map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled: true }))
       ) ?? [],
     [data, domain]
   );
@@ -139,26 +115,19 @@ export function UserGenerationsDrawer({
   );
 }
 
-type GenerationRequest = NormalizedGeneratedImageResponse & {
-  steps: Array<NormalizedGeneratedImageStep & { images: BlobData[] }>;
-};
-
-function UserGenerationItem({ request }: { request: GenerationRequest }) {
+function UserGenerationItem({ request }: { request: WorkflowData }) {
   const step = request.steps[0];
   const { status } = request;
-  const { params } = step;
+  const params = step.params;
   const images = step.images;
 
-  const completedCount = images.filter((x) => x.status === 'succeeded').length;
-  const processingCount = images.filter((x) => x.status === 'processing').length;
-
-  const { prompt, ...details } = params;
+  const { prompt, ...details } = params as Record<string, unknown>;
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
-  const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
+  const workflowDefinition = workflowDefinitions?.find((x) => x.key === (params as any).workflow);
 
-  const displayImages = images.filter((x) => !x.blockedReason);
-  const blockedCount = images.length - displayImages.length;
+  const displayImages = step.succeededImages;
+  const blockedCount = step.blockedCount;
 
   return (
     <Card withBorder px="xs">
@@ -167,8 +136,8 @@ function UserGenerationItem({ request }: { request: GenerationRequest }) {
           {!!images.length && (
             <GenerationStatusBadge
               status={request.status}
-              complete={completedCount}
-              processing={processingCount}
+              complete={step.completedCount}
+              processing={step.processingCount}
               quantity={images.length}
               tooltipLabel={status}
               progress
@@ -186,7 +155,7 @@ function UserGenerationItem({ request }: { request: GenerationRequest }) {
       </Card.Section>
 
       <div className="flex flex-col gap-3 py-3">
-        {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+        {typeof prompt === 'string' && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
         <div className="-my-2 flex gap-2">
           {workflowDefinition && (
@@ -199,12 +168,7 @@ function UserGenerationItem({ request }: { request: GenerationRequest }) {
         {displayImages.length > 0 && (
           <div className="grid grid-cols-3 gap-2">
             {displayImages.map((image, index) => (
-              <GeneratedImage
-                key={index}
-                image={image}
-                request={request as NormalizedGeneratedImageResponse}
-                step={step}
-              />
+              <GeneratedImage key={index} image={image} />
             ))}
           </div>
         )}

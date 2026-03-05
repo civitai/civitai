@@ -6,7 +6,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  matchesMarkerTags,
+  useGetTextToImageRequestsImages,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 import { GeneratedImage } from './GeneratedImage';
@@ -19,7 +22,7 @@ export default function GeneratedImageLightbox({
   workflowId: string;
 }) {
   const dialog = useDialogContext();
-  const { requests, isLoading } = useGetTextToImageRequestsImages();
+  const { requests, markerTags, isLoading } = useGetTextToImageRequestsImages();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -33,20 +36,10 @@ export default function GeneratedImageLightbox({
   // Build flat image list across all loaded workflows
   const images = useMemo(
     () =>
-      (requests ?? []).flatMap((request) => {
-        const { steps, ...workflow } = request;
-        return steps.flatMap(({ images, ...step }) =>
-          images
-            .filter((x) => x.status === 'succeeded' && !x.blockedReason)
-            .map((image) => ({
-              ...image,
-              params: { ...step.params, seed: image.seed },
-              step,
-              workflow,
-            }))
-        );
-      }),
-    [requests]
+      (requests ?? []).flatMap((r) =>
+        r.succeededImages.filter((img) => matchesMarkerTags(img, markerTags))
+      ),
+    [requests, markerTags]
   );
 
   // Close if the initial workflow isn't in the feed data after loading
@@ -118,13 +111,7 @@ export default function GeneratedImageLightbox({
                   {image.url &&
                     (Math.abs(index - slide) <= 1 ||
                       Math.abs(index - slide) >= images.length - 1) && (
-                      <GeneratedImage
-                        image={image}
-                        request={image.workflow}
-                        step={image.step}
-                        isLightbox
-                        isActiveSlide={index === slide}
-                      />
+                      <GeneratedImage image={image} isLightbox isActiveSlide={index === slide} />
                     )}
                 </Embla.Slide>
               ))}
@@ -142,17 +129,20 @@ export default function GeneratedImageLightbox({
           zIndex: 10,
         }}
       >
-        <GenerationDetails
-          label="Generation Details"
-          params={images?.[slide]?.params}
-          labelWidth={150}
-          paperProps={{ radius: 0 }}
-          controlProps={{
-            style: {
-              backgroundColor: colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-            },
-          }}
-        />
+        {images?.[slide] && (
+          <GenerationDetails
+            label="Generation Details"
+            params={{ ...images[slide].params, seed: images[slide].seed }}
+            labelWidth={150}
+            paperProps={{ radius: 0 }}
+            controlProps={{
+              style: {
+                backgroundColor:
+                  colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+              },
+            }}
+          />
+        )}
       </div>
     </Modal>
   );
