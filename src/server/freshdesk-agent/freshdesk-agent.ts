@@ -28,17 +28,26 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
       userMessage,
       tools,
       executeToolCall,
+      maxTurns: 25,
     });
 
     const durationMs = Date.now() - startTime;
     await log({
-      type: 'complete',
+      type: result.exhausted ? 'exhausted' : 'complete',
       ticket_id,
       phase,
       turnsUsed: result.turnsUsed,
       toolCallsExecuted: result.toolCallsExecuted,
       durationMs,
     });
+
+    if (result.exhausted) {
+      const summary = result.response || 'No summary available.';
+      await freshdeskCaller.addNote(
+        ticket_id,
+        `<p><strong>⚠️ Agent Handoff (${phase})</strong></p><p>The automated agent reached its turn limit before completing. Here is a summary of findings so far:</p><p>${summary}</p><p><em>A human agent should continue from here.</em></p>`
+      );
+    }
   } catch (err) {
     const durationMs = Date.now() - startTime;
     const message = err instanceof Error ? err.message : String(err);

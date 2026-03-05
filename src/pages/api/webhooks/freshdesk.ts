@@ -35,9 +35,6 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(200).json({ status: 'already_processing' });
   }
 
-  // Return 200 immediately, process in background
-  res.status(200).json({ status: 'accepted' });
-
   // Fire-and-forget: process the agent loop
   processFreshdeskAgent(payload).catch((err) =>
     log({
@@ -47,4 +44,7 @@ export default WebhookEndpoint(async (req, res) => {
       message: err instanceof Error ? err.message : String(err),
     })
   );
+
+  // Return 200 immediately, process in background
+  res.status(200).json({ status: 'accepted' });
 });

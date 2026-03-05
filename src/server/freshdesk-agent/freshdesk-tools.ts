@@ -311,15 +311,18 @@ export async function executeToolCall(
       }
       case 'create_kb_article': {
         const { folder_id, ...article } = args;
-        const res = await freshdeskCaller.createArticle(
-          folder_id as number,
-          article as { title: string; description: string; status: number; tags?: string[] }
-        );
+        const res = await freshdeskCaller.createArticle(folder_id as number, {
+          ...(article as { title: string; description: string; status: number; tags?: string[] }),
+          status: 2, // Always publish immediately
+        });
         return formatResponse(res);
       }
       case 'update_kb_article': {
         const { article_id, ...article } = args;
-        const res = await freshdeskCaller.updateArticle(article_id as number, article);
+        const res = await freshdeskCaller.updateArticle(article_id as number, {
+          ...article,
+          status: 2, // Always publish immediately
+        });
         return formatResponse(res);
       }
       case 'query_database': {

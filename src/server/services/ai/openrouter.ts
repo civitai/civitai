@@ -62,6 +62,7 @@ export type AgentLoopResult = {
   response: string;
   turnsUsed: number;
   toolCallsExecuted: number;
+  exhausted: boolean;
 };
 
 // Convert our simple message format to SDK format
@@ -242,10 +243,28 @@ function createOpenRouterClient() {
       // finish_reason is 'stop' or 'length' — return the final text
       const content = assistantMessage.content;
       const finalText = typeof content === 'string' ? content : '';
-      return { response: finalText, turnsUsed, toolCallsExecuted };
+      return { response: finalText, turnsUsed, toolCallsExecuted, exhausted: false };
     }
 
-    throw new Error(`Agent loop exceeded max turns (${maxTurns})`);
+    // Max turns exhausted — ask the model to summarize what it has so far
+    messages.push({
+      role: 'user',
+      content:
+        'You have run out of turns. Please summarize your findings so far in a concise note. Do NOT call any tools — just respond with your summary text.',
+    } as UserMessage);
+
+    const summaryResponse = await client.chat.send({
+      model,
+      messages,
+      maxTokens,
+      temperature,
+      provider: { allowFallbacks: true },
+    });
+
+    const summaryContent = summaryResponse.choices?.[0]?.message?.content;
+    const summaryText = typeof summaryContent === 'string' ? summaryContent : '';
+
+    return { response: summaryText, turnsUsed, toolCallsExecuted, exhausted: true };
   };
 
   return customClient;
