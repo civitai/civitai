@@ -24,6 +24,7 @@ import { videoInterpolationGraph } from './video-interpolation-graph';
 import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
+import { metadataExtractionGraph } from './metadata-extraction-graph';
 import { ecosystemGraph } from './ecosystem-graph';
 import {
   getInputTypeForWorkflow,
@@ -233,6 +234,8 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     // Image enhancement workflows (no ecosystem support)
     { values: ['img2img:upscale'] as const, graph: imageUpscaleGraph },
     { values: ['img2img:remove-background'] as const, graph: imageRemoveBackgroundGraph },
+    // Image utility workflows (no ecosystem support)
+    { values: ['img2meta'] as const, graph: metadataExtractionGraph },
   ]);
 
 // =============================================================================

@@ -25,6 +25,18 @@ import { remixStore } from '~/store/remix.store';
 import { trpcVanilla } from '~/utils/trpc';
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/** Enhancement workflows that should fall back to txt2img when remixing */
+export const REMIX_WORKFLOW_OVERRIDES: Record<string, string> = {
+  'txt2img:hires-fix': 'txt2img',
+  'img2img:hires-fix': 'txt2img',
+  'txt2img:face-fix': 'txt2img',
+  'img2img:face-fix': 'txt2img',
+};
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -177,12 +189,6 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
             // When remixing enhancement workflows (hires-fix, face-fix), fall back to
             // txt2img so the user gets a standard generation form.
             if (isMedia) {
-              const REMIX_WORKFLOW_OVERRIDES: Record<string, string> = {
-                'txt2img:hires-fix': 'txt2img',
-                'img2img:hires-fix': 'txt2img',
-                'txt2img:face-fix': 'txt2img',
-                'img2img:face-fix': 'txt2img',
-              };
               const w = result.params.workflow as string | undefined;
               if (w && REMIX_WORKFLOW_OVERRIDES[w]) {
                 result.params.workflow = REMIX_WORKFLOW_OVERRIDES[w];

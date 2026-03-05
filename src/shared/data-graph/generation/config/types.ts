@@ -56,6 +56,9 @@ export interface WorkflowConfig {
   /** Whether this workflow requires membership */
   memberOnly?: boolean;
 
+  /** When true, no FormFooter (submit/quantity/reset) is shown for this workflow */
+  noSubmit?: boolean;
+
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
 

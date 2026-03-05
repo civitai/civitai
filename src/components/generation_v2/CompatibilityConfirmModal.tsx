@@ -6,7 +6,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Badge, Button, Card, Group, Modal, Paper, Stack, Text } from '@mantine/core';
+import { Badge, Button, Card, Group, Modal, Paper, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 
@@ -247,8 +247,10 @@ function CompatibilityConfirmModalContent({
       }
       size="sm"
       centered
+      styles={{ content: { maxHeight: '85vh', display: 'flex', flexDirection: 'column' } }}
+      classNames={{ body: 'p-0' }}
     >
-      <Stack gap="md">
+      <Stack gap="md" pb="xs" px="md">
         {isWorkflowChange && pendingChange.incompatible ? (
           <Text size="sm">
             <strong>{workflowLabel}</strong> is not available for <strong>{currentEcoLabel}</strong>
@@ -326,14 +328,14 @@ function CompatibilityConfirmModalContent({
             </Group>
           </Card>
         )}
-
-        <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={dialog.onClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleConfirm}>Continue</Button>
-        </Group>
       </Stack>
+
+      <Paper className="sticky bottom-0 flex justify-end gap-3 p-3">
+        <Button variant="default" onClick={dialog.onClose}>
+          Cancel
+        </Button>
+        <Button onClick={handleConfirm}>Continue</Button>
+      </Paper>
     </Modal>
   );
 }

@@ -216,6 +216,18 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   // ===========================================================================
+  // Image Utility Workflows (Standalone, no generation)
+  // ===========================================================================
+
+  img2meta: {
+    label: 'Extract Metadata',
+    description: 'Extract generation parameters from an image',
+    category: 'image',
+    ecosystemIds: [],
+    noSubmit: true,
+  },
+
+  // ===========================================================================
   // Video Workflows
   // ===========================================================================
 

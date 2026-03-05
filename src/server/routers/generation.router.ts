@@ -4,6 +4,7 @@ import {
   getGenerationDataSchema,
   getGenerationResourcesSchema,
   getResourceDataByIdsSchema,
+  resolveImageMetaSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -14,6 +15,7 @@ import {
   getResourceData,
   getUnavailableResources,
   getUnstableResources,
+  resolveImageMeta,
   // textToImage,
   // textToImageTestRun,
   toggleUnavailableResource,
@@ -69,4 +71,7 @@ export const generationRouter = router({
   getResourceDataByIds: publicProcedure
     .input(getResourceDataByIdsSchema)
     .query(({ input, ctx }) => getResourceData(input.ids, ctx.user, false, true)),
+  resolveImageMeta: publicProcedure
+    .input(resolveImageMetaSchema)
+    .query(({ input, ctx }) => resolveImageMeta({ input, user: ctx.user })),
 });
