@@ -734,7 +734,7 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: CacheTTL.day, // was CacheTTL.hour — image metadata is stable after upload
 });
 
 type ImageWithMetadata = {
@@ -1005,7 +1005,7 @@ type ImageResourcesCacheItem = {
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
-  ttl: CacheTTL.sm,
+  ttl: CacheTTL.day, // was CacheTTL.sm (3min) — image resources never change after creation
   lookupFn: async (ids) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
