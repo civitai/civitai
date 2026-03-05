@@ -118,7 +118,10 @@ export const imageRouter = router({
   getDetail: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImageDetail({ ...input })),
-  getInfinite: publicProcedure.input(getInfiniteImagesSchema).query(getInfiniteImagesHandler),
+  getInfinite: publicProcedure
+    .input(getInfiniteImagesSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(getInfiniteImagesHandler),
   getImagesForModelVersion: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImagesForModelVersionCache([input.id])),
