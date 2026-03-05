@@ -60,7 +60,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
-import { PanelCard, SortablePanel } from '~/components/Comics/PanelCard';
+import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
 import { ReferenceSidebarItem } from '~/components/Comics/ReferenceSidebarItem';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -107,11 +107,6 @@ const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: 
     { label: '3:4', width: 1728, height: 2304 },
     { label: '9:16', width: 1440, height: 2560 },
   ],
-  Flux2: [
-    { label: 'Square', width: 1024, height: 1024 },
-    { label: 'Landscape', width: 1216, height: 832 },
-    { label: 'Portrait', width: 832, height: 1216 },
-  ],
   Seedream: [
     { label: '16:9', width: 2560, height: 1440 },
     { label: '4:3', width: 2304, height: 1728 },
@@ -135,7 +130,6 @@ const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: 
 
 const COMIC_MODEL_OPTIONS = [
   { value: 'NanoBanana', label: 'Nano Banana Pro' },
-  { value: 'Flux2', label: 'Flux.2' },
   { value: 'Seedream', label: 'Seedream v4.5' },
   { value: 'OpenAI', label: 'OpenAI GPT-Image' },
   { value: 'Qwen', label: 'Qwen' },
@@ -296,7 +290,7 @@ function ProjectWorkspace() {
   const [useContext, setUseContext] = useState(true);
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
-  const [generationModel, setGenerationModel] = useState<'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | null>(null);
+  const [generationModel, setGenerationModel] = useState<'NanoBanana' | 'Seedream' | 'OpenAI' | 'Qwen' | null>(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
 
@@ -1373,7 +1367,7 @@ function ProjectWorkspace() {
                 </Text>
               )}
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 items-center">
                 <span className={styles.statPill}>
                   <span className={styles.statDot} />
                   {project.chapters.length} {project.chapters.length === 1 ? 'chapter' : 'chapters'}
@@ -1382,6 +1376,14 @@ function ProjectWorkspace() {
                   <span className={styles.statDot} />
                   {totalPanelCount} {totalPanelCount === 1 ? 'panel' : 'panels'}
                 </span>
+                {(() => {
+                  const nsfw = getNsfwLabel(project.nsfwLevel);
+                  return nsfw ? (
+                    <Badge size="xs" color={nsfw.color} variant="filled">
+                      {nsfw.label}
+                    </Badge>
+                  ) : null;
+                })()}
               </div>
             </div>
 
@@ -1500,7 +1502,7 @@ function ProjectWorkspace() {
                             />
                           )}
                         </p>
-                        <p className={styles.chapterItemCount}>
+                        <div className={styles.chapterItemCount} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           <Tooltip
                             label={
                               chapter.status === ComicChapterStatus.Published
@@ -1513,7 +1515,7 @@ function ProjectWorkspace() {
                             position="right"
                           >
                             <span
-                              className="inline-block w-1.5 h-1.5 rounded-full mr-1"
+                              className="inline-block w-1.5 h-1.5 rounded-full"
                               style={{
                                 background: isPaywalled
                                   ? 'var(--mantine-color-yellow-5)'
@@ -1523,8 +1525,16 @@ function ProjectWorkspace() {
                               }}
                             />
                           </Tooltip>
-                          {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
-                        </p>
+                          <span>{panelCount} {panelCount === 1 ? 'panel' : 'panels'}</span>
+                          {(() => {
+                            const nsfw = getNsfwLabel(chapter.nsfwLevel);
+                            return nsfw ? (
+                              <Badge size="xs" color={nsfw.color} variant="filled" ml={2}>
+                                {nsfw.label}
+                              </Badge>
+                            ) : null;
+                          })()}
+                        </div>
                       </div>
                       <span className={styles.chapterItemActions}>
                         <ActionIcon
@@ -2852,7 +2862,6 @@ function ProjectWorkspace() {
             description="Choose the AI model for panel generation"
             data={[
               { value: 'NanoBanana', label: 'Nano Banana Pro (Default)' },
-              { value: 'Flux2', label: 'Flux.2' },
               { value: 'Seedream', label: 'Seedream v4.5' },
               { value: 'OpenAI', label: 'OpenAI GPT-Image' },
               { value: 'Qwen', label: 'Qwen' },

@@ -49,7 +49,6 @@ import {
 import { comicsSearchIndex } from '~/server/search-index';
 import {
   nanoBananaProSizes,
-  commonAspectRatios,
   seedreamSizes,
   qwenSizes,
 } from '~/server/common/constants';
@@ -60,6 +59,7 @@ import {
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { uploadViaUrl } from '~/utils/cf-images-utils';
 
 // Feature flag gate — all procedures require the comicCreator flag
 const comicFlag = isFlagProtected('comicCreator');
@@ -83,12 +83,6 @@ const COMIC_MODEL_CONFIG: Record<
     baseModel: 'NanoBanana',
     versionId: 2436219,
     sizes: nanoBananaProSizes,
-  },
-  Flux2: {
-    engine: 'flux2',
-    baseModel: 'Flux.2 D',
-    versionId: 2439067,
-    sizes: commonAspectRatios,
   },
   Seedream: {
     engine: 'seedream',
@@ -205,7 +199,7 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen']);
+const comicModelEnum = z.enum(['NanoBanana', 'Seedream', 'OpenAI', 'Qwen']);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -595,6 +589,9 @@ export const comicsRouter = router({
               include: {
                 references: {
                   select: { referenceId: true },
+                },
+                image: {
+                  select: { nsfwLevel: true },
                 },
               },
             },
@@ -2049,10 +2046,17 @@ export const comicsRouter = router({
           const imgHeight =
             genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
+          // Upload to Cloudflare — orchestrator URLs expire within 30 days
+          const { id: cfImageId } = await uploadViaUrl(imageUrl, {
+            userId: ctx.user!.id,
+            source: 'comic-panel',
+            panelId: panel.id,
+          });
+
           // Create Image record for content moderation pipeline
           const image = await dbWrite.image.create({
             data: {
-              url: imageUrl,
+              url: cfImageId,
               userId: ctx.user!.id,
               width: imgWidth,
               height: imgHeight,
@@ -2065,7 +2069,7 @@ export const comicsRouter = router({
             where: { id: panel.id },
             data: {
               status: ComicPanelStatus.Ready,
-              imageUrl,
+              imageUrl: cfImageId,
               imageId: image.id,
             },
           });
