@@ -297,13 +297,16 @@ export async function addImageRating({
 }: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
-  // Use distributed lock to prevent race conditions
+  // Use distributed lock to prevent race conditions on vote counting.
+  // Lock scope is narrow (ttl: 5s) to avoid blocking concurrent voters.
+  // The lock only needs to cover the atomic vote-count + consensus-check
+  // window; post-vote operations (stats, reports) are safe to run unlocked.
   const result = await withDistributedLock(
     {
       key: `image-rating:${imageId}`,
-      ttl: 30, // 30 second lock
-      maxRetries: 5,
-      retryDelay: 200,
+      ttl: 5, // 5 second lock (was 30s — caused 30-50s tail latency)
+      maxRetries: 3,
+      retryDelay: 100,
     },
     async () => {
       return await processImageRating({
