@@ -18,8 +18,7 @@ import {
   ecosystemById,
   getEcosystemSupport,
 } from '~/shared/constants/basemodel.constants';
-import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
-import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
+import { klingVersionIds, nanoBananaVersionIds } from '~/shared/data-graph/generation/version-ids';
 import {
   type WorkflowCategory,
   type WorkflowConfig,

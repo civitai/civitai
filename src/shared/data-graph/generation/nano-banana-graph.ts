@@ -23,6 +23,7 @@ import {
   seedNode,
   type ResourceData,
 } from './common';
+import { nanoBananaVersionIds } from './version-ids';
 
 // =============================================================================
 // Nano Banana Mode Constants
@@ -30,13 +31,6 @@ import {
 
 /** Nano Banana mode type */
 export type NanoBananaMode = 'standard' | 'pro' | 'v2';
-
-/** Nano Banana mode version IDs */
-const nanoBananaVersionIds = {
-  standard: 2154472,
-  pro: 2436219,
-  v2: 2725610,
-} as const;
 
 /** Map from version ID to mode name */
 const versionIdToMode = new Map<number, NanoBananaMode>(

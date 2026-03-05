@@ -47,7 +47,12 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { comicsSearchIndex } from '~/server/search-index';
-import { nanoBananaProSizes } from '~/server/common/constants';
+import {
+  nanoBananaProSizes,
+  commonAspectRatios,
+  seedreamSizes,
+  qwenSizes,
+} from '~/server/common/constants';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
   createMultiAccountBuzzTransaction,
@@ -62,13 +67,68 @@ const comicProtectedProcedure = protectedProcedure.use(comicFlag);
 const comicPublicProcedure = publicProcedure.use(comicFlag);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
-// Constants
-const NANOBANANA_VERSION_ID = 2436219;
+// Multi-model configuration for comic panel generation
+const COMIC_MODEL_CONFIG: Record<
+  string,
+  {
+    engine: string;
+    baseModel: string;
+    versionId: number;
+    img2imgVersionId?: number;
+    sizes: { label: string; width: number; height: number }[];
+  }
+> = {
+  NanoBanana: {
+    engine: 'gemini',
+    baseModel: 'NanoBanana',
+    versionId: 2436219,
+    sizes: nanoBananaProSizes,
+  },
+  Flux2: {
+    engine: 'flux2',
+    baseModel: 'Flux.2 D',
+    versionId: 2439067,
+    sizes: commonAspectRatios,
+  },
+  Seedream: {
+    engine: 'seedream',
+    baseModel: 'Seedream',
+    versionId: 2470991,
+    sizes: seedreamSizes,
+  },
+  OpenAI: {
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    versionId: 2512167,
+    sizes: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
+  },
+  Qwen: {
+    engine: 'qwen',
+    baseModel: 'Qwen',
+    versionId: 2552908,
+    img2imgVersionId: 2558804,
+    sizes: qwenSizes,
+  },
+};
+
+const DEFAULT_COMIC_MODEL = 'NanoBanana';
 const DEFAULT_ASPECT_RATIO = '3:4';
 
-function getAspectRatioDimensions(aspectRatio: string) {
-  const match = nanoBananaProSizes.find((s) => s.label === aspectRatio);
-  return match ?? nanoBananaProSizes.find((s) => s.label === DEFAULT_ASPECT_RATIO)!;
+function getComicModelConfig(baseModel?: string | null) {
+  return COMIC_MODEL_CONFIG[baseModel ?? DEFAULT_COMIC_MODEL] ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL];
+}
+
+function getAspectRatioDimensions(
+  aspectRatio: string,
+  modelConfig?: (typeof COMIC_MODEL_CONFIG)[string]
+) {
+  const sizes = modelConfig?.sizes ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL].sizes;
+  const match = sizes.find((s) => s.label === aspectRatio);
+  return match ?? sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ?? sizes[0];
 }
 
 // Middleware to check project ownership
@@ -145,6 +205,8 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
+const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen']);
+
 const createPanelSchema = z.object({
   projectId: z.number().int(),
   chapterPosition: z.number().int().min(0),
@@ -155,6 +217,7 @@ const createPanelSchema = z.object({
   includePreviousImage: z.boolean().default(false),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
+  baseModel: comicModelEnum.nullish(),
 });
 
 const updatePanelSchema = z.object({
@@ -217,6 +280,7 @@ const smartCreateChapterSchema = z.object({
     .max(20),
   enhance: z.boolean().default(true),
   aspectRatio: z.string().default('3:4'),
+  baseModel: comicModelEnum.nullish(),
 });
 
 const enhancePanelSchema = z.object({
@@ -231,11 +295,13 @@ const enhancePanelSchema = z.object({
   includePreviousImage: z.boolean().default(false),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
+  baseModel: comicModelEnum.nullish(),
 });
 
 const bulkCreatePanelsSchema = z.object({
   projectId: z.number().int(),
   chapterPosition: z.number().int().min(0),
+  baseModel: comicModelEnum.nullish(),
   panels: z
     .array(
       z.object({
@@ -260,6 +326,7 @@ const updateProjectSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(5000).nullish(),
   genre: z.nativeEnum(ComicGenre).nullish(),
+  baseModel: comicModelEnum.nullish(),
   coverImageId: z.number().int().nullish(),
   coverUrl: z.string().nullish(),
   heroImageId: z.number().int().nullish(),
@@ -325,6 +392,7 @@ async function createSinglePanel(args: {
   width: number;
   height: number;
   aspectRatio: string;
+  modelConfig: (typeof COMIC_MODEL_CONFIG)[string];
   storyContext?: {
     storyDescription: string;
     previousPanelPrompts: string[];
@@ -346,6 +414,7 @@ async function createSinglePanel(args: {
     width,
     height,
     aspectRatio,
+    modelConfig,
     storyContext,
   } = args;
 
@@ -375,9 +444,9 @@ async function createSinglePanel(args: {
     primaryReferenceName,
     allReferenceNames,
     generationParams: {
-      engine: 'gemini',
-      baseModel: 'NanoBanana',
-      checkpointVersionId: NANOBANANA_VERSION_ID,
+      engine: modelConfig.engine,
+      baseModel: modelConfig.baseModel,
+      checkpointVersionId: modelConfig.versionId,
       width,
       height,
       prompt: fullPrompt,
@@ -410,8 +479,8 @@ async function createSinglePanel(args: {
       params: {
         prompt: fullPrompt,
         negativePrompt: '',
-        engine: 'gemini',
-        baseModel: 'NanoBanana' as any,
+        engine: modelConfig.engine,
+        baseModel: modelConfig.baseModel as any,
         width,
         height,
         aspectRatio,
@@ -425,7 +494,7 @@ async function createSinglePanel(args: {
         sourceImage: null,
         images: refImages,
       },
-      resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+      resources: [{ id: modelConfig.versionId, strength: 1 }],
       tags: ['comics'],
       tips: { creators: 0, civitai: 0 },
       user: ctx.user! as SessionUser,
@@ -950,17 +1019,20 @@ export const comicsRouter = router({
     }),
 
   // Dynamic pricing — whatIf cost estimate for panel generation
-  getPanelCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
+  getPanelCostEstimate: comicProtectedProcedure
+    .input(z.object({ baseModel: z.string().nullish() }).optional())
+    .query(async ({ ctx, input }) => {
     try {
       const token = await getOrchestratorToken(ctx.user.id, ctx);
+      const modelConfig = getComicModelConfig(input?.baseModel);
 
-      const defaultDims = getAspectRatioDimensions(DEFAULT_ASPECT_RATIO);
+      const defaultDims = getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, modelConfig);
       const step = await createImageGenStep({
         params: {
           prompt: '',
           negativePrompt: '',
-          engine: 'gemini',
-          baseModel: 'NanoBanana' as any,
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel as any,
           width: defaultDims.width,
           height: defaultDims.height,
           aspectRatio: DEFAULT_ASPECT_RATIO,
@@ -974,7 +1046,7 @@ export const comicsRouter = router({
           sourceImage: null,
           images: null,
         },
-        resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+        resources: [{ id: modelConfig.versionId, strength: 1 }],
         tags: ['comics'],
         tips: { creators: 0, civitai: 0 },
         whatIf: true,
@@ -1143,6 +1215,7 @@ export const comicsRouter = router({
       if (input.name !== undefined) data.name = input.name;
       if (input.description !== undefined) data.description = input.description;
       if (input.genre !== undefined) data.genre = input.genre;
+      if (input.baseModel !== undefined) data.baseModel = input.baseModel;
       if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
 
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
@@ -1468,7 +1541,7 @@ export const comicsRouter = router({
       };
     }),
 
-  // Panels — NanoBanana generation via createImageGen
+  // Panels — generation via createImageGen (model determined by project)
   createPanel: comicProtectedProcedure
     .input(createPanelSchema)
     .use(isChapterOwner)
@@ -1480,7 +1553,7 @@ export const comicsRouter = router({
         },
         include: {
           project: {
-            select: { id: true, userId: true },
+            select: { id: true, userId: true, baseModel: true },
           },
         },
       });
@@ -1578,8 +1651,10 @@ export const comicsRouter = router({
 
       // Conditionally use previous panel context for prompt enhancement
       const effectiveContext = input.useContext ? contextPanel : null;
+      const modelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
       const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(
-        input.aspectRatio
+        input.aspectRatio,
+        modelConfig
       );
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -1619,9 +1694,9 @@ export const comicsRouter = router({
         primaryReferenceName,
         allReferenceNames,
         generationParams: {
-          engine: 'gemini',
-          baseModel: 'NanoBanana',
-          checkpointVersionId: NANOBANANA_VERSION_ID,
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel,
+          checkpointVersionId: modelConfig.versionId,
           width: panelWidth,
           height: panelHeight,
           prompt: fullPrompt,
@@ -1650,14 +1725,14 @@ export const comicsRouter = router({
         });
       }
 
-      // Submit NanoBanana generation workflow
+      // Submit generation workflow
       try {
         const result = await createImageGen({
           params: {
             prompt: fullPrompt,
             negativePrompt: '',
-            engine: 'gemini',
-            baseModel: 'NanoBanana' as any,
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
             width: panelWidth,
             height: panelHeight,
             aspectRatio: input.aspectRatio,
@@ -1671,7 +1746,7 @@ export const comicsRouter = router({
             sourceImage: null,
             images: allImages,
           },
-          resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+          resources: [{ id: modelConfig.versionId, strength: 1 }],
           tags: ['comics'],
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
@@ -1896,20 +1971,23 @@ export const comicsRouter = router({
           name: ref.name,
           images: ref.images,
         })),
-        generation: {
-          engine: 'gemini',
-          baseModel: 'NanoBanana',
-          checkpointVersionId: NANOBANANA_VERSION_ID,
-          dimensions: (panel.metadata as any)?.generationParams
-            ? {
-                width: (panel.metadata as any).generationParams.width,
-                height: (panel.metadata as any).generationParams.height,
-              }
-            : {
-                width: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width,
-                height: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height,
-              },
-        },
+        generation: (() => {
+          const mc = getComicModelConfig(panel.chapter.project.baseModel);
+          return {
+            engine: mc.engine,
+            baseModel: mc.baseModel,
+            checkpointVersionId: mc.versionId,
+            dimensions: (panel.metadata as any)?.generationParams
+              ? {
+                  width: (panel.metadata as any).generationParams.width,
+                  height: (panel.metadata as any).generationParams.height,
+                }
+              : {
+                  width: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, mc).width,
+                  height: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, mc).height,
+                },
+          };
+        })(),
         workflow: workflowInfo,
       };
     }),
@@ -2057,6 +2135,13 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      // Fetch project baseModel for generation config
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: { baseModel: true },
+      });
+      const modelConfig = getComicModelConfig(input.baseModel ?? project?.baseModel);
+
       // Create the chapter
       const lastChapter = await dbRead.comicChapter.findFirst({
         where: { projectId: input.projectId },
@@ -2105,7 +2190,8 @@ export const comicsRouter = router({
       // Create panels sequentially — each panel uses the previous as context
       // Build story context so the enhancer sees the full narrative arc
       const { width: smartWidth, height: smartHeight } = getAspectRatioDimensions(
-        input.aspectRatio
+        input.aspectRatio,
+        modelConfig
       );
       const createdPanels: any[] = [];
       const previousPanelPrompts: string[] = [];
@@ -2141,6 +2227,7 @@ export const comicsRouter = router({
           width: smartWidth,
           height: smartHeight,
           aspectRatio: input.aspectRatio,
+          modelConfig,
           storyContext: {
             storyDescription: input.storyDescription,
             previousPanelPrompts: [...previousPanelPrompts],
@@ -2679,7 +2766,7 @@ export const comicsRouter = router({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
-        include: { project: { select: { id: true, userId: true } } },
+        include: { project: { select: { id: true, userId: true, baseModel: true } } },
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
@@ -2769,8 +2856,12 @@ export const comicsRouter = router({
         });
       }
       const effectiveContext = input.useContext ? contextPanel : null;
+      const modelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
+      // For Qwen img2img, use the img2img version if available
+      const effectiveVersionId = modelConfig.img2imgVersionId ?? modelConfig.versionId;
       const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(
-        input.aspectRatio
+        input.aspectRatio,
+        modelConfig
       );
 
       const allUserRefs = await dbRead.comicReference.findMany({
@@ -2835,9 +2926,9 @@ export const comicsRouter = router({
         primaryReferenceName,
         allReferenceNames,
         generationParams: {
-          engine: 'gemini',
-          baseModel: 'NanoBanana',
-          checkpointVersionId: NANOBANANA_VERSION_ID,
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel,
+          checkpointVersionId: effectiveVersionId,
           width: panelWidth,
           height: panelHeight,
           prompt: fullPrompt,
@@ -2869,8 +2960,8 @@ export const comicsRouter = router({
           params: {
             prompt: fullPrompt,
             negativePrompt: '',
-            engine: 'gemini',
-            baseModel: 'NanoBanana' as any,
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
             width: panelWidth,
             height: panelHeight,
             aspectRatio: input.aspectRatio,
@@ -2884,7 +2975,7 @@ export const comicsRouter = router({
             sourceImage: null,
             images: allImages,
           },
-          resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+          resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['comics'],
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
@@ -2938,11 +3029,13 @@ export const comicsRouter = router({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
-        include: { project: { select: { id: true, userId: true } } },
+        include: { project: { select: { id: true, userId: true, baseModel: true } } },
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+
+      const bulkModelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
 
       // Get next position after existing panels
       const lastPanel = await dbWrite.comicPanel.findFirst({
@@ -3103,8 +3196,13 @@ export const comicsRouter = router({
             ...combinedRefImages,
           ];
 
+          // For Qwen img2img, use the img2img version if available
+          const bulkVersionId = panelDef.sourceImageUrl
+            ? (bulkModelConfig.img2imgVersionId ?? bulkModelConfig.versionId)
+            : bulkModelConfig.versionId;
           const { width: bulkPanelW, height: bulkPanelH } = getAspectRatioDimensions(
-            panelDef.aspectRatio
+            panelDef.aspectRatio,
+            bulkModelConfig
           );
 
           const metadata = {
@@ -3116,9 +3214,9 @@ export const comicsRouter = router({
             primaryReferenceName,
             allReferenceNames,
             generationParams: {
-              engine: 'gemini',
-              baseModel: 'NanoBanana',
-              checkpointVersionId: NANOBANANA_VERSION_ID,
+              engine: bulkModelConfig.engine,
+              baseModel: bulkModelConfig.baseModel,
+              checkpointVersionId: bulkVersionId,
               width: bulkPanelW,
               height: bulkPanelH,
               prompt: fullPrompt,
@@ -3150,8 +3248,8 @@ export const comicsRouter = router({
               params: {
                 prompt: fullPrompt,
                 negativePrompt: '',
-                engine: 'gemini',
-                baseModel: 'NanoBanana' as any,
+                engine: bulkModelConfig.engine,
+                baseModel: bulkModelConfig.baseModel as any,
                 width: bulkPanelW,
                 height: bulkPanelH,
                 aspectRatio: panelDef.aspectRatio,
@@ -3165,7 +3263,7 @@ export const comicsRouter = router({
                 sourceImage: null,
                 images: allImages,
               },
-              resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+              resources: [{ id: bulkVersionId, strength: 1 }],
               tags: ['comics'],
               tips: { creators: 0, civitai: 0 },
               user: ctx.user! as SessionUser,
@@ -3233,7 +3331,8 @@ export const comicsRouter = router({
           });
 
           const { width: txtPanelW, height: txtPanelH } = getAspectRatioDimensions(
-            panelDef.aspectRatio
+            panelDef.aspectRatio,
+            bulkModelConfig
           );
           const panel = await createSinglePanel({
             projectId: input.projectId,
@@ -3251,6 +3350,7 @@ export const comicsRouter = router({
             width: txtPanelW,
             height: txtPanelH,
             aspectRatio: panelDef.aspectRatio,
+            modelConfig: bulkModelConfig,
           });
 
           createdPanels.push(panel);

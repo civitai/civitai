@@ -33,6 +33,22 @@ Branch: `fix/comic-tester-feedback`
 
 14. **Tip total display** — Replaced `TipBuzzButton` with `InteractiveTipBuzzButton` showing accumulated tip total (queried from `BuzzTip` table) with optimistic session-local updates via `useBuzzTippingStore`.
 
+15. **Chapter early access / paywall** — Creators can set a Buzz price and timeframe when publishing a chapter. During early access, readers must pay to unlock. After the timeframe, the chapter becomes free. Uses `EntityAccess` table + DB trigger mirroring ModelVersion pattern. Panels are stripped server-side for locked chapters. Added `id` (autoincrement unique), `availability`, `earlyAccessConfig`, `earlyAccessEndsAt` to ComicChapter schema. New mutations: `purchaseChapterAccess`, `updateChapterEarlyAccess`. Migration: `20260304123827_comic_chapter_early_access`.
+
+16. **Publish modal with paywall config** — Publishing a chapter now opens a modal with an optional "Enable Early Access Paywall" toggle, Buzz price input, and timeframe (days) input. A separate "Paywall" button next to "Publish" opens the same modal with EA pre-enabled.
+
+17. **Paywall indicators in editor** — Paywalled chapters show a yellow lock icon and yellow status dot in the sidebar, with a "Paywalled · X Buzz" tooltip. The chapter header shows a yellow badge with the price.
+
+18. **Chapter settings modal** — Replaced inline chapter name editing with a settings modal (gear icon). Contains: name input, EA config (for published chapters, can only reduce price/timeframe), and delete button with loading states.
+
+19. **Loading states for chapter operations** — Add chapter button shows a spinner while creating. Delete shows a spinner on the sidebar item and modal button. Update shows a spinner on the sidebar item while saving.
+
+20. **Bulk upload image fix in reader** — Panel images uploaded via bulk import were only showing as raw CF UUIDs in the reader. Fixed by wrapping all panel image URLs in `getEdgeUrl()` in the reader's `renderPanel` function.
+
+21. **Moderation tools** — `tosViolation` field on ComicProject. Moderator procedures: `setTosViolation` (toggles flag, notifies creator, hides from listings/search) and `moderatorUnpublishChapter` (reverts to draft, notifies creator). TOS-violated projects are hidden from `getPublicProjects` and blocked in `getPublicProjectForReader` for non-owner/non-mod. Frontend: red TOS violation banner on overview, moderator dropdown menus on both overview (flag/unflag) and chapter reader (unpublish). Report button added to chapter reader header (reports at project level).
+
+22. **Unpublish protection** — Published chapters that have been purchased by someone via early access cannot be unpublished by the creator.
+
 ## Not Implemented — Feasibility Analysis
 
 ### Achievable with existing infrastructure (low-medium effort)
@@ -45,12 +61,12 @@ Branch: `fix/comic-tester-feedback`
 
 | Feedback | Effort | Details |
 |----------|--------|---------|
-| **Mod tools / Comics queue** | ~12-15 tasks | Report system works (`ComicProjectReport` exists, reports show in `/moderator/reports`). Missing: `tosViolation` field on schema, unpublish/block endpoints, dedicated `/moderator/comics.tsx` page, text moderation (Clavata) integration, and report-action workflow. Patterns exist for images/articles to copy from. |
+| **Dedicated moderator comics queue** | Medium | Report system works (`ComicProjectReport` exists, reports show in `/moderator/reports`). Core moderation tools (TOS flag, mod unpublish) are implemented. Missing: dedicated `/moderator/comics.tsx` page, text moderation (Clavata) integration, and report-action workflow linking. |
+| **Per-chapter reporting** | Low-Medium | Currently reports are at the project level. Adding `ReportEntity.ComicChapter` requires DB model, report schema, and moderator queue integration. |
 | **Setting/art style reference** | Unknown | AI generation feature — needs orchestration/model changes and UX for style reference input. |
 | **Feed panels from previous chapters** | Unknown | AI generation feature — needs orchestration changes to accept reference panels as context. |
 | **Reference image tagging** (e.g. "@character with item") | Unknown | AI generation feature — needs UX + prompt engineering for tagged references. |
 | **Comic images in user's posts/images** | TBD | Architecture decision on how comic panels relate to user gallery. Panels already have `imageId` FK to `Image` table, so the data relationship exists. |
 | **PDF export** | Medium | Needs PDF generation service + creator permission controls + optional Buzz-gated download. |
-| **Buzz-gated chapters / paywall** | Large | Major feature — payment flow, access control, Early Access integration, per-chapter pricing. |
 | **More model options / price range** | Product decision | Needs product/pricing decision + orchestration config changes. |
 | **Reactions on image panels** | Intentionally skipped | Testers specifically warned against this: "johnny civ is 100% going to fill someone's Romance Tragedy last panel with laughing face reacts" |

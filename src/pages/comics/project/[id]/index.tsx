@@ -99,20 +99,56 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const COMIC_ASPECT_RATIOS = [
-  { label: '16:9', width: 2560, height: 1440 },
-  { label: '4:3', width: 2304, height: 1728 },
-  { label: '1:1', width: 2048, height: 2048 },
-  { label: '3:4', width: 1728, height: 2304 },
-  { label: '9:16', width: 1440, height: 2560 },
+const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: number }[]> = {
+  NanoBanana: [
+    { label: '16:9', width: 2560, height: 1440 },
+    { label: '4:3', width: 2304, height: 1728 },
+    { label: '1:1', width: 2048, height: 2048 },
+    { label: '3:4', width: 1728, height: 2304 },
+    { label: '9:16', width: 1440, height: 2560 },
+  ],
+  Flux2: [
+    { label: 'Square', width: 1024, height: 1024 },
+    { label: 'Landscape', width: 1216, height: 832 },
+    { label: 'Portrait', width: 832, height: 1216 },
+  ],
+  Seedream: [
+    { label: '16:9', width: 2560, height: 1440 },
+    { label: '4:3', width: 2304, height: 1728 },
+    { label: '1:1', width: 2048, height: 2048 },
+    { label: '3:4', width: 1728, height: 2304 },
+    { label: '9:16', width: 1440, height: 2560 },
+  ],
+  OpenAI: [
+    { label: '1:1', width: 1024, height: 1024 },
+    { label: '3:2', width: 1536, height: 1024 },
+    { label: '2:3', width: 1024, height: 1536 },
+  ],
+  Qwen: [
+    { label: '16:9', width: 1664, height: 928 },
+    { label: '4:3', width: 1472, height: 1104 },
+    { label: '1:1', width: 1328, height: 1328 },
+    { label: '3:4', width: 1104, height: 1472 },
+    { label: '9:16', width: 928, height: 1664 },
+  ],
+};
+
+const COMIC_MODEL_OPTIONS = [
+  { value: 'NanoBanana', label: 'Nano Banana Pro' },
+  { value: 'Flux2', label: 'Flux.2' },
+  { value: 'Seedream', label: 'Seedream v4.5' },
+  { value: 'OpenAI', label: 'OpenAI GPT-Image' },
+  { value: 'Qwen', label: 'Qwen' },
 ];
 
 function AspectRatioSelector({
   value,
   onChange,
+  aspectRatios,
 }: {
   value: string;
   onChange: (value: string) => void;
+  aspectRatios: { label: string; width: number; height: number }[];
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -122,7 +158,7 @@ function AspectRatioSelector({
       <SegmentedControl
         value={value}
         onChange={onChange}
-        data={COMIC_ASPECT_RATIOS.map(({ label, width, height }) => ({
+        data={aspectRatios.map(({ label, width, height }) => ({
           label: (
             <div className="flex flex-col items-center gap-1">
               <Paper
@@ -145,12 +181,14 @@ function SortableBulkItem({
   onUpdatePrompt,
   onUpdateAspectRatio,
   onRemove,
+  aspectRatioLabels,
 }: {
   item: { id: string; sourceImage?: { preview: string }; prompt: string; aspectRatio: string };
   index: number;
   onUpdatePrompt: (id: string, prompt: string) => void;
   onUpdateAspectRatio: (id: string, aspectRatio: string) => void;
   onRemove: (id: string) => void;
+  aspectRatioLabels: string[];
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
@@ -221,7 +259,7 @@ function SortableBulkItem({
             size="xs"
             value={item.aspectRatio}
             onChange={(e) => onUpdateAspectRatio(item.id, e.target.value)}
-            data={COMIC_ASPECT_RATIOS.map((r) => r.label)}
+            data={aspectRatioLabels}
             style={{ width: 72, flexShrink: 0 }}
           />
         </div>
@@ -258,6 +296,7 @@ function ProjectWorkspace() {
   const [useContext, setUseContext] = useState(true);
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
+  const [generationModel, setGenerationModel] = useState<'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | null>(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
 
@@ -313,6 +352,7 @@ function ProjectWorkspace() {
   const [editCoverUrl, setEditCoverUrl] = useState<string | null>(null);
   const [editCoverImageId, setEditCoverImageId] = useState<number | null>(null);
   const [editGenre, setEditGenre] = useState<string | null>(null);
+  const [editBaseModel, setEditBaseModel] = useState<string | null>(null);
   const [editHeroUrl, setEditHeroUrl] = useState<string | null>(null);
   const [editHeroImageId, setEditHeroImageId] = useState<number | null>(null);
   const [editHeroPosition, setEditHeroPosition] = useState(50);
@@ -359,10 +399,16 @@ function ProjectWorkspace() {
     refetch,
   } = trpc.comics.getProject.useQuery({ id: projectId }, { enabled: projectId > 0 });
 
+  // Resolve active model and aspect ratios — generationModel overrides project default
+  const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana';
+  const activeAspectRatios =
+    COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
+
   // Dynamic cost estimate from orchestrator
-  const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(undefined, {
-    staleTime: 5 * 60 * 1000, // cache for 5 minutes
-  });
+  const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(
+    { baseModel: effectiveModel },
+    { staleTime: 5 * 60 * 1000 }
+  );
   const panelCost = costEstimate?.cost ?? 25; // fallback to 25 if unavailable
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
@@ -665,11 +711,25 @@ function ProjectWorkspace() {
     setUseContext(true);
     setIncludePreviousImage(false);
     setAspectRatio('3:4');
+    setGenerationModel(null);
     resetEnhanceFiles();
     setBulkItems([]);
     setBulkEnhance(true);
     resetBulkFiles();
     setImportSelected([]);
+  };
+
+  const handleModelChange = (value: string | null) => {
+    setGenerationModel(value as typeof generationModel);
+    // Reset aspect ratios if current values aren't available in the new model's sizes
+    const newSizes = COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana'] ?? COMIC_MODEL_SIZES.NanoBanana;
+    const defaultLabel = newSizes.find((s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3')?.label ?? newSizes[0].label;
+    if (!newSizes.some((s) => s.label === aspectRatio)) {
+      setAspectRatio(defaultLabel);
+    }
+    if (!newSizes.some((s) => s.label === smartAspectRatio)) {
+      setSmartAspectRatio(defaultLabel);
+    }
   };
 
   const handleGeneratePanel = async () => {
@@ -693,6 +753,7 @@ function ProjectWorkspace() {
         useContext,
         includePreviousImage,
         aspectRatio,
+        baseModel: generationModel,
         ...(targetPosition != null ? { position: targetPosition } : {}),
       });
     } finally {
@@ -724,6 +785,7 @@ function ProjectWorkspace() {
         useContext,
         includePreviousImage,
         aspectRatio,
+        baseModel: generationModel,
         ...(targetPosition != null ? { position: targetPosition } : {}),
       });
     } finally {
@@ -977,6 +1039,7 @@ function ProjectWorkspace() {
         {
           projectId,
           chapterPosition: activeChapter.position,
+          baseModel: generationModel,
           panels: importSelected.map((img) => ({
             sourceImageUrl: img.url,
             sourceImageWidth: img.width,
@@ -1030,6 +1093,7 @@ function ProjectWorkspace() {
       bulkCreateMutation.mutate({
         projectId,
         chapterPosition: activeChapter.position,
+        baseModel: generationModel,
         panels: bulkItems.map((item) => ({
           prompt: item.prompt?.trim() || undefined,
           enhance: bulkEnhance,
@@ -1171,6 +1235,7 @@ function ProjectWorkspace() {
     setEditName(project.name);
     setEditDescription(project.description ?? '');
     setEditGenre((project as any).genre ?? null);
+    setEditBaseModel(project.baseModel ?? null);
     setEditCoverUrl(project.coverImage?.url ?? null);
     setEditCoverImageId(project.coverImage?.id ?? null);
     setEditHeroUrl((project as any).heroImage?.url ?? null);
@@ -1189,6 +1254,10 @@ function ProjectWorkspace() {
       genre:
         editGenre !== ((project as any).genre ?? null)
           ? (editGenre as ComicGenre) ?? null
+          : undefined,
+      baseModel:
+        editBaseModel !== (project.baseModel ?? null)
+          ? (editBaseModel as any) ?? null
           : undefined,
       // Pass URL for new uploads (backend creates Image record), or null to clear
       coverUrl: editCoverUrl !== (project.coverImage?.url ?? null) ? editCoverUrl : undefined,
@@ -1255,6 +1324,7 @@ function ProjectWorkspace() {
       panels: smartPanels.filter((p) => p.prompt.trim()),
       enhance: smartEnhance,
       aspectRatio: smartAspectRatio,
+      baseModel: generationModel,
     });
   };
 
@@ -2042,7 +2112,14 @@ function ProjectWorkspace() {
               </>
             )}
 
-            <AspectRatioSelector value={aspectRatio} onChange={setAspectRatio} />
+            <Select
+              label="Generation Model"
+              data={COMIC_MODEL_OPTIONS}
+              value={effectiveModel}
+              onChange={handleModelChange}
+              size="sm"
+            />
+            <AspectRatioSelector value={aspectRatio} onChange={setAspectRatio} aspectRatios={activeAspectRatios} />
 
             <Group justify="flex-end">
               <Button variant="default" onClick={handlePanelModalClose}>
@@ -2184,7 +2261,14 @@ function ProjectWorkspace() {
                     onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
                   />
                 )}
-                <AspectRatioSelector value={aspectRatio} onChange={setAspectRatio} />
+                <Select
+                  label="Generation Model"
+                  data={COMIC_MODEL_OPTIONS}
+                  value={effectiveModel}
+                  onChange={handleModelChange}
+                  size="sm"
+                />
+                <AspectRatioSelector value={aspectRatio} onChange={setAspectRatio} aspectRatios={activeAspectRatios} />
               </>
             )}
 
@@ -2261,6 +2345,13 @@ function ProjectWorkspace() {
               </Button>
             </Group>
 
+            <Select
+              label="Generation Model"
+              data={COMIC_MODEL_OPTIONS}
+              value={effectiveModel}
+              onChange={handleModelChange}
+              size="sm"
+            />
             <Switch
               label="Enhance prompts"
               description="Use AI to add detail and composition to prompts"
@@ -2286,6 +2377,7 @@ function ProjectWorkspace() {
                           onUpdatePrompt={handleBulkUpdatePrompt}
                           onUpdateAspectRatio={handleBulkUpdateAspectRatio}
                           onRemove={handleBulkRemoveItem}
+                          aspectRatioLabels={activeAspectRatios.map((r) => r.label)}
                         />
                       ))}
                     </Stack>
@@ -2513,6 +2605,13 @@ function ProjectWorkspace() {
               Add Panel
             </Button>
 
+            <Select
+              label="Generation Model"
+              data={COMIC_MODEL_OPTIONS}
+              value={effectiveModel}
+              onChange={handleModelChange}
+              size="sm"
+            />
             <Switch
               label="Enhance prompts"
               description="Use AI to add detail and composition to each panel"
@@ -2521,7 +2620,7 @@ function ProjectWorkspace() {
               color="yellow"
             />
 
-            <AspectRatioSelector value={smartAspectRatio} onChange={setSmartAspectRatio} />
+            <AspectRatioSelector value={smartAspectRatio} onChange={setSmartAspectRatio} aspectRatios={activeAspectRatios} />
 
             <Text size="sm" c="dimmed">
               Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
@@ -2746,6 +2845,20 @@ function ProjectWorkspace() {
             data={genreOptions}
             value={editGenre}
             onChange={setEditGenre}
+            clearable
+          />
+          <Select
+            label="Generation Model"
+            description="Choose the AI model for panel generation"
+            data={[
+              { value: 'NanoBanana', label: 'Nano Banana Pro (Default)' },
+              { value: 'Flux2', label: 'Flux.2' },
+              { value: 'Seedream', label: 'Seedream v4.5' },
+              { value: 'OpenAI', label: 'OpenAI GPT-Image' },
+              { value: 'Qwen', label: 'Qwen' },
+            ]}
+            value={editBaseModel}
+            onChange={setEditBaseModel}
             clearable
           />
 
