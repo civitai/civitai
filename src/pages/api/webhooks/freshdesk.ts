@@ -7,7 +7,7 @@ import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 const DEDUP_TTL_SECONDS = 600; // 10 minutes
 
 const log = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'freshdesk-webhook', ...data }, 'webhooks').catch(() => {});
+  logToAxiom({ name: 'freshdesk-webhook', ...data }, 'webhooks').catch(() => null);
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') {

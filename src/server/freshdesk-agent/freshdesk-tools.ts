@@ -259,7 +259,7 @@ function formatResponse(res: { ok: boolean; status: number; data?: unknown; mess
   if ('data' in res && res.data !== undefined) {
     return JSON.stringify(res.data);
   }
-  return JSON.stringify({ error: `message` in res ? res.message : `Status ${res.status}` });
+  return JSON.stringify({ error: 'message' in res ? res.message : `Status ${res.status}` });
 }
 
 export async function executeToolCall(

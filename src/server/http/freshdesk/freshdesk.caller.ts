@@ -29,9 +29,7 @@ class FreshdeskCaller extends HttpCaller {
   // --- Ticket operations ---
 
   async getTicket(ticketId: number) {
-    return this.get<FreshdeskTicket>(`/tickets/${ticketId}`, {
-      queryParams: { include: 'description' },
-    });
+    return this.get<FreshdeskTicket>(`/tickets/${ticketId}`);
   }
 
   async getConversations(ticketId: number) {
@@ -76,7 +74,7 @@ class FreshdeskCaller extends HttpCaller {
 
   async searchKB(query: string) {
     return this.get<FreshdeskKBSearchResult[]>(
-      `/solutions/articles/search`,
+      `/search/solutions`,
       { queryParams: { term: query } }
     );
   }

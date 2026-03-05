@@ -6,7 +6,7 @@ import { buildUserMessage, getSystemPrompt } from './freshdesk-prompts';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 
 const log = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'freshdesk-agent', ...data }, 'webhooks').catch(() => {});
+  logToAxiom({ name: 'freshdesk-agent', ...data }, 'webhooks').catch(() => null);
 
 export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
   const { ticket_id, phase } = payload;
