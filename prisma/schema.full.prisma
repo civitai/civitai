@@ -3759,10 +3759,11 @@ enum ChallengeSource {
 }
 
 enum ChallengeStatus {
-  Scheduled // Funded and waiting for startsAt
-  Active    // Currently accepting submissions
-  Completed // Winners announced
-  Cancelled // Cancelled before completion
+  Scheduled  // Funded and waiting for startsAt
+  Active     // Currently accepting submissions
+  Completing // Winner picking in progress (prevents duplicate processing)
+  Completed  // Winners announced
+  Cancelled  // Cancelled before completion
 }
 
 enum PrizeMode {

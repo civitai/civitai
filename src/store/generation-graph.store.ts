@@ -22,7 +22,7 @@ import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/gener
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationFormStore } from '~/store/generation-form.store';
 import { remixStore } from '~/store/remix.store';
-import { QS } from '~/utils/qs';
+import { trpcVanilla } from '~/utils/trpc';
 
 // =============================================================================
 // Types
@@ -138,11 +138,9 @@ export function fetchGenerationData(input: GetGenerationDataInput): Promise<Gene
   const cached = generationDataCache.get(key);
   if (cached) return cached;
 
-  const promise = fetch(`/api/generation/data?${QS.stringify({ ...input, withPreview: true })}`)
-    .then((res) => {
-      if (!res.ok) throw new Error(res.statusText);
-      return res.json() as Promise<GenerationData>;
-    })
+  const promise = trpcVanilla.generation.getGenerationData
+    .query({ ...input, withPreview: true })
+    .then((data) => data as GenerationData)
     .catch((err) => {
       generationDataCache.delete(key); // Allow retry on failure
       throw err;
@@ -175,6 +173,21 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
             const result = await fetchGenerationData(input);
             const isMedia = ['audio', 'image', 'video'].includes(input.type);
             const resources = result.resources.map(substituteResource);
+
+            // When remixing enhancement workflows (hires-fix, face-fix), fall back to
+            // txt2img so the user gets a standard generation form.
+            if (isMedia) {
+              const REMIX_WORKFLOW_OVERRIDES: Record<string, string> = {
+                'txt2img:hires-fix': 'txt2img',
+                'img2img:hires-fix': 'txt2img',
+                'txt2img:face-fix': 'txt2img',
+                'img2img:face-fix': 'txt2img',
+              };
+              const w = result.params.workflow as string | undefined;
+              if (w && REMIX_WORKFLOW_OVERRIDES[w]) {
+                result.params.workflow = REMIX_WORKFLOW_OVERRIDES[w];
+              }
+            }
 
             // TEMPORARY: Sync legacy form store (remove with legacy generator)
             syncLegacyFormStore(result.params, resources);

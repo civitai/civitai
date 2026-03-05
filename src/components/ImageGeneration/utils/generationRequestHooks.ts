@@ -36,7 +36,7 @@ import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { queryClient, trpc } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -482,14 +482,10 @@ export function useTextToImageSignalUpdate() {
   });
 }
 
-async function fetchSignaledWorkflow(
+export async function fetchSignaledWorkflow(
   workflowId: string
 ): Promise<WorkflowStatusUpdate | undefined> {
-  const response = await fetch(`/api/generation/workflows/${workflowId}/status-update`);
-  if (response.ok) return await response.json();
-  else {
-    // TODO - handle errors
-  }
+  return await trpcVanilla.orchestrator.statusUpdate.query({workflowId})
 }
 
 async function updateSignaledWorkflows() {

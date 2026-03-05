@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   buildGenerationContext,
   generateFromGraph,
+  getWorkflowStatusUpdate,
   queryGeneratedImageWorkflows2,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -329,4 +330,7 @@ export const orchestratorRouter = router({
     .mutation(({ input, ctx }) =>
       reviewConsumerStrikes({ consumerId: `civitai-${input.userId}`, moderatorId: ctx.user.id })
     ),
+  statusUpdate: orchestratorGuardedProcedure.input(workflowIdSchema).query(({ ctx, input }) =>
+    getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+  ),
 });

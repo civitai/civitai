@@ -68,6 +68,7 @@ const sourceOptions = [
 const statusColors: Record<ChallengeStatus, string> = {
   [ChallengeStatus.Scheduled]: 'blue',
   [ChallengeStatus.Active]: 'green',
+  [ChallengeStatus.Completing]: 'yellow',
   [ChallengeStatus.Completed]: 'teal',
   [ChallengeStatus.Cancelled]: 'red',
 };

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getChallengeById,
@@ -19,19 +20,21 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const log = createLogger('api:daily-challenge-re-review', 'magenta');
 
 const schema = z.object({
   challengeId: z.coerce.number(),
+  imageIds: commaDelimitedNumberArray().optional(),
 });
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const parsed = schema.safeParse(req.query);
+  const parsed = schema.safeParse({ ...req.query, ...req.body });
   if (!parsed.success) {
-    return res.status(400).json({ error: 'challengeId is required' });
+    return res.status(400).json({ error: parsed.error.message });
   }
-  const { challengeId } = parsed.data;
+  const { challengeId, imageIds } = parsed.data;
 
   // Load challenge
   const challenge = await getChallengeById(challengeId);
@@ -57,10 +60,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const metadata = parseChallengeMetadata(challenge.metadata);
   const themeElements = metadata.themeElements;
 
-  // Fetch all judged entries with their existing judge comment IDs
-  type EntryWithComment = RecentEntry & { judgeCommentId: number | null };
+  // Fetch entries with their existing judge comment IDs
+  // When imageIds is provided, select those specific entries (regardless of judged status)
+  // Otherwise, select all previously judged entries
+  type EntryWithComment = RecentEntry & { judgeCommentId: number | null; hasJudgedTag: boolean };
+  const imageIdsParam = imageIds ?? null;
   const entries = await dbRead.$queryRaw<EntryWithComment[]>`
     SELECT ci."imageId", i."userId", u."username", i."url",
+      (ci."tagId" = ${config.judgedTagId}) as "hasJudgedTag",
       (
         SELECT cv2.id
         FROM "Thread" t
@@ -75,8 +82,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     JOIN "User" u ON u.id = i."userId"
     WHERE ci."collectionId" = ${challenge.collectionId}
       AND ci.status = 'ACCEPTED'
-      AND ci."tagId" = ${config.judgedTagId}
-      AND ci.note IS NOT NULL
+      AND (
+        ${imageIdsParam}::int[] IS NOT NULL
+          AND ci."imageId" = ANY(${imageIdsParam}::int[])
+        OR
+        ${imageIdsParam}::int[] IS NULL
+          AND ci."tagId" = ${config.judgedTagId}
+          AND ci.note IS NOT NULL
+      )
   `;
 
   if (entries.length === 0) {
@@ -88,7 +101,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     });
   }
 
-  log(`Re-reviewing ${entries.length} entries for challenge ${challengeId}`);
+  log(
+    `Re-reviewing ${entries.length} entries for challenge ${challengeId}` +
+      (imageIds ? ` (filtered by ${imageIds.length} imageIds)` : ' (all judged)')
+  );
 
   let successes = 0;
   let failures = 0;
@@ -103,7 +119,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           generateReview({
             theme: challenge.theme!,
             creator: entry.username,
-            imageUrl: getEdgeUrl(entry.url, { original: true, optimized: true, quality: 90 }),
+            imageUrl: getEdgeUrl(entry.url, { width: 1200, optimized: true }),
             config: judgingConfig,
             themeElements,
           }),
@@ -112,7 +128,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       );
       log('Review generated', entry.imageId, review.score);
 
-      // Overwrite score note on collection item
+      // Overwrite score note on collection item, and tag with judgedTagId if not already tagged
       const note = JSON.stringify({
         score: review.score,
         summary: review.summary,
@@ -122,6 +138,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       await dbWrite.$executeRaw`
         UPDATE "CollectionItem"
         SET note = ${note}
+          ${entry.hasJudgedTag ? Prisma.empty : Prisma.sql`, "tagId" = ${config.judgedTagId}`}
         WHERE "collectionId" = ${challenge.collectionId}
           AND "imageId" = ${entry.imageId}
       `;

@@ -133,14 +133,23 @@ const wan25AspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
   ],
 };
 
-/** Wan 2.1 aspect ratios (more options for Civitai provider) */
-const wan21AspectRatios = [
-  { label: '16:9', value: '16:9', width: 848, height: 480 },
-  { label: '3:2', value: '3:2', width: 720, height: 480 },
-  { label: '1:1', value: '1:1', width: 480, height: 480 },
-  { label: '2:3', value: '2:3', width: 480, height: 720 },
-  { label: '9:16', value: '9:16', width: 480, height: 848 },
-];
+/** Wan 2.1 resolution-dependent aspect ratios */
+const wan21AspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
+  '480p': [
+    { label: '16:9', value: '16:9', width: 848, height: 480 },
+    { label: '3:2', value: '3:2', width: 720, height: 480 },
+    { label: '1:1', value: '1:1', width: 480, height: 480 },
+    { label: '2:3', value: '2:3', width: 480, height: 720 },
+    { label: '9:16', value: '9:16', width: 480, height: 848 },
+  ],
+  '720p': [
+    { label: '16:9', value: '16:9', width: 1280, height: 720 },
+    { label: '3:2', value: '3:2', width: 1080, height: 720 },
+    { label: '1:1', value: '1:1', width: 720, height: 720 },
+    { label: '2:3', value: '2:3', width: 720, height: 1080 },
+    { label: '9:16', value: '9:16', width: 720, height: 1280 },
+  ],
+};
 
 /** Wan resolution options by version */
 const wan21Resolutions = [
@@ -206,27 +215,32 @@ type WanVersionCtx = {
  * - 720p → model ID 1501344 (Wan Video 14B I2V 720p)
  */
 const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
-  .node(
-    'aspectRatio',
-    (ctx) => ({
-      ...aspectRatioNode({ options: wan21AspectRatios, defaultValue: '1:1' }),
-      when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
-    }),
-    ['images']
-  )
   .node('resolution', {
     input: z.enum(['480p', '720p']).optional(),
     output: z.enum(['480p', '720p']),
     defaultValue: '480p' as const,
     meta: { options: wan21Resolutions },
   })
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '480p';
+      const options =
+        wan21AspectRatiosByResolution[resolution] ?? wan21AspectRatiosByResolution['480p'];
+      return {
+        ...aspectRatioNode({ options, defaultValue: '1:1' }),
+        when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
+      };
+    },
+    ['images', 'resolution']
+  )
   .node('duration', enumNode({ options: wanDurations, defaultValue: 5 }))
   .node(
     'resources',
-    (ctx) =>
+    (ctx, ext) =>
       resourcesNode({
         ecosystem: ctx.ecosystem,
-        limit: 2, // Fal provider has 2 max resources
+        limit: ext.limits.maxResources, // Fal provider has 2 max resources
       }),
     ['ecosystem']
   )
@@ -487,7 +501,7 @@ export {
   wanVersionOptions,
   ecosystemToVersionDef,
   wanAspectRatios,
-  wan21AspectRatios,
+  wan21AspectRatiosByResolution,
   wan22AspectRatios,
   wan25AspectRatiosByResolution,
   wan21Resolutions,

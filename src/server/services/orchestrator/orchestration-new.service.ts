@@ -31,7 +31,7 @@ import {
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -633,9 +633,15 @@ export async function createWorkflowStepFromGraph({
 
   // For enhancement workflows with source metadata, restructure metadata to preserve original generation
   if (!isWhatIf && isEnhancement && sourceMetadata) {
+    // Trim source resources to ResourceData format (strip enriched fields like name, model.name, etc.)
+    const sourceResources = (sourceMetadata.resources ?? [])
+      .map((r) => resourceSchema.safeParse(r))
+      .filter((r) => r.success)
+      .map((r) => r.data);
+
     // Use original params/resources as the root-level metadata
     metadata.params = sourceMetadata.params ?? {};
-    metadata.resources = sourceMetadata.resources ?? [];
+    metadata.resources = sourceResources;
 
     // Build the new transformation for this enhancement
     const newTransformation = {
@@ -651,7 +657,7 @@ export async function createWorkflowStepFromGraph({
     imageMetadata = JSON.stringify(
       removeEmpty({
         ...sourceMetadata.params,
-        resources: resourcesToImageMetadataResources(sourceMetadata.resources),
+        resources: resourcesToImageMetadataResources(sourceResources),
       })
     );
   }

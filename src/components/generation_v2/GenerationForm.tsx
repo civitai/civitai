@@ -65,7 +65,12 @@ import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter } from './FormFooter';
-import { ResourceAlerts, ExperimentalModelAlert, ReadyAlert } from './ResourceAlerts';
+import {
+  ResourceAlerts,
+  ExperimentalModelAlert,
+  GrokEcosystemAlert,
+  ReadyAlert,
+} from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -100,17 +105,23 @@ export function GenerationForm() {
   const currentUser = useCurrentUser();
   const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
-  const snapshot = graph.getSnapshot() as { workflow?: string; ecosystem?: string };
-  // Force re-render when workflow or ecosystem changes
-  // Use loose typing for subscribe since ecosystem is in a discriminated branch
+  const snapshot = graph.getSnapshot() as {
+    workflow?: string;
+    ecosystem?: string;
+    model?: { id?: number };
+  };
+  // Force re-render when workflow, ecosystem, or model changes
+  // Use loose typing for subscribe since ecosystem/model are in discriminated branches
   const [, forceUpdate] = useState({});
   useEffect(() => {
     const unsubWorkflow = graph.subscribe('workflow', () => forceUpdate({}));
     type LooseGraph = { subscribe: (key: string, cb: () => void) => () => void };
     const unsubEcosystem = (graph as LooseGraph).subscribe('ecosystem', () => forceUpdate({}));
+    const unsubModel = (graph as LooseGraph).subscribe('model', () => forceUpdate({}));
     return () => {
       unsubWorkflow();
       unsubEcosystem();
+      unsubModel();
     };
   }, [graph]);
 
@@ -245,7 +256,7 @@ export function GenerationForm() {
 
   return (
     <div className="flex size-full flex-1 flex-col">
-      <div className="flex-1 overflow-auto p-2">
+      <div className="flex-1 p-2">
         <Stack gap="sm" className="w-full">
           {/* Workflow and ecosystem selectors - inline */}
           <Group gap="xs" wrap="nowrap" className="w-full justify-between">
@@ -291,7 +302,7 @@ export function GenerationForm() {
             name="workflow"
             render={({ value }) => {
               const modes = snapshot.ecosystem
-                ? getWorkflowModes(value as string, snapshot.ecosystem)
+                ? getWorkflowModes(value as string, snapshot.ecosystem, snapshot.model?.id)
                 : [];
 
               return (
@@ -457,7 +468,12 @@ export function GenerationForm() {
           <Controller
             graph={graph}
             name="ecosystem"
-            render={({ value }) => <ExperimentalModelAlert ecosystem={value} />}
+            render={({ value }) => (
+              <>
+                <ExperimentalModelAlert ecosystem={value} />
+                <GrokEcosystemAlert ecosystem={value} />
+              </>
+            )}
           />
 
           {/* Ready State Alert - Resources need downloading */}
@@ -477,6 +493,8 @@ export function GenerationForm() {
                 error={error?.message}
                 enableDrawing={snapshot.workflow === 'img2img:edit'}
                 warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
+                aspectRatios={meta?.aspectRatios}
+                cropToFirstImage={meta?.cropToFirstImage}
               />
             )}
           />
@@ -990,6 +1008,7 @@ export function GenerationForm() {
                   checked={value}
                   onChange={(e) => onChange(e.target.checked)}
                   label="Enhanced Compatibility"
+                  description="We've updated our generation engine for better performance, but older prompts may look different. Turn this on to make new generations look more like your originals."
                 />
               )}
             />
@@ -1092,7 +1111,21 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Wan: Draft mode toggle (v2.2-5b) */}
+            {/* Vidu Q3: Enable audio toggle */}
+            <Controller
+              graph={graph}
+              name="enableAudio"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Generate audio"
+                  description="Generate audio along with the video"
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
             <Controller
               graph={graph}
               name="draft"
@@ -1101,7 +1134,7 @@ export function GenerationForm() {
                   checked={value}
                   onChange={(e) => onChange(e.target.checked)}
                   label="Draft Mode"
-                  description="Generate faster at lower quality"
+                  description="Generate faster at with optimized settings (may reduce quality)"
                 />
               )}
             />

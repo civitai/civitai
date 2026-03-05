@@ -12,6 +12,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   dataForModelsCache,
@@ -763,7 +764,7 @@ export const publishModelVersionById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
-  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow({
+  const versionFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -781,7 +782,13 @@ export const publishModelVersionById = async ({
         },
       },
     },
-  });
+  } as const;
+  const currentVersion = await dbRead.modelVersion
+    .findUniqueOrThrow(versionFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
+      return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
+    });
 
   // Validate NSFW + restricted base model combination
   if (
@@ -1480,7 +1487,7 @@ export const modelVersionDonationGoals = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const version = await dbRead.modelVersion.findFirstOrThrow({
+  const donationFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -1492,7 +1499,13 @@ export const modelVersionDonationGoals = async ({
         },
       },
     },
-  });
+  } as const;
+  const version = await dbRead.modelVersion
+    .findFirstOrThrow(donationFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+    });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 

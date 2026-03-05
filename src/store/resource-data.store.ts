@@ -17,7 +17,7 @@
 
 import { create } from 'zustand';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { QS } from '~/utils/qs';
+import { trpcVanilla } from '~/utils/trpc';
 
 // =============================================================================
 // Types
@@ -83,13 +83,10 @@ export function requestResourceIds(ids: number[]): void {
   );
   if (!uncached.length) return;
 
-  const promise = fetch(`/api/generation/resources?${QS.stringify({ ids: uncached })}`)
-    .then((res) => {
-      if (!res.ok) throw new Error(res.statusText);
-      return res.json() as Promise<ResourceData[]>;
-    })
+  const promise = trpcVanilla.generation.getResourceDataByIds
+    .query({ ids: uncached })
     .then((data) => {
-      useResourceDataStore.getState()._setFetched(data);
+      useResourceDataStore.getState()._setFetched(data as ResourceData[]);
 
       const returnedIds = new Set(data.map((r) => r.id));
       for (const id of uncached) {

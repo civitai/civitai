@@ -32,7 +32,10 @@ import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
-import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
+import {
+  openCompatibilityConfirmModal,
+  buildWorkflowPendingChange,
+} from './CompatibilityConfirmModal';
 import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { WhatIfProvider } from './WhatIfProvider';
 import { needsHydration, type PartialResourceValue } from './inputs/resource-select.utils';
@@ -232,6 +235,65 @@ function InnerProvider({
     skipStorage,
   });
 
+  // On mount: detect if the stored workflow/ecosystem was auto-corrected during init
+  // (e.g., workflow or ecosystem was removed/disabled). Show compatibility modal so the user
+  // can pick a valid ecosystem instead of being silently switched.
+  useEffect(() => {
+    try {
+      // Read the raw stored workflow from localStorage (before graph corrections)
+      const globalStored = localStorage.getItem(STORAGE_KEY);
+      if (!globalStored) return;
+      const globalValues = JSON.parse(globalStored) as Record<string, unknown>;
+      const storedWorkflow = globalValues.workflow as string | undefined;
+      if (!storedWorkflow) return;
+
+      // Determine the output type from the stored workflow key prefix
+      // (can't use getOutputTypeForWorkflow — it falls back to 'image' for unknown workflows)
+      const storedOutputType = storedWorkflow.includes('2vid') ? 'video' : 'image';
+
+      // Read the stored ecosystem from the output-scoped storage
+      const outputStored = localStorage.getItem(`${STORAGE_KEY}.output.${storedOutputType}`);
+      if (!outputStored) return;
+      const outputValues = JSON.parse(outputStored) as Record<string, unknown>;
+      const storedEcosystem = outputValues.ecosystem as string | undefined;
+      if (!storedEcosystem) return;
+
+      // Resolve what the graph corrected to
+      const snapshot = graph.getSnapshot() as Record<string, unknown>;
+      const resolvedEcosystem = snapshot.ecosystem as string | undefined;
+
+      // If the stored ecosystem matches the resolved one, no correction happened
+      if (storedEcosystem === resolvedEcosystem) return;
+
+      // Determine the target workflow — use stored if known, else derive from prefix
+      const resolvedWorkflow = workflowConfigByKey.has(storedWorkflow)
+        ? storedWorkflow
+        : storedOutputType === 'video'
+        ? 'txt2vid'
+        : 'txt2img';
+
+      // Verify the stored ecosystem is actually incompatible (not just an internal re-org)
+      const storedEco = ecosystemByKey.get(storedEcosystem);
+      if (storedEco && isWorkflowAvailable(resolvedWorkflow, storedEco.id)) return;
+
+      // Ecosystem was corrected — show compatibility modal
+      openCompatibilityConfirmModal({
+        pendingChange: buildWorkflowPendingChange({
+          workflowId: resolvedWorkflow,
+          currentEcosystem: storedEcosystem,
+        }),
+        onConfirm: (selectedEcosystemKey) => {
+          if (selectedEcosystemKey) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            graph.set({ workflow: resolvedWorkflow, ecosystem: selectedEcosystemKey } as any);
+          }
+        },
+      });
+    } catch {
+      // localStorage read failed, skip
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Sync generation graph store data into the graph
   // - Remix/Replay: full override (reset + set)
   // - Run/Patch: partial update (set only)
@@ -254,21 +316,25 @@ function InnerProvider({
         const remixEcosystemKey = paramsWithoutOutputSettings.ecosystem as string | undefined;
         let resolvedWorkflow = paramsWithoutOutputSettings.workflow as string | undefined;
         if (!resolvedWorkflow || !workflowConfigByKey.has(resolvedWorkflow)) {
-          // Workflow unknown — check the ecosystem's base model type to pick the right default
+          // Workflow unknown — infer output type from the workflow key prefix or ecosystem
+          const isVideoWorkflow =
+            resolvedWorkflow?.includes('2vid') || resolvedWorkflow?.startsWith('vid2');
           const remixEcoEntry = remixEcosystemKey
             ? ecosystemByKey.get(remixEcosystemKey)
             : undefined;
           const isVideoEco =
             remixEcoEntry &&
-            getBaseModelsByEcosystemId(remixEcoEntry.id).some((m) => m.type === 'video');
-          resolvedWorkflow = isVideoEco ? 'txt2vid' : 'txt2img';
+            getBaseModelsByEcosystemId(remixEcoEntry.id).some((m) =>
+              Array.isArray(m.type) ? m.type.includes('video') : m.type === 'video'
+            );
+          resolvedWorkflow = isVideoWorkflow || isVideoEco ? 'txt2vid' : 'txt2img';
         }
 
         // Check if the remix ecosystem supports the resolved workflow
         const remixEco = remixEcosystemKey ? ecosystemByKey.get(remixEcosystemKey) : undefined;
         const ecosystemSupportsWorkflow = remixEco
           ? isWorkflowAvailable(resolvedWorkflow, remixEco.id)
-          : true;
+          : !remixEcosystemKey; // Unknown ecosystem key — treat as incompatible
 
         // Build the values to apply (shared between both paths)
         const remixValues = {
@@ -279,21 +345,13 @@ function InnerProvider({
           vae: split.vae,
         };
 
-        if (!ecosystemSupportsWorkflow && remixEco) {
+        if (!ecosystemSupportsWorkflow && remixEcosystemKey) {
           // Ecosystem doesn't support this workflow — show modal before applying
-          const compatibleIds = getEcosystemsForWorkflow(resolvedWorkflow);
-          const defaultEcoId = compatibleIds[0];
-          const defaultEco = defaultEcoId ? ecosystemById.get(defaultEcoId) : undefined;
-
           openCompatibilityConfirmModal({
-            pendingChange: {
-              type: 'workflow',
-              value: resolvedWorkflow,
-              optionId: resolvedWorkflow,
-              currentEcosystem: remixEcosystemKey!,
-              compatibleEcosystemIds: compatibleIds,
-              defaultEcosystemKey: defaultEco?.key ?? '',
-            },
+            pendingChange: buildWorkflowPendingChange({
+              workflowId: resolvedWorkflow,
+              currentEcosystem: remixEcosystemKey,
+            }),
             onConfirm: (selectedEcosystemKey) => {
               if (selectedEcosystemKey) {
                 graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
@@ -340,9 +398,10 @@ function InnerProvider({
 
         const values = {
           ...data.params,
-          model: split.model,
           resources: mergedResources,
-          vae: split.vae,
+          // Only include model/vae when present — otherwise we'd nullify the current value
+          ...(split.model && { model: split.model }),
+          ...(split.vae && { vae: split.vae }),
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
         graph.set(values as any);

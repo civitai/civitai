@@ -32,7 +32,7 @@ export const rewardsAbusePrevention = createJob(
       AND awardAmount > 0
       GROUP BY ip
       HAVING uniq(be.toUserId) > 1 AND (
-        awarded >= ${abuseLimits.awarded} OR
+        awarded >= ${abuseLimits.awarded} AND
         user_count > ${abuseLimits.user_count}
       )
       ORDER BY awarded DESC;

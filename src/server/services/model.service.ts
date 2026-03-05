@@ -15,10 +15,8 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import {
-  DEPRECATED_BASE_MODELS,
-  getBaseModelGenerationSupported,
-} from '~/shared/constants/base-model.constants';
+import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
+import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -410,10 +408,10 @@ export const getModelsRaw = async ({
   }
 
   if (username || user) {
-    const targetUser = await dbRead.user.findUnique({
-      where: { username: (username || user) ?? '' },
-      select: { id: true },
-    });
+    const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
+    const targetUser =
+      (await dbRead.user.findUnique(userFindArgs)) ??
+      (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw new Error('User not found');
 
@@ -1222,7 +1220,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         const canGenerate =
           !!version?.covered &&
           unavailableGenResources.indexOf(version.id) === -1 &&
-          getBaseModelGenerationSupported(version.baseModel, model.type);
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,

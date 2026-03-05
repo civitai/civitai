@@ -31,6 +31,7 @@ export enum FLIPT_FEATURE_FLAGS {
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
   COMIC_CREATOR = 'comic-creator',
+  AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

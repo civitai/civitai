@@ -92,7 +92,7 @@ export type BaseModelRecord = {
   id: number;
   name: string;
   description?: string;
-  type: MediaType;
+  type: MediaType | MediaType[];
   ecosystemId: number; // Direct reference to ecosystem
   hidden?: boolean;
   disabled?: boolean; // Disables ALL support types (generation, training, auction, etc.)
@@ -121,6 +121,7 @@ export const ECO = {
   Flux2Klein_4B: 56,
   Flux2Klein_4B_base: 57,
   Qwen: 10,
+  Qwen2: 62,
   Chroma: 11,
   HyDit1: 12,
   AuraFlow: 13,
@@ -166,6 +167,7 @@ export const ECO = {
   Lightricks: 51,
   Seedance: 60,
   Anima: 59,
+  Grok: 61,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -521,6 +523,14 @@ export const ecosystems: EcosystemRecord[] = [
 
   // Qwen Family (familyId: 10)
   { id: ECO.Qwen, key: 'Qwen', name: 'qwen', displayName: 'Qwen', familyId: 10, sortOrder: 90 },
+  {
+    id: ECO.Qwen2,
+    key: 'Qwen2',
+    name: 'qwen2',
+    displayName: 'Qwen 2',
+    familyId: 10,
+    sortOrder: 91,
+  },
 
   // ZImage Family (familyId: 11)
   {
@@ -584,7 +594,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.Vidu,
     key: 'Vidu',
     name: 'vidu',
-    displayName: 'Vidu Q1',
+    displayName: 'Vidu',
     sortOrder: 210,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -604,6 +614,7 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 212,
     // txt2vid + img2vid (no vid2vid support currently)
   },
+  { id: ECO.Grok, key: 'Grok', name: 'grok', displayName: 'Grok', familyId: 13, sortOrder: 216 },
   {
     id: ECO.Haiper,
     key: 'Haiper',
@@ -702,6 +713,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Qwen, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Qwen, supportType: 'training', modelTypes: [ModelType.LORA] },
 
+  // Qwen 2 - checkpoint only
+  { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
+
   // HyV1 (Hunyuan Video) - LORA only
   { ecosystemId: ECO.HyV1, supportType: 'generation', modelTypes: loraOnly },
 
@@ -747,6 +761,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Grok - checkpoint only
+  { ecosystemId: ECO.Grok, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Seedream - checkpoint only
   { ecosystemId: ECO.Seedream, supportType: 'generation', modelTypes: checkpointOnly },
@@ -887,6 +904,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Qwen,
     defaults: {
       model: { id: 2552908 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Qwen2,
+    defaults: {
+      model: { id: 2744101 },
       modelLocked: true,
     },
   },
@@ -1073,6 +1097,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Seedance,
     defaults: {
       model: { id: 2623856 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Grok,
+    defaults: {
+      model: { id: 2738377 },
       modelLocked: true,
     },
   },
@@ -1421,6 +1452,8 @@ export const BM = {
   Kling: 69,
   Seedance: 70,
   Anima: 77,
+  Grok: 78,
+  Qwen2: 79,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -1584,6 +1617,11 @@ export const licenses: LicenseRecord[] = [
     notice:
       'The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  {
+    id: 26,
+    name: 'Grok',
+    url: 'https://x.ai/legal/terms-of-service',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -1652,6 +1690,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 12,
     name: 'ByteDance',
     description: "ByteDance's image and video generation models",
+  },
+  {
+    id: 13,
+    name: 'xAI',
+    description: "xAI's image and video generation models",
   },
 ];
 
@@ -1776,6 +1819,16 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B_base,
     licenseId: 14,
+  },
+
+  // Grok
+  {
+    id: BM.Grok,
+    name: 'Grok',
+    description: 'Image and video generation model from xAI',
+    type: ['image', 'video'],
+    ecosystemId: ECO.Grok,
+    licenseId: 26,
   },
 
   // HiDream
@@ -1982,6 +2035,14 @@ export const baseModels: BaseModelRecord[] = [
     ecosystemId: ECO.Qwen,
     licenseId: 13,
     experimental: true,
+  },
+  {
+    id: BM.Qwen2,
+    name: 'Qwen 2',
+    description: 'Next-generation Qwen image generation model',
+    type: 'image',
+    ecosystemId: ECO.Qwen2,
+    licenseId: 13,
   },
 
   // Stable Cascade
@@ -2559,6 +2620,74 @@ export function isModelSupported(
 }
 
 /**
+ * Check if a base model or ecosystem supports generation for a given model type.
+ * Accepts either a base model name (e.g., 'SDXL 1.0') or an ecosystem key (e.g., 'SDXL').
+ */
+export function isBaseModelGenerationSupported(
+  baseModelOrEcosystem: string,
+  modelType: ModelType
+): boolean {
+  // Try base model name first
+  const model = baseModelByName.get(baseModelOrEcosystem);
+  if (model) return isModelSupported(model.id, 'generation', modelType);
+
+  // Fall back to ecosystem key
+  const ecosystem = ecosystemByKey.get(baseModelOrEcosystem);
+  if (!ecosystem) return false;
+
+  const support = getEcosystemSupport(ecosystem.id, 'generation');
+  if (!support || support.disabled) return false;
+
+  return support.modelTypes.includes(modelType);
+}
+
+/**
+ * Check if a base model or ecosystem has any generation support at all.
+ * Accepts either a base model name (e.g., 'SDXL 1.0') or an ecosystem key (e.g., 'SDXL').
+ * Unlike isBaseModelGenerationSupported, this does not require a specific modelType.
+ */
+export function hasGenerationSupport(baseModelOrEcosystem: string): boolean {
+  // Try base model name first
+  const model = baseModelByName.get(baseModelOrEcosystem);
+  if (model) return isModelSupported(model.id, 'generation');
+
+  // Fall back to ecosystem key
+  const ecosystem = ecosystemByKey.get(baseModelOrEcosystem);
+  if (!ecosystem) return false;
+
+  const support = getEcosystemSupport(ecosystem.id, 'generation');
+  return !!support && !support.disabled;
+}
+
+/**
+ * Check if a resource's base model is compatible with a primary ecosystem for generation.
+ * Accepts base model names or ecosystem keys for both the primary and resource parameters.
+ *
+ * @param primaryBaseModelOrEcosystem - The checkpoint's base model name or ecosystem key
+ * @param resourceBaseModel - The resource's base model name
+ * @param resourceModelType - The resource's model type (e.g., 'LORA', 'Checkpoint')
+ * @returns The support level ('full' | 'partial') or null if not compatible
+ */
+export function getResourceGenerationSupport(
+  primaryBaseModelOrEcosystem: string,
+  resourceBaseModel: string,
+  resourceModelType: ModelType
+): SupportLevel | null {
+  // Resolve primary ecosystem
+  const primaryModel = baseModelByName.get(primaryBaseModelOrEcosystem);
+  const primaryEcosystem = primaryModel
+    ? ecosystemById.get(primaryModel.ecosystemId)
+    : ecosystemByKey.get(primaryBaseModelOrEcosystem);
+  if (!primaryEcosystem) return null;
+
+  // Resolve resource ecosystem
+  const resourceModel = baseModelByName.get(resourceBaseModel);
+  if (!resourceModel) return null;
+
+  return getGenerationSupport(primaryEcosystem.id, resourceModel.ecosystemId, resourceModelType);
+}
+
+/**
  * Get generation support level between two ecosystems
  */
 export function getGenerationSupport(
@@ -2743,7 +2872,7 @@ export function getGenerationEcosystemsForMediaType(mediaType: MediaType): strin
   // Get all base models that support generation and match the media type
   const validModels = baseModels.filter((m) => {
     if (m.disabled) return false;
-    if (m.type !== mediaType) return false;
+    if (Array.isArray(m.type) ? !m.type.includes(mediaType) : m.type !== mediaType) return false;
     // Check if ecosystem supports generation
     const support = getEcosystemSupport(m.ecosystemId, 'generation');
     return support && !support.disabled;

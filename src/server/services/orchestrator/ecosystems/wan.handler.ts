@@ -6,7 +6,7 @@
  */
 
 import type {
-  Wan21FalVideoGenInput,
+  Wan21CivitaiVideoGenInput,
   Wan22FalTextToVideoInput,
   Wan22FalImageToVideoInput,
   Wan225bFalTextToVideoInput,
@@ -41,7 +41,7 @@ type WanCtx = EcosystemGraphOutput & { ecosystem: WanBaseModel };
 
 // Return type union
 type WanInput =
-  | Wan21FalVideoGenInput
+  | Wan21CivitaiVideoGenInput
   | Wan22FalTextToVideoInput
   | Wan22FalImageToVideoInput
   | Wan225bFalTextToVideoInput
@@ -53,7 +53,25 @@ type WanInput =
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5';
 
 // Supported aspect ratios per version (from @civitai/client types)
-const v21AspectRatios = ['1:1', '16:9', '9:16'] as const;
+const v21AspectRatiosByResolution: Record<
+  string,
+  { value: string; width: number; height: number }[]
+> = {
+  '480p': [
+    { value: '16:9', width: 848, height: 480 },
+    { value: '3:2', width: 720, height: 480 },
+    { value: '1:1', width: 480, height: 480 },
+    { value: '2:3', width: 480, height: 720 },
+    { value: '9:16', width: 480, height: 848 },
+  ],
+  '720p': [
+    { value: '16:9', width: 1280, height: 720 },
+    { value: '3:2', width: 1080, height: 720 },
+    { value: '1:1', width: 720, height: 720 },
+    { value: '2:3', width: 720, height: 1080 },
+    { value: '9:16', width: 720, height: 1280 },
+  ],
+};
 const v22AspectRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5', '5:4'] as const;
 const v225bAspectRatios = ['1:1', '16:9', '9:16'] as const;
 const v25AspectRatios = ['16:9', '9:16', '1:1'] as const;
@@ -101,19 +119,25 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
     quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
+    frameRate: 24,
   };
 
   // Version-specific handling
   switch (version) {
     case 'v2.1': {
+      const resolution = 'resolution' in data ? (data.resolution as string) : '480p';
+      const ratioEntries =
+        v21AspectRatiosByResolution[resolution] ?? v21AspectRatiosByResolution['480p'];
+      const dims = hasImages
+        ? findClosestAspectRatio(data.images![0], ratioEntries)
+        : data.aspectRatio;
       return removeEmpty({
         ...baseInput,
-        aspectRatio: (hasImages
-          ? getImageAspectRatio(data.images, v21AspectRatios)
-          : data.aspectRatio?.value) as Wan21FalVideoGenInput['aspectRatio'],
-        enablePromptExpansion: false,
-        sourceImage: hasImages ? data.images?.[0]?.url : undefined,
-      }) as Wan21FalVideoGenInput;
+        provider: 'civitai' as const,
+        width: dims?.width,
+        height: dims?.height,
+        images: hasImages ? data.images?.map((x) => x.url) : undefined,
+      }) as Wan21CivitaiVideoGenInput;
     }
 
     case 'v2.2': {
@@ -189,7 +213,7 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
     }
 
     default:
-      return removeEmpty(baseInput) as WanInput;
+      return removeEmpty(baseInput) as unknown as WanInput;
   }
 });
 

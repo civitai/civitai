@@ -53,11 +53,13 @@ export function GeneratedImage({
   request,
   step,
   isLightbox,
+  isActiveSlide,
 }: {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: Omit<NormalizedGeneratedImageStep, 'images'>;
   isLightbox?: boolean;
+  isActiveSlide?: boolean;
 }) {
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const selected = orchestratorImageSelect.useIsSelected({
@@ -235,8 +237,8 @@ export function GeneratedImage({
                   if (e.button === 1) return handleAuxClick(image.url);
                 },
               }}
-              muted={!isLightbox}
-              controls={isLightbox}
+              muted={!isLightbox || !isActiveSlide}
+              controls={isLightbox && isActiveSlide}
               disableWebm
               disablePoster
               imageProps={{

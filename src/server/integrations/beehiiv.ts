@@ -31,6 +31,7 @@ async function beehiivRequest({
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(5000),
   })
     .then((res) => res.json())
     .catch((err) => {
@@ -91,48 +92,57 @@ const getSubscription = newsletterHandler(async (email: string) => {
     return JSON.parse(subscriptionCache) as Subscription | undefined;
   }
 
-  const subscriptions = await beehiivRequest({
-    endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
-    method: 'GET',
-    body: { email },
-  });
-  const subscription = subscriptions?.data?.[0] as Subscription | undefined;
-  await redis.set(getRedisKey(email), JSON.stringify(subscription ?? 'not-subscribed'), {
-    EX: CacheTTL.day,
-  });
-  return subscription;
+  try {
+    const subscriptions = await beehiivRequest({
+      endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
+      method: 'GET',
+      body: { email },
+    });
+    const subscription = subscriptions?.data?.[0] as Subscription | undefined;
+    await redis.set(getRedisKey(email), JSON.stringify(subscription ?? 'not-subscribed'), {
+      EX: CacheTTL.day,
+    });
+    return subscription;
+  } catch (err) {
+    log('Failed to get subscription for', email, (err as Error).message);
+    return undefined;
+  }
 });
 
 const setSubscription = newsletterHandler(
   async ({ email, subscribed }: { email: string; subscribed: boolean }) => {
-    const subscription = await getSubscription(email);
-    if (!subscription && !subscribed) return;
-    const active = subscription?.status === 'active';
+    try {
+      const subscription = await getSubscription(email);
+      if (!subscription && !subscribed) return;
+      const active = subscription?.status === 'active';
 
-    if (!active) {
-      if (!subscribed) return;
-      await beehiivRequest({
-        endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
-        method: 'POST',
-        body: {
-          email,
-          reactivate_existing: true,
-          utm_source: 'Civitai',
-          utm_medium: 'organic',
-          utm_campaign: 'Civitai',
-        },
-      });
-    } else {
-      if (subscribed) return;
-      await beehiivRequest({
-        endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions/${subscription.id}`,
-        method: 'PATCH',
-        body: {
-          unsubscribe: !subscribed,
-        },
-      });
+      if (!active) {
+        if (!subscribed) return;
+        await beehiivRequest({
+          endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
+          method: 'POST',
+          body: {
+            email,
+            reactivate_existing: true,
+            utm_source: 'Civitai',
+            utm_medium: 'organic',
+            utm_campaign: 'Civitai',
+          },
+        });
+      } else {
+        if (subscribed) return;
+        await beehiivRequest({
+          endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions/${subscription.id}`,
+          method: 'PATCH',
+          body: {
+            unsubscribe: !subscribed,
+          },
+        });
+      }
+      await redis.del(getRedisKey(email));
+    } catch (err) {
+      log('Failed to set subscription for', email, (err as Error).message);
     }
-    await redis.del(getRedisKey(email));
   }
 );
 

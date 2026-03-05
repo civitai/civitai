@@ -23,7 +23,10 @@ import {
   getWorkflowsForMediaType,
   workflowHasNode,
 } from '~/shared/data-graph/generation/generation-graph';
-import { openCompatibilityConfirmModal } from '~/components/generation_v2/CompatibilityConfirmModal';
+import {
+  openCompatibilityConfirmModal,
+  buildWorkflowPendingChange,
+} from '~/components/generation_v2/CompatibilityConfirmModal';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -406,32 +409,27 @@ export async function applyWorkflowWithCheck({
   }
 
   // Incompatible ecosystem: show ecosystem selection modal
-  const compatibleIds = getEcosystemsForWorkflow(workflowId);
+  // Determine default ecosystem key — prefer stored preference, then first valid
+  const storedPref = workflowPreferences.getPreferredEcosystem(workflowId);
+  const storedEco = storedPref ? ecosystemByKey.get(storedPref) : undefined;
+  const defaultTarget = storedEco
+    ? { key: storedEco.key }
+    : getValidEcosystemForWorkflow(workflowId, ecosystemKey);
 
-  // Determine default ecosystem key
-  let defaultKey: string;
-  {
-    // Incompatible — use stored preference or first valid ecosystem
-    const storedPref = workflowPreferences.getPreferredEcosystem(workflowId);
-    const storedEco = storedPref ? ecosystemByKey.get(storedPref) : undefined;
-    const target = storedEco
-      ? { key: storedEco.key }
-      : getValidEcosystemForWorkflow(workflowId, ecosystemKey);
-    defaultKey = target?.key ?? ecosystemById.get(compatibleIds[0])?.key ?? '';
-  }
+  const pendingChange = {
+    ...buildWorkflowPendingChange({
+      workflowId,
+      currentEcosystem: ecosystemKey ?? '',
+      optionId: rawWorkflowId,
+      defaultEcosystemKey: defaultTarget?.key,
+    }),
+    incompatible: !compatible,
+  };
 
   openCompatibilityConfirmModal({
-    pendingChange: {
-      type: 'workflow',
-      value: workflowId,
-      optionId: rawWorkflowId,
-      currentEcosystem: ecosystemKey ?? '',
-      compatibleEcosystemIds: compatibleIds,
-      defaultEcosystemKey: defaultKey,
-      incompatible: !compatible,
-    },
+    pendingChange,
     onConfirm: (selectedEcosystemKey) => {
-      const targetEco = selectedEcosystemKey ?? defaultKey;
+      const targetEco = selectedEcosystemKey ?? pendingChange.defaultEcosystemKey;
       const ecosystemChanged = targetEco !== ecosystemKey;
       applyWorkflowToForm({
         workflowId,

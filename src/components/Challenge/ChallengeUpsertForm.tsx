@@ -133,6 +133,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   const isEditing = !!challenge;
   const isActive = challenge?.status === ChallengeStatus.Active;
   const isTerminal =
+    challenge?.status === ChallengeStatus.Completing ||
     challenge?.status === ChallengeStatus.Completed ||
     challenge?.status === ChallengeStatus.Cancelled;
 
@@ -205,10 +206,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    // Convert display dates back to real UTC before validation and submission
-    const startsAt = fromDisplayUTC(data.startsAt);
-    const endsAt = fromDisplayUTC(data.endsAt);
-    const visibleAt = fromDisplayUTC(data.visibleAt);
+    // Convert display dates back to real UTC and snap to exact hours
+    const startsAt = dayjs.utc(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
+    const endsAt = dayjs.utc(fromDisplayUTC(data.endsAt)).startOf('hour').toDate();
+    const visibleAt = dayjs.utc(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
 
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
     if (endsAt <= startsAt) {
@@ -434,6 +435,9 @@ export function ChallengeUpsertForm({ challenge }: Props) {
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
             <Title order={4}>Schedule</Title>
+            <Text size="sm" c="dimmed">
+              Times are snapped to the nearest hour (UTC).
+            </Text>
 
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
               <InputDateTimePicker
@@ -442,6 +446,15 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When challenge appears in feed"
                 valueFormat="lll"
                 disabled={isTerminal}
+                timeInputProps={{ step: 3600 }}
+                onChange={(val) => {
+                  // Snap after field.onChange overwrites (withController calls field.onChange after this)
+                  if (val)
+                    setTimeout(
+                      () => form.setValue('visibleAt', dayjs(val).startOf('hour').toDate()),
+                      0
+                    );
+                }}
               />
 
               <InputDateTimePicker
@@ -450,6 +463,14 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When submissions open"
                 valueFormat="lll"
                 disabled={isActive || isTerminal}
+                timeInputProps={{ step: 3600 }}
+                onChange={(val) => {
+                  if (val)
+                    setTimeout(
+                      () => form.setValue('startsAt', dayjs(val).startOf('hour').toDate()),
+                      0
+                    );
+                }}
               />
 
               <InputDateTimePicker
@@ -458,6 +479,14 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 placeholder="When submissions close"
                 valueFormat="lll"
                 disabled={isTerminal}
+                timeInputProps={{ step: 3600 }}
+                onChange={(val) => {
+                  if (val)
+                    setTimeout(
+                      () => form.setValue('endsAt', dayjs(val).startOf('hour').toDate()),
+                      0
+                    );
+                }}
               />
             </SimpleGrid>
           </Stack>

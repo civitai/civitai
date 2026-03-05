@@ -45,9 +45,12 @@ const logAx = (data: MixedObject) => {
 
 const tracker = new Tracker();
 
+// Entity types eligible for auto-mute on scam impersonation tags
+const autoMuteEntityTypes: AllModKeys[] = ['Chat', 'Comment', 'CommentV2'];
+
 /**
  * Auto-mute users who match high-confidence scam tags and have new accounts.
- * Only applies to Chat entities. Skips moderators.
+ * Applies to Chat, Comment, and CommentV2 entities. Skips moderators.
  */
 async function autoMuteIfScamAccount({
   type,
@@ -58,11 +61,11 @@ async function autoMuteIfScamAccount({
   userId: number;
   matches: string[];
 }) {
-  if (type !== 'Chat') return;
+  if (!autoMuteEntityTypes.includes(type)) return;
   const hasAutoMuteTag = matches.some((m) => autoMuteTags.includes(m));
   if (!hasAutoMuteTag) return;
 
-  log(`Auto-mute check: userId=${userId}, matches=[${matches.join(', ')}]`);
+  log(`Auto-mute check: userId=${userId}, type=${type}, matches=[${matches.join(', ')}]`);
 
   try {
     const user = await dbRead.user.findUnique({
@@ -98,10 +101,27 @@ async function autoMuteIfScamAccount({
     });
     await invalidateSession(userId);
 
-    // Delete the scammer's chat messages so recipients don't see them
-    const deleted = await dbWrite.chatMessage.deleteMany({
-      where: { userId },
-    });
+    // Clean up the scammer's content based on entity type
+    let cleanupSummary: string;
+    if (type === 'Chat') {
+      const deleted = await dbWrite.chatMessage.deleteMany({
+        where: { userId },
+      });
+      cleanupSummary = `deleted ${deleted.count} chat msgs`;
+    } else if (type === 'Comment') {
+      const hidden = await dbWrite.comment.updateMany({
+        where: { userId, hidden: { not: true } },
+        data: { hidden: true },
+      });
+      cleanupSummary = `hidden ${hidden.count} comments`;
+    } else {
+      // CommentV2
+      const hidden = await dbWrite.commentV2.updateMany({
+        where: { userId, hidden: { not: true } },
+        data: { hidden: true },
+      });
+      cleanupSummary = `hidden ${hidden.count} v2 comments`;
+    }
 
     // Audit trail — track in ModActivity (Postgres) and userActivities (ClickHouse)
     await trackModActivity(-1, {
@@ -112,15 +132,15 @@ async function autoMuteIfScamAccount({
     await tracker.userActivity({
       type: 'Muted',
       targetUserId: userId,
-      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(', ')}, deleted: ${
-        deleted.count
-      } msgs)`,
+      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(
+        ', '
+      )}, ${cleanupSummary})`,
     });
 
     log(
-      `Auto-muted user ${userId} and deleted ${
-        deleted.count
-      } messages (account age: ${accountAgeDays}d, tags: ${matches.join(', ')})`
+      `Auto-muted user ${userId} and ${cleanupSummary} (account age: ${accountAgeDays}d, tags: ${matches.join(
+        ', '
+      )})`
     );
   } catch (error) {
     logAx({ message: 'Error auto-muting user', data: { error, userId, matches } });

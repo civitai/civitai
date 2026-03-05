@@ -640,9 +640,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'AdamW8Bit',
     options: optimizerTypes,
     overrides: {
-      sdxl: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
-      pony: { kohya: { default: 'Prodigy' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
-      illustrious: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'AdamW8Bit' } },
+      sd_1_5: { 'ai-toolkit': { default: 'Adafactor' } },
+      sdxl: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'Adafactor' } },
+      pony: { kohya: { default: 'Prodigy' }, 'ai-toolkit': { default: 'Adafactor' } },
+      illustrious: { kohya: { default: 'Adafactor' }, 'ai-toolkit': { default: 'Adafactor' } },
       zimagebase: { all: { default: 'Automagic' } },
     },
   },

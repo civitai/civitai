@@ -9,10 +9,12 @@ import type { Middleware } from '~/server/middleware/middleware-utils';
 import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
 import { regionRestrictionMiddleware } from '~/server/middleware/region-restriction.middleware';
+import { previewAuthMiddleware } from '~/server/middleware/preview-auth.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
-// NOTE: order matters! Region blocking should come first, then restriction redirect
+// NOTE: order matters! Preview auth first, then region blocking, then restriction redirect
 const middlewares: Middleware[] = [
+  previewAuthMiddleware,
   regionBlockMiddleware,
   regionRestrictionMiddleware,
   apiRegionBlockMiddleware,

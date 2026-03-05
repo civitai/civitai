@@ -20,6 +20,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
 import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
+import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
 import {
   type WorkflowCategory,
   type WorkflowConfig,
@@ -43,6 +44,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 /** Image ecosystems that support image:edit (accept optional/required images for editing) */
 const EDIT_IMG_IDS = [
   ECO.Qwen,
+  ECO.Qwen2,
   ECO.Seedream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -52,6 +54,7 @@ const EDIT_IMG_IDS = [
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
   ECO.Flux1Kontext,
+  ECO.Grok,
 ];
 
 /** Image ecosystems that support image:create */
@@ -74,6 +77,7 @@ const TXT2IMG_IDS = [
   // Other image ecosystems
   ECO.Chroma,
   ECO.Qwen,
+  ECO.Qwen2,
   ECO.HiDream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -82,6 +86,7 @@ const TXT2IMG_IDS = [
   ECO.PonyV7,
   ECO.ZImageTurbo,
   ECO.ZImageBase,
+  ECO.Grok,
 ];
 
 /** Video ecosystems that support video:create */
@@ -99,6 +104,7 @@ const TXT2VID_IDS = [
   ECO.Kling,
   // ECO.Haiper,
   // ECO.Lightricks,
+  ECO.Grok,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -166,8 +172,8 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:edit': {
-    label: 'Edit Image',
-    description: 'Edit an image with AI',
+    label: 'Image to Image',
+    description: 'Generate or edit using reference images',
     category: 'image',
     ecosystemIds: EDIT_IMG_IDS,
   },
@@ -230,7 +236,7 @@ export const workflowConfigs: WorkflowConfigs = {
       {
         label: 'First/Last Frame',
         description: 'Generate video from start and end images',
-        ecosystemIds: [ECO.Vidu, ECO.Kling],
+        ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2],
       },
     ],
   },
@@ -240,6 +246,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video using a reference image',
     category: 'video',
     ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling],
+    excludeModelVersionIds: [viduVersionIds.q3],
   },
 
   // ===========================================================================
@@ -260,6 +267,13 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'video',
     enhancement: true,
     ecosystemIds: [],
+  },
+
+  'vid2vid:edit': {
+    label: 'Edit Video',
+    description: 'Edit a video with AI',
+    category: 'video',
+    ecosystemIds: [ECO.Grok],
   },
 };
 
@@ -309,6 +323,8 @@ export type WorkflowOption = {
   enhancement?: boolean;
   /** If true, this workflow requires membership */
   memberOnly?: boolean;
+  /** Model version IDs that should NOT see this option */
+  excludeModelVersionIds?: number[];
 };
 
 /**
@@ -327,6 +343,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     ecosystemSpecific: w.ecosystemIds.length === 1,
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
+    excludeModelVersionIds: w.excludeModelVersionIds,
   };
 
   const aliases: WorkflowOption[] = (w.aliases ?? []).map((alias, i) => ({
@@ -340,6 +357,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     ecosystemSpecific: alias.ecosystemIds.length === 1,
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
+    excludeModelVersionIds: alias.excludeModelVersionIds,
   }));
 
   return [primary, ...aliases];
@@ -366,11 +384,17 @@ export function isWorkflowAvailable(workflowId: string, ecosystemId: number): bo
 /**
  * Get workflows available for a specific ecosystem.
  * Uses per-entry ecosystemIds (not aggregated) so aliases filter correctly.
+ * Optionally filters out options excluded for a specific model version.
  */
-export function getWorkflowsForEcosystem(ecosystemId: number): WorkflowOption[] {
+export function getWorkflowsForEcosystem(
+  ecosystemId: number,
+  modelVersionId?: number
+): WorkflowOption[] {
   return workflowOptions.filter((w) => {
     if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
-    return w.ecosystemIds.includes(ecosystemId);
+    if (!w.ecosystemIds.includes(ecosystemId)) return false;
+    if (modelVersionId && w.excludeModelVersionIds?.includes(modelVersionId)) return false;
+    return true;
   });
 }
 
@@ -465,11 +489,19 @@ export function isEnhancementWorkflow(workflowId: string): boolean {
  * Get the display label for a workflow on a specific ecosystem (alias-aware).
  * Returns the alias label when the ecosystem matches an alias entry,
  * otherwise returns the primary config label.
+ * Skips aliases excluded for the given model version.
  */
-export function getWorkflowLabelForEcosystem(graphKey: string, ecosystemId?: number): string {
+export function getWorkflowLabelForEcosystem(
+  graphKey: string,
+  ecosystemId?: number,
+  modelVersionId?: number
+): string {
   if (ecosystemId !== undefined) {
     const match = workflowOptions.find(
-      (o) => o.graphKey === graphKey && o.ecosystemIds.includes(ecosystemId)
+      (o) =>
+        o.graphKey === graphKey &&
+        o.ecosystemIds.includes(ecosystemId) &&
+        !(modelVersionId && o.excludeModelVersionIds?.includes(modelVersionId))
     );
     if (match) return match.label;
   }
@@ -494,19 +526,43 @@ export function getWorkflowLabelForEcosystem(graphKey: string, ecosystemId?: num
 type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
 
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
-  // Kling V3 on standard video workflows (legacy only supports V1.6, V2, V2.5)
-  ['txt2vid', (ecoId, modelId) => ecoId === ECO.Kling && modelId === klingVersionIds.v3],
-  ['img2vid', (ecoId, modelId) => ecoId === ECO.Kling && modelId === klingVersionIds.v3],
+  // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
+  [
+    'txt2vid',
+    (ecoId, modelId) =>
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
+      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
+      ecoId === ECO.Grok,
+  ],
+  [
+    'img2vid',
+    (ecoId, modelId) =>
+      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
+      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
+      ecoId === ECO.Grok,
+  ],
 
-  // ref2vid: legacy forms for Kling and Veo3 don't support this workflow
-  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3],
+  // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
+  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.Vidu],
 
   // NanoBanana V2 - only available in new form
-  ['txt2img', (ecoId, modelId) => ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2],
+  [
+    'txt2img',
+    (ecoId, modelId) =>
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Grok ||
+      ecoId === ECO.Qwen2,
+  ],
   [
     'img2img:edit',
-    (ecoId, modelId) => ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2,
+    (ecoId, modelId) =>
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Grok ||
+      ecoId === ECO.Qwen2,
   ],
+
+  // Grok vid2vid:edit - no legacy equivalent
+  ['vid2vid:edit', true],
 ]);
 
 /**
@@ -539,7 +595,7 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
 ];
@@ -552,7 +608,8 @@ export const workflowGroups: WorkflowGroup[] = [
  */
 export function getWorkflowModes(
   workflowId: string,
-  ecosystemKey: string
+  ecosystemKey: string,
+  modelVersionId?: number
 ): { label: string; value: string; description?: string }[] {
   const group = workflowGroups.find((g) => g.workflows.includes(workflowId));
   if (!group) return [];
@@ -562,9 +619,16 @@ export function getWorkflowModes(
 
   // Check for ecosystem-specific override first
   const override = group.overrides?.find((o) => o.ecosystemIds.includes(ecosystem.id));
-  const availableWorkflows = override
-    ? override.workflows
-    : group.workflows.filter((wfId) => isWorkflowAvailable(wfId, ecosystem.id));
+  const availableWorkflows = (
+    override
+      ? override.workflows
+      : group.workflows.filter((wfId) => isWorkflowAvailable(wfId, ecosystem.id))
+  ).filter((wfId) => {
+    // Filter out workflows excluded for this model version
+    if (!modelVersionId) return true;
+    const config = workflowConfigByKey.get(wfId);
+    return !config?.excludeModelVersionIds?.includes(modelVersionId);
+  });
 
   const modes = availableWorkflows.map((wfId) => {
     const config = workflowConfigByKey.get(wfId);
