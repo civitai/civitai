@@ -1018,7 +1018,9 @@ export const getAllImages = async (
         })
       : undefined,
     username && !targetUserId
-      ? dbRead.user.findUnique({ where: { username }, select: { id: true } })
+      ? dbRead.user
+          .findUnique({ where: { username }, select: { id: true } })
+          .then((u) => u ?? dbWrite.user.findUnique({ where: { username }, select: { id: true } }))
       : undefined,
     prioritizedUserIds?.length
       ? isFlipt('use-model-version-cache-for-images', modelVersionId?.toString(), {
@@ -2149,7 +2151,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
 
   if (username && !userId) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    const targetUser =
+      (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+      (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
     if (!targetUser) throw new Error('User not found');
     userId = targetUser.id;
 
@@ -2685,7 +2689,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 
   if (username && !userId) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    const targetUser =
+      (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+      (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
     if (!targetUser) throw new Error('User not found');
     userId = targetUser.id;
 

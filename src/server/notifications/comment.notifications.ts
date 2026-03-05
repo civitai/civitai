@@ -20,6 +20,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bounty: `/bounties/${threadParentId}?${queryString}#comments`,
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}#comments`,
     challenge: `/challenges/${threadParentId}?${queryString}#comments`,
+    comicChapter: `/comics/${threadParentId}?${queryString}#comments`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
