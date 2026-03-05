@@ -264,6 +264,7 @@ export const serverSchema = z.object({
 
   FLIPT_URL: z.string(),
   FLIPT_FETCHER_SECRET: z.string(),
+  FLIPT_DEPLOYMENT_ID: z.string().optional(),
 
   // B2 Upload (gated by Flipt flag)
   S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
