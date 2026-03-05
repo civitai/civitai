@@ -6,6 +6,7 @@ import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constan
 import {
   BanReasonCode,
   BlockedReason,
+  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -15,7 +16,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
-import { userUpdateCounter } from '~/server/prom/client';
+import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -103,6 +104,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
+import { getBlocklistData } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -348,14 +350,22 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
-export const isUsernamePermitted = (username: string) => {
+export const isUsernamePermitted = async (username: string): Promise<boolean> => {
   const lower = username.toLowerCase();
-  const isPermitted = !(
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x)
-  );
 
-  return isPermitted;
+  // Static JSON baseline (always enforced, can't be removed via UI)
+  const staticBlocked =
+    blockedUsernames.partial.some((x) => lower.includes(x)) ||
+    blockedUsernames.exact.some((x) => lower === x);
+  if (staticBlocked) return false;
+
+  // Dynamic blocklist from DB/Redis/in-memory cache
+  const [dynamicExact, dynamicPartial] = await Promise.all([
+    getBlocklistData(BlocklistType.UsernameExact),
+    getBlocklistData(BlocklistType.UsernamePartial),
+  ]);
+
+  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
 };
 
 export const updateUserById = async ({
@@ -1636,9 +1646,13 @@ export const createUserReferral = async ({
   loginRedirectReason?: string;
   ip?: string;
 }) => {
-  const user = await dbRead.user.findUniqueOrThrow({
+  const findArgs = {
     where: { id },
     select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
+  } as const;
+  const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'user', caller: 'createUserReferral' });
+    return dbWrite.user.findUniqueOrThrow(findArgs);
   });
 
   if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {

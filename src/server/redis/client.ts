@@ -316,8 +316,9 @@ function getBaseClient(type: 'cache' | 'system') {
       return 'unknown';
     };
     const fliptHostname = getFliptHostname();
-    const fliptContext = { hostname: fliptHostname };
-    log(`Flipt context for enhanced failover flag: hostname=${fliptHostname}`);
+    const fliptContext: Record<string, string> = { hostname: fliptHostname };
+    if (env.FLIPT_DEPLOYMENT_ID) fliptContext.deploymentId = env.FLIPT_DEPLOYMENT_ID;
+    log(`Flipt context for enhanced failover flag: hostname=${fliptHostname}, deploymentId=${env.FLIPT_DEPLOYMENT_ID ?? 'unset'}`);
 
     // Helper to check feature flag before triggering rediscovery
     const maybeRediscover = async (reason: string) => {

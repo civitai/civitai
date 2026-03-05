@@ -359,6 +359,8 @@ export enum BlocklistType {
   EmailDomain = 'EmailDomain',
   LinkDomain = 'LinkDomain',
   MessagePattern = 'MessagePattern',
+  UsernameExact = 'UsernameExact',
+  UsernamePartial = 'UsernamePartial',
 }
 
 export enum ToolSort {

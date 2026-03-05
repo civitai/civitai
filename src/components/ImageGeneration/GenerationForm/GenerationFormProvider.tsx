@@ -163,6 +163,10 @@ function createFormSchema(_domainColor: string) {
 // #endregion
 
 // #region [data formatter]
+// Bump this timestamp to force a one-time form reset for all users on next load.
+const FORM_RESET_TIMESTAMP = new Date('2026-02-27T00:00:00.000Z').getTime();
+const FORM_LAST_RESET_KEY = 'generation-form-last-reset';
+
 const defaultValues = generation.defaultValues;
 
 interface LegacyGenerationData {
@@ -356,6 +360,14 @@ export function GenerationFormProvider({
 
   // Listen to generation-graph.store data and convert to legacy format
   useEffect(() => {
+    // Auto-reset form if user hasn't reset since the last FORM_RESET_TIMESTAMP bump
+    if (typeof window !== 'undefined') {
+      const lastReset = Number(localStorage.getItem(FORM_LAST_RESET_KEY) || '0');
+      if (lastReset < FORM_RESET_TIMESTAMP) {
+        reset();
+      }
+    }
+
     // Only process if counter changed (new data)
     if (storeCounter === prevCounterRef.current || !storeData) return;
 
@@ -670,7 +682,11 @@ export function GenerationFormProvider({
 
   function reset() {
     form.reset(getDefaultValues(form.getValues()), { keepDefaultValues: false });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(FORM_LAST_RESET_KEY, String(Date.now()));
+    }
   }
+
   // #endregion
 
   return (

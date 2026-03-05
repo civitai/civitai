@@ -129,6 +129,8 @@ export const createFluxInput = defineHandler<FluxCtx, TextToImageStepTemplate>((
  */
 function createFluxUltraInput(data: FluxCtx, seed: number): TextToImageStepTemplate {
   const fluxUltraRaw = 'fluxUltraRaw' in data ? data.fluxUltraRaw : false;
+  // Get scheduler (Flux uses Euler by default)
+  const scheduler = samplersToSchedulers['undefined'] as Scheduler;
 
   return {
     $type: 'textToImage',
@@ -143,6 +145,7 @@ function createFluxUltraInput(data: FluxCtx, seed: number): TextToImageStepTempl
       batchSize: 1,
       outputFormat: data.outputFormat,
       engine: fluxUltraRaw ? 'flux-pro-raw' : undefined,
+      scheduler,
     },
   } as TextToImageStepTemplate;
 }

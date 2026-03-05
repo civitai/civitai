@@ -28,7 +28,7 @@ export {
   wanVersionOptions,
   ecosystemToVersionDef,
   wanAspectRatios,
-  wan21AspectRatios,
+  wan21AspectRatiosByResolution,
   wan21Resolutions,
   wan22Resolutions,
   wan225bResolutions,
@@ -86,5 +86,10 @@ export {
   type ImagesNodeConfig,
   type ImageSlotConfig,
 } from './common';
+export {
+  metadataExtractionGraph,
+  type MetadataExtractionGraphCtx,
+} from './metadata-extraction-graph';
 export { hiDreamGraph } from './hi-dream-graph';
+export { grokGraph, grokImageAspectRatios, grokVideoAspectRatiosByResolution } from './grok-graph';
 export type { GenerationCtx } from './context';

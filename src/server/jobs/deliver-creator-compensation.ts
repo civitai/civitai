@@ -80,7 +80,7 @@ export async function runPayout(lastUpdate: Date) {
     SELECT
       modelVersionId,
 	    accountType,
-	    MAX(FLOOR(amount))::int AS amount
+	    SUM(FLOOR(amount))::int AS amount
     FROM orchestration.resourceCompensations
     WHERE date = ${date}
     GROUP BY modelVersionId, accountType

@@ -6,6 +6,7 @@ import type {
   UpsertClubPostInput,
 } from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { createEntityImages, getImagesForPosts } from '~/server/services/image.service';
 import { userContributingClubs } from '~/server/services/club.service';
@@ -32,22 +33,30 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   select: TSelect;
 }) => {
   const clubWithMembership = userId
-    ? await dbRead.club.findUniqueOrThrow({
-        where: { id: clubId },
-        select: {
-          userId: true,
-          admins: {
-            where: {
-              userId,
+    ? await (async () => {
+        const clubFindArgs = {
+          where: { id: clubId },
+          select: {
+            userId: true,
+            admins: {
+              where: {
+                userId,
+              },
+            },
+            memberships: {
+              where: {
+                userId,
+              },
             },
           },
-          memberships: {
-            where: {
-              userId,
-            },
-          },
-        },
-      })
+        } as const;
+        return dbRead.club
+          .findUniqueOrThrow(clubFindArgs)
+          .catch(() => {
+            dbReadFallbackCounter.inc({ entity: 'club', caller: 'getAllClubPosts' });
+            return dbWrite.club.findUniqueOrThrow(clubFindArgs);
+          });
+      })()
     : undefined;
 
   const includeMembersOnlyContent =
@@ -84,7 +93,7 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
   select: TSelect;
 }) => {
   // Need to query the basics first to confirm the user has some right to access this post.
-  const post = await dbRead.clubPost.findUniqueOrThrow({
+  const postFindArgs = {
     select: {
       clubId: true,
       membersOnly: true,
@@ -92,20 +101,34 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
     where: {
       id,
     },
-  });
+  } as const;
+  const post = await dbRead.clubPost
+    .findUniqueOrThrow(postFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'getClubPostById' });
+      return dbWrite.clubPost.findUniqueOrThrow(postFindArgs);
+    });
 
   const clubWithMembership = userId
-    ? await dbRead.club.findUniqueOrThrow({
-        where: { id: post.clubId },
-        select: {
-          userId: true,
-          memberships: {
-            where: {
-              userId,
+    ? await (async () => {
+        const clubMemberFindArgs = {
+          where: { id: post.clubId },
+          select: {
+            userId: true,
+            memberships: {
+              where: {
+                userId,
+              },
             },
           },
-        },
-      })
+        } as const;
+        return dbRead.club
+          .findUniqueOrThrow(clubMemberFindArgs)
+          .catch(() => {
+            dbReadFallbackCounter.inc({ entity: 'club', caller: 'getClubPostById' });
+            return dbWrite.club.findUniqueOrThrow(clubMemberFindArgs);
+          });
+      })()
     : undefined;
 
   const includeMembersOnlyContent =
@@ -119,12 +142,18 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
     throw throwAuthorizationError('You do not have permission to view this post.');
   }
 
-  return dbRead.clubPost.findUniqueOrThrow({
+  const clubPostDetailFindArgs = {
     select,
     where: {
       id,
     },
-  });
+  } as const;
+  return dbRead.clubPost
+    .findUniqueOrThrow(clubPostDetailFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'getClubPostById' });
+      return dbWrite.clubPost.findUniqueOrThrow(clubPostDetailFindArgs);
+    });
 };
 
 export const upsertClubPost = async ({
@@ -206,9 +235,15 @@ export const deleteClubPost = async ({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator?: boolean }) => {
-  const post = await dbRead.clubPost.findUniqueOrThrow({
+  const deletePostFindArgs = {
     where: { id },
-  });
+  } as const;
+  const post = await dbRead.clubPost
+    .findUniqueOrThrow(deletePostFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'deleteClubPost' });
+      return dbWrite.clubPost.findUniqueOrThrow(deletePostFindArgs);
+    });
 
   const [userClub] = await userContributingClubs({ userId, clubIds: [post.clubId] });
 

@@ -247,9 +247,13 @@ export const ModelSelect = ({
     // Determine the appropriate engine based on the base type and model
     const engineToUse =
       data.params?.engine ??
-      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined) : defaultEngine);
+      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined, features) : defaultEngine);
 
     const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
+
+    // Ensure the engine param reflects the computed default (getDefaultTrainingParams
+    // uses the static trainingSettings default of 'kohya' for the engine field itself)
+    defaultParams.engine = engineToUse;
 
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 

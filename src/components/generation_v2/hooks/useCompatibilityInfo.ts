@@ -182,7 +182,10 @@ export function useCompatibilityInfo({
       // Ecosystem has no compatible workflows — determine fallback from its base model type
       const targetEco = targetEcosystemKey ? ecosystemByKey.get(targetEcosystemKey) : undefined;
       const isVideoEcosystem =
-        targetEco && getBaseModelsByEcosystemId(targetEco.id).some((m) => m.type === 'video');
+        targetEco &&
+        getBaseModelsByEcosystemId(targetEco.id).some((m) =>
+          Array.isArray(m.type) ? m.type.includes('video') : m.type === 'video'
+        );
       const fallbackId = isVideoEcosystem ? 'txt2vid' : 'txt2img';
       const fallback = workflowOptions.find((w) => w.id === fallbackId);
       return {

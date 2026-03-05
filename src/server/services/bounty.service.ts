@@ -22,6 +22,7 @@ import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
 import type {
   AddBenefactorUnitAmountInputSchema,
@@ -729,7 +730,7 @@ export const refundBounty = async ({
     throw throwAuthorizationError();
   }
 
-  const bounty = await dbRead.bounty.findUniqueOrThrow({
+  const bountyFindArgs = {
     where: { id },
     select: {
       name: true,
@@ -739,7 +740,13 @@ export const refundBounty = async ({
       userId: true,
       user: { select: { id: true, email: true } },
     },
-  });
+  } as const;
+  const bounty = await dbRead.bounty
+    .findUniqueOrThrow(bountyFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'bounty', caller: 'refundBounty' });
+      return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
+    });
 
   const { user } = bounty;
 

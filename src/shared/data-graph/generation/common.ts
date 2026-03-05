@@ -37,7 +37,10 @@ function getEcosystemKeyForBaseModel(baseModelName: string): string | undefined 
 
 /** Snap a value to the nearest step multiple and clamp to [min, max]. */
 function snapToStep(val: number, step: number, min: number, max: number): number {
-  return Math.min(Math.max(Math.round(val / step) * step, min), max);
+  const precision = Math.max(0, -Math.floor(Math.log10(step)));
+  const snapped = Math.round(val / step) * step;
+  const rounded = parseFloat(snapped.toFixed(precision));
+  return Math.min(Math.max(rounded, min), max);
 }
 
 // =============================================================================
@@ -971,6 +974,15 @@ export interface ImagesNodeConfig {
    * Used for video generation flows where source image metadata improves output quality.
    */
   warnOnMissingAiMetadata?: boolean;
+  /**
+   * Allowed aspect ratios for image cropping.
+   * When provided, images are cropped to fit one of these aspect ratios on upload.
+   */
+  aspectRatios?: `${number}:${number}`[];
+  /**
+   * When true, crops subsequent images to match the first image's aspect ratio.
+   */
+  cropToFirstImage?: boolean;
 }
 
 /**
@@ -998,6 +1010,8 @@ export function imagesNode({
   slots,
   modes,
   warnOnMissingAiMetadata,
+  aspectRatios,
+  cropToFirstImage,
 }: ImagesNodeConfig = {}) {
   // When slots are provided, max is derived from slots length
   const effectiveMax = slots?.length ?? max;
@@ -1039,6 +1053,8 @@ export function imagesNode({
       slots,
       modes,
       warnOnMissingAiMetadata,
+      aspectRatios,
+      cropToFirstImage,
     },
   };
 }

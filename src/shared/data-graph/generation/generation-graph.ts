@@ -24,6 +24,7 @@ import { videoInterpolationGraph } from './video-interpolation-graph';
 import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
+import { metadataExtractionGraph } from './metadata-extraction-graph';
 import { ecosystemGraph } from './ecosystem-graph';
 import {
   getInputTypeForWorkflow,
@@ -98,6 +99,7 @@ const NEW_TO_OLD: Record<string, string> = {
   'video:ref2vid': 'img2vid:ref2vid',
   'video:upscale': 'vid2vid:upscale',
   'video:interpolate': 'vid2vid:interpolate',
+  'video:edit': 'vid2vid:edit',
 };
 
 /** Migrate stored workflow key to current format */
@@ -222,6 +224,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         'txt2vid',
         'img2vid',
         'img2vid:ref2vid',
+        'vid2vid:edit',
       ] as const,
       graph: ecosystemGraph,
     },
@@ -231,6 +234,8 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     // Image enhancement workflows (no ecosystem support)
     { values: ['img2img:upscale'] as const, graph: imageUpscaleGraph },
     { values: ['img2img:remove-background'] as const, graph: imageRemoveBackgroundGraph },
+    // Image utility workflows (no ecosystem support)
+    { values: ['img2meta'] as const, graph: metadataExtractionGraph },
   ]);
 
 // =============================================================================

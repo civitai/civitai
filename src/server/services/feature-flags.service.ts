@@ -52,6 +52,7 @@ const featureFlags = createFeatureFlags({
   aiToolkitHunyuan: { availability: ['mod'], fliptKey: 'ai-toolkit-hunyuan' },
   aiToolkitWan: { availability: ['mod'], fliptKey: 'ai-toolkit-wan' },
   aiToolkitChroma: { availability: ['mod'], fliptKey: 'ai-toolkit-chroma' },
+  aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
   flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
@@ -291,6 +292,8 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
   } else {
     ctx.isLoggedIn = 'false';
   }
+  const deploymentId = process.env.FLIPT_DEPLOYMENT_ID;
+  if (deploymentId) ctx.deploymentId = deploymentId;
   return ctx;
 }
 

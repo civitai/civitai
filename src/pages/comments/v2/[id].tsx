@@ -44,6 +44,16 @@ export const getServerSideProps = createServerSideProps({
           id: true,
         },
       },
+      challenge: {
+        select: {
+          id: true,
+        },
+      },
+      comicChapter: {
+        select: {
+          projectId: true,
+        },
+      },
     };
     const commentV2 = await dbRead.commentV2.findUnique({
       where: { id: Number(id) },
@@ -96,6 +106,12 @@ export const getServerSideProps = createServerSideProps({
           threadParentId: thread.bountyEntry.id,
         };
       }
+      if (thread.challenge) {
+        return { threadType: 'challenge', threadParentId: thread.challenge.id };
+      }
+      if (thread.comicChapter) {
+        return { threadType: 'comicChapter', threadParentId: thread.comicChapter.projectId };
+      }
       if (thread.image) {
         return { threadType: 'image', threadParentId: thread.image.id };
       }
@@ -137,5 +153,5 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function EntriesPage() {
-  return <PageLoader text="Redirecting to bounty entry..." />;
+  return <PageLoader text="Redirecting..." />;
 }

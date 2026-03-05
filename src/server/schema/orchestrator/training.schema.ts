@@ -26,7 +26,6 @@ const aiToolkitBaseParams = z.object({
   trainTextEncoder: z.boolean(),
   lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
   optimizerType: z.enum([
-    'adam',
     'adamw',
     'adamw8bit',
     'adam8bit',
