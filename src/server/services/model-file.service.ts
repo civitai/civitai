@@ -40,7 +40,7 @@ async function fetchModelFilesForCache(ids: number[]) {
 export const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: CacheTTL.sm,
+  ttl: CacheTTL.day,
   async lookupFn(ids) {
     const files = await fetchModelFilesForCache(ids);
 
