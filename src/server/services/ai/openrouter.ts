@@ -1,7 +1,15 @@
 import { OpenRouter } from '@openrouter/sdk';
-import type { Message, SystemMessage, UserMessage } from '@openrouter/sdk/models';
+import type {
+  ChatMessageToolCall,
+  Message,
+  SystemMessage,
+  ToolDefinitionJson,
+  ToolResponseMessage,
+  UserMessage,
+} from '@openrouter/sdk/models';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { agentLog } from '~/server/freshdesk-agent/freshdesk-debug';
 
 // Model aliases for easier usage
 export const AI_MODELS = {
@@ -40,6 +48,24 @@ type GetJsonCompletionInput = {
   retries?: number;
 };
 
+export type RunAgentLoopInput = {
+  model?: AIModel;
+  system: string;
+  userMessage: string;
+  tools: ToolDefinitionJson[];
+  executeToolCall: (name: string, args: Record<string, unknown>) => Promise<string>;
+  maxTurns?: number;
+  maxTokens?: number;
+  temperature?: number;
+};
+
+export type AgentLoopResult = {
+  response: string;
+  turnsUsed: number;
+  toolCallsExecuted: number;
+  exhausted: boolean;
+};
+
 // Convert our simple message format to SDK format
 function toSDKMessage(msg: SimpleMessage): Message {
   if (msg.role === 'system') {
@@ -75,6 +101,7 @@ function toSDKMessage(msg: SimpleMessage): Message {
 
 type CustomOpenRouter = OpenRouter & {
   getJsonCompletion: <T>(params: GetJsonCompletionInput) => Promise<T>;
+  runAgentLoop: (params: RunAgentLoopInput) => Promise<AgentLoopResult>;
 };
 
 declare global {
@@ -149,6 +176,107 @@ function createOpenRouterClient() {
       console.error('Failed to parse JSON from content:', content);
       throw new Error('Failed to parse JSON from completion');
     }
+  };
+
+  customClient.runAgentLoop = async ({
+    model = AI_MODELS.CLAUDE_SONNET,
+    system,
+    userMessage,
+    tools,
+    executeToolCall,
+    maxTurns = 15,
+    maxTokens = 4096,
+    temperature = 0,
+  }: RunAgentLoopInput): Promise<AgentLoopResult> => {
+    const messages: Message[] = [
+      { role: 'system', content: system } as SystemMessage,
+      { role: 'user', content: userMessage } as UserMessage,
+    ];
+
+    let turnsUsed = 0;
+    let toolCallsExecuted = 0;
+
+    while (turnsUsed < maxTurns) {
+      turnsUsed++;
+      agentLog(`--- TURN ${turnsUsed}/${maxTurns} ---`);
+
+      const response = await client.chat.send({
+        model,
+        messages,
+        tools,
+        maxTokens,
+        temperature,
+        provider: { allowFallbacks: true },
+      });
+
+      const choice = response.choices?.[0];
+      if (!choice) throw new Error('No choice in agent loop response');
+
+      const assistantMessage = choice.message;
+      // Push the assistant message to conversation history
+      messages.push(assistantMessage as unknown as Message);
+
+      const toolCalls = assistantMessage.toolCalls;
+
+      agentLog('ASSISTANT', {
+        finishReason: choice.finishReason,
+        hasToolCalls: !!toolCalls?.length,
+        textPreview:
+          typeof assistantMessage.content === 'string'
+            ? assistantMessage.content.slice(0, 200)
+            : undefined,
+      });
+
+      if (choice.finishReason === 'tool_calls' && toolCalls?.length) {
+        // Execute each tool call and collect results
+        const toolResults: ToolResponseMessage[] = await Promise.all(
+          toolCalls.map(async (tc: ChatMessageToolCall) => {
+            toolCallsExecuted++;
+            let result: string;
+            try {
+              const args = JSON.parse(tc.function.arguments);
+              result = await executeToolCall(tc.function.name, args);
+            } catch (err) {
+              result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+            }
+            return {
+              role: 'tool' as const,
+              content: result,
+              toolCallId: tc.id,
+            };
+          })
+        );
+
+        // Add tool results to messages
+        messages.push(...(toolResults as unknown as Message[]));
+        continue;
+      }
+
+      // finish_reason is 'stop' or 'length' — return the final text
+      const content = assistantMessage.content;
+      const finalText = typeof content === 'string' ? content : '';
+      return { response: finalText, turnsUsed, toolCallsExecuted, exhausted: false };
+    }
+
+    // Max turns exhausted — ask the model to summarize what it has so far
+    messages.push({
+      role: 'user',
+      content:
+        'You have run out of turns. Please summarize your findings so far in a concise note. Do NOT call any tools — just respond with your summary text.',
+    } as UserMessage);
+
+    const summaryResponse = await client.chat.send({
+      model,
+      messages,
+      maxTokens,
+      temperature,
+      provider: { allowFallbacks: true },
+    });
+
+    const summaryContent = summaryResponse.choices?.[0]?.message?.content;
+    const summaryText = typeof summaryContent === 'string' ? summaryContent : '';
+
+    return { response: summaryText, turnsUsed, toolCallsExecuted, exhausted: true };
   };
 
   return customClient;
