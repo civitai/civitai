@@ -3,6 +3,14 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 import type { FreshdeskWebhookPhase } from '~/server/http/freshdesk/freshdesk.schema';
+import { agentLog, getDebugContext } from './freshdesk-debug';
+import {
+  investigateUserAccount,
+  investigateCosmetics,
+  investigateContent,
+  investigateSubscription,
+  investigateModeration,
+} from './freshdesk-investigation-tools';
 
 // --- Tool definitions ---
 
@@ -90,6 +98,18 @@ const updateTicketTool: ToolDefinitionJson = {
         status: {
           type: 'number',
           description: 'Ticket status: 2=Open, 3=Pending, 4=Resolved, 5=Closed',
+        },
+        custom_fields: {
+          type: 'object',
+          description:
+            'Custom field values to set. Use cf_feature to classify the ticket feature area.',
+          properties: {
+            cf_feature: {
+              type: 'string',
+              description:
+                'The feature area. One of: Account Login, Email Change, Image Generator, LoRA Trainer, Account Restriction or Banned Account, Content Related Issue, Moderation Decision, Cosmetic Shop, Buzz (Purchase), Buzz (Receiving), Billing or Membership, Bounty System, Civitai Link, Civitai Vault, User Report, API, Other/Misc.',
+            },
+          },
         },
       },
       required: ['ticket_id'],
@@ -231,6 +251,88 @@ const queryDatabaseTool: ToolDefinitionJson = {
   },
 };
 
+// --- Investigation tools ---
+
+const investigateUserAccountTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'investigate_user_account',
+    description:
+      'Get a comprehensive overview of a Civitai user account including profile, status, active strikes, restrictions, and stats. Use this as a starting point for any investigation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'number', description: 'The Civitai user ID' },
+      },
+      required: ['user_id'],
+    },
+  },
+};
+
+const investigateCosmeticsTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'investigate_cosmetics',
+    description:
+      'Get all cosmetics owned by a user, including badges, decorations, shop purchases, and challenge wins. Use for tickets about missing rewards, cosmetic issues, or contest prizes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'number', description: 'The Civitai user ID' },
+      },
+      required: ['user_id'],
+    },
+  },
+};
+
+const investigateContentTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'investigate_content',
+    description:
+      "Get a user's recent models, images, and posts with their moderation status, plus any reports against their content. Use for tickets about content removal, visibility issues, or TOS violations.",
+    parameters: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'number', description: 'The Civitai user ID' },
+      },
+      required: ['user_id'],
+    },
+  },
+};
+
+const investigateSubscriptionTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'investigate_subscription',
+    description:
+      "Get a user's subscription history, one-time purchases, and buzz withdrawal requests. Use for tickets about billing, membership, payments, or buzz cashout issues.",
+    parameters: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'number', description: 'The Civitai user ID' },
+      },
+      required: ['user_id'],
+    },
+  },
+};
+
+const investigateModerationTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'investigate_moderation',
+    description:
+      "Get a user's full moderation history including all strikes (active/expired/voided), restrictions, and reports (both filed and received). Use for tickets about bans, mutes, content removal, or account restrictions.",
+    parameters: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'number', description: 'The Civitai user ID' },
+      },
+      required: ['user_id'],
+    },
+  },
+};
+
 // --- Tool execution ---
 
 const DB_QUERY_TIMEOUT_MS = 30_000;
@@ -262,52 +364,80 @@ function formatResponse(res: { ok: boolean; status: number; data?: unknown; mess
   return JSON.stringify({ error: 'message' in res ? res.message : `Status ${res.status}` });
 }
 
+const MUTATION_TOOLS = new Set([
+  'add_note',
+  'update_ticket',
+  'create_kb_article',
+  'update_kb_article',
+]);
+
 export async function executeToolCall(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
+  const ctx = getDebugContext();
+
+  // Dry-run: intercept mutation tools, return fake success
+  if (ctx?.dryRun && MUTATION_TOOLS.has(name)) {
+    agentLog(`DRY RUN INTERCEPTED: ${name}`, args);
+    return JSON.stringify({ success: true, dry_run: true, tool: name, args });
+  }
+
+  agentLog(`TOOL CALL: ${name}`, args);
+
   try {
+    let result: string;
     switch (name) {
       case 'get_ticket': {
         const res = await freshdeskCaller.getTicket(args.ticket_id as number);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'get_conversations': {
         const res = await freshdeskCaller.getConversations(args.ticket_id as number);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'get_contact': {
         const res = await freshdeskCaller.getContact(args.contact_id as number);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'add_note': {
         const res = await freshdeskCaller.addNote(args.ticket_id as number, args.body as string);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'update_ticket': {
         const { ticket_id, ...data } = args;
         const res = await freshdeskCaller.updateTicket(ticket_id as number, data);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'search_kb': {
         const res = await freshdeskCaller.searchKB(args.query as string);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'get_kb_article': {
         const res = await freshdeskCaller.getArticle(args.article_id as number);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'list_kb_categories': {
         const res = await freshdeskCaller.listCategories();
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'list_kb_folders': {
         const res = await freshdeskCaller.listFolders(args.category_id as number);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'list_kb_articles': {
         const res = await freshdeskCaller.listArticles(args.folder_id as number);
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'create_kb_article': {
         const { folder_id, ...article } = args;
@@ -315,7 +445,8 @@ export async function executeToolCall(
           ...(article as { title: string; description: string; status: number; tags?: string[] }),
           status: 2, // Always publish immediately
         });
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
       }
       case 'update_kb_article': {
         const { article_id, ...article } = args;
@@ -323,22 +454,48 @@ export async function executeToolCall(
           ...article,
           status: 2, // Always publish immediately
         });
-        return formatResponse(res);
+        result = formatResponse(res);
+        break;
+      }
+      case 'investigate_user_account':
+      case 'investigate_cosmetics':
+      case 'investigate_content':
+      case 'investigate_subscription':
+      case 'investigate_moderation': {
+        const userId = Number(args.user_id);
+        if (!Number.isInteger(userId) || userId <= 0) {
+          result = JSON.stringify({ error: 'user_id must be a positive integer' });
+          break;
+        }
+        const investigationFns = {
+          investigate_user_account: investigateUserAccount,
+          investigate_cosmetics: investigateCosmetics,
+          investigate_content: investigateContent,
+          investigate_subscription: investigateSubscription,
+          investigate_moderation: investigateModeration,
+        } as const;
+        result = await investigationFns[name](userId);
+        break;
       }
       case 'query_database': {
-        const result = await Promise.race([
+        result = await Promise.race([
           executeQueryDatabase(args.sql as string),
           new Promise<string>((_, reject) =>
             setTimeout(() => reject(new Error('Query timed out after 30s')), DB_QUERY_TIMEOUT_MS)
           ),
         ]);
-        return result;
+        break;
       }
       default:
-        return `Unknown tool: ${name}`;
+        result = `Unknown tool: ${name}`;
     }
+
+    agentLog(`TOOL RESULT: ${name}`, result);
+    return result;
   } catch (err) {
-    return `Tool execution error: ${err instanceof Error ? err.message : String(err)}`;
+    const errMsg = `Tool execution error: ${err instanceof Error ? err.message : String(err)}`;
+    agentLog(`TOOL ERROR: ${name}`, errMsg);
+    return errMsg;
   }
 }
 
@@ -362,6 +519,14 @@ const KB_TOOLS = [
   updateKBArticleTool,
 ];
 
+const INVESTIGATION_TOOLS = [
+  investigateUserAccountTool,
+  investigateCosmeticsTool,
+  investigateContentTool,
+  investigateSubscriptionTool,
+  investigateModerationTool,
+];
+
 export function getToolsForPhase(phase: FreshdeskWebhookPhase): ToolDefinitionJson[] {
   switch (phase) {
     case 'kb-article':
@@ -369,6 +534,6 @@ export function getToolsForPhase(phase: FreshdeskWebhookPhase): ToolDefinitionJs
     case 'triage':
       return [...COMMON_TOOLS];
     case 'investigation':
-      return [...COMMON_TOOLS, queryDatabaseTool];
+      return [...COMMON_TOOLS, ...INVESTIGATION_TOOLS, queryDatabaseTool];
   }
 }

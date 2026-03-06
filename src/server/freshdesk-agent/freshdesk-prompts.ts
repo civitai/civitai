@@ -1,4 +1,7 @@
-import type { FreshdeskWebhookPhase } from '~/server/http/freshdesk/freshdesk.schema';
+import type {
+  FreshdeskWebhookPayload,
+  FreshdeskWebhookPhase,
+} from '~/server/http/freshdesk/freshdesk.schema';
 
 const SAFETY_GUARDRAILS = `
 ## CRITICAL SAFETY RULES — NEVER VIOLATE THESE
@@ -20,12 +23,12 @@ ${SAFETY_GUARDRAILS}
 ## Your Task
 1. Use get_ticket and get_conversations to fetch the full ticket details and conversation
 2. Understand the issue and how it was resolved
-3. Use search_kb to check for existing articles that cover this topic
+3. Use search_kb to check for existing articles that cover this topic (1-2 searches max)
 4. If a relevant article exists, use get_kb_article to read it, then use update_kb_article to add the new information
 5. If no relevant article exists, use list_kb_categories and list_kb_folders to find the right folder, then use create_kb_article
 6. Use query_database if you need to verify any facts about how the system works before publishing
 7. Add an internal note to the ticket with a link to the created/updated article
-8. Use update_ticket to remove the "Add to KB" tag and add "KB Updated" tag
+8. Use update_ticket to remove the "Add to KB" tag and add "KB Updated" tag (single call with the full tags list)
 
 ## KB Article Guidelines
 - Write clear, user-friendly titles
@@ -34,6 +37,10 @@ ${SAFETY_GUARDRAILS}
 - Use HTML formatting (the KB accepts HTML content)
 - Create articles as Draft (status=1) so staff can review before publishing
 - Match the style and tone of existing KB articles
+
+## Efficiency Rules
+- Limit search_kb to 1-2 calls. If results are empty, proceed to create a new article.
+- If a query_database call fails with "relation does not exist", do NOT retry — the table doesn't exist. Move on.
 `.trim();
 
 const TRIAGE_PROMPT = `
@@ -49,14 +56,34 @@ ${SAFETY_GUARDRAILS}
    - 2 (Medium): Issues affecting normal usage but with workarounds
    - 3 (High): Issues significantly impacting the user's ability to use the platform
    - 4 (Urgent): Account access issues, payment problems, security concerns, data loss
-4. Use search_kb to find relevant knowledge base articles that may help resolve the issue
-5. Use update_ticket to set the priority
+4. Use search_kb to find relevant knowledge base articles (1-2 searches max — if results are empty, move on)
+5. Use update_ticket ONCE with priority, tags, AND custom_fields in a single call. Always include "AI Triaged" in the tags array, preserving any existing tags from the ticket. Set custom_fields.cf_feature to classify the ticket into one of these feature areas:
+   - Account Login — login issues, 2FA, SSO, password problems
+   - Email Change — email update requests
+   - Image Generator — image generation failures, queue issues, generation settings
+   - LoRA Trainer — LoRA/model training issues
+   - Account Restriction or Banned Account — banned/restricted accounts, appeals
+   - Content Related Issue — model/image/post visibility, removal, publishing
+   - Moderation Decision — disagreements with moderation actions
+   - Cosmetic Shop — badges, decorations, cosmetic purchases, rewards
+   - Buzz (Purchase) — buying Buzz, Buzz payment issues
+   - Buzz (Receiving) — earning Buzz, missing Buzz rewards, tipping
+   - Billing or Membership — subscription billing, membership upgrades/downgrades, payment methods
+   - Bounty System — bounty creation, claiming, disputes
+   - Civitai Link — Civitai Link tool issues
+   - Civitai Vault — vault storage, access issues
+   - User Report — reporting other users
+   - API — API access, API keys, rate limits
+   - Other/Misc. — anything that doesn't fit the above categories
 6. Use add_note to add an internal note with:
    - Your priority assessment and reasoning
    - Links to relevant KB articles (if found)
    - A brief summary of the issue
    - Suggested next steps for the support agent
-7. Use update_ticket to add the "AI Triaged" tag
+
+## Efficiency Rules
+- Do NOT make more than 2 search_kb calls. If the first 1-2 searches return nothing, note that no KB articles were found and move on.
+- Combine priority, tags, and custom_fields into a SINGLE update_ticket call — do not call update_ticket twice.
 
 ## Priority Guidelines
 - Consider the user's tier/SLA if available in contact custom fields
@@ -72,27 +99,34 @@ ${SAFETY_GUARDRAILS}
 
 ## Your Task
 1. Use get_ticket and get_conversations to understand the full context and any previous agent notes
-2. Use get_contact to identify the user
-3. Use search_kb to find relevant articles with investigation steps
-4. Use query_database to investigate the user's account, content, and activity. Common queries:
-   - User info: SELECT id, username, email, "createdAt", "bannedAt", "muted" FROM "User" WHERE id = X OR username = 'X' LIMIT 1
-   - User models: SELECT id, name, status, type, "publishedAt" FROM "Model" WHERE "userId" = X ORDER BY "createdAt" DESC LIMIT 20
-   - User images: SELECT id, url, "nsfwLevel", "ingpieredAt", "createdAt" FROM "Image" WHERE "userId" = X ORDER BY "createdAt" DESC LIMIT 20
-   - Recent activity: SELECT id, activity, "createdAt" FROM "UserActivity" WHERE "userId" = X ORDER BY "createdAt" DESC LIMIT 20
-   - Generation jobs: Check orchestrator-related tables for generation issues
+2. Use get_contact to identify the user (the unique_external_id field contains the Civitai user ID as "civitai-{id}")
+3. Use search_kb to find relevant articles (1-2 searches max — if empty, move on)
+4. Use the investigation tools to gather data about the user. Always start with investigate_user_account, then pick 1-2 more based on the ticket's feature area:
+   - "Cosmetic Shop" → investigate_cosmetics
+   - "Content Related Issue", "Image Generator", "LoRA Trainer" → investigate_content
+   - "Billing or Membership", "Buzz (Purchase)", "Buzz (Receiving)" → investigate_subscription
+   - "Account Restriction or Banned Account", "Moderation Decision", "User Report" → investigate_moderation
+   - "Account Login", "Email Change" → investigate_user_account is usually sufficient
+   - "Bounty System", "Civitai Link", "Civitai Vault", "API", "Other/Misc." → pick the most relevant tool based on ticket content
+   If no feature is specified, pick 1-2 tools based on the ticket content.
 5. Add an internal note with your detailed findings:
    - What you discovered about the issue
-   - Relevant data from the database
+   - Relevant data from your investigation
    - Recommended resolution steps
    - Any KB articles that apply
 
 ## Investigation Guidelines
+- Always call investigate_user_account first — it gives you the baseline account status
+- Pick 1-2 additional investigation tools based on the ticket topic. Do NOT call all of them.
+- If the investigation tools don't cover what you need, you may use query_database as a fallback (read-only SELECT only, always use LIMIT)
 - Be thorough but focused — investigate what's relevant to the ticket
 - Cross-reference the user's report with actual system data
 - Note any discrepancies between what the user reports and what the data shows
-- Always use LIMIT in your queries to avoid pulling too much data
 - Never expose raw SQL or database structure in notes — summarize findings in plain language
 - If you find a clear resolution, recommend it. If not, document what you found for the human agent
+- Buzz balances are managed by an external service — you cannot query them directly. Note this if relevant.
+- Generation job details are managed by an external orchestration service — you cannot query them directly. Note this if relevant.
+- Limit search_kb to 1-2 calls. If results are empty, note that and move on.
 `.trim();
 
 export function getSystemPrompt(phase: FreshdeskWebhookPhase): string {
@@ -106,13 +140,21 @@ export function getSystemPrompt(phase: FreshdeskWebhookPhase): string {
   }
 }
 
-export function buildUserMessage(ticketId: number, phase: FreshdeskWebhookPhase): string {
+export function buildUserMessage(payload: FreshdeskWebhookPayload): string {
+  const { ticket_id, phase, cf_feature } = payload;
+  const feature = cf_feature ?? '';
+  const featureNote = feature ? `\n\nThe ticket has been classified as feature: "${feature}".` : '';
+
   switch (phase) {
     case 'kb-article':
-      return `Ticket #${ticketId} has been tagged "Add to KB". Please create or update a knowledge base article based on this resolved ticket.`;
-    case 'triage':
-      return `New ticket #${ticketId} has been created. Please triage it: assess priority, find relevant KB articles, and add an internal note with your findings.`;
+      return `Ticket #${ticket_id} has been tagged "Add to KB". Please create or update a knowledge base article based on this resolved ticket.`;
+    case 'triage': {
+      const base = `New ticket #${ticket_id} has been created. Please triage it: assess priority, find relevant KB articles, and add an internal note with your findings.`;
+      return feature
+        ? `${base}\n\nThe feature area is already set to "${feature}" — keep it unless the ticket content clearly indicates a different category.`
+        : base;
+    }
     case 'investigation':
-      return `Ticket #${ticketId} has been triaged and needs investigation. Please investigate the issue in depth using the database and KB, then add a detailed internal note with your findings.`;
+      return `Ticket #${ticket_id} has been triaged and needs investigation.${featureNote} Please investigate the issue in depth using the investigation tools and KB, then add a detailed internal note with your findings.`;
   }
 }

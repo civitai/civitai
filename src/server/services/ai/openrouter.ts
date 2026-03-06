@@ -9,6 +9,7 @@ import type {
 } from '@openrouter/sdk/models';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { agentLog } from '~/server/freshdesk-agent/freshdesk-debug';
 
 // Model aliases for easier usage
 export const AI_MODELS = {
@@ -197,6 +198,7 @@ function createOpenRouterClient() {
 
     while (turnsUsed < maxTurns) {
       turnsUsed++;
+      agentLog(`--- TURN ${turnsUsed}/${maxTurns} ---`);
 
       const response = await client.chat.send({
         model,
@@ -215,6 +217,16 @@ function createOpenRouterClient() {
       messages.push(assistantMessage as unknown as Message);
 
       const toolCalls = assistantMessage.toolCalls;
+
+      agentLog('ASSISTANT', {
+        finishReason: choice.finishReason,
+        hasToolCalls: !!toolCalls?.length,
+        textPreview:
+          typeof assistantMessage.content === 'string'
+            ? assistantMessage.content.slice(0, 200)
+            : undefined,
+      });
+
       if (choice.finishReason === 'tool_calls' && toolCalls?.length) {
         // Execute each tool call and collect results
         const toolResults: ToolResponseMessage[] = await Promise.all(

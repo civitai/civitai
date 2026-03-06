@@ -11,6 +11,7 @@ export const freshdeskWebhookPayloadSchema = z.object({
   description_text: z.string().optional(),
   tags: z.string().optional(), // Comma-separated from Freshdesk
   triggered_event: z.string().optional(),
+  cf_feature: z.string().optional(), // Custom field: feature area classification
 });
 
 export type FreshdeskWebhookPayload = z.infer<typeof freshdeskWebhookPayloadSchema>;
