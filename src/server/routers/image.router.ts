@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import {
   deleteImageHandler,
@@ -118,10 +119,10 @@ export const imageRouter = router({
   getDetail: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImageDetail({ ...input })),
-  getInfinite: publicProcedure
-    .input(getInfiniteImagesSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(getInfiniteImagesHandler),
+  getInfinite: (env.IS_DATAPACKET
+    ? publicProcedure.input(getInfiniteImagesSchema).use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    : publicProcedure.input(getInfiniteImagesSchema)
+  ).query(getInfiniteImagesHandler),
   getImagesForModelVersion: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImagesForModelVersionCache([input.id])),

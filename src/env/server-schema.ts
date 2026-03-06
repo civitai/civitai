@@ -167,6 +167,7 @@ export const serverSchema = z.object({
       })
     )
     .optional(),
+  IS_DATAPACKET: zc.booleanString.default(false),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.url().optional(),
