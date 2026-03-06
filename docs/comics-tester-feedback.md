@@ -9,7 +9,7 @@ Branch: `fix/comic-tester-feedback`
 
 2. **Page count per chapter in overview** — The chapter list now shows "X pages" next to each chapter name.
 
-3. **Edit button on public comic page** — Owners see an Edit button that links to `/comics/edit/[id]`.
+3. **Edit button on public comic page** — Owners see an Edit button that links to `/comics/project/[id]`.
 
 4. **Delete button on public comic page** — Owners can delete the entire comic project with a confirmation modal.
 
