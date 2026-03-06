@@ -755,7 +755,7 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.day,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
