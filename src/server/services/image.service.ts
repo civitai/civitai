@@ -6332,7 +6332,6 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.bust(id);
-  if (flag === 'hideMeta') await imageMetaCache.bust(id);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -6352,7 +6351,6 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.bust(ids);
-  if (flag === 'hideMeta') await imageMetaCache.bust(ids);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
