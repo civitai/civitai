@@ -49,6 +49,14 @@ Branch: `fix/comic-tester-feedback`
 
 22. **Unpublish protection** — Published chapters that have been purchased by someone via early access cannot be unpublished by the creator.
 
+23. **Multi-model support** — Project-level model selection. Creators can choose between NanoBanana (default), Seedream v4.5, OpenAI GPT-Image, or Qwen in Project Settings. Each model has its own aspect ratio options. The config map (`COMIC_MODEL_CONFIG`) stores engine, baseModel, versionId, and available sizes per model. Qwen uses a separate `img2imgVersionId` for image-to-image generation. Flux2 was evaluated but excluded (only supports 4 images per request).
+
+24. **Persistent panel images (CF upload)** — Generated panel images are now uploaded to Cloudflare Images before creating the Image record. Previously, panels stored raw orchestrator URLs which expire within 30 days. Now uses `uploadViaUrl()` to persist to CF, storing the CF image ID. Applies to all generation paths (create, enhance, bulk, smart create) via the single polling endpoint.
+
+25. **NSFW level indicators** — Panel cards show a colored NSFW badge (PG/PG-13/R/X/XXX) based on the image's `nsfwLevel` from content moderation. Badges also appear on the chapter sidebar (next to page count) and project header (next to stat pills). Uses bitwise flag detection to find the highest set level.
+
+26. **Circular dependency fix (media-schemas)** — Fixed `ReferenceError: Cannot access 'imageValueSchema' before initialization` caused by circular imports in the data-graph generation system. Extracted Zod schemas (`imageValueSchema`, `videoMetadataSchema`, `videoValueSchema`) into a leaf module `media-schemas.ts` that has no circular dependencies, while keeping version IDs in their respective graph files.
+
 ## Not Implemented — Feasibility Analysis
 
 ### Achievable with existing infrastructure (low-medium effort)
@@ -68,5 +76,5 @@ Branch: `fix/comic-tester-feedback`
 | **Reference image tagging** (e.g. "@character with item") | Unknown | AI generation feature — needs UX + prompt engineering for tagged references. |
 | **Comic images in user's posts/images** | TBD | Architecture decision on how comic panels relate to user gallery. Panels already have `imageId` FK to `Image` table, so the data relationship exists. |
 | **PDF export** | Medium | Needs PDF generation service + creator permission controls + optional Buzz-gated download. |
-| **More model options / price range** | Product decision | Needs product/pricing decision + orchestration config changes. |
+| ~~**More model options / price range**~~ | ~~Product decision~~ | ~~Implemented as item #23 — multi-model support with 4 engines.~~ |
 | **Reactions on image panels** | Intentionally skipped | Testers specifically warned against this: "johnny civ is 100% going to fill someone's Romance Tragedy last panel with laughing face reacts" |
