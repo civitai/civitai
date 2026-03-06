@@ -12,6 +12,7 @@ import {
   modelVersionAccessCache,
   postStatCache,
   thumbnailCache,
+  imageMetadataCache,
   userBasicCache,
   userPostCountCache,
 } from '~/server/redis/caches';
@@ -1049,6 +1050,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true, url: true, userId: true },
   });
+  await imageMetadataCache.bust(image.id);
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
