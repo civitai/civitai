@@ -3686,7 +3686,7 @@ type CachedImagesForModelVersions = {
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: CacheTTL.day,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
   // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
   lookupFn: async (ids) => {
     const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
