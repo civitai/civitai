@@ -127,6 +127,7 @@ import {
   processPrepaidMembershipTransitions,
   cancelExpiredPrepaidMemberships,
 } from '~/server/jobs/prepaid-membership-jobs';
+import { getMembershipBuzzTransactionId } from '~/server/schema/subscriptions.schema';
 
 describe('prepaid-membership-jobs', () => {
   beforeEach(() => {
@@ -257,7 +258,72 @@ describe('prepaid-membership-jobs', () => {
 
       expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith([
         expect.objectContaining({
-          externalTransactionId: expect.stringMatching(/civitai-membership:2024-01:1:prod_gold:v3/),
+          externalTransactionId: getMembershipBuzzTransactionId({ date: '2024-01', userId: 1, productId: 'prod_gold' }),
+        }),
+      ]);
+    });
+
+    it('should include idempotency guard in metadata update to prevent duplicate decrements', async () => {
+      vi.setSystemTime(new Date('2024-01-15T01:00:00Z'));
+
+      mockDbWrite.$queryRaw.mockResolvedValue([
+        {
+          id: 'sub_1',
+          userId: 1,
+          buzzAmount: '50000',
+          productId: 'prod_gold',
+          priceId: 'price_gold',
+          interval: 'month',
+          tier: 'gold',
+          buzzType: 'yellow',
+        },
+      ]);
+      mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
+
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
+
+      expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
+
+      // The tagged template literal passes template strings as the first arg
+      const callArgs = mockDbWrite.$executeRaw.mock.calls[0];
+      const sqlParts = callArgs[0]; // TemplateStringsArray
+      const fullSql = sqlParts.join('');
+
+      // Verify the idempotency guard is present in the SQL
+      expect(fullSql).toContain(
+        `AND NOT COALESCE("metadata"->'buzzTransactionIds', '[]'::jsonb) @> jsonb_build_array(updates.data ->> 'externalTransactionId')`
+      );
+    });
+
+    it('should pass correct userData with externalTransactionId to metadata update', async () => {
+      vi.setSystemTime(new Date('2024-01-15T01:00:00Z'));
+
+      mockDbWrite.$queryRaw.mockResolvedValue([
+        {
+          id: 'sub_1',
+          userId: 1,
+          buzzAmount: '50000',
+          productId: 'prod_gold',
+          priceId: 'price_gold',
+          interval: 'month',
+          tier: 'gold',
+          buzzType: 'yellow',
+        },
+      ]);
+      mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
+
+      await deliverPrepaidMembershipBuzz.run({ req: undefined }).result;
+
+      // The interpolated value (second element in call args) should contain the userData JSON
+      const callArgs = mockDbWrite.$executeRaw.mock.calls[0];
+      const interpolatedValue = callArgs[1]; // The JSON.stringify'd userData
+      const userData = JSON.parse(interpolatedValue);
+
+      expect(userData).toEqual([
+        expect.objectContaining({
+          id: 'sub_1',
+          tier: 'gold',
+          externalTransactionId: getMembershipBuzzTransactionId({ date: '2024-01', userId: 1, productId: 'prod_gold' }),
         }),
       ]);
     });
