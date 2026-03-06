@@ -253,6 +253,8 @@ export const imageUpscaleGraph = new DataGraph<Record<never, never>, GenerationC
           value: UpscaleSelection,
           ctx: { images?: { width: number; height: number }[] }
         ) => {
+          // Guard: transform can be called before a value is set (e.g., append from menu)
+          if (!value) return (defaultValue ?? value) as UpscaleSelection;
           const imgs = ctx.images ?? [];
           if (imgs.length === 0) return value;
 
