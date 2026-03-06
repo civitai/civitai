@@ -3895,7 +3895,7 @@ export const removeImageResource = async ({
     // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
     purgeImageGenerationDataCache(imageId);
-    // purgeCache({ tags: [`image-resources-${imageId}`] });
+    await imageResourcesCache.bust(imageId);
 
     return resource;
   } catch (error) {
@@ -6208,6 +6208,7 @@ export async function createImageResources({
     `;
   }
 
+  await imageResourcesCache.bust(imageId);
   return resources;
 }
 
@@ -6331,6 +6332,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.bust(id);
+  if (flag === 'hideMeta') await imageMetaCache.bust(id);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -6350,6 +6352,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.bust(ids);
+  if (flag === 'hideMeta') await imageMetaCache.bust(ids);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
@@ -6364,10 +6367,7 @@ export async function refreshImageResources(imageId: number) {
     DELETE FROM "ImageResourceNew" WHERE "imageId" = ${imageId} AND detected
   `;
   await createImageResources({ imageId });
-  // await queueImageSearchIndexUpdate({
-  //   ids: [imageId],
-  //   action: SearchIndexUpdateQueueAction.Update,
-  // });
+  await imageResourcesCache.bust(imageId);
   return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
 }
 
