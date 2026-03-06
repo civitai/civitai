@@ -6,6 +6,7 @@
  */
 
 import z from 'zod';
+import { videoValueSchema, videoMetadataSchema } from './media-schemas';
 import {
   baseModelByName,
   ecosystemById,
@@ -1093,26 +1094,8 @@ export type VideoValue = {
   metadata?: VideoMetadata;
 };
 
-/** Zod schema for image value (url + dimensions) */
-export const imageValueSchema = z.object({
-  url: z.string(),
-  width: z.number(),
-  height: z.number(),
-});
-
-/** Zod schema for video metadata */
-export const videoMetadataSchema = z.object({
-  fps: z.number(),
-  width: z.number(),
-  height: z.number(),
-  duration: z.number(),
-});
-
-/** Zod schema for video value */
-export const videoValueSchema = z.object({
-  url: z.string(),
-  metadata: videoMetadataSchema.optional(),
-});
+// Re-exported from media-schemas.ts to avoid circular dependency TDZ errors
+export { imageValueSchema, videoMetadataSchema, videoValueSchema } from './media-schemas';
 
 /**
  * Creates a video source node.

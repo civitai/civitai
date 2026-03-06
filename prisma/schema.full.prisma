@@ -4998,6 +4998,7 @@ model ComicProject {
   heroImage         Image?             @relation("comicProjectHero", fields: [heroImageId], references: [id], onDelete: SetNull)
   heroImagePosition Int                @default(50)
   status            ComicProjectStatus @default(Active)
+  tosViolation  Boolean            @default(false)
   baseModel     String?            @db.VarChar(50)
   genre         ComicGenre?
   nsfwLevel     Int                @default(0)
@@ -5016,15 +5017,19 @@ model ComicProject {
 }
 
 model ComicChapter {
-  projectId   Int
-  project     ComicProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name        String             @db.VarChar(255) @default("Chapter 1")
-  position    Int                @default(0)
-  status      ComicChapterStatus @default(Draft)
-  publishedAt DateTime?
-  nsfwLevel   Int                @default(0)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  id                Int                @default(autoincrement()) @unique
+  projectId         Int
+  project           ComicProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name              String             @db.VarChar(255) @default("Chapter 1")
+  position          Int                @default(0)
+  status            ComicChapterStatus @default(Draft)
+  availability      Availability       @default(Public)
+  earlyAccessConfig Json?
+  earlyAccessEndsAt DateTime?
+  publishedAt       DateTime?
+  nsfwLevel         Int                @default(0)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
   panels ComicPanel[]
   thread Thread?
