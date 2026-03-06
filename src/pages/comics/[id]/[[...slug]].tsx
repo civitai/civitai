@@ -543,10 +543,14 @@ function ComicOverview({ project }: { project: Project }) {
                       </p>
                       <p className={styles.chapterPanelCount}>
                         {ch.isLocked ? (
-                          <>
-                            Early access · free in {daysUntilFree}{' '}
-                            {daysUntilFree === 1 ? 'day' : 'days'}
-                          </>
+                          daysUntilFree > 0 ? (
+                            <>
+                              Early access · free in {daysUntilFree}{' '}
+                              {daysUntilFree === 1 ? 'day' : 'days'}
+                            </>
+                          ) : (
+                            <>Early access</>
+                          )
                         ) : (
                           <>
                             {ch.panelCount} {ch.panelCount === 1 ? 'page' : 'pages'}
@@ -861,6 +865,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
               <div className={styles.readerChapterNav}>
                 <SegmentedControl
                   size="xs"
+                  aria-label="Reading mode"
                   value={readerMode}
                   onChange={handleModeChange}
                   data={[
@@ -868,7 +873,9 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                       value: 'scroll',
                       label: (
                         <Tooltip label="Scroll view">
-                          <IconLayoutList size={16} />
+                          <span role="img" aria-label="Scroll view">
+                            <IconLayoutList size={16} />
+                          </span>
                         </Tooltip>
                       ),
                     },
@@ -876,7 +883,9 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                       value: 'pages',
                       label: (
                         <Tooltip label="Page view">
-                          <IconColumns size={16} />
+                          <span role="img" aria-label="Page view">
+                            <IconColumns size={16} />
+                          </span>
                         </Tooltip>
                       ),
                     },

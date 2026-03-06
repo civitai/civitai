@@ -1339,20 +1339,20 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
-      // Get all chapter positions before deletion so we know what to re-compact
-      const allChapters = await dbWrite.comicChapter.findMany({
-        where: { projectId: input.projectId },
-        orderBy: { position: 'asc' },
-        select: { position: true },
-      });
-      const remaining = allChapters.filter((ch) => ch.position !== input.chapterPosition);
-
       await dbWrite.$transaction(async (tx) => {
         await tx.comicChapter.delete({
           where: {
             projectId_position: { projectId: input.projectId, position: input.chapterPosition },
           },
         });
+
+        // Get remaining chapter positions inside the transaction to avoid race conditions
+        const allChapters = await tx.comicChapter.findMany({
+          where: { projectId: input.projectId },
+          orderBy: { position: 'asc' },
+          select: { position: true },
+        });
+        const remaining = allChapters;
 
         // Re-compact positions so chapters are sequential (0, 1, 2, ...)
         if (remaining.length > 0) {
@@ -2047,11 +2047,25 @@ export const comicsRouter = router({
             genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
           // Upload to Cloudflare — orchestrator URLs expire within 30 days
-          const { id: cfImageId } = await uploadViaUrl(imageUrl, {
-            userId: ctx.user!.id,
-            source: 'comic-panel',
-            panelId: panel.id,
-          });
+          let cfImageId: string;
+          try {
+            const result = await uploadViaUrl(imageUrl, {
+              userId: ctx.user!.id,
+              source: 'comic-panel',
+              panelId: panel.id,
+            });
+            cfImageId = result.id;
+          } catch (e) {
+            console.error(`Failed to upload panel ${panel.id} image to CF:`, e);
+            await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: {
+                status: ComicPanelStatus.Failed,
+                errorMessage: 'Image upload failed. Please regenerate.',
+              },
+            });
+            return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
+          }
 
           // Create Image record for content moderation pipeline
           const image = await dbWrite.image.create({

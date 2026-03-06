@@ -1276,11 +1276,12 @@ function ProjectWorkspace() {
         aspectRatios: ['3:4'] as `${number}:${number}`[],
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
-          if (blob) {
-            const result = await uploadToCF(new File([blob], 'cover.jpg', { type: blob.type }));
-            setEditCoverUrl(result.id);
-            setEditCoverImageId(null);
-          }
+          const uploadFile = blob
+            ? new File([blob], 'cover.jpg', { type: blob.type })
+            : file;
+          const result = await uploadToCF(uploadFile);
+          setEditCoverUrl(result.id);
+          setEditCoverImageId(null);
           URL.revokeObjectURL(url);
         },
         onCancel: () => URL.revokeObjectURL(url),

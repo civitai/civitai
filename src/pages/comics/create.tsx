@@ -83,10 +83,11 @@ function CreateComicPage() {
         aspectRatios: ['3:4'] as `${number}:${number}`[],
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
-          if (blob) {
-            const result = await uploadCoverToCF(new File([blob], 'cover.jpg', { type: blob.type }));
-            setCoverUrl(result.id);
-          }
+          const uploadFile = blob
+            ? new File([blob], 'cover.jpg', { type: blob.type })
+            : file;
+          const result = await uploadCoverToCF(uploadFile);
+          setCoverUrl(result.id);
           URL.revokeObjectURL(url);
         },
         onCancel: () => URL.revokeObjectURL(url),
