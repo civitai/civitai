@@ -190,7 +190,8 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
     numberOfRepeats: aiToolkitParams.numRepeats ?? undefined,
-  };
+    triggerWord: loraName,
+  } as AiToolkitTrainingInput & { triggerWord: string };
 
   if (aiToolkitParams.ecosystem === 'sd1') {
     trainingInput = {

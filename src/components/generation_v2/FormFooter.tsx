@@ -6,9 +6,25 @@
  * Includes alerts for terms agreement, generation status, and errors.
  */
 
-import { Alert, Button, Card, Notification, NumberInput, Text } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Card,
+  LoadingOverlay,
+  Menu,
+  Notification,
+  NumberInput,
+  Text,
+} from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconArrowRight,
+  IconArrowsShuffle,
+  IconCheck,
+  IconDots,
+  IconX,
+} from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -48,9 +64,22 @@ import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import {
+  workflowConfigByKey,
+  getEcosystemsForWorkflow,
+  isWorkflowAvailable,
+} from '~/shared/data-graph/generation/config/workflows';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  openCompatibilityConfirmModal,
+  buildWorkflowPendingChange,
+} from '~/components/generation_v2/CompatibilityConfirmModal';
+import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { useRemixOfId } from './hooks/useRemixOfId';
 import { remixStore } from '~/store/remix.store';
+import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
+import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
+import { generationGraphStore, REMIX_WORKFLOW_OVERRIDES } from '~/store/generation-graph.store';
 import { clearStorageForOutput } from './GenerationFormProvider';
 
 // =============================================================================
@@ -266,7 +295,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 // FormFooter Component
 // =============================================================================
 
-export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void } = {}) {
+export function FormFooter({
+  onSubmitSuccess,
+  noSubmit,
+}: { onSubmitSuccess?: () => void; noSubmit?: boolean } = {}) {
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
@@ -351,7 +383,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     const snapshot = graph.getSnapshot() as ResourceSnapshot & {
       workflow?: string;
       images?: Array<{ url: string }>;
-      video?: {url: string};
+      video?: { url: string };
     };
     const hasCreatorTip = getHasCreatorTip(snapshot);
 
@@ -510,58 +542,60 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         </Alert>
       )}
 
-      {/* Main form footer - only show when terms are reviewed */}
-      {reviewed && (
-        <>
-          <PriorityAlertSpace
-            submitError={submitError}
-            onClearSubmitError={() => setSubmitError(undefined)}
-            missingFieldMessage={missingFieldMessage}
-          />
+      <PriorityAlertSpace
+        submitError={submitError}
+        onClearSubmitError={() => setSubmitError(undefined)}
+        missingFieldMessage={missingFieldMessage}
+      />
 
-          {/* Quantity Input, Submit Button, Reset Button */}
-          <div className="flex min-h-[52px] gap-2">
-            <Controller
-              graph={graph}
-              name="quantity"
-              render={({ value, meta, onChange }) => (
-                <Card withBorder className="flex max-w-[88px] flex-col p-0">
-                  <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
-                    Quantity
-                  </Text>
-                  <NumberInput
-                    value={value ?? 1}
-                    onChange={(val) => onChange(Number(val) || 1)}
-                    min={meta.min}
-                    max={meta.max}
-                    step={meta.step}
-                    size="md"
-                    variant="unstyled"
-                    style={{ marginTop: -16 }}
-                    styles={{
-                      input: {
-                        textAlign: 'center',
-                        fontWeight: 500,
-                        paddingRight: 27,
-                        lineHeight: 1,
-                        paddingTop: 22,
-                        paddingBottom: 6,
-                        height: 'auto',
-                      },
-                    }}
-                  />
-                </Card>
-              )}
-            />
-            <SubmitButton
-              isLoading={generateMutation.isLoading || isMinLoading}
-              onSubmit={handleSubmit}
-            />
-            <Button onClick={handleReset} variant="default" className="h-auto px-3">
-              Reset
-            </Button>
-          </div>
-        </>
+      {/* Main form footer - only show when terms are reviewed */}
+      {reviewed && !noSubmit && (
+        <div className="flex min-h-[52px] gap-2">
+          <Controller
+            graph={graph}
+            name="quantity"
+            render={({ value, meta, onChange }) => (
+              <Card withBorder className="flex max-w-[88px] flex-col p-0">
+                <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
+                  Quantity
+                </Text>
+                <NumberInput
+                  value={value ?? 1}
+                  onChange={(val) => onChange(Number(val) || 1)}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                  size="md"
+                  variant="unstyled"
+                  style={{ marginTop: -16 }}
+                  styles={{
+                    input: {
+                      textAlign: 'center',
+                      fontWeight: 500,
+                      paddingRight: 27,
+                      lineHeight: 1,
+                      paddingTop: 22,
+                      paddingBottom: 6,
+                      height: 'auto',
+                    },
+                  }}
+                />
+              </Card>
+            )}
+          />
+          <SubmitButton
+            isLoading={generateMutation.isLoading || isMinLoading}
+            onSubmit={handleSubmit}
+          />
+          <Button onClick={handleReset} variant="default" className="h-auto px-3">
+            Reset
+          </Button>
+        </div>
+      )}
+
+      {/* Metadata extraction remix/workflow buttons */}
+      {(graph.getSnapshot() as { workflow?: string }).workflow === 'img2meta' && (
+        <MetadataExtractionFooter />
       )}
 
       {/* Dismissible Status Message */}
@@ -572,6 +606,179 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           </CustomMarkdown>
         </DismissibleAlert>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// MetadataExtractionFooter
+// =============================================================================
+
+const PRIMARY_WORKFLOW_KEYS = ['txt2img', 'img2img', 'img2img:edit'];
+
+function MetadataExtractionFooter() {
+  const {
+    metadata,
+    resolvedResources,
+    params: serverParams,
+    fileUrl,
+    isResolving,
+  } = useMetadataExtractionStore();
+
+  const hasMetadata = metadata && Object.keys(metadata).length > 0;
+  const ecosystemKey = serverParams?.ecosystem as string | undefined;
+
+  const { groups } = useGeneratedItemWorkflows({
+    outputType: 'image',
+    ecosystemKey,
+    filterBy: 'output',
+  });
+
+  // Filter to non-enhancement, non-alias, non-img2meta workflows
+  const imageWorkflows = (groups.find((g) => g.category === 'image')?.workflows ?? []).filter(
+    (w) => !w.enhancement && w.id === w.graphKey && w.graphKey !== 'img2meta'
+  );
+  const primaryWorkflows = imageWorkflows.filter((w) => PRIMARY_WORKFLOW_KEYS.includes(w.graphKey));
+  const secondaryWorkflows = imageWorkflows.filter(
+    (w) => !PRIMARY_WORKFLOW_KEYS.includes(w.graphKey)
+  );
+
+  const applyToForm = (
+    workflowKey: string,
+    ecosystem: string | undefined,
+    opts?: { withSeed?: boolean; forceImage?: boolean }
+  ) => {
+    if (!serverParams) return;
+
+    const params: Record<string, unknown> = { ...serverParams, workflow: workflowKey };
+    if (ecosystem) params.ecosystem = ecosystem;
+    if (!opts?.withSeed) delete params.seed;
+    if (opts?.forceImage && fileUrl) {
+      params.images = [fileUrl];
+    }
+
+    generationGraphStore.setData({
+      params,
+      resources: ecosystem && ecosystem !== ecosystemKey ? [] : resolvedResources,
+      runType: 'remix',
+    });
+  };
+
+  const handleApply = (
+    workflowKey: string,
+    opts?: { withSeed?: boolean; forceImage?: boolean }
+  ) => {
+    if (!serverParams) return;
+
+    const workflowEcosystems = getEcosystemsForWorkflow(workflowKey);
+    const isStandalone = workflowEcosystems.length === 0;
+
+    // Standalone workflows (no ecosystem requirement) — apply directly
+    if (isStandalone) {
+      applyToForm(workflowKey, undefined, opts);
+      return;
+    }
+
+    // Check if the inferred ecosystem is compatible with the target workflow
+    const ecosystemId = ecosystemKey ? ecosystemByKey.get(ecosystemKey)?.id : undefined;
+    const compatible = ecosystemId != null && isWorkflowAvailable(workflowKey, ecosystemId);
+
+    if (compatible) {
+      // Ecosystem is known and compatible — apply directly
+      applyToForm(workflowKey, ecosystemKey, opts);
+      return;
+    }
+
+    // Ecosystem unknown or incompatible — show ecosystem selection modal
+    const storedPref = workflowPreferences.getPreferredEcosystem(workflowKey);
+    const storedEco = storedPref ? ecosystemByKey.get(storedPref) : undefined;
+    const defaultEcosystemKey = storedEco?.key ?? undefined;
+
+    const pendingChange = {
+      ...buildWorkflowPendingChange({
+        workflowId: workflowKey,
+        currentEcosystem: ecosystemKey ?? '',
+        defaultEcosystemKey,
+      }),
+      incompatible: !!ecosystemKey && !compatible,
+    };
+
+    openCompatibilityConfirmModal({
+      pendingChange,
+      onConfirm: (selectedEcosystemKey) => {
+        const targetEco = selectedEcosystemKey ?? pendingChange.defaultEcosystemKey;
+        applyToForm(workflowKey, targetEco, opts);
+      },
+    });
+  };
+
+  return (
+    <div className="relative flex flex-col gap-2">
+      <LoadingOverlay visible={isResolving} loaderProps={{ size: 'sm' }} />
+      <div className="flex flex-wrap gap-1">
+        {primaryWorkflows.map((w) => (
+          <Button
+            key={w.id}
+            variant="light"
+            color="gray"
+            size="compact-xs"
+            disabled={!hasMetadata || isResolving}
+            rightSection={<IconArrowRight size={12} />}
+            onClick={() => handleApply(w.graphKey, { forceImage: true })}
+          >
+            {w.label}
+          </Button>
+        ))}
+        {secondaryWorkflows.length > 0 && (
+          <Menu position="top-end" withinPortal>
+            <Menu.Target>
+              <Button
+                variant="light"
+                color="gray"
+                size="compact-xs"
+                disabled={!hasMetadata || isResolving}
+              >
+                <IconDots size={14} />
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {secondaryWorkflows.map((w) => (
+                <Menu.Item
+                  key={w.id}
+                  rightSection={<IconArrowRight size={14} />}
+                  onClick={() => handleApply(w.graphKey, { forceImage: true })}
+                >
+                  {w.label}
+                </Menu.Item>
+              ))}
+            </Menu.Dropdown>
+          </Menu>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button
+          className="flex-1"
+          disabled={!hasMetadata || isResolving}
+          leftSection={<IconArrowsShuffle size={16} />}
+          onClick={() => {
+            const w = (serverParams?.workflow as string) ?? 'txt2img';
+            handleApply(REMIX_WORKFLOW_OVERRIDES[w] ?? w);
+          }}
+        >
+          Remix
+        </Button>
+        <Button
+          variant="light"
+          disabled={!hasMetadata || isResolving}
+          leftSection={<IconArrowsShuffle size={16} />}
+          onClick={() => {
+            const w = (serverParams?.workflow as string) ?? 'txt2img';
+            handleApply(REMIX_WORKFLOW_OVERRIDES[w] ?? w, { withSeed: true });
+          }}
+        >
+          Remix with Seed
+        </Button>
+      </div>
     </div>
   );
 }

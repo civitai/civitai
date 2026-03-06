@@ -408,10 +408,10 @@ export const getModelsRaw = async ({
   }
 
   if (username || user) {
-    const targetUser = await dbRead.user.findUnique({
-      where: { username: (username || user) ?? '' },
-      select: { id: true },
-    });
+    const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
+    const targetUser =
+      (await dbRead.user.findUnique(userFindArgs)) ??
+      (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw new Error('User not found');
 

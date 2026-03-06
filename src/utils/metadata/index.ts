@@ -90,11 +90,10 @@ const CIVITAI_META_ATTR = 'data-civitai-metadata';
 export async function copyMetadataToClipboard(meta: ImageMetaProps): Promise<boolean> {
   const textPlain = encodeMetadata(meta);
   const jsonMeta = JSON.stringify(meta);
-  const escapedText = textPlain
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  const textHtml = `<div ${CIVITAI_META_ATTR}="${encodeURIComponent(jsonMeta)}">${escapedText}</div>`;
+  const escapedText = textPlain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const textHtml = `<div ${CIVITAI_META_ATTR}="${encodeURIComponent(
+    jsonMeta
+  )}">${escapedText}</div>`;
 
   try {
     await navigator.clipboard.write([

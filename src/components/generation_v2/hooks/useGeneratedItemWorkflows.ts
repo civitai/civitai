@@ -15,6 +15,7 @@ import {
   isWorkflowAvailable,
   workflowConfigByKey,
   workflowOptionById,
+  workflowOptions,
   type WorkflowOption,
   type WorkflowCategory,
   getEcosystemsForWorkflow,
@@ -57,6 +58,12 @@ export interface UseGeneratedItemWorkflowsOptions {
   outputType: 'image' | 'video';
   /** Ecosystem key from the generated output (step.params.baseModel) */
   ecosystemKey?: string;
+  /**
+   * How to filter workflows:
+   * - 'input' (default): workflows that accept this media type as input (for generated item actions)
+   * - 'output': all workflows that produce this media type (for remix/workflow selection)
+   */
+  filterBy?: 'input' | 'output';
 }
 
 export interface UseGeneratedItemWorkflowsReturn {
@@ -88,12 +95,18 @@ const videoCategoryOrder: WorkflowCategory[] = ['video'];
 export function useGeneratedItemWorkflows({
   outputType,
   ecosystemKey,
+  filterBy = 'input',
 }: UseGeneratedItemWorkflowsOptions): UseGeneratedItemWorkflowsReturn {
   return useMemo(() => {
     const ecosystemId = ecosystemKey ? ecosystemByKey.get(ecosystemKey)?.id : undefined;
 
-    // Get all workflows that accept this output type as input (derived from graph structure)
-    const availableWorkflows = getWorkflowsForMediaType(outputType);
+    // Get workflows based on filter mode:
+    // - 'input': workflows that accept this media type as input (for generated item actions)
+    // - 'output': all workflows that produce this media type (for remix/workflow selection)
+    const availableWorkflows =
+      filterBy === 'input'
+        ? getWorkflowsForMediaType(outputType)
+        : workflowOptions.filter((w) => w.category === outputType);
 
     // Determine compatibility for each workflow
     const isCompatible = (workflowId: string): boolean => {
@@ -125,7 +138,7 @@ export function useGeneratedItemWorkflows({
       .filter((g) => g.workflows.length > 0);
 
     return { groups, isCompatible };
-  }, [outputType, ecosystemKey]);
+  }, [outputType, ecosystemKey, filterBy]);
 }
 
 // =============================================================================

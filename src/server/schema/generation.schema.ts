@@ -313,3 +313,9 @@ export type GetResourceDataByIdsInput = z.infer<typeof getResourceDataByIdsSchem
 export const getResourceDataByIdsSchema = z.object({
   ids: z.array(z.number()).min(1).max(100),
 });
+
+export type ResolveImageMetaInput = z.infer<typeof resolveImageMetaSchema>;
+export const resolveImageMetaSchema = z.object({
+  /** Raw EXIF metadata extracted from the image */
+  metadata: z.record(z.string(), z.unknown()),
+});

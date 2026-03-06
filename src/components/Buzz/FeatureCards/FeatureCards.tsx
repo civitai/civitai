@@ -13,8 +13,10 @@ import {
   IconShoppingCart,
   IconInfoCircle,
 } from '@tabler/icons-react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import type { MouseEvent } from 'react';
+import dayjs from '~/shared/utils/dayjs';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -348,6 +350,7 @@ export const RewardsList = ({
   onAccountTypeChange,
 }: Omit<RewardsListProps, 'rewardsMultiplier'>) => {
   const buzzConfig = useBuzzCurrencyConfig(accountType);
+  const nextReset = useMemo(() => dayjs.utc().add(1, 'day').startOf('day').toDate(), []);
 
   // Convert hex to RGB for CSS variable
   const hexToRgb = (hex: string) => {
@@ -452,6 +455,11 @@ export const RewardsList = ({
           </Paper>
         );
       })}
+      <Tooltip label="Daily Buzz rewards reset at midnight UTC" withArrow>
+        <Text size="xs" c="dimmed" ta="right">
+          Resets in <Countdown endTime={nextReset} format="short" />
+        </Text>
+      </Tooltip>
     </Stack>
   );
 };

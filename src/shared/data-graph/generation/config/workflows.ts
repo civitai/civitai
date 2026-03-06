@@ -44,6 +44,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 /** Image ecosystems that support image:edit (accept optional/required images for editing) */
 const EDIT_IMG_IDS = [
   ECO.Qwen,
+  ECO.Qwen2,
   ECO.Seedream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -76,6 +77,7 @@ const TXT2IMG_IDS = [
   // Other image ecosystems
   ECO.Chroma,
   ECO.Qwen,
+  ECO.Qwen2,
   ECO.HiDream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -170,8 +172,8 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:edit': {
-    label: 'Edit Image',
-    description: 'Edit an image with AI',
+    label: 'Image to Image',
+    description: 'Generate or edit using reference images',
     category: 'image',
     ecosystemIds: EDIT_IMG_IDS,
   },
@@ -211,6 +213,18 @@ export const workflowConfigs: WorkflowConfigs = {
     enhancement: true,
     ecosystemIds: [],
     memberOnly: true,
+  },
+
+  // ===========================================================================
+  // Image Utility Workflows (Standalone, no generation)
+  // ===========================================================================
+
+  img2meta: {
+    label: 'Extract Metadata',
+    description: 'Extract generation parameters from an image',
+    category: 'image',
+    ecosystemIds: [],
+    noSubmit: true,
   },
 
   // ===========================================================================
@@ -547,12 +561,16 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
   [
     'txt2img',
     (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) || ecoId === ECO.Grok,
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Grok ||
+      ecoId === ECO.Qwen2,
   ],
   [
     'img2img:edit',
     (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) || ecoId === ECO.Grok,
+      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Grok ||
+      ecoId === ECO.Qwen2,
   ],
 
   // Grok vid2vid:edit - no legacy equivalent

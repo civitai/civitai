@@ -387,7 +387,7 @@ export function QueueItem({
                       <>
                         {queuePosition.support === 'unavailable' && (
                           <Text c="dimmed" size="xs" align="center">
-                            Currently unavailable
+                            Request queued — your generation will begin shortly
                           </Text>
                         )}
                         {!!queuePosition.precedingJobs && (
