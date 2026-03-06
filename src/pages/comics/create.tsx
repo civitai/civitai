@@ -84,7 +84,7 @@ function CreateComicPage() {
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
           if (blob) {
-            const result = await uploadCoverToCF(blob);
+            const result = await uploadCoverToCF(new File([blob], 'cover.jpg', { type: blob.type }));
             setCoverUrl(result.id);
           }
           URL.revokeObjectURL(url);

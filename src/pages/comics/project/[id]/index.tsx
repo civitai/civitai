@@ -1277,7 +1277,7 @@ function ProjectWorkspace() {
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
           if (blob) {
-            const result = await uploadToCF(blob);
+            const result = await uploadToCF(new File([blob], 'cover.jpg', { type: blob.type }));
             setEditCoverUrl(result.id);
             setEditCoverImageId(null);
           }
