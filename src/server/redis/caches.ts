@@ -1053,7 +1053,7 @@ export function getBaseModelFromResources(
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',
-  ttl: CacheTTL.md,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.md,
   lookupFn: async (ids) => {
     const mvInfo = await dbRead.modelVersion.findMany({
       where: { id: { in: ids } },
@@ -1131,7 +1131,7 @@ type UserDownloadsCacheItem = {
 export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
   cacheNotFound: false,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};
