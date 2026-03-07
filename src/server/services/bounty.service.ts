@@ -836,3 +836,60 @@ export const refundBounty = async ({
 
   return updated;
 };
+
+/**
+ * Moderator-only endpoint to block a bounty.
+ * Refunds all benefactors first, then deletes the bounty.
+ *
+ * For use by moderation agents via the block-content skill.
+ */
+export const moderatorBlockBounty = async ({
+  id,
+  moderatorId,
+}: {
+  id: number;
+  moderatorId: number;
+}): Promise<{ success: true; refunded: boolean }> => {
+  // Read from primary DB to get accurate state (avoids replica lag after refund)
+  const bounty = await dbWrite.bounty.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      complete: true,
+      refunded: true,
+    },
+  });
+
+  if (!bounty) {
+    throw throwNotFoundError('Bounty not found');
+  }
+
+  let refunded = false;
+
+  // Refund all benefactors if not already done
+  if (!bounty.complete && !bounty.refunded) {
+    await refundBounty({ id, isModerator: true });
+    refunded = true;
+  }
+
+  // Delete the bounty and associated files directly.
+  // We avoid deleteBountyById here because it independently reads bounty state
+  // from dbRead (replica) and may attempt a redundant creator refund if the
+  // replica hasn't caught up with the refundBounty write above.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
+    await tx.bounty.delete({ where: { id } });
+  });
+
+  // Log the moderation action (non-blocking to avoid masking the successful action)
+  logToAxiom({
+    name: 'bounty-moderator-block',
+    type: 'info',
+    message: `Moderator ${moderatorId} blocked bounty ${id}`,
+    bountyId: id,
+    moderatorId,
+    refunded,
+  }).catch(() => null);
+
+  return { success: true, refunded };
+};

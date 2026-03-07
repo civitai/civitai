@@ -9,6 +9,7 @@ import {
   getBountyById,
   getBountyImages,
   getImagesForBounties,
+  moderatorBlockBounty,
   refundBounty,
   updateBountyById,
   upsertBounty,
@@ -473,6 +474,24 @@ export const refundBountyHandler = async ({
     const refundedBounty = await refundBounty({ ...input, isModerator });
 
     return refundedBounty;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const moderatorBlockBountyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await moderatorBlockBounty({
+      id: input.id,
+      moderatorId: ctx.user.id,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
