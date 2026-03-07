@@ -3,6 +3,7 @@ import { orderBy } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import { purgeCache } from '~/server/cloudflare/client';
 import { constants } from '~/server/common/constants';
 import type { NotificationCategory } from '~/server/common/enums';
 import {
@@ -475,6 +476,8 @@ export const updateUserHandler = async ({
     }
 
     await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+    purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
     return updatedUser;
   } catch (error) {
