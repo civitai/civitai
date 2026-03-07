@@ -15,6 +15,7 @@ export function Queue() {
 
   const {
     data = [],
+    markerTags,
     isLoading,
     fetchNextPage,
     hasNextPage,
@@ -23,15 +24,6 @@ export function Queue() {
     isError,
     error,
   } = useGetTextToImageRequests();
-
-  const kontextMessages = useMemo(
-    () =>
-      data.map((request) => ({
-        content: request.steps.map((step) => step.params.prompt).join(', '),
-        createdAt: request.createdAt,
-      })),
-    [data]
-  );
 
   if (isError)
     return (
@@ -100,20 +92,18 @@ export function Queue() {
         Creations are kept in the Generator for 30 days. Download or Post them to your Profile to
         save them!
       </Text>
-      <KontextProvider messages={kontextMessages}>
-        <div className="flex flex-col gap-2">
-          {data.map((request, index) => {
-            return (
-              <Fragment key={request.id}>
-                {index !== 0 && (index + 4) % 5 === 0 && (
-                  <KontextAd key={index} index={index} className="p-3" />
-                )}
-                <QueueItem id={request.id.toString()} request={request} />
-              </Fragment>
-            );
-          })}
-        </div>
-      </KontextProvider>
+      <div className="flex flex-col gap-2">
+        {data.map((request, index) => {
+          return (
+            <QueueItem
+              key={request.id}
+              id={request.id.toString()}
+              request={request}
+              markerTags={markerTags}
+            />
+          );
+        })}
+      </div>
       {hasNextPage ? (
         <InViewLoader
           loadFn={fetchNextPage}

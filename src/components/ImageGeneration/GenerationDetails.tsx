@@ -4,12 +4,7 @@ import type { Props as DescriptionTableProps } from '~/components/DescriptionTab
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
-export function GenerationDetails({
-  params,
-  label,
-  controlProps,
-  ...descriptionTableProps
-}: Props) {
+export function GenerationDetails({ params, label, controlProps, ...descriptionTableProps }: Props) {
   const detailItems = Object.entries(params ?? {})
     .filter(([key, value]) => {
       if (Array.isArray(value) || typeof value === 'object' || key === 'priority') return false;
@@ -61,6 +56,5 @@ export function GenerationDetails({
 
 type Props = Omit<DescriptionTableProps, 'items'> & {
   label: string;
-  params: Record<string, unknown>;
   controlProps?: AccordionControlProps;
-};
+} & { params: Record<string, unknown> };

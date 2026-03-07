@@ -23,7 +23,7 @@ import type {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
+import { BlobData, WorkflowData } from '~/shared/orchestrator/workflow-data';
 import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
 import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -40,24 +40,19 @@ import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows2>
 >;
-export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
 
-function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?: string[] }) {
-  return step.images.filter(({ id }) => {
-    const imageMeta = step.metadata?.images?.[id];
-    if (imageMeta?.hidden) return false;
-    if (tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite) return false;
-    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && imageMeta?.feedback !== 'liked')
-      return false;
-    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && imageMeta?.feedback !== 'disliked')
-      return false;
-    return true;
-  });
+/** Check whether a BlobData image passes the active marker-tag filter. */
+export function matchesMarkerTags(image: BlobData, tags?: string[]): boolean {
+  if (!tags?.length) return true;
+  const meta = image.imageMeta;
+  if (tags.includes(WORKFLOW_TAGS.FAVORITE) && !meta?.favorite) return false;
+  if (tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && meta?.feedback !== 'liked') return false;
+  if (tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && meta?.feedback !== 'disliked') return false;
+  return true;
 }
 
 export function useInvalidateWhatIf() {
@@ -136,39 +131,18 @@ export function useGetTextToImageRequests(
               return false;
             return true;
           })
-          .map((workflow) => {
-            const steps = workflow.steps.map((step) => {
-              const images = imageFilter({ step, tags: markerTags }).map(
-                (image) =>
-                  new BlobData({
-                    data: image,
-                    step: step,
-                    allowMatureContent: workflow.allowMatureContent,
-                    domain,
-                    nsfwEnabled,
-                  })
-              );
-              return { ...step, images };
-            });
-            return { ...workflow, steps };
-          })
+          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled }))
       ) ?? [],
     [data, nsfwEnabled, domain, markerTags]
   );
 
-  const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(
-    () => steps.flatMap((step) => imageFilter({ step, tags: markerTags })),
-    [steps, markerTags]
-  );
-
-  return { data: flatData, steps, images, ...rest };
+  return { data: flatData, markerTags, ...rest };
 }
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
-  const { data, steps, ...rest } = useGetTextToImageRequests(input);
+  const { data, markerTags, ...rest } = useGetTextToImageRequests(input);
 
-  return { requests: data, steps, ...rest };
+  return { requests: data, markerTags, ...rest };
 }
 
 function updateTextToImageRequests({
@@ -485,7 +459,7 @@ export function useTextToImageSignalUpdate() {
 export async function fetchSignaledWorkflow(
   workflowId: string
 ): Promise<WorkflowStatusUpdate | undefined> {
-  return await trpcVanilla.orchestrator.statusUpdate.query({workflowId})
+  return await trpcVanilla.orchestrator.statusUpdate.query({ workflowId });
 }
 
 async function updateSignaledWorkflows() {

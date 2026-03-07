@@ -27,16 +27,12 @@ export interface SourceMetadata {
   params?: Record<string, unknown>;
   /** Original generation resources */
   resources?: Array<Record<string, unknown>>;
-  /** Enhancement transformations applied to the original generation */
-  transformations?: Array<{
-    workflow: string;
-    params: Record<string, unknown>;
-    resources: Array<Record<string, unknown>>;
-  }>;
   /** Drawing annotation — tracks original image + drawing lines for re-editing */
   annotation?: SourceAnnotation;
   /** Timestamp when metadata was extracted/stored */
   extractedAt: number;
+  /** Additional flags from the original generation (remixOfId, etc.) */
+  [key: string]: unknown;
 }
 
 interface SourceMetadataState {

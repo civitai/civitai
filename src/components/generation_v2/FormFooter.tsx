@@ -387,20 +387,31 @@ export function FormFooter({
     };
     const hasCreatorTip = getHasCreatorTip(snapshot);
 
-    // Check if this is an enhancement workflow and retrieve source metadata
-    const isEnhancement = snapshot.workflow
+    // Check if this workflow needs source metadata (for remix-from-original after enhancements)
+    const needsSourceMetadata = snapshot.workflow
       ? workflowConfigByKey.get(snapshot.workflow)?.enhancement === true
       : false;
 
     let sourceMetadata: SourceMetadata | undefined;
-    if (isEnhancement) {
+    let sourceMetadataMap: Record<string, SourceMetadata> | undefined;
+    if (needsSourceMetadata) {
       // Get the image/video URL from the snapshot
-      const imageUrl = snapshot.images?.[0]?.url;
+      const images = snapshot.images;
+      const imageUrl = images?.[0]?.url;
       const videoUrl = snapshot.video?.url;
       const mediaUrl = imageUrl || videoUrl;
 
       if (mediaUrl) {
         sourceMetadata = sourceMetadataStore.getMetadata(mediaUrl);
+      }
+
+      // For multi-image workflows (batch upscale), collect metadata for all images
+      if (images && images.length > 1) {
+        sourceMetadataMap = {};
+        for (const img of images) {
+          const meta = sourceMetadataStore.getMetadata(img.url);
+          if (meta) sourceMetadataMap[img.url] = meta;
+        }
       }
     }
 
@@ -425,6 +436,7 @@ export function FormFooter({
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
         ...(sourceMetadata ? { sourceMetadata } : {}),
+        ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
       });
 
       if (hasEarlyAccess) {

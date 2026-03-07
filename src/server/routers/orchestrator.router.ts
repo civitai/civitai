@@ -56,8 +56,8 @@ import {
   getFlaggedReasonsSchema,
   getFlaggedConsumerStrikesSchema,
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
-import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import semver from 'semver';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 
@@ -91,10 +91,26 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, user, ...flags } });
 });
 
-const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
+const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
+  const result = await next();
+  const version = ctx.req?.headers['x-client-version'] as string;
+  if (!version || version === 'unknown') return result;
+
+  const genClient = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT);
+  if (genClient.version && semver.lt(version, genClient.version)) {
+    ctx.res?.setHeader('x-update-required', 'true');
+  }
+
+  return result;
+});
+
+const orchestratorProcedure = protectedProcedure
+  .use(orchestratorMiddleware)
+  .use(enforceGenerationVersion);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
-  .use(experimentalMiddleware);
+  .use(experimentalMiddleware)
+  .use(enforceGenerationVersion);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 export const orchestratorRouter = router({
@@ -192,6 +208,7 @@ export const orchestratorRouter = router({
         creatorTip,
         tags: inputTags,
         sourceMetadata,
+        sourceMetadataMap,
         remixOfId,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
@@ -221,6 +238,7 @@ export const orchestratorRouter = router({
         creatorTip,
         tags,
         sourceMetadata,
+        sourceMetadataMap,
         remixOfId,
       });
     }),
@@ -330,7 +348,9 @@ export const orchestratorRouter = router({
     .mutation(({ input, ctx }) =>
       reviewConsumerStrikes({ consumerId: `civitai-${input.userId}`, moderatorId: ctx.user.id })
     ),
-  statusUpdate: orchestratorGuardedProcedure.input(workflowIdSchema).query(({ ctx, input }) =>
-    getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
-  ),
+  statusUpdate: orchestratorGuardedProcedure
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+    ),
 });

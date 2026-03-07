@@ -4,7 +4,7 @@ import { IconDownload, IconTrash } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useRouter } from 'next/router';
 import pLimit from 'p-limit';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { SortFilter } from '~/components/Filters';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
@@ -21,7 +21,6 @@ import { getJSZip } from '~/utils/lazy';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -36,9 +35,10 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
-  const { images, data } = useGetTextToImageRequests();
+  const { data } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
-  const selectableImages = images.filter((x) => x.status === 'succeeded' && !x.blockedReason);
+  const images = useMemo(() => data.flatMap((wf) => wf.steps.flatMap((s) => s.images)), [data]);
+  const selectableImages = useMemo(() => data.flatMap((wf) => wf.succeededImages), [data]);
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
   const selected = orchestratorImageSelect
@@ -55,12 +55,8 @@ export function GeneratedImageActions({
 
   function getSelectedImages() {
     const selectedIds = selected.map((x) => x.imageId);
-    const grouped = data.flatMap((workflow) =>
-      workflow.steps.flatMap((step) =>
-        step.images
-          .filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id) && !x.blockedReason)
-          .map((image, index) => ({ ...image, createdAt: workflow.createdAt, index: index + 1 }))
-      )
+    const grouped = data.flatMap((wf) =>
+      wf.succeededImages.filter((x) => selectedIds.includes(x.id))
     );
     return uniqBy(grouped, 'id');
   }
@@ -96,16 +92,10 @@ export function GeneratedImageActions({
 
   const postSelectedImages = async () => {
     const selectedImages = getSelectedImages();
-    // const urls = selectedImages.map((x) => x.url).filter(isDefined);
-    const imageData = selectedImages
-      .map((image) => {
-        const workflow = data?.find((x) => x.id === image.workflowId);
-        if (workflow) {
-          const step = workflow.steps.find((x) => x.name === image.stepName);
-          return { url: image.url, meta: getStepMeta(step) };
-        }
-      })
-      .filter(isDefined);
+    const imageData = selectedImages.map((image) => ({
+      url: image.url,
+      meta: getStepMeta(image),
+    }));
 
     try {
       const key = 'generator';
@@ -146,16 +136,17 @@ export function GeneratedImageActions({
     const selectedImages = getSelectedImages();
     const zip = await getJSZip();
     await Promise.all(
-      selectedImages.map((image) =>
+      selectedImages.map((image, index) =>
         limit(async () => {
           if (!image.url) return;
           const blob = await fetchBlob(image.url);
           if (!blob) return;
           let name = image.id;
-          if (image.createdAt) {
-            const dateString = image.createdAt.toISOString().replaceAll(':', '.').split('.');
+          const createdAt = image.workflow.createdAt;
+          if (createdAt) {
+            const dateString = createdAt.toISOString().replaceAll(':', '.').split('.');
             dateString.pop();
-            name = `${dateString.join('.')}_${image.index}`;
+            name = `${dateString.join('.')}_${index + 1}`;
           }
 
           const file = new File([blob], name);

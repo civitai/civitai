@@ -40,7 +40,7 @@ export const REMIX_WORKFLOW_OVERRIDES: Record<string, string> = {
 // Types
 // =============================================================================
 
-export type RunType = 'run' | 'remix' | 'replay' | 'patch';
+export type RunType = 'run' | 'remix' | 'replay' | 'patch' | 'append';
 
 /**
  * Graph-compatible generation data.

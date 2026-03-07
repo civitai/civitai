@@ -28,8 +28,15 @@ export async function extractSourceMetadata(
       return undefined;
     }
 
-    // Extract params - all metadata fields except resources and transformations
-    const { resources, civitaiResources, additionalResources, transformations, ...params } = metadata as any;
+    // Extract params and resources from top-level EXIF fields
+    const {
+      resources,
+      civitaiResources,
+      additionalResources,
+      transformations: _,
+      source: __,
+      ...params
+    } = metadata as any;
 
     // Combine all resource arrays
     const allResources = [
@@ -41,16 +48,14 @@ export async function extractSourceMetadata(
     // Only return metadata if we have either params or resources
     const hasParams = Object.keys(params).length > 0;
     const hasResources = allResources.length > 0;
-    const hasTransformations = Array.isArray(transformations) && transformations.length > 0;
 
-    if (!hasParams && !hasResources && !hasTransformations) {
+    if (!hasParams && !hasResources) {
       return undefined;
     }
 
     return removeEmpty({
       params: hasParams ? params : undefined,
       resources: hasResources ? allResources : undefined,
-      transformations: hasTransformations ? transformations : undefined,
     });
   } catch (error) {
     console.error('Failed to extract source metadata:', error);

@@ -73,23 +73,25 @@ export function UpscaleDimensionsInput({
         />
       )}
 
-      {/* Display source and target dimensions */}
-      <div className="rounded-md bg-gray-2 px-4 py-3 dark:bg-dark-6">
-        <div className="flex justify-between text-sm">
-          <span className="text-dimmed">Source:</span>
-          <span>
-            {sourceWidth} × {sourceHeight}
-          </span>
-        </div>
-        {targetDimensions && (
+      {/* Display source and target dimensions (single image only) */}
+      {meta.imageCount <= 1 && (
+        <div className="rounded-md bg-gray-2 px-4 py-3 dark:bg-dark-6">
           <div className="flex justify-between text-sm">
-            <span className="font-medium">Upscaled:</span>
-            <span className="font-medium">
-              {targetDimensions.width} × {targetDimensions.height}
+            <span className="text-dimmed">Source:</span>
+            <span>
+              {sourceWidth} × {sourceHeight}
             </span>
           </div>
-        )}
-      </div>
+          {targetDimensions && (
+            <div className="flex justify-between text-sm">
+              <span className="font-medium">Upscaled:</span>
+              <span className="font-medium">
+                {targetDimensions.width} × {targetDimensions.height}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -175,3 +177,4 @@ function ResolutionGroup({
     </Input.Wrapper>
   );
 }
+

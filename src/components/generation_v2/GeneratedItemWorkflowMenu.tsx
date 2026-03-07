@@ -27,10 +27,7 @@ import { generationGraphStore } from '~/store/generation-graph.store';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import type {
-  NormalizedGeneratedImage,
-  NormalizedGeneratedImageStep,
-} from '~/server/services/orchestrator';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import {
   useGeneratedItemWorkflows,
   applyWorkflowWithCheck,
@@ -41,9 +38,7 @@ import {
 // =============================================================================
 
 interface GeneratedItemWorkflowMenuProps {
-  image: NormalizedGeneratedImage;
-  step: Omit<NormalizedGeneratedImageStep, 'images'>;
-  workflowId: string;
+  image: BlobData;
   workflowsOnly?: boolean;
   isLightbox?: boolean;
 }
@@ -54,22 +49,20 @@ interface GeneratedItemWorkflowMenuProps {
 
 export function GeneratedItemWorkflowMenu({
   image,
-  step,
-  workflowId,
   workflowsOnly,
   isLightbox,
 }: GeneratedItemWorkflowMenuProps) {
+  const workflowId = image.workflow.id;
   const { updateImages } = useUpdateImageStepMetadata();
   const { copied, copy } = useClipboard();
   const status = useGenerationStatus();
   const isMember = status.tier !== 'free';
 
   const outputType = image.type === 'video' ? 'video' : 'image';
-  const ecosystemKey: string | undefined = (step.params as any).ecosystem ?? step.params.baseModel;
 
   const { groups, isCompatible } = useGeneratedItemWorkflows({
     outputType,
-    ecosystemKey,
+    ecosystemKey: image.ecosystemKey,
   });
 
   // ---------------------------------------------------------------------------
@@ -79,14 +72,11 @@ export function GeneratedItemWorkflowMenu({
   function handleRemix(seed?: number | null) {
     dialogStore.closeById('generated-image');
 
-    // Params are already mapped via mapDataToGraphInput (workflow, ecosystem, aspectRatio, etc.)
-    // Use step.resources (enriched) for splitResourcesByType to work correctly
-    // Legacy form sync (type/engine) is handled by generationGraphStore.setData
     generationGraphStore.setData({
-      params: { ...step.metadata.params, seed: seed ?? undefined },
-      resources: step.resources,
+      params: { ...image.params, seed: seed ?? undefined },
+      resources: image.resources ?? [],
       runType: 'remix',
-      remixOfId: step.metadata?.remixOfId,
+      remixOfId: image.remixOfId,
     });
   }
 
@@ -101,7 +91,7 @@ export function GeneratedItemWorkflowMenu({
         updateImages([
           {
             workflowId,
-            stepName: step.name,
+            stepName: image.stepName,
             images: {
               [image.id]: { hidden: true },
             },
@@ -184,9 +174,7 @@ export function GeneratedItemWorkflowMenu({
                 onClick={() =>
                   applyWorkflowWithCheck({
                     workflowId: workflow.id,
-                    ecosystemKey,
                     image,
-                    step,
                     compatible: workflow.compatible,
                     isLightbox,
                   })
