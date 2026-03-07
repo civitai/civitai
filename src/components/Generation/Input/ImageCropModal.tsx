@@ -97,7 +97,19 @@ export function ImageCropperContent({
       });
   }, [initialAspect]);
 
-  const [aspect, setAspect] = useState(Number(availableAspects[0].value));
+  const [aspect, setAspect] = useState(() => {
+    // Default to the closest matching aspect ratio to the first image
+    let closest = availableAspects[0];
+    let minDiff = Infinity;
+    for (const option of availableAspects) {
+      const diff = Math.abs(Number(option.value) - initialAspect);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = option;
+      }
+    }
+    return Number(closest.value);
+  });
 
   function handleCropComplete(
     croppedArea: Area,

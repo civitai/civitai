@@ -178,6 +178,7 @@ export function SourceImageUploadMultiple({
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
+  const isCroppingRef = useRef(false);
 
   const previewImages = useMemo(() => {
     if (!value) return [];
@@ -199,35 +200,41 @@ export function SourceImageUploadMultiple({
     if (uploads.length > 0 && uploads.every((x) => x.status === 'complete')) setUploads([]);
   }, [uploads]);
 
-  const getShouldCrop = useCallback((previewImages: { width: number; height: number }[]) => {
-    if (!previewImages.length) return false;
-    let allMatch = true;
-    if (cropToFirstImage) {
-      const { width, height } = previewImages[0];
-      const ratio = width / height;
-      allMatch = previewImages.every(({ width, height }) =>
-        almostEqual(ratio, width / height, 0.01)
-      );
-    } else if (!!aspectRatios?.length) {
-      const ratios = aspectRatios.map((ratio) => {
-        const [w, h] = ratio.split(':').map(Number);
-        return w / h;
-      });
-      allMatch = previewImages.every(({ width, height }) =>
-        ratios.some((r) => almostEqual(r, width / height, 0.01))
-      );
-    }
-    return !allMatch;
-  }, []);
+  const getShouldCrop = useCallback(
+    (previewImages: { width: number; height: number }[]) => {
+      if (!previewImages.length) return false;
+      if (cropToFirstImage) {
+        const { width, height } = previewImages[0];
+        const ratio = width / height;
+        const allMatch = previewImages.every(({ width, height }) =>
+          almostEqual(ratio, width / height, 0.01)
+        );
+        return !allMatch;
+      } else if (!!aspectRatios?.length) {
+        const ratios = aspectRatios.map((ratio) => {
+          const [w, h] = ratio.split(':').map(Number);
+          return w / h;
+        });
+        // All images must share the same allowed aspect ratio
+        const allSameAllowedRatio = ratios.some((r) =>
+          previewImages.every(({ width, height }) => almostEqual(r, width / height, 0.01))
+        );
+        return !allSameAllowedRatio;
+      }
+      return false;
+    },
+    [cropToFirstImage, aspectRatios]
+  );
 
   useEffect(() => {
+    if (isCroppingRef.current) return;
     if (getShouldCrop(previewImages)) {
       handleCrop(
         previewImages.map((x) => x.url),
         'replace'
       );
     }
-  }, [previewImages]);
+  }, [previewImages, getShouldCrop]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -257,6 +264,7 @@ export function SourceImageUploadMultiple({
 
   // handle update value
   useEffect(() => {
+    if (isCroppingRef.current) return;
     const completed = previewItems.filter((x) => x.status === 'complete') as ImageComplete[];
     if (!completed.length) onChange?.(null);
     else if (completed.length !== value?.length) {
@@ -386,13 +394,11 @@ export function SourceImageUploadMultiple({
     if (!shouldCrop) {
       await Promise.all(urls.map((url) => handleUpload(url)));
     } else {
-      const incoming: ImageCrop[] = urls.map((url) => ({
-        status: 'cropping',
-        id: getRandomId(),
-        url,
-      }));
+      // Open crop modal without touching uploads/value
+      isCroppingRef.current = true;
 
-      setUploads(incoming);
+      // Track which allUrls indices are existing (in value) vs new
+      const existingUrls = new Set(value?.map((v) => v.url) ?? []);
 
       dialogStore.trigger({
         id: 'image-crop-modal',
@@ -400,12 +406,68 @@ export function SourceImageUploadMultiple({
         props: {
           images: withAspectRatio,
           onConfirm: async (output) => {
-            const toUpload = output.filter(({ cropped }) => !!cropped);
-            await Promise.all(
-              toUpload.map(async ({ cropped, src }) => handleUpload(cropped!, src))
-            );
+            // Determine what needs uploading:
+            // - Cropped images always need upload (existing or new)
+            // - New images that weren't cropped still need upload
+            // - Existing images that weren't cropped stay as-is
+            const toUpload: { index: number; src: Blob | string; id: string }[] = [];
+
+            for (let i = 0; i < output.length; i++) {
+              const { cropped, src } = output[i];
+              if (cropped) {
+                toUpload.push({ index: i, src: cropped, id: getRandomId() });
+              } else if (!existingUrls.has(src)) {
+                toUpload.push({ index: i, src, id: getRandomId() });
+              }
+            }
+
+            if (toUpload.length) {
+              // Show uploading indicators
+              setUploads(
+                toUpload.map(({ src, id }) => ({
+                  status: 'uploading' as const,
+                  url: typeof src === 'string' ? src : URL.createObjectURL(src),
+                  id,
+                }))
+              );
+
+              const uploadResults = await Promise.all(
+                toUpload.map(async ({ src, id }) => {
+                  const response = await uploadOrchestratorImage(src, id);
+                  if (response.url && response.available) {
+                    return {
+                      url: response.url,
+                      width: response.width,
+                      height: response.height,
+                    } as SourceImageProps;
+                  }
+                  return null;
+                })
+              );
+
+              // Build final value: start from current value, replace/insert at indices
+              const finalValue: SourceImageProps[] = [];
+              for (let i = 0; i < withAspectRatio.length; i++) {
+                const uploadEntry = toUpload.findIndex((u) => u.index === i);
+                if (uploadEntry > -1 && uploadResults[uploadEntry]) {
+                  finalValue[i] = uploadResults[uploadEntry]!;
+                } else {
+                  // Keep existing image as-is
+                  const img = withAspectRatio[i];
+                  finalValue[i] = { url: img.url, width: img.width, height: img.height };
+                }
+              }
+
+              setUploads([]);
+              isCroppingRef.current = false;
+              onChange?.(finalValue.filter(Boolean) as SourceImageProps[]);
+            } else {
+              isCroppingRef.current = false;
+            }
           },
-          onCancel: () => setUploads([]),
+          onCancel: () => {
+            isCroppingRef.current = false;
+          },
           aspectRatios,
         },
       });
@@ -467,25 +529,103 @@ export function SourceImageUploadMultiple({
         return;
       }
 
-      // Update value at the slot index
       const newImage: SourceImageProps = {
         url: response.url,
         width: response.width,
         height: response.height,
       };
 
-      const newValue = value ? [...value] : [];
-      // Ensure array is large enough
-      while (newValue.length <= slotIndex) {
-        newValue.push(undefined as unknown as SourceImageProps);
+      // Build what the full image set would look like with this new image
+      const prospectiveValue = value ? [...value] : [];
+      while (prospectiveValue.length <= slotIndex) {
+        prospectiveValue.push(undefined as unknown as SourceImageProps);
       }
-      newValue[slotIndex] = newImage;
+      prospectiveValue[slotIndex] = newImage;
+      const allImages = prospectiveValue.filter(Boolean) as SourceImageProps[];
 
-      // Filter out undefined values for sparse arrays, but keep position
-      onChange?.(newValue.filter(Boolean) as SourceImageProps[]);
+      // Check if all images share the same allowed aspect ratio
+      if (getShouldCrop(allImages)) {
+        // Clear slot upload indicator
+        setUploads((items) => items.filter((x) => x.id !== uploadId));
 
-      // Clear upload state for this slot
-      setUploads((items) => items.filter((x) => x.id !== uploadId));
+        // Open crop modal with all images
+        isCroppingRef.current = true;
+        const withDimensions = await Promise.all(
+          allImages.map(async (img) => {
+            const { width, height } = await getImageDimensions(img.url);
+            return { url: img.url, width, height, aspectRatio: width / height };
+          })
+        );
+
+        dialogStore.trigger({
+          id: 'image-crop-modal',
+          component: ImageCropModal,
+          props: {
+            images: withDimensions,
+            onConfirm: async (output) => {
+              const toUpload: { index: number; src: Blob; id: string }[] = [];
+
+              for (let i = 0; i < output.length; i++) {
+                const { cropped } = output[i];
+                if (cropped) {
+                  toUpload.push({ index: i, src: cropped, id: getRandomId() });
+                }
+              }
+
+              if (toUpload.length) {
+                // Show uploading indicators in slots
+                setUploads(
+                  toUpload.map(({ index: idx, id }) => ({
+                    status: 'uploading' as const,
+                    url: allImages[idx].url,
+                    id,
+                    slotIndex: idx,
+                  }))
+                );
+
+                const uploadResults = await Promise.all(
+                  toUpload.map(async ({ src, id }) => {
+                    const res = await uploadOrchestratorImage(src, id);
+                    if (res.url && res.available) {
+                      return {
+                        url: res.url,
+                        width: res.width,
+                        height: res.height,
+                      } as SourceImageProps;
+                    }
+                    return null;
+                  })
+                );
+
+                // Build final value: keep uncropped as-is, replace cropped at index
+                const finalValue = allImages.map((img, i) => {
+                  const uploadIdx = toUpload.findIndex((u) => u.index === i);
+                  if (uploadIdx > -1 && uploadResults[uploadIdx]) {
+                    return uploadResults[uploadIdx]!;
+                  }
+                  return img;
+                });
+
+                setUploads([]);
+                isCroppingRef.current = false;
+                onChange?.(finalValue);
+              } else {
+                // No images were cropped — just set the value as-is
+                isCroppingRef.current = false;
+                onChange?.(allImages);
+              }
+            },
+            onCancel: () => {
+              isCroppingRef.current = false;
+            },
+            aspectRatios,
+          },
+        });
+      } else {
+        // Aspect ratios match — add directly
+        onChange?.(allImages);
+        setUploads((items) => items.filter((x) => x.id !== uploadId));
+      }
     } catch (e) {
       setError((e as Error).message);
       setUploads((items) => items.filter((x) => x.id !== uploadId));
