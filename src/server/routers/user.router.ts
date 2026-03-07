@@ -103,7 +103,16 @@ import { refreshSession } from '~/server/auth/session-invalidation';
 export const userRouter = router({
   getCreator: publicProcedure
     .input(getUserByUsernameSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .use(
+      edgeCacheIt({
+        ttl: CacheTTL.sm,
+        tags: (input) =>
+          [
+            input?.id ? `user-creator-${input.id}` : undefined,
+            input?.username ? `user-creator-${input.username}` : undefined,
+          ].filter(Boolean) as string[],
+      })
+    )
     .query(getUserCreatorHandler),
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   usernameAvailable: protectedProcedure

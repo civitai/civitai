@@ -1,3 +1,4 @@
+import { purgeCache } from '~/server/cloudflare/client';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -70,10 +71,13 @@ export const updateUserProfileHandler = async ({
     if ((!sessionUser.isModerator && input.userId !== sessionUser.id) || sessionUser.muted)
       throw throwAuthorizationError();
 
+    const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
     const user = await updateUserProfile({
       ...input,
-      userId: sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id,
+      userId,
     });
+
+    purgeCache({ tags: [`user-creator-${userId}`] }).catch();
 
     return user;
   } catch (error) {
@@ -114,10 +118,14 @@ export const addEntityToShowcaseHandler = async ({
       constants.profile.showcaseItemsLimit
     );
 
-    return await updateUserProfile({
+    const result = await updateUserProfile({
       userId: ctx.user.id,
       showcaseItems: updatedShowcaseItems,
     });
+
+    purgeCache({ tags: [`user-creator-${ctx.user.id}`] }).catch();
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
