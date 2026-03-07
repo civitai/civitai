@@ -96,10 +96,15 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
+import { CacheTTL } from '~/server/common/constants';
+import { edgeCacheIt } from '~/server/middleware.trpc';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
 export const userRouter = router({
-  getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
+  getCreator: publicProcedure
+    .input(getUserByUsernameSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(getUserCreatorHandler),
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   usernameAvailable: protectedProcedure
     .input(getByUsernameSchema)
