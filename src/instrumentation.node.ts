@@ -10,8 +10,8 @@ import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
-import { IORedisInstrumentation } from '@opentelemetry/instrumentation-ioredis';
+import { PrismaInstrumentation } from '@prisma/instrumentation';
+import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
@@ -63,8 +63,8 @@ if (!OTEL_ENABLED) {
       spanProcessor: new BatchSpanProcessor(traceExporter),
       instrumentations: [
         new HttpInstrumentation(),
-        new PgInstrumentation({ enhancedDatabaseReporting: true }),
-        new IORedisInstrumentation(),
+        new PrismaInstrumentation(),
+        new RedisInstrumentation(),
       ],
     });
 
