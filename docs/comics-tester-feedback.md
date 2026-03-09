@@ -57,13 +57,9 @@ Branch: `fix/comic-tester-feedback`
 
 26. **Circular dependency fix (media-schemas)** — Fixed `ReferenceError: Cannot access 'imageValueSchema' before initialization` caused by circular imports in the data-graph generation system. Extracted Zod schemas (`imageValueSchema`, `videoMetadataSchema`, `videoValueSchema`) into a leaf module `media-schemas.ts` that has no circular dependencies, while keeping version IDs in their respective graph files.
 
+27. **Pick from generator for cover/hero images** — Both the create page and project settings modal now have a "Pick from generator" button below the cover and hero dropzones. Opens `ImageSelectModal` with generator history, fetches the selected image, uploads to CF, and sets it as the cover or hero. Uses the same pattern as the panel import picker.
+
 ## Not Implemented — Feasibility Analysis
-
-### Achievable with existing infrastructure (low-medium effort)
-
-| Feedback | Effort | Details |
-|----------|--------|---------|
-| **Pick previously generated images for header** | Low | Same image picker as import tab, applied to cover/header image selection. |
 
 ### Requires significant new work (medium-high effort)
 

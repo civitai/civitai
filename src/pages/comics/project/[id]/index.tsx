@@ -71,6 +71,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getImageDimensions } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatGenreLabel } from '~/utils/comic-helpers';
+import { fetchAndUploadGeneratorImage, openGeneratorImagePicker } from '~/utils/comic-image-picker';
 import { ComicChapterStatus, ComicGenre } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
@@ -349,6 +350,8 @@ function ProjectWorkspace() {
   const [editBaseModel, setEditBaseModel] = useState<string | null>(null);
   const [editHeroUrl, setEditHeroUrl] = useState<string | null>(null);
   const [editHeroImageId, setEditHeroImageId] = useState<number | null>(null);
+  const [pickingCover, setPickingCover] = useState(false);
+  const [pickingHero, setPickingHero] = useState(false);
   const [editHeroPosition, setEditHeroPosition] = useState(50);
   const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
   const {
@@ -834,23 +837,20 @@ function ProjectWorkspace() {
           const height = (img.meta?.height as number) ?? 512;
 
           setEnhanceUploading(true);
-          // Generator images are ephemeral — fetch the blob and upload to CF
-          // so the image persists and can be ingested/scanned
           try {
-            const edgeUrl = getEdgeUrl(img.url, { original: true }) ?? img.url;
-            const response = await fetch(edgeUrl);
-            const blob = await response.blob();
-            const file = new File([blob], `enhance_${Date.now()}.jpg`, { type: blob.type });
-            const result = await uploadEnhanceToCF(file);
+            const cfId = await fetchAndUploadGeneratorImage(
+              img.url,
+              'enhance',
+              uploadEnhanceToCF
+            );
             setEnhanceSourceImage({
-              url: result.id,
-              previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+              url: cfId,
+              previewUrl: getEdgeUrl(cfId, { width: 400 }) ?? cfId,
               width,
               height,
             });
           } catch (err) {
             console.error('Failed to upload generator image:', err);
-            // Fallback: use the URL directly (will still work but may expire)
             setEnhanceSourceImage({
               url: img.url,
               previewUrl: img.url,
@@ -935,39 +935,25 @@ function ProjectWorkspace() {
             for (const img of selected) {
               const width = (img.meta?.width as number) ?? 512;
               const height = (img.meta?.height as number) ?? 512;
+              let cfId: string;
               try {
-                const edgeUrl = getEdgeUrl(img.url, { original: true }) ?? img.url;
-                const response = await fetch(edgeUrl);
-                const blob = await response.blob();
-                const file = new File([blob], `bulk_gen_${Date.now()}.jpg`, { type: blob.type });
-                const result = await uploadBulkToCF(file);
-                newItems.push({
-                  id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                  sourceImage: {
-                    url: result.id,
-                    cfId: result.id,
-                    width,
-                    height,
-                    preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
-                  },
-                  prompt: '',
-                  aspectRatio: '3:4',
-                });
+                cfId = await fetchAndUploadGeneratorImage(img.url, 'bulk_gen', uploadBulkToCF);
               } catch (err) {
                 console.error('Failed to upload generator image:', err);
-                newItems.push({
-                  id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                  sourceImage: {
-                    url: img.url,
-                    cfId: img.url,
-                    width,
-                    height,
-                    preview: img.url,
-                  },
-                  prompt: '',
-                  aspectRatio: '3:4',
-                });
+                cfId = img.url; // Fallback: use URL directly (may expire)
               }
+              newItems.push({
+                id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                sourceImage: {
+                  url: cfId,
+                  cfId,
+                  width,
+                  height,
+                  preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
+                },
+                prompt: '',
+                aspectRatio: '3:4',
+              });
             }
             setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
           } finally {
@@ -996,17 +982,17 @@ function ProjectWorkspace() {
               const width = (img.meta?.width as number) ?? 512;
               const height = (img.meta?.height as number) ?? 512;
               try {
-                const edgeUrl = getEdgeUrl(img.url, { original: true }) ?? img.url;
-                const response = await fetch(edgeUrl);
-                const blob = await response.blob();
-                const file = new File([blob], `import_${Date.now()}.jpg`, { type: blob.type });
-                const result = await uploadImportToCF(file);
+                const cfId = await fetchAndUploadGeneratorImage(
+                  img.url,
+                  'import',
+                  uploadImportToCF
+                );
                 newItems.push({
-                  url: result.id,
-                  cfId: result.id,
+                  url: cfId,
+                  cfId,
                   width,
                   height,
-                  preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
+                  preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
                 });
               } catch (err) {
                 console.error('Failed to upload import image:', err);
@@ -1295,6 +1281,32 @@ function ProjectWorkspace() {
     setEditHeroUrl(result.id);
     setEditHeroImageId(null); // New upload — backend will create Image record
   };
+
+  const handlePickCoverFromGenerator = () =>
+    openGeneratorImagePicker({
+      title: 'Pick Cover from Generator',
+      fileNameBase: 'cover',
+      uploadFn: uploadToCF,
+      onSuccess: (id) => {
+        setEditCoverUrl(id);
+        setEditCoverImageId(null);
+      },
+      onLoadingChange: setPickingCover,
+      ImageSelectModal,
+    });
+
+  const handlePickHeroFromGenerator = () =>
+    openGeneratorImagePicker({
+      title: 'Pick Hero from Generator',
+      fileNameBase: 'hero',
+      uploadFn: uploadHeroToCF,
+      onSuccess: (id) => {
+        setEditHeroUrl(id);
+        setEditHeroImageId(null);
+      },
+      onLoadingChange: setPickingHero,
+      ImageSelectModal,
+    });
 
   const resetSmartState = () => {
     setSmartStep('input');
@@ -2905,22 +2917,33 @@ function ProjectWorkspace() {
                 </ActionIcon>
               </div>
             ) : (
-              <Dropzone onDrop={handleCoverDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
-                <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
-                  <Dropzone.Accept>
-                    <IconUpload size={24} className="text-blue-500" />
-                  </Dropzone.Accept>
-                  <Dropzone.Reject>
-                    <IconX size={24} className="text-red-500" />
-                  </Dropzone.Reject>
-                  <Dropzone.Idle>
-                    <IconPhoto size={24} style={{ color: '#909296' }} />
-                  </Dropzone.Idle>
-                  <Text size="sm" c="dimmed">
-                    Drop a cover image or click to browse
-                  </Text>
-                </Group>
-              </Dropzone>
+              <Stack gap={4}>
+                <Dropzone onDrop={handleCoverDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
+                  <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
+                    <Dropzone.Accept>
+                      <IconUpload size={24} className="text-blue-500" />
+                    </Dropzone.Accept>
+                    <Dropzone.Reject>
+                      <IconX size={24} className="text-red-500" />
+                    </Dropzone.Reject>
+                    <Dropzone.Idle>
+                      <IconPhoto size={24} style={{ color: '#909296' }} />
+                    </Dropzone.Idle>
+                    <Text size="sm" c="dimmed">
+                      Drop a cover image or click to browse
+                    </Text>
+                  </Group>
+                </Dropzone>
+                <Button
+                  variant="subtle"
+                  size="compact-xs"
+                  leftSection={<IconPhotoUp size={14} />}
+                  onClick={handlePickCoverFromGenerator}
+                  loading={pickingCover}
+                >
+                  Pick from generator
+                </Button>
+              </Stack>
             )}
             {coverUploadFiles.some((f) => f.status === 'uploading') && (
               <Text size="xs" c="dimmed" mt={4}>
@@ -2948,22 +2971,33 @@ function ProjectWorkspace() {
                 }}
               />
             ) : (
-              <Dropzone onDrop={handleHeroDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
-                <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
-                  <Dropzone.Accept>
-                    <IconUpload size={24} className="text-blue-500" />
-                  </Dropzone.Accept>
-                  <Dropzone.Reject>
-                    <IconX size={24} className="text-red-500" />
-                  </Dropzone.Reject>
-                  <Dropzone.Idle>
-                    <IconPhoto size={24} style={{ color: '#909296' }} />
-                  </Dropzone.Idle>
-                  <Text size="sm" c="dimmed">
-                    Drop a hero banner or click to browse
-                  </Text>
-                </Group>
-              </Dropzone>
+              <Stack gap={4}>
+                <Dropzone onDrop={handleHeroDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
+                  <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
+                    <Dropzone.Accept>
+                      <IconUpload size={24} className="text-blue-500" />
+                    </Dropzone.Accept>
+                    <Dropzone.Reject>
+                      <IconX size={24} className="text-red-500" />
+                    </Dropzone.Reject>
+                    <Dropzone.Idle>
+                      <IconPhoto size={24} style={{ color: '#909296' }} />
+                    </Dropzone.Idle>
+                    <Text size="sm" c="dimmed">
+                      Drop a hero banner or click to browse
+                    </Text>
+                  </Group>
+                </Dropzone>
+                <Button
+                  variant="subtle"
+                  size="compact-xs"
+                  leftSection={<IconPhotoUp size={14} />}
+                  onClick={handlePickHeroFromGenerator}
+                  loading={pickingHero}
+                >
+                  Pick from generator
+                </Button>
+              </Stack>
             )}
             {heroUploadFiles.some((f) => f.status === 'uploading') && (
               <Text size="xs" c="dimmed" mt={4}>

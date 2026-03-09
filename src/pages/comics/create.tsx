@@ -12,7 +12,8 @@ import {
   Title,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { IconBook, IconPhoto, IconUpload, IconUser, IconX } from '@tabler/icons-react';
+import { IconBook, IconPhoto, IconPhotoUp, IconUpload, IconUser, IconX } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 
@@ -26,9 +27,14 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { getImageDimensions } from '~/utils/image-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatGenreLabel } from '~/utils/comic-helpers';
+import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
 import { ComicGenre } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './CreateComic.module.scss';
+
+const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
+  ssr: false,
+});
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -60,6 +66,8 @@ function CreateComicPage() {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [heroUrl, setHeroUrl] = useState<string | null>(null);
   const [heroPosition, setHeroPosition] = useState(50);
+  const [pickingCover, setPickingCover] = useState(false);
+  const [pickingHero, setPickingHero] = useState(false);
 
   const { uploadToCF: uploadCoverToCF, files: coverFiles } = useCFImageUpload();
   const { uploadToCF: uploadHeroToCF, files: heroFiles } = useCFImageUpload();
@@ -100,6 +108,26 @@ function CreateComicPage() {
     const result = await uploadHeroToCF(files[0]);
     setHeroUrl(result.id);
   };
+
+  const handlePickCoverFromGenerator = () =>
+    openGeneratorImagePicker({
+      title: 'Pick Cover from Generator',
+      fileNameBase: 'cover',
+      uploadFn: uploadCoverToCF,
+      onSuccess: setCoverUrl,
+      onLoadingChange: setPickingCover,
+      ImageSelectModal,
+    });
+
+  const handlePickHeroFromGenerator = () =>
+    openGeneratorImagePicker({
+      title: 'Pick Hero from Generator',
+      fileNameBase: 'hero',
+      uploadFn: uploadHeroToCF,
+      onSuccess: setHeroUrl,
+      onLoadingChange: setPickingHero,
+      ImageSelectModal,
+    });
 
   const handleSubmit = () => {
     if (!name.trim()) return;
@@ -166,33 +194,44 @@ function CreateComicPage() {
                     className={styles.heroPickerWrap}
                   />
                 ) : (
-                  <Dropzone
-                    onDrop={handleHeroDrop}
-                    accept={IMAGE_MIME_TYPE}
-                    maxFiles={1}
-                    className={styles.heroDropzone}
-                  >
-                    <Stack
-                      align="center"
-                      justify="center"
-                      gap={4}
-                      h="100%"
-                      style={{ pointerEvents: 'none' }}
+                  <Stack gap={4}>
+                    <Dropzone
+                      onDrop={handleHeroDrop}
+                      accept={IMAGE_MIME_TYPE}
+                      maxFiles={1}
+                      className={styles.heroDropzone}
                     >
-                      <Dropzone.Accept>
-                        <IconUpload size={20} className="text-blue-500" />
-                      </Dropzone.Accept>
-                      <Dropzone.Reject>
-                        <IconX size={20} className="text-red-500" />
-                      </Dropzone.Reject>
-                      <Dropzone.Idle>
-                        <IconPhoto size={20} style={{ color: '#909296' }} />
-                      </Dropzone.Idle>
-                      <Text size="xs" c="dimmed">
-                        16:9 banner
-                      </Text>
-                    </Stack>
-                  </Dropzone>
+                      <Stack
+                        align="center"
+                        justify="center"
+                        gap={4}
+                        h="100%"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        <Dropzone.Accept>
+                          <IconUpload size={20} className="text-blue-500" />
+                        </Dropzone.Accept>
+                        <Dropzone.Reject>
+                          <IconX size={20} className="text-red-500" />
+                        </Dropzone.Reject>
+                        <Dropzone.Idle>
+                          <IconPhoto size={20} style={{ color: '#909296' }} />
+                        </Dropzone.Idle>
+                        <Text size="xs" c="dimmed">
+                          16:9 banner
+                        </Text>
+                      </Stack>
+                    </Dropzone>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<IconPhotoUp size={14} />}
+                      onClick={handlePickHeroFromGenerator}
+                      loading={pickingHero}
+                    >
+                      Pick from generator
+                    </Button>
+                  </Stack>
                 )}
               </div>
 
@@ -226,33 +265,44 @@ function CreateComicPage() {
                     </ActionIcon>
                   </div>
                 ) : (
-                  <Dropzone
-                    onDrop={handleCoverDrop}
-                    accept={IMAGE_MIME_TYPE}
-                    maxFiles={1}
-                    className={styles.coverDropzone}
-                  >
-                    <Stack
-                      align="center"
-                      justify="center"
-                      gap={4}
-                      h="100%"
-                      style={{ pointerEvents: 'none' }}
+                  <Stack gap={4}>
+                    <Dropzone
+                      onDrop={handleCoverDrop}
+                      accept={IMAGE_MIME_TYPE}
+                      maxFiles={1}
+                      className={styles.coverDropzone}
                     >
-                      <Dropzone.Accept>
-                        <IconUpload size={18} className="text-blue-500" />
-                      </Dropzone.Accept>
-                      <Dropzone.Reject>
-                        <IconX size={18} className="text-red-500" />
-                      </Dropzone.Reject>
-                      <Dropzone.Idle>
-                        <IconPhoto size={18} style={{ color: '#909296' }} />
-                      </Dropzone.Idle>
-                      <Text size="xs" c="dimmed">
-                        3:4
-                      </Text>
-                    </Stack>
-                  </Dropzone>
+                      <Stack
+                        align="center"
+                        justify="center"
+                        gap={4}
+                        h="100%"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        <Dropzone.Accept>
+                          <IconUpload size={18} className="text-blue-500" />
+                        </Dropzone.Accept>
+                        <Dropzone.Reject>
+                          <IconX size={18} className="text-red-500" />
+                        </Dropzone.Reject>
+                        <Dropzone.Idle>
+                          <IconPhoto size={18} style={{ color: '#909296' }} />
+                        </Dropzone.Idle>
+                        <Text size="xs" c="dimmed">
+                          3:4
+                        </Text>
+                      </Stack>
+                    </Dropzone>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<IconPhotoUp size={14} />}
+                      onClick={handlePickCoverFromGenerator}
+                      loading={pickingCover}
+                    >
+                      Pick from generator
+                    </Button>
+                  </Stack>
                 )}
               </div>
             </div>
