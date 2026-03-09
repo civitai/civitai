@@ -11,6 +11,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { redeemableCodePurchaseEmail } from '~/server/email/templates/redeemableCodePurchase.email';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -280,6 +282,24 @@ export const processCodeOrder = async (eventData: Coinbase.WebhookEventSchema['e
           });
         });
     }
+
+    // Send in-app notification
+    await createNotification({
+      key: `redeemable-code-ready:${internalOrderId}`,
+      type: 'redeemable-code-ready',
+      category: NotificationCategory.Buzz,
+      details: {
+        codeType,
+        unitValue: codeUnitValue,
+      },
+      userId,
+    }).catch((err) => {
+      log({
+        message: 'Failed to send redeemable code notification',
+        error: String(err),
+        orderId: internalOrderId,
+      });
+    });
 
     await log({
       type: 'info',

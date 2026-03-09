@@ -138,7 +138,7 @@ export function PurchasedCodesCard() {
   const paginatedCodes = codes.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <Card withBorder>
+    <Card withBorder id="purchased-codes">
       <Stack gap={0}>
         <Title order={2}>Purchased Codes</Title>
         <Text c="dimmed" size="sm">
