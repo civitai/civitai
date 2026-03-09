@@ -674,7 +674,8 @@ async function processImageRating({
       userId: playerId,
     }).catch(() => null); // Ignore if it fails
 
-    await signalClient
+    // Fire-and-forget: don't block the response waiting for signal delivery
+    signalClient
       .send({
         userId: playerId,
         target: SignalMessages.NewOrderPlayerUpdate,
@@ -990,7 +991,8 @@ export async function updatePlayerStats({
     stats = { ...stats, fervor: newFervor, blessedBuzz, pendingBlessedBuzz, nextGrantDate };
   }
 
-  await signalClient
+  // Fire-and-forget: don't block the response waiting for signal delivery
+  signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
