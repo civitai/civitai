@@ -4,7 +4,7 @@ export const royalCdKeysVendor: Vendor = {
   id: 'royal-cd-keys',
   name: 'RoyalCDKeys',
   displayName: 'Royal CD Keys',
-  enabled: true,
+  enabled: false,
   badge: 'New!',
   products: {
     buzzCards: [

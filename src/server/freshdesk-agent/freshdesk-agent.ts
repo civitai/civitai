@@ -35,6 +35,7 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
     agentLog('USER MESSAGE', userMessage);
 
     const result = await openrouter.runAgentLoop({
+      model: 'STEP_FUN',
       system: systemPrompt,
       userMessage,
       tools,

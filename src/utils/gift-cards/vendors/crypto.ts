@@ -41,6 +41,7 @@ export const cryptoVendor: Vendor = {
         tier: 'Silver',
         image: '/images/gift-cards/Silver3.webp',
         durations: [
+          { months: 2, url: '', image: '/images/gift-cards/Silver3.webp' },
           { months: 3, url: '', image: '/images/gift-cards/Silver3.webp' },
           { months: 6, url: '', image: '/images/gift-cards/Silver6.webp' },
           { months: 12, url: '', image: '/images/gift-cards/Silver12.webp' },
@@ -50,6 +51,7 @@ export const cryptoVendor: Vendor = {
         tier: 'Gold',
         image: '/images/gift-cards/Gold3.webp',
         durations: [
+          { months: 1, url: '', image: '/images/gift-cards/Gold3.webp' },
           { months: 3, url: '', image: '/images/gift-cards/Gold3.webp' },
           { months: 6, url: '', image: '/images/gift-cards/Gold6.webp' },
           { months: 12, url: '', image: '/images/gift-cards/Gold12.webp' },

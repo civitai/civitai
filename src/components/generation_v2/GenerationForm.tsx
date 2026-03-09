@@ -325,7 +325,10 @@ export function GenerationForm() {
                     />
                     {modes.length > 0 && (
                       <ButtonGroupInput
-                        value={value as string}
+                        value={
+                          workflowConfigByKey.get(value as string)?.variantOf ??
+                          (value as string)
+                        }
                         onChange={(v) =>
                           graph.set({ workflow: v } as Parameters<typeof graph.set>[0])
                         }
@@ -805,6 +808,27 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Num Frames (LTXV23 vid2vid:extend) */}
+            {/* <Controller
+              graph={graph}
+              name="numFrames"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  value={value}
+                  onChange={onChange}
+                  label={
+                    <ControllerLabel
+                      label="Frames to Extend"
+                      info="Number of frames to add when extending the video."
+                    />
+                  }
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                />
+              )}
+            /> */}
+
             {/* Output Settings (image output only) */}
             <Controller
               graph={graph}
@@ -846,6 +870,28 @@ export function GenerationForm() {
 
             {/* Advanced section */}
             <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
+              {/* Frame Guide Strength (LTXV2/LTXV23 img2vid with both frames) */}
+              <Controller
+                graph={graph}
+                name="frameGuideStrength"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Frame Guide Strength"
+                        info="Controls how strongly the first/last frame images guide the video generation."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
               {/* CFG Scale / Guidance - label varies by model family */}
               <Controller
                 graph={graph}
@@ -919,6 +965,72 @@ export function GenerationForm() {
                       <ControllerLabel
                         label="Steps"
                         info="The number of iterations spent generating."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Canny Low Threshold (LTXV23 vid2vid:edit) */}
+              <Controller
+                graph={graph}
+                name="cannyLowThreshold"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Canny Low Threshold"
+                        info="Lower threshold for Canny edge detection. Lower values detect more edges."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Canny High Threshold (LTXV23 vid2vid:edit) */}
+              <Controller
+                graph={graph}
+                name="cannyHighThreshold"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Canny High Threshold"
+                        info="Upper threshold for Canny edge detection. Higher values only keep strong edges."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Guide Strength (LTXV23 vid2vid:edit) */}
+              <Controller
+                graph={graph}
+                name="guideStrength"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Guide Strength"
+                        info="Controls how closely the output follows the source video structure."
                       />
                     }
                     min={meta.min}
