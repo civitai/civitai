@@ -48,6 +48,7 @@ import {
 } from '~/server/common/enums';
 import { comicsSearchIndex } from '~/server/search-index';
 import {
+  commonAspectRatios,
   nanoBananaProSizes,
   seedreamSizes,
   qwenSizes,
@@ -59,7 +60,7 @@ import {
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { uploadViaUrl } from '~/utils/cf-images-utils';
+import { uploadViaUrl, uploadViaBuffer } from '~/utils/cf-images-utils';
 
 // Feature flag gate — all procedures require the comicCreator flag
 const comicFlag = isFlagProtected('comicCreator');
@@ -83,6 +84,12 @@ const COMIC_MODEL_CONFIG: Record<
     baseModel: 'NanoBanana',
     versionId: 2436219,
     sizes: nanoBananaProSizes,
+  },
+  Flux2: {
+    engine: 'flux2',
+    baseModel: 'Flux.2 D',
+    versionId: 2439067,
+    sizes: commonAspectRatios,
   },
   Seedream: {
     engine: 'seedream',
@@ -123,6 +130,17 @@ function getAspectRatioDimensions(
   const sizes = modelConfig?.sizes ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL].sizes;
   const match = sizes.find((s) => s.label === aspectRatio);
   return match ?? sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ?? sizes[0];
+}
+
+// Cap reference images to prevent Fal rejection (too many images → 400 error)
+const MAX_REFERENCE_IMAGES = 6;
+
+function capReferenceImages(
+  images: { url: string; width: number; height: number }[],
+  max: number = MAX_REFERENCE_IMAGES
+): { url: string; width: number; height: number }[] {
+  if (images.length <= max) return images;
+  return images.slice(0, max);
 }
 
 // Middleware to check project ownership
@@ -199,7 +217,7 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Seedream', 'OpenAI', 'Qwen']);
+const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen']);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -486,7 +504,7 @@ async function createSinglePanel(args: {
         disablePoi: false,
         priority: 'low',
         sourceImage: null,
-        images: refImages,
+        images: capReferenceImages(refImages),
       },
       resources: [{ id: modelConfig.versionId, strength: 1 }],
       tags: ['comics'],
@@ -1741,7 +1759,7 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: allImages,
+            images: capReferenceImages(allImages),
           },
           resources: [{ id: modelConfig.versionId, strength: 1 }],
           tags: ['comics'],
@@ -2046,25 +2064,32 @@ export const comicsRouter = router({
           const imgHeight =
             genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
-          // Upload to Cloudflare — orchestrator URLs expire within 30 days
+          // Upload to Cloudflare — try URL-based first, fall back to downloading + uploading binary
           let cfImageId: string;
+          const uploadMeta = {
+            userId: ctx.user!.id,
+            source: 'comic-panel',
+            panelId: panel.id,
+          };
           try {
-            const result = await uploadViaUrl(imageUrl, {
-              userId: ctx.user!.id,
-              source: 'comic-panel',
-              panelId: panel.id,
-            });
+            const result = await uploadViaUrl(imageUrl, uploadMeta);
             cfImageId = result.id;
           } catch (e) {
-            console.error(`Failed to upload panel ${panel.id} image to CF:`, e);
-            await dbWrite.comicPanel.update({
-              where: { id: panel.id },
-              data: {
-                status: ComicPanelStatus.Failed,
-                errorMessage: 'Image upload failed. Please regenerate.',
-              },
-            });
-            return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
+            console.warn(`uploadViaUrl failed for panel ${panel.id}, trying buffer fallback:`, e);
+            try {
+              const result = await uploadViaBuffer(imageUrl, uploadMeta);
+              cfImageId = result.id;
+            } catch (e2) {
+              console.error(`Failed to upload panel ${panel.id} image to CF (both methods):`, e2);
+              await dbWrite.comicPanel.update({
+                where: { id: panel.id },
+                data: {
+                  status: ComicPanelStatus.Failed,
+                  errorMessage: 'Image upload failed. Please regenerate.',
+                },
+              });
+              return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
+            }
           }
 
           // Create Image record for content moderation pipeline
@@ -2114,7 +2139,7 @@ export const comicsRouter = router({
             where: { id: panel.id },
             data: {
               status: ComicPanelStatus.Failed,
-              errorMessage: `Generation ${workflow.status}`,
+              errorMessage: `Generation ${workflow.status} — buzz has been refunded`,
             },
           });
           return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
@@ -2991,7 +3016,7 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: allImages,
+            images: capReferenceImages(allImages),
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['comics'],
@@ -3279,7 +3304,7 @@ export const comicsRouter = router({
                 disablePoi: false,
                 priority: 'low',
                 sourceImage: null,
-                images: allImages,
+                images: capReferenceImages(allImages),
               },
               resources: [{ id: bulkVersionId, strength: 1 }],
               tags: ['comics'],
@@ -3488,6 +3513,71 @@ export const comicsRouter = router({
       await dbWrite.comicReference.delete({
         where: { id: input.referenceId },
       });
+      return { success: true };
+    }),
+
+  deleteReferenceImage: comicProtectedProcedure
+    .input(z.object({ referenceId: z.number().int(), imageId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const reference = await dbRead.comicReference.findUnique({
+        where: { id: input.referenceId },
+        select: { userId: true },
+      });
+      if (!reference || reference.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      await dbWrite.comicReferenceImage.delete({
+        where: {
+          referenceId_imageId: { referenceId: input.referenceId, imageId: input.imageId },
+        },
+      });
+
+      // Re-compact positions
+      const remaining = await dbWrite.comicReferenceImage.findMany({
+        where: { referenceId: input.referenceId },
+        orderBy: { position: 'asc' },
+        select: { imageId: true },
+      });
+      await dbWrite.$transaction(
+        remaining.map((r, i) =>
+          dbWrite.comicReferenceImage.update({
+            where: { referenceId_imageId: { referenceId: input.referenceId, imageId: r.imageId } },
+            data: { position: i },
+          })
+        )
+      );
+
+      return { success: true };
+    }),
+
+  reorderReferenceImages: comicProtectedProcedure
+    .input(
+      z.object({
+        referenceId: z.number().int(),
+        imageIds: z.array(z.number().int()),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const reference = await dbRead.comicReference.findUnique({
+        where: { id: input.referenceId },
+        select: { userId: true },
+      });
+      if (!reference || reference.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      await dbWrite.$transaction(
+        input.imageIds.map((imageId, i) =>
+          dbWrite.comicReferenceImage.update({
+            where: {
+              referenceId_imageId: { referenceId: input.referenceId, imageId },
+            },
+            data: { position: i },
+          })
+        )
+      );
+
       return { success: true };
     }),
 

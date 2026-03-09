@@ -66,6 +66,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getImageDimensions } from '~/utils/image-utils';
@@ -108,6 +109,11 @@ const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: 
     { label: '3:4', width: 1728, height: 2304 },
     { label: '9:16', width: 1440, height: 2560 },
   ],
+  Flux2: [
+    { label: 'Square', width: 1024, height: 1024 },
+    { label: 'Landscape', width: 1216, height: 832 },
+    { label: 'Portrait', width: 832, height: 1216 },
+  ],
   Seedream: [
     { label: '16:9', width: 2560, height: 1440 },
     { label: '4:3', width: 2304, height: 1728 },
@@ -131,6 +137,7 @@ const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: 
 
 const COMIC_MODEL_OPTIONS = [
   { value: 'NanoBanana', label: 'Nano Banana Pro' },
+  { value: 'Flux2', label: 'Flux.2' },
   { value: 'Seedream', label: 'Seedream v4.5' },
   { value: 'OpenAI', label: 'OpenAI GPT-Image' },
   { value: 'Qwen', label: 'Qwen' },
@@ -274,8 +281,29 @@ function SortableBulkItem({
   );
 }
 
+function SortableChapter({ id, children }: { id: number; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
 function ProjectWorkspace() {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { id } = router.query;
   const projectId = Number(id);
 
@@ -520,6 +548,14 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const deleteProjectMutation = trpc.comics.deleteProject.useMutation({
+    onSuccess: () => {
+      const username = currentUser?.username;
+      router.push(username ? `/user/${username}?comics` : '/comics');
+    },
+    onError: handleMutationError,
+  });
+
   const publishChapterMutation = trpc.comics.publishChapter.useMutation({
     onSuccess: () => refetch(),
     onError: handleMutationError,
@@ -561,6 +597,30 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const reorderChaptersMutation = trpc.comics.reorderChapters.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
+
+  const chapterSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  const handleChapterDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !project) return;
+    const chapters = project.chapters;
+    const oldIndex = chapters.findIndex((ch) => ch.position === active.id);
+    const newIndex = chapters.findIndex((ch) => ch.position === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrder = arrayMove(
+      chapters.map((ch) => ch.position),
+      oldIndex,
+      newIndex
+    );
+    reorderChaptersMutation.mutate({ projectId, order: newOrder });
+  };
+
   const utils = trpc.useUtils();
 
   // Get active chapter's panels
@@ -584,6 +644,13 @@ function ProjectWorkspace() {
         const results = await Promise.all(
           generatingPanelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
         );
+        const failedResults = results.filter((r) => r.status === 'Failed');
+        if (failedResults.length > 0) {
+          showErrorNotification({
+            title: 'Panel generation failed',
+            error: new Error('Buzz has been refunded automatically.'),
+          });
+        }
         if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
       } catch {
         /* ignore */
@@ -647,6 +714,11 @@ function ProjectWorkspace() {
 
   const anyRefHasImages = useMemo(
     () => activeReferences.some((c) => ((c as any).images?.length ?? 0) > 0),
+    [activeReferences]
+  );
+
+  const totalRefImageCount = useMemo(
+    () => activeReferences.reduce((sum, c) => sum + ((c as any).images?.length ?? 0), 0),
     [activeReferences]
   );
 
@@ -1215,7 +1287,7 @@ function ProjectWorkspace() {
     setEditName(project.name);
     setEditDescription(project.description ?? '');
     setEditGenre((project as any).genre ?? null);
-    setEditBaseModel(project.baseModel ?? null);
+    setEditBaseModel(project.baseModel ?? 'NanoBanana');
     setEditCoverUrl(project.coverImage?.url ?? null);
     setEditCoverImageId(project.coverImage?.id ?? null);
     setEditHeroUrl((project as any).heroImage?.url ?? null);
@@ -1366,7 +1438,7 @@ function ProjectWorkspace() {
 
             <div className={styles.headerContent}>
               <Group gap="xs" mb={4}>
-                <ActionIcon variant="subtle" size="sm" component={Link} href="/comics" c="dimmed">
+                <ActionIcon variant="subtle" size="sm" component={Link} href={currentUser?.username ? `/user/${currentUser.username}?comics` : '/comics'} c="dimmed">
                   <IconArrowLeft size={16} />
                 </ActionIcon>
                 <Title order={3} style={{ fontWeight: 700 }} lineClamp={1}>
@@ -1421,6 +1493,13 @@ function ProjectWorkspace() {
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
                 <span>References</span>
+                {totalRefImageCount > 6 && (
+                  <Tooltip label={`${totalRefImageCount} images across refs — only the first 6 will be used for generation`}>
+                    <Badge size="xs" color="yellow" variant="light">
+                      {totalRefImageCount}/6
+                    </Badge>
+                  </Tooltip>
+                )}
                 <ActionIcon
                   variant="subtle"
                   size="sm"
@@ -1471,100 +1550,109 @@ function ProjectWorkspace() {
               </div>
 
               <div className={styles.chapterSidebar}>
-                {project.chapters.map((chapter, idx) => {
-                  const isActive =
-                    (activeChapterPosition ?? project.chapters[0]?.position) === chapter.position;
-                  const panelCount = chapter.panels.length;
-                  const eaConfig = chapter.earlyAccessConfig as {
-                    buzzPrice: number;
-                    timeframe: number;
-                  } | null;
-                  const isPaywalled =
-                    chapter.status === ComicChapterStatus.Published &&
-                    eaConfig != null &&
-                    chapter.earlyAccessEndsAt != null &&
-                    new Date(chapter.earlyAccessEndsAt) > new Date();
-                  const isDeleting =
-                    deleteChapterMutation.isLoading &&
-                    deleteChapterMutation.variables?.chapterPosition === chapter.position;
-                  const isUpdating =
-                    (updateChapterMutation.isLoading &&
-                      updateChapterMutation.variables?.chapterPosition === chapter.position) ||
-                    (updateChapterEaMutation.isLoading &&
-                      updateChapterEaMutation.variables?.chapterPosition === chapter.position);
-                  const isBusy = isDeleting || isUpdating;
+                <DndContext
+                  sensors={chapterSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleChapterDragEnd}
+                >
+                  <SortableContext items={project.chapters.map((ch) => ch.position)}>
+                    {project.chapters.map((chapter, idx) => {
+                      const isActive =
+                        (activeChapterPosition ?? project.chapters[0]?.position) === chapter.position;
+                      const panelCount = chapter.panels.length;
+                      const eaConfig = chapter.earlyAccessConfig as {
+                        buzzPrice: number;
+                        timeframe: number;
+                      } | null;
+                      const isPaywalled =
+                        chapter.status === ComicChapterStatus.Published &&
+                        eaConfig != null &&
+                        chapter.earlyAccessEndsAt != null &&
+                        new Date(chapter.earlyAccessEndsAt) > new Date();
+                      const isDeleting =
+                        deleteChapterMutation.isLoading &&
+                        deleteChapterMutation.variables?.chapterPosition === chapter.position;
+                      const isUpdating =
+                        (updateChapterMutation.isLoading &&
+                          updateChapterMutation.variables?.chapterPosition === chapter.position) ||
+                        (updateChapterEaMutation.isLoading &&
+                          updateChapterEaMutation.variables?.chapterPosition === chapter.position);
+                      const isBusy = isDeleting || isUpdating;
 
-                  return (
-                    <div
-                      key={`${chapter.projectId}-${chapter.position}`}
-                      className={clsx(styles.chapterItem, isActive && styles.chapterItemActive)}
-                      style={isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
-                      onClick={() => setActiveChapterPosition(chapter.position)}
-                    >
-                      <span className={styles.chapterItemNumber}>
-                        {isBusy ? <Loader size={12} /> : idx + 1}
-                      </span>
-                      <div className={styles.chapterItemInfo}>
-                        <p className={styles.chapterItemName}>
-                          {chapter.name}
-                          {isPaywalled && (
-                            <IconLock
-                              size={11}
-                              className="inline-block ml-1 opacity-60"
-                              style={{ verticalAlign: 'middle', color: 'var(--mantine-color-yellow-5)' }}
-                            />
-                          )}
-                        </p>
-                        <div className={styles.chapterItemCount} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <Tooltip
-                            label={
-                              chapter.status === ComicChapterStatus.Published
-                                ? isPaywalled
-                                  ? `Paywalled · ${eaConfig!.buzzPrice} Buzz`
-                                  : 'Published'
-                                : 'Draft'
-                            }
-                            withArrow
-                            position="right"
+                      return (
+                        <SortableChapter key={`${chapter.projectId}-${chapter.position}`} id={chapter.position}>
+                          <div
+                            className={clsx(styles.chapterItem, isActive && styles.chapterItemActive)}
+                            style={isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
+                            onClick={() => setActiveChapterPosition(chapter.position)}
                           >
-                            <span
-                              className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{
-                                background: isPaywalled
-                                  ? 'var(--mantine-color-yellow-5)'
-                                  : chapter.status === ComicChapterStatus.Published
-                                  ? 'var(--mantine-color-green-5)'
-                                  : 'var(--mantine-color-gray-5)',
-                              }}
-                            />
-                          </Tooltip>
-                          <span>{panelCount} {panelCount === 1 ? 'panel' : 'panels'}</span>
-                          {(() => {
-                            const nsfw = getNsfwLabel(chapter.nsfwLevel);
-                            return nsfw ? (
-                              <Badge size="xs" color={nsfw.color} variant="filled" ml={2}>
-                                {nsfw.label}
-                              </Badge>
-                            ) : null;
-                          })()}
-                        </div>
-                      </div>
-                      <span className={styles.chapterItemActions}>
-                        <ActionIcon
-                          variant="transparent"
-                          size="xs"
-                          c="dimmed"
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            handleOpenChapterSettings(chapter);
-                          }}
-                        >
-                          <IconSettings size={12} />
-                        </ActionIcon>
-                      </span>
-                    </div>
-                  );
-                })}
+                            <span className={styles.chapterItemNumber}>
+                              {isBusy ? <Loader size={12} /> : <IconGripVertical size={12} />}
+                            </span>
+                            <div className={styles.chapterItemInfo}>
+                              <p className={styles.chapterItemName}>
+                                {chapter.name}
+                                {isPaywalled && (
+                                  <IconLock
+                                    size={11}
+                                    className="inline-block ml-1 opacity-60"
+                                    style={{ verticalAlign: 'middle', color: 'var(--mantine-color-yellow-5)' }}
+                                  />
+                                )}
+                              </p>
+                              <div className={styles.chapterItemCount} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Tooltip
+                                  label={
+                                    chapter.status === ComicChapterStatus.Published
+                                      ? isPaywalled
+                                        ? `Paywalled · ${eaConfig!.buzzPrice} Buzz`
+                                        : 'Published'
+                                      : 'Draft'
+                                  }
+                                  withArrow
+                                  position="right"
+                                >
+                                  <span
+                                    className="inline-block w-1.5 h-1.5 rounded-full"
+                                    style={{
+                                      background: isPaywalled
+                                        ? 'var(--mantine-color-yellow-5)'
+                                        : chapter.status === ComicChapterStatus.Published
+                                        ? 'var(--mantine-color-green-5)'
+                                        : 'var(--mantine-color-gray-5)',
+                                    }}
+                                  />
+                                </Tooltip>
+                                <span>{panelCount} {panelCount === 1 ? 'panel' : 'panels'}</span>
+                                {(() => {
+                                  const nsfw = getNsfwLabel(chapter.nsfwLevel);
+                                  return nsfw ? (
+                                    <Badge size="xs" color={nsfw.color} variant="filled" ml={2}>
+                                      {nsfw.label}
+                                    </Badge>
+                                  ) : null;
+                                })()}
+                              </div>
+                            </div>
+                            <span className={styles.chapterItemActions}>
+                              <ActionIcon
+                                variant="transparent"
+                                size="xs"
+                                c="dimmed"
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  handleOpenChapterSettings(chapter);
+                                }}
+                              >
+                                <IconSettings size={12} />
+                              </ActionIcon>
+                            </span>
+                          </div>
+                        </SortableChapter>
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
 
                 <button
                   className={styles.chapterAddBtn}
@@ -2875,13 +2963,13 @@ function ProjectWorkspace() {
             description="Choose the AI model for panel generation"
             data={[
               { value: 'NanoBanana', label: 'Nano Banana Pro (Default)' },
+              { value: 'Flux2', label: 'Flux.2' },
               { value: 'Seedream', label: 'Seedream v4.5' },
               { value: 'OpenAI', label: 'OpenAI GPT-Image' },
               { value: 'Qwen', label: 'Qwen' },
             ]}
             value={editBaseModel}
             onChange={setEditBaseModel}
-            clearable
           />
 
           <div>
@@ -3006,17 +3094,38 @@ function ProjectWorkspace() {
             )}
           </div>
 
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closeSettings}>
-              Cancel
-            </Button>
-            <button
-              className={styles.gradientBtn}
-              onClick={handleSaveSettings}
-              disabled={!editName.trim()}
+          <Group justify="space-between">
+            <Button
+              variant="subtle"
+              color="red"
+              size="compact-sm"
+              leftSection={<IconTrash size={14} />}
+              onClick={() => {
+                closeSettings();
+                openConfirmModal({
+                  title: 'Delete Project',
+                  children:
+                    'Are you sure you want to delete this comic project? This action cannot be undone.',
+                  labels: { confirm: 'Delete', cancel: 'Cancel' },
+                  confirmProps: { color: 'red' },
+                  onConfirm: () => deleteProjectMutation.mutate({ id: projectId }),
+                });
+              }}
             >
-              Save
-            </button>
+              Delete Project
+            </Button>
+            <Group>
+              <Button variant="default" onClick={closeSettings}>
+                Cancel
+              </Button>
+              <button
+                className={styles.gradientBtn}
+                onClick={handleSaveSettings}
+                disabled={!editName.trim()}
+              >
+                Save
+              </button>
+            </Group>
           </Group>
         </Stack>
       </Modal>

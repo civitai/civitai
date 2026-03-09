@@ -111,3 +111,44 @@ type UploadViaUrlResponse = {
   success: boolean;
   errors: string[];
 };
+
+/**
+ * Download an image from a URL and upload it to Cloudflare Images as binary data.
+ * Useful as a fallback when `uploadViaUrl` fails because CF can't reach the source URL.
+ */
+export async function uploadViaBuffer(
+  url: string,
+  metadata: Record<string, unknown> | null = null
+) {
+  const missing = missingEnvs();
+  if (missing.length > 0)
+    throw new Error(`CloudFlare Image Upload: Missing ENVs ${missing.join(', ')}`);
+
+  // Download the image ourselves
+  const imageResponse = await fetch(url);
+  if (!imageResponse.ok)
+    throw new Error(`Failed to download image: ${imageResponse.status} ${imageResponse.statusText}`);
+  const blob = await imageResponse.blob();
+
+  metadata ??= {};
+  const body = new FormData();
+  body.append('file', blob, 'image.png');
+  body.append('requireSignedURLs', 'false');
+  body.append('metadata', JSON.stringify(metadata));
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/images/v1`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.CF_IMAGES_TOKEN}`,
+      },
+      body,
+    }
+  );
+
+  const result = (await response.json()) as UploadViaUrlResponse;
+  if (!result.success) throw new Error(result.errors.join('\n'));
+
+  return result.result;
+}

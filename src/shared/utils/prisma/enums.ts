@@ -911,6 +911,7 @@ export const ComicReferenceType = {
   Character: 'Character',
   Location: 'Location',
   Item: 'Item',
+  Style: 'Style',
 } as const;
 
 export type ComicReferenceType = (typeof ComicReferenceType)[keyof typeof ComicReferenceType];
