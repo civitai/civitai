@@ -19,7 +19,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { ltxv23AspectRatios } from '~/shared/data-graph/generation/ltxv23-graph';
+import { ltxv23AspectRatiosByResolution } from '~/shared/data-graph/generation/ltxv23-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -64,15 +64,18 @@ function buildLoras(data: LTXV23Ctx, ctx: Parameters<Parameters<typeof defineHan
 
 /** Resolves width/height from the first image by finding the closest supported aspect ratio */
 function resolveImageDimensions(data: LTXV23Ctx) {
+  const resolution = 'resolution' in data ? (data.resolution as string) : '720p';
+  const aspectRatios =
+    ltxv23AspectRatiosByResolution[resolution] ?? ltxv23AspectRatiosByResolution['720p'];
   const firstImage = data.images?.[0];
   if (firstImage?.width && firstImage?.height) {
-    const match = findClosestAspectRatio(firstImage, ltxv23AspectRatios);
+    const match = findClosestAspectRatio(firstImage, aspectRatios);
     if (match) return { width: match.width, height: match.height };
   }
   // Fallback to aspectRatio node if set, or default
   return {
-    width: data.aspectRatio?.width ?? ltxv23AspectRatios[0].width,
-    height: data.aspectRatio?.height ?? ltxv23AspectRatios[0].height,
+    width: data.aspectRatio?.width ?? aspectRatios[0].width,
+    height: data.aspectRatio?.height ?? aspectRatios[0].height,
   };
 }
 

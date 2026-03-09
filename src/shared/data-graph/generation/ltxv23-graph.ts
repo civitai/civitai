@@ -14,9 +14,10 @@
  * - images: Workflow-dependent image input (img2vid only)
  * - video: Source video input (vid2vid:edit and vid2vid:extend)
  * - seed: Optional seed for reproducibility
- * - aspectRatio: Output aspect ratio (hidden when video source provided)
+ * - resolution: Output resolution (720p or 1080p)
+ * - aspectRatio: Output aspect ratio (varies by resolution, hidden when video source provided)
  * - cfgScale: CFG scale for generation control
- * - duration: Video duration
+ * - duration: Video duration (max varies by resolution)
  * - steps: Number of inference steps
  * - frameGuideStrength: Frame guide conditioning strength (img2vid only)
  * - cannyLowThreshold: Canny low threshold (vid2vid:edit only)
@@ -29,11 +30,11 @@
 import { z } from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import type { AspectRatioOption } from './common';
 import {
   seedNode,
   aspectRatioNode,
   sliderNode,
-  enumNode,
   imagesNode,
   videoNode,
   resourcesNode,
@@ -50,20 +51,38 @@ const ltxv23VersionOptions = [
   { label: 'Distilled', value: 2749948 },
 ];
 
-/** LTXV23 aspect ratio options (same as LTXV2) */
-const ltxv23AspectRatios = [
-  { label: '16:9', value: '16:9', width: 848, height: 480 },
-  { label: '3:2', value: '3:2', width: 720, height: 480 },
-  { label: '1:1', value: '1:1', width: 512, height: 512 },
-  { label: '2:3', value: '2:3', width: 480, height: 720 },
-  { label: '9:16', value: '9:16', width: 480, height: 848 },
+/** LTXV23 aspect ratio options by resolution */
+const ltxv23AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
+  '720p': [
+    { label: '16:9', value: '16:9', width: 1280, height: 720 },
+    { label: '3:2', value: '3:2', width: 1176, height: 784 },
+    { label: '1:1', value: '1:1', width: 960, height: 960 },
+    { label: '2:3', value: '2:3', width: 784, height: 1176 },
+    { label: '9:16', value: '9:16', width: 720, height: 1280 },
+  ],
+  '1080p': [
+    { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+    { label: '3:2', value: '3:2', width: 1764, height: 1176 },
+    { label: '1:1', value: '1:1', width: 1440, height: 1440 },
+    { label: '2:3', value: '2:3', width: 1176, height: 1764 },
+    { label: '9:16', value: '9:16', width: 1080, height: 1920 },
+  ],
+};
+
+/** Default aspect ratios (720p for backwards compatibility) */
+const ltxv23AspectRatios = ltxv23AspectRatiosByResolution['720p'];
+
+/** LTXV23 resolution options */
+const ltxv23Resolutions = [
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
 ];
 
-/** LTXV23 duration options */
-const ltxv23Durations = [
-  { label: '3 seconds', value: 3 },
-  { label: '5 seconds', value: 5 },
-];
+/** Max duration per resolution */
+const ltxv23MaxDurationByResolution: Record<string, number> = {
+  '720p': 20,
+  '1080p': 15,
+};
 
 // =============================================================================
 // LTXV23 Graph
@@ -135,14 +154,27 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
   // Seed node
   .node('seed', seedNode())
 
-  // Aspect ratio node - only for txt2vid (img2vid uses image crop, vid2vid uses source video)
+  // Resolution node
+  .node('resolution', {
+    input: z.enum(['720p', '1080p']).optional(),
+    output: z.enum(['720p', '1080p']),
+    defaultValue: '720p' as const,
+    meta: { options: ltxv23Resolutions },
+  })
+
+  // Aspect ratio node - only for txt2vid and ref2vid, options vary by resolution
   .node(
     'aspectRatio',
-    (ctx) => ({
-      ...aspectRatioNode({ options: ltxv23AspectRatios, defaultValue: '16:9' }),
-      when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
-    }),
-    ['workflow']
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
+      const options =
+        ltxv23AspectRatiosByResolution[resolution] ?? ltxv23AspectRatiosByResolution['720p'];
+      return {
+        ...aspectRatioNode({ options, defaultValue: '16:9' }),
+        when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
+      };
+    },
+    ['workflow', 'resolution']
   )
 
   // CFG scale node
@@ -161,8 +193,21 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
     })
   )
 
-  // Duration node
-  .node('duration', enumNode({ options: ltxv23Durations, defaultValue: 5 }))
+  // Duration node - max varies by resolution (720p: 3-20, 1080p: 3-15)
+  .node(
+    'duration',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
+      const max = ltxv23MaxDurationByResolution[resolution] ?? 20;
+      return sliderNode({
+        min: 3,
+        max,
+        step: 1,
+        defaultValue: 5,
+      });
+    },
+    ['resolution']
+  )
 
   // Steps node
   .node(
@@ -284,4 +329,9 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
   );
 
 // Export constants for use in components
-export { ltxv23AspectRatios, ltxv23Durations, ltxv23VersionOptions };
+export {
+  ltxv23AspectRatios,
+  ltxv23AspectRatiosByResolution,
+  ltxv23Resolutions,
+  ltxv23VersionOptions,
+};
