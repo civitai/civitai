@@ -14,6 +14,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
@@ -152,75 +153,79 @@ export const getUserCreator = async ({
   leaderboardId?: string;
   isModerator?: boolean;
 }) => {
-  const user = await dbRead.user.findFirst({
-    where: {
-      ...where,
-      deletedAt: null,
-      AND: [
-        { id: { not: constants.system.user.id } },
-        { username: { not: constants.system.user.username } },
-      ],
-    },
-    select: {
-      id: true,
-      image: true,
-      username: true,
-      muted: true,
-      bannedAt: true,
-      deletedAt: true,
-      createdAt: true,
-      publicSettings: true,
-      excludeFromLeaderboards: true,
-      links: {
-        select: {
-          url: true,
-          type: true,
-        },
+  const user = await withSpan('user:getCreator:findUser', () =>
+    dbRead.user.findFirst({
+      where: {
+        ...where,
+        deletedAt: null,
+        AND: [
+          { id: { not: constants.system.user.id } },
+          { username: { not: constants.system.user.username } },
+        ],
       },
-      stats: {
-        select: {
-          downloadCountAllTime: true,
-          thumbsUpCountAllTime: true,
-          followerCountAllTime: true,
-          reactionCountAllTime: true,
-          uploadCountAllTime: true,
-          generationCountAllTime: true,
-        },
-      },
-      rank: {
-        select: {
-          leaderboardRank: true,
-          leaderboardId: true,
-          leaderboardTitle: true,
-          leaderboardCosmetic: true,
-        },
-      },
-      cosmetics: {
-        where: { equippedAt: { not: null } },
-        select: {
-          data: true,
-          cosmetic: {
-            select: simpleCosmeticSelect,
+      select: {
+        id: true,
+        image: true,
+        username: true,
+        muted: true,
+        bannedAt: true,
+        deletedAt: true,
+        createdAt: true,
+        publicSettings: true,
+        excludeFromLeaderboards: true,
+        links: {
+          select: {
+            url: true,
+            type: true,
           },
         },
+        stats: {
+          select: {
+            downloadCountAllTime: true,
+            thumbsUpCountAllTime: true,
+            followerCountAllTime: true,
+            reactionCountAllTime: true,
+            uploadCountAllTime: true,
+            generationCountAllTime: true,
+          },
+        },
+        rank: {
+          select: {
+            leaderboardRank: true,
+            leaderboardId: true,
+            leaderboardTitle: true,
+            leaderboardCosmetic: true,
+          },
+        },
+        cosmetics: {
+          where: { equippedAt: { not: null } },
+          select: {
+            data: true,
+            cosmetic: {
+              select: simpleCosmeticSelect,
+            },
+          },
+        },
+        profilePicture: {
+          select: profileImageSelect,
+        },
       },
-      profilePicture: {
-        select: profileImageSelect,
-      },
-    },
-  });
+    })
+  );
   if (!user) return null;
 
   /**
    * TODO: seems to be deprecated, we are getting model count from the stats
    * though it might be bugged since we are not updating stats if user deletes/unpublishes models
    */
-  const modelCount = await dbRead.model.count({
-    where: {
-      userId: user?.id,
-      status: 'Published',
-    },
-  });
+  const modelCount = await withSpan('user:getCreator:countModels', () =>
+    dbRead.model.count({
+      where: {
+        userId: user?.id,
+        status: 'Published',
+      },
+    })
+  );
 
   return {
     ...user,
