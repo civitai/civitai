@@ -129,38 +129,39 @@ export function WinnerPodiumCard({
 
       {/* Winner Image */}
       {winner.imageUrl && (
-        <ImageGuard2
-          image={{
-            id: winner.imageId,
-            nsfwLevel: winner.imageNsfwLevel ?? 0,
-            url: winner.imageUrl,
-          }}
+        <div
+          className={`relative w-full overflow-hidden ${
+            compact
+              ? isFirst
+                ? 'aspect-[5/6]'
+                : 'aspect-square'
+              : isFirst
+              ? 'aspect-square'
+              : 'aspect-[4/3]'
+          }`}
         >
-          {(safe) => (
-            <Link href={`/images/${winner.imageId}`}>
-              <div
-                className={`relative w-full overflow-hidden ${
-                  compact
-                    ? isFirst
-                      ? 'aspect-[5/6]'
-                      : 'aspect-square'
-                    : isFirst
-                    ? 'aspect-square'
-                    : 'aspect-[4/3]'
-                }`}
-                style={{ cursor: 'pointer' }}
-              >
-                {safe ? (
-                  <EdgeMedia2
-                    src={winner.imageUrl}
-                    type={MediaType.image}
-                    width={450}
-                    className="size-full object-cover transition-transform duration-300 hover:scale-105"
-                  />
-                ) : (
-                  <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />
-                )}
-                <div className="absolute left-2 top-2 flex items-center gap-1">
+          <ImageGuard2
+            image={{
+              id: winner.imageId,
+              nsfwLevel: winner.imageNsfwLevel ?? 0,
+              url: winner.imageUrl,
+            }}
+          >
+            {(safe) => (
+              <>
+                <Link href={`/images/${winner.imageId}`} className="block size-full">
+                  {safe ? (
+                    <EdgeMedia2
+                      src={winner.imageUrl}
+                      type={MediaType.image}
+                      width={450}
+                      className="size-full object-cover transition-transform duration-300 hover:scale-105"
+                    />
+                  ) : (
+                    <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />
+                  )}
+                </Link>
+                <div className="absolute left-2 top-2 z-10 flex items-center gap-1">
                   <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
                   {safe && winner.judgeScore && (
                     <JudgeScoreBadge
@@ -171,10 +172,10 @@ export function WinnerPodiumCard({
                     />
                   )}
                 </div>
-              </div>
-            </Link>
-          )}
-        </ImageGuard2>
+              </>
+            )}
+          </ImageGuard2>
+        </div>
       )}
 
       {/* Winner Info */}
