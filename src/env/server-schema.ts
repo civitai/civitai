@@ -281,4 +281,7 @@ export const serverSchema = z.object({
   // Storage resolver internal API (for registering B2 uploads)
   STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
   STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
+
+  // BitDex
+  BITDEX_URL: z.string().optional().default(''),
 });

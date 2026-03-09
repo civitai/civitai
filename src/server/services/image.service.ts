@@ -170,7 +170,10 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
+import { getImagesFromBitdex, queryBitdex } from '~/server/bitdex/client';
+import type { FilterClause, SortClause, Value } from '~/server/bitdex/filter-translator';
+import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
@@ -1931,7 +1934,40 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     if (flag.enabled) searchFn = getImagesFromSearchPostFilter;
   }
 
-  return searchFn(input);
+  // Check BitDex mode (off / shadow / primary)
+  const bitdexMode = await getFliptVariant(
+    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+    input.currentUserId?.toString() || 'anonymous'
+  );
+
+  // TODO: primary mode — bypass Meili entirely, query BitDex directly
+  // For now, shadow mode fires BitDex async alongside Meili for comparison
+
+  const meiliStart = Date.now();
+  const result = await searchFn(input);
+
+  // Fire BitDex shadow comparison (non-blocking) — uses native filter builder
+  if (bitdexMode === 'shadow' || bitdexMode === 'primary') {
+    const meiliElapsed = Date.now() - meiliStart;
+    getImagesFromBitdexPreFilter(input)
+      .then((bitdexResult) => {
+        if (bitdexResult) {
+          compareBitdexResults({
+            bitdexIds: bitdexResult.ids,
+            meiliIds: result.data.map((i: { id: number }) => i.id),
+            bitdexTotalMatched: bitdexResult.total_matched,
+            meiliTotalMatched: result.data.length,
+            bitdexElapsedMs: bitdexResult.elapsed_us / 1000,
+            meiliElapsedMs: meiliElapsed,
+          });
+        }
+      })
+      .catch((err) => recordBitdexError(err));
+  }
+
+  // Strip internal metadata before returning
+  const { _meiliFilter, _meiliSort, ...cleanResult } = result as typeof result & { _meiliFilter?: string; _meiliSort?: string };
+  return cleanResult;
 }
 
 export async function getImagesFromFeedSearch(
@@ -2388,8 +2424,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   sorts.push(searchSort);
   //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
+  const meiliFilterStr = filters.join(' AND ');
   const request: SearchParams = {
-    filter: filters.join(' AND '),
+    filter: meiliFilterStr,
     sort: sorts,
     limit: limit + 1,
     offset,
@@ -2398,6 +2435,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
   requestTotal.inc({ route }); // count every request up front
+  const meiliStart = Date.now();
 
   try {
     const { results } = await metricsSearchClient
@@ -2477,7 +2515,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
       endTimer();
 
-      return { data: fullData, nextCursor };
+      return { data: fullData, nextCursor, _meiliFilter: meiliFilterStr, _meiliSort: sorts[0] };
     }
 
     // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
@@ -2583,9 +2621,12 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     });
 
     endTimer();
+
     return {
       data: fullData,
       nextCursor,
+      _meiliFilter: meiliFilterStr,
+      _meiliSort: sorts[0],
     };
   } catch (error) {
     const err = error as Error;
@@ -2603,6 +2644,235 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     endTimer();
     return { data: [], nextCursor: undefined };
   }
+}
+
+// --- BitDex native filter helpers ---
+const _int = (v: number): Value => ({ Integer: v });
+const _str = (v: string): Value => ({ String: v });
+const _bool = (v: boolean): Value => ({ Bool: v });
+const _eq = (f: string, v: Value): FilterClause => ({ Eq: [f, v] });
+const _notEq = (f: string, v: Value): FilterClause => ({ NotEq: [f, v] });
+const _in = (f: string, vs: Value[]): FilterClause => ({ In: [f, vs] });
+const _notIn = (f: string, vs: Value[]): FilterClause => ({ NotIn: [f, vs] });
+const _gt = (f: string, v: Value): FilterClause => ({ Gt: [f, v] });
+const _gte = (f: string, v: Value): FilterClause => ({ Gte: [f, v] });
+const _lte = (f: string, v: Value): FilterClause => ({ Lte: [f, v] });
+const _not = (c: FilterClause): FilterClause => ({ Not: c });
+const _and = (...cs: (FilterClause | null)[]): FilterClause => {
+  const valid = cs.filter((c): c is FilterClause => c !== null);
+  return valid.length === 1 ? valid[0] : { And: valid };
+};
+const _or = (...cs: (FilterClause | null)[]): FilterClause => {
+  const valid = cs.filter((c): c is FilterClause => c !== null);
+  return valid.length === 1 ? valid[0] : { Or: valid };
+};
+
+/**
+ * Build and execute a BitDex query from the same input as getImagesFromSearchPreFilter.
+ * Returns { ids, total_matched, elapsed_us } or null on error.
+ */
+export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
+  let { postIds = [] } = input;
+  const {
+    sort,
+    modelVersionId,
+    types,
+    withMeta,
+    fromPlatform,
+    notPublished,
+    scheduled,
+    username,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    period,
+    isModerator,
+    currentUserId,
+    excludedUserIds,
+    hideAutoResources,
+    hideManualResources,
+    hidden,
+    followed,
+    limit = 100,
+    offset,
+    entry,
+    postId,
+    useCombinedNsfwLevel,
+    remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    poiOnly,
+    minorOnly,
+    blockedFor,
+    requiringMeta,
+  } = input;
+  let { browsingLevel, userId } = input;
+
+  const filters: FilterClause[] = [];
+
+  // --- Access control ---
+  if (!isModerator) {
+    if (currentUserId) {
+      filters.push(_or(
+        _not(_eq('availability', _str(Availability.Private))),
+        _eq('userId', _int(currentUserId))
+      ));
+    } else {
+      filters.push(_not(_eq('availability', _str(Availability.Private))));
+    }
+    // blockedFor: BitDex bitmap semantics handle nulls — no bitmap entry = not matched
+  }
+
+  if (postId) postIds = [...postIds, postId];
+
+  if (disablePoi) {
+    filters.push(currentUserId
+      ? _or(_not(_eq('poi', _bool(true))), _eq('userId', _int(currentUserId)))
+      : _not(_eq('poi', _bool(true)))
+    );
+  }
+  if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
+
+  if (isModerator) {
+    if (poiOnly) filters.push(_eq('poi', _bool(true)));
+    if (minorOnly) filters.push(_eq('minor', _bool(true)));
+    if (blockedFor?.length) filters.push(_in('blockedFor', blockedFor.map(_str)));
+  }
+
+  // --- Hidden images ---
+  if (hidden) {
+    if (!currentUserId) return null;
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId: currentUserId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (!imageIds.length) return null;
+    filters.push(_in('id', imageIds.map(_int)));
+  }
+
+  // --- Username → userId ---
+  if (username && !userId) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) return null;
+    userId = targetUser.id;
+  }
+
+  // --- Followed users ---
+  if (currentUserId && followed) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (!userIds.length) return null;
+    filters.push(_in('userId', userIds.map(_int)));
+  }
+
+  // --- NSFW Browsing Level ---
+  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
+  else browsingLevel = onlySelectableLevels(browsingLevel);
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+  if (isModerator && includesNsfwContent) browsingLevels.push(0);
+
+  // combinedNsfwLevel maps to nsfwLevel in BitDex
+  const nsfwLevelField = 'nsfwLevel';
+  const nsfwMain = _in(nsfwLevelField, browsingLevels.map(_int));
+  const nsfwUser: FilterClause[] = [_eq(nsfwLevelField, _int(0))];
+  if (currentUserId) nsfwUser.push(_eq('userId', _int(currentUserId)));
+  filters.push(_or(nsfwMain, nsfwUser.length > 1 ? _and(...nsfwUser) : nsfwUser[0]));
+
+  // NSFW license restrictions
+  if (nsfwRestrictedBaseModels.length > 0) {
+    filters.push(_not(_and(
+      _in(nsfwLevelField, nsfwBrowsingLevelsArray.map(_int)),
+      _in('baseModel', nsfwRestrictedBaseModels.map(_str))
+    )));
+  }
+
+  // --- Model version ---
+  if (modelVersionId) {
+    const vClauses: FilterClause[] = [_eq('postedToId', _int(modelVersionId))];
+    if (!hideAutoResources) vClauses.push(_in('modelVersionIds', [_int(modelVersionId)]));
+    if (!hideManualResources) vClauses.push(_in('modelVersionIdsManual', [_int(modelVersionId)]));
+    filters.push(_or(...vClauses));
+  }
+
+  // --- Remix ---
+  if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
+  if (remixesOnly && !nonRemixesOnly) filters.push(_gte('remixOfId', _int(0)));
+  // nonRemixesOnly: docs without remixOfId have no bitmap entry → already excluded
+
+  // --- Tag exclusions ---
+  if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
+
+  // --- Metadata ---
+  if (withMeta) filters.push(_eq('hasMeta', _bool(true)));
+  if (requiringMeta) filters.push(_eq('blockedFor', _str(BlockedReason.AiNotVerified)));
+  if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
+
+  // --- Published ---
+  if (isModerator) {
+    if (notPublished) {
+      // NOT EXISTS equivalent — skip for now (moderator-only)
+    } else if (scheduled) {
+      filters.push(_gt('publishedAtUnix', _int(Date.now())));
+    } else {
+      const pubClauses: FilterClause[] = [_lte('publishedAtUnix', _int(Date.now()))];
+      if (currentUserId) pubClauses.push(_eq('userId', _int(currentUserId)));
+      filters.push(_or(...pubClauses));
+    }
+  } else {
+    const pubClauses: FilterClause[] = [
+      _lte('publishedAtUnix', _int(snapToInterval(Math.round(Date.now())))),
+    ];
+    if (currentUserId) pubClauses.push(_eq('userId', _int(currentUserId)));
+    filters.push(_or(...pubClauses));
+  }
+
+  // --- Simple field filters ---
+  if (types?.length) filters.push(_in('type', types.map(_str)));
+  if (tags?.length) filters.push(_in('tagIds', tags.map(_int)));
+  if (tools?.length) filters.push(_in('toolIds', tools.map(_int)));
+  if (techniques?.length) filters.push(_in('techniqueIds', techniques.map(_int)));
+  if (postIds.length) filters.push(_in('postId', postIds.map(_int)));
+  if (baseModels?.length) filters.push(_in('baseModel', baseModels.map(_str)));
+
+  if (userId) filters.push(_eq('userId', _int(userId)));
+  else if (excludedUserIds?.length) filters.push(_notIn('userId', excludedUserIds.map(_int)));
+
+  // --- Period ---
+  if (period && period !== 'AllTime') {
+    const periodMs: Record<string, number> = {
+      Day: 86400000, Week: 604800000, Month: 2592000000, Year: 31536000000,
+    };
+    const ms = periodMs[period];
+    if (ms) filters.push(_gt('sortAtUnix', _int(snapToInterval(Math.round(Date.now() - ms)))));
+  }
+
+  // --- Sort ---
+  let bitdexSort: SortClause | undefined;
+  if (sort === ImageSort.MostComments) {
+    bitdexSort = { field: 'commentCount', direction: 'Desc' };
+  } else if (sort === ImageSort.MostReactions) {
+    bitdexSort = { field: 'reactionCount', direction: 'Desc' };
+  } else if (sort === ImageSort.MostCollected) {
+    bitdexSort = { field: 'collectedCount', direction: 'Desc' };
+  } else if (sort === ImageSort.Oldest) {
+    bitdexSort = { field: 'sortAt', direction: 'Asc' };
+  } else {
+    bitdexSort = { field: 'sortAt', direction: 'Desc' };
+    if (entry) {
+      filters.push(_lte('sortAtUnix', _int(snapToInterval(Math.round(entry)))));
+    }
+  }
+
+  return queryBitdex('civitai', filters, bitdexSort, limit, undefined, offset);
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
