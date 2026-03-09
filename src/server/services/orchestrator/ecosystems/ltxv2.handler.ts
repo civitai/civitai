@@ -10,8 +10,10 @@ import type {
   ComfyLtx2FirstLastFrameToVideoInput,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import { ltxv2AspectRatios } from '~/shared/data-graph/generation/ltxv2-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -66,6 +68,20 @@ function createVideoInput(
   }) as ComfyLtx2CreateVideoInput;
 }
 
+/** Resolves width/height from the first image by finding the closest supported aspect ratio */
+function resolveImageDimensions(data: LTXV2Ctx) {
+  const firstImage = data.images?.[0];
+  if (firstImage?.width && firstImage?.height) {
+    const match = findClosestAspectRatio(firstImage, ltxv2AspectRatios);
+    if (match) return { width: match.width, height: match.height };
+  }
+  // Fallback to aspectRatio node if set, or default
+  return {
+    width: data.aspectRatio?.width ?? ltxv2AspectRatios[0].width,
+    height: data.aspectRatio?.height ?? ltxv2AspectRatios[0].height,
+  };
+}
+
 /** Creates firstLastFrameToVideo input for img2vid workflow */
 function createFirstLastFrameInput(
   data: LTXV2Ctx,
@@ -73,13 +89,14 @@ function createFirstLastFrameInput(
 ): ComfyLtx2FirstLastFrameToVideoInput {
   const loras = buildLoras(data, ctx);
   const images = data.images;
+  const { width, height } = resolveImageDimensions(data);
 
   return removeEmpty({
     engine: 'ltx2',
     operation: 'firstLastFrameToVideo',
     prompt: data.prompt,
-    width: data.aspectRatio?.width,
-    height: data.aspectRatio?.height,
+    width,
+    height,
     guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
     steps: 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,

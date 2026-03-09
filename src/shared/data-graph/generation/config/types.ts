@@ -62,6 +62,13 @@ export interface WorkflowConfig {
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
 
+  /**
+   * Base workflow this is a variant of. Variants share the same graph branch
+   * and submit as the base workflow, but have their own config (ecosystemIds,
+   * excludeModelVersionIds, etc.). Used for mode switcher group resolution.
+   */
+  variantOf?: string;
+
   /** UI-only aliases — appear as additional entries in the workflow dropdown, all map to this key */
   aliases?: {
     label: string;

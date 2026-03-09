@@ -19,7 +19,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
-import { isWorkflowAvailable, getWorkflowsForEcosystem } from './config';
+import { isWorkflowAvailable, getWorkflowsForEcosystem, workflowConfigByKey } from './config';
 
 // =============================================================================
 // Helper Functions
@@ -832,6 +832,22 @@ export function createCheckpointGraph(
             set('ecosystem', modelEcosystemKey);
           }
           // If no compatible workflows found, don't switch (shouldn't happen in practice)
+        }
+      },
+      ['model']
+    )
+    // When model changes to a version excluded by the current workflow variant,
+    // fall back to the parent workflow. This lets the user re-select the variant
+    // from the dropdown, which will trigger the version constraint to force a valid model.
+    .effect(
+      (ctx, _ext, set) => {
+        const workflow = (ctx as { workflow?: string }).workflow;
+        if (!workflow) return;
+        const config = workflowConfigByKey.get(workflow);
+        if (!config?.variantOf || !config.excludeModelVersionIds?.length) return;
+        const model = ctx.model as { id?: number } | undefined;
+        if (model?.id && config.excludeModelVersionIds.includes(model.id)) {
+          set('workflow', config.variantOf);
         }
       },
       ['model']

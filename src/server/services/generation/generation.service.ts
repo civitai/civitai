@@ -806,7 +806,9 @@ function extractResourceInputFromMeta(metadata: Record<string, unknown>) {
 /**
  * Extract hash candidates from metadata (mirrors get_image_resources.sql stages 1-3).
  */
-function extractHashCandidates(input: ReturnType<typeof extractResourceInputFromMeta>): HashCandidate[] {
+function extractHashCandidates(
+  input: ReturnType<typeof extractResourceInputFromMeta>
+): HashCandidate[] {
   const candidates: HashCandidate[] = [];
 
   // Stage 1: meta.resources[] — resources with hashes
@@ -961,8 +963,7 @@ export async function resolveImageMeta({
   const baseModel = getBaseModelFromResources(
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
-  const engine =
-    initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
+  const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
   const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
   // Filter resources by ecosystem compatibility

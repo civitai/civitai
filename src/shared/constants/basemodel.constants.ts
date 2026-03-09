@@ -157,6 +157,7 @@ export const ECO = {
   CogVideoX: 41,
   LTXV: 42,
   LTXV2: 58,
+  LTXV23: 63,
   Sora2: 43,
   Veo3: 44,
   SVD: 45,
@@ -596,6 +597,15 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 16,
     sortOrder: 206,
   },
+  {
+    id: ECO.LTXV23,
+    key: 'LTXV23',
+    name: 'ltxv23',
+    displayName: 'LTX Video 2.3',
+    parentEcosystemId: ECO.LTXV2,
+    familyId: 16,
+    sortOrder: 207,
+  },
   { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 207 },
   {
     id: ECO.Mochi,
@@ -813,6 +823,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // LTXV2 - checkpoint and LORA
   { ecosystemId: ECO.LTXV2, supportType: 'generation', modelTypes: checkpointAndLora },
+
+  // LTXV2.3 - checkpoint and LORA
+  { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
 ];
 
 // =============================================================================
@@ -1024,6 +1037,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.LTXV2,
     defaults: {
       model: { id: 2578325 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.LTXV23,
+    defaults: {
+      model: { id: 2749908 },
       modelLocked: true,
     },
   },
@@ -1412,6 +1432,7 @@ export const BM = {
   Kolors: 14,
   LTXV: 15,
   LTXV2: 72,
+  LTXV23: 80,
   Lumina: 16,
   Mochi: 17,
   NanoBanana: 18,
@@ -1937,6 +1958,14 @@ export const baseModels: BaseModelRecord[] = [
     description: "Lightricks' next-generation video generation model",
     type: 'video',
     ecosystemId: ECO.LTXV2,
+    licenseId: 16,
+  },
+  {
+    id: BM.LTXV23,
+    name: 'LTXV 2.3',
+    description: "Lightricks' LTX Video 2.3 generation model",
+    type: 'video',
+    ecosystemId: ECO.LTXV23,
     licenseId: 16,
   },
 

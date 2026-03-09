@@ -22,13 +22,15 @@ export const AI_MODELS = {
   KIMI: 'moonshotai/kimi-k2.5',
   GROK: 'x-ai/grok-4.1-fast',
   GPT_5_NANO: 'openai/gpt-5-nano',
+  STEP_FUN: 'stepfun/step-3.5-flash:free',
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',
   VISION_FALLBACK: 'anthropic/claude-sonnet-4',
 } as const;
 
-export type AIModel = (typeof AI_MODELS)[keyof typeof AI_MODELS] | string;
+// eslint-disable-next-line @typescript-eslint/ban-types
+export type AIModel = (typeof AI_MODELS)[keyof typeof AI_MODELS] | (string & {});
 
 // Simple message types that get converted to SDK format
 type TextContent = { type: 'text'; text: string };

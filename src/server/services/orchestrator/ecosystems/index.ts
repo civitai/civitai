@@ -45,6 +45,7 @@ import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createLTXV2Input } from './ltxv2.handler';
+import { createLTXV23Input } from './ltxv23.handler';
 import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
@@ -139,6 +140,9 @@ export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 /** LTXV2 context */
 export type LTXV2Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV2' };
 
+/** LTXV23 context */
+export type LTXV23Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV23' };
+
 /** Mochi context */
 export type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
 
@@ -177,6 +181,7 @@ export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createLTXV2Input } from './ltxv2.handler';
+export { createLTXV23Input } from './ltxv23.handler';
 export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
@@ -336,6 +341,10 @@ async function createEcosystemStep(
     // LTXV2
     case 'LTXV2':
       return { $type: 'videoGen', input: await createLTXV2Input(normalizedData, handlerCtx) };
+
+    // LTXV23
+    case 'LTXV23':
+      return { $type: 'videoGen', input: await createLTXV23Input(normalizedData, handlerCtx) };
 
     // Mochi
     case 'Mochi':
