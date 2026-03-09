@@ -11,7 +11,9 @@ import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
-import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
+// RedisInstrumentation disabled — Next.js webpack bundles @redis/client,
+// eliminating runtime require() calls that OTEL's require-in-the-middle hooks need.
+// Manual instrumentation in client.ts would be needed for Redis spans.
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
@@ -64,7 +66,6 @@ if (!OTEL_ENABLED) {
       instrumentations: [
         new HttpInstrumentation(),
         new PrismaInstrumentation(),
-        new RedisInstrumentation(),
       ],
     });
 

@@ -101,7 +101,6 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: ['lodash', 'lodash-es', 'prisma'],
-    serverExternalPackages: ['redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series'],
     experimental: {
       // scrollRestoration: true,
       serverSourceMaps: true,

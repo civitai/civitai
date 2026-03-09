@@ -111,7 +111,6 @@
     "@opentelemetry/exporter-logs-otlp-proto": "^0.211.0",
     "@opentelemetry/exporter-trace-otlp-proto": "^0.211.0",
     "@opentelemetry/instrumentation-http": "^0.213.0",
-    "@opentelemetry/instrumentation-redis": "^0.61.0",
     "@opentelemetry/resources": "^2.5.0",
     "@opentelemetry/sdk-logs": "^0.211.0",
     "@opentelemetry/sdk-node": "^0.211.0",
