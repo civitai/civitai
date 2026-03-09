@@ -84,7 +84,7 @@ export function CompletedChallengeCard({ data }: Props) {
         {/* Winner podium — same [2nd, 1st, 3rd] layout as detail page */}
         {podiumOrder.length > 0 && (
           <div className="flex items-end justify-center gap-2">
-            {podiumOrder.map((winner, index) => (
+            {podiumOrder.map((winner) => (
               <WinnerPodiumCard
                 key={winner.place}
                 winner={winner}
