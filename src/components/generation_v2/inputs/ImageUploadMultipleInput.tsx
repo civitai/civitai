@@ -20,6 +20,7 @@ import type { InputWrapperProps } from '@mantine/core';
 import { Badge, Input, Text, Tooltip } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
+import classes from './ImageUploadMultipleInput.module.scss';
 import {
   SourceImageUploadMultiple,
   type ImageAnnotation,
@@ -332,27 +333,34 @@ export function ImageUploadMultipleInput({
                 </SourceImageUploadMultiple.Dropzone>
               )}
 
-              {/* Image strip with clear button */}
+              {/* Image grid/strip */}
               {hasImages && (
                 <div className="flex flex-col gap-1">
-                  <div
-                    className={clsx(
-                      'flex gap-3',
-                      imageLayout === 'wrap' ? 'flex-wrap' : 'overflow-x-auto'
-                    )}
-                  >
-                    {previewItems.map((item, i) => (
-                      <div
-                        key={i}
-                        className={clsx('relative w-[200px]', imageLayout !== 'wrap' && 'shrink-0')}
-                      >
-                        <SourceImageUploadMultiple.Image index={i} {...item} />
-                        {imageAnnotations?.[i] && (
-                          <ImageAnnotationBadge annotation={imageAnnotations[i]} />
-                        )}
+                  {imageLayout === 'wrap' ? (
+                    <div className={classes.imageGridContainer}>
+                      <div className={classes.imageGrid}>
+                        {previewItems.map((item, i) => (
+                          <div key={i} className={classes.imageGridItem}>
+                            <SourceImageUploadMultiple.Image index={i} {...item} />
+                            {imageAnnotations?.[i] && (
+                              <ImageAnnotationBadge annotation={imageAnnotations[i]} />
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-3 overflow-x-auto">
+                      {previewItems.map((item, i) => (
+                        <div key={i} className="relative w-[200px] shrink-0">
+                          <SourceImageUploadMultiple.Image index={i} {...item} />
+                          {imageAnnotations?.[i] && (
+                            <ImageAnnotationBadge annotation={imageAnnotations[i]} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {!canAddMore && max > 1 && (
                     <Text size="xs" c="dimmed">
                       {completedCount} of {max} images (limit reached)

@@ -1,0 +1,27 @@
+.imageGridContainer {
+  container-type: inline-size;
+}
+
+.imageGrid {
+  display: grid;
+  gap: var(--mantine-spacing-xs);
+  grid-template-columns: repeat(2, minmax(0, 200px));
+  justify-content: center;
+
+  @container (min-width: 530px) {
+    grid-template-columns: repeat(3, minmax(0, 200px));
+  }
+
+  @container (min-width: 900px) {
+    grid-template-columns: repeat(4, minmax(0, 200px));
+  }
+
+  @container (min-width: 1200px) {
+    grid-template-columns: repeat(auto-fill, minmax(0, 200px));
+  }
+}
+
+.imageGridItem {
+  position: relative;
+  width: 100%;
+}

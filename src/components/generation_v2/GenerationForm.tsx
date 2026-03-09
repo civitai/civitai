@@ -1244,8 +1244,6 @@ function ImagesInput({
   const annotations = annotationsSnapshot?.value as
     | ({ label: string; color: string; tooltip?: string } | null)[]
     | undefined;
-  const hasAnnotations = annotations && annotations.length > 0;
-
   return (
     <ImageUploadMultipleInput
       value={value}
@@ -1259,7 +1257,7 @@ function ImagesInput({
       aspectRatios={meta?.aspectRatios}
       cropToFirstImage={meta?.cropToFirstImage}
       imageAnnotations={annotations ?? undefined}
-      imageLayout={hasAnnotations ? 'wrap' : 'scroll'}
+      imageLayout="wrap"
     />
   );
 }
