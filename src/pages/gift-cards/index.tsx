@@ -18,8 +18,6 @@ import {
   IconExternalLink,
   IconCheck,
   IconBolt,
-  IconBuildingStore,
-  IconArrowRight,
   IconAlertTriangle,
   IconCoinBitcoin,
 } from '@tabler/icons-react';
@@ -638,9 +636,6 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
             </>
           )}
 
-          {/* Wholesale Program Callout */}
-          {!showKinguinCheckout && <WholesaleCallout />}
-
           {/* Disclaimer */}
           {!showKinguinCheckout && (
             <Text size="xs" c="dimmed" ta="center" mt="md">
@@ -663,79 +658,3 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
   );
 }
 
-// Wholesale Program Callout Component
-const WholesaleCallout = () => {
-  return (
-    <Card
-      shadow="lg"
-      padding="xl"
-      radius="md"
-      withBorder
-      mt="xl"
-      className={classes.wholesaleCallout}
-    >
-      {/* New Plans Badge */}
-      <div className={classes.newPlansBadge}>
-        <Text size="xs" fw={700} c="white">
-          New Plans Available
-        </Text>
-      </div>
-
-      <Grid align="center">
-        <Grid.Col span={{ base: 12, md: 8 }}>
-          <Stack gap="md">
-            <Group gap="md">
-              <div className={classes.wholesaleIconWrapper}>
-                <IconBuildingStore size={32} />
-              </div>
-              <Stack gap={4}>
-                <Title order={2} className={classes.wholesaleTitle}>
-                  Run a Store? Sell Buzz Gift Cards
-                </Title>
-                <Text size="lg" c="dimmed">
-                  Join our Wholesale Program and offer Buzz gift cards to your customers
-                </Text>
-              </Stack>
-            </Group>
-            <Group gap="xl" ml={60} wrap="wrap">
-              <Group gap="xs">
-                <IconBolt size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Starting at just $1k/month
-                </Text>
-              </Group>
-              <Group gap="xs">
-                <IconBolt size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Up to 10% discount
-                </Text>
-              </Group>
-              <Group gap="xs">
-                <IconCheck size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Featured on gift cards page
-                </Text>
-              </Group>
-            </Group>
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 4 }}>
-          <Stack gap="sm" className={classes.wholesaleCTAWrapper}>
-            <Button
-              component={NextLink}
-              href="/buzz-wholesale"
-              size="lg"
-              rightSection={<IconArrowRight size={20} />}
-              className={classes.wholesaleCTA}
-            >
-              Learn More
-            </Button>
-            <Text size="xs" c="dimmed" className={classes.wholesaleCTAText}>
-              Perfect for retailers, resellers, and online stores
-            </Text>
-          </Stack>
-        </Grid.Col>
-      </Grid>
-    </Card>
-  );
-};

@@ -23,7 +23,7 @@ const vendorConfigs: Array<{
   { vendor: buybuzzVendor },
   { vendor: waifuWayVendor, fliptFlag: FLIPT_FEATURE_FLAGS.GIFT_CARD_VENDOR_WAIFU_WAY },
   { vendor: lewtDropVendor, fliptFlag: FLIPT_FEATURE_FLAGS.GIFT_CARD_VENDOR_LEWT_DROP },
-  { vendor: royalCdKeysVendor, fliptFlag: FLIPT_FEATURE_FLAGS.GIFT_CARD_VENDOR_ROYAL_CD_KEYS },
+  { vendor: royalCdKeysVendor },
 ];
 
 /**
