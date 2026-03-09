@@ -1,22 +1,30 @@
 import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
+import { useMemo } from 'react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  matchesMarkerTags,
+  useGetTextToImageRequestsImages,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { isDefined } from '~/utils/type-guards';
+
 import classes from './Feed.module.scss';
 
 export function Feed() {
   const filters = useFiltersContext((state) => state.generation);
 
-  const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+  const { requests, markerTags, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequestsImages();
 
-  const images = steps
-    .flatMap(({ images, ...step }) => images.map((image) => ({ ...image, step })))
-    .filter((image) => !image.blockedReason && image.status === 'succeeded');
+  const images = useMemo(
+    () =>
+      requests.flatMap((r) =>
+        r.succeededImages.filter((img) => matchesMarkerTags(img, markerTags))
+      ),
+    [requests, markerTags]
+  );
 
   if (isError)
     return (
@@ -74,20 +82,13 @@ export function Feed() {
   return (
     <div className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
-      <div className={classes.grid} data-testid="generation-feed-list">
-        {images.map((image) => {
-          const request = requests.find((request) => request.id === image.workflowId);
-          if (!request) return null;
-
-          return (
-            <GeneratedImage
-              key={`${image.workflowId}_${image.id}`}
-              request={request}
-              step={image.step}
-              image={image}
-            />
-          );
-        })}
+      <div
+        className={classes.grid}
+        data-testid="generation-feed-list"
+      >
+        {images.map((image) => (
+          <GeneratedImage key={`${image.workflow.id}_${image.id}`} image={image} />
+        ))}
       </div>
 
       {hasNextPage && (

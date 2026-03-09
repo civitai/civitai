@@ -17,8 +17,10 @@
 
 import { useMemo } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
-import { Input, Text } from '@mantine/core';
+import { Badge, Input, Text, Tooltip } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
+import clsx from 'clsx';
+import classes from './ImageUploadMultipleInput.module.scss';
 import {
   SourceImageUploadMultiple,
   type ImageAnnotation,
@@ -36,6 +38,13 @@ import { useSourceMetadataStore, sourceMetadataStore } from '~/store/source-meta
 export type ImageValue = { url: string; width: number; height: number } & Partial<
   Omit<SourceImageProps, 'url' | 'width' | 'height'>
 >;
+
+/** Per-image status annotation for overlay badges */
+export interface ImageStatusAnnotation {
+  label?: string;
+  color?: string;
+  tooltip?: string;
+}
 
 export interface ImageUploadMultipleInputProps
   extends Omit<InputWrapperProps, 'children' | 'onChange'> {
@@ -66,6 +75,10 @@ export interface ImageUploadMultipleInputProps
   urlPlaceholder?: string;
   /** Hint text below URL input (only used when layout='url-input') */
   urlHint?: string;
+  /** Per-image status annotations (parallel array to value). null entries = no annotation. */
+  imageAnnotations?: (ImageStatusAnnotation | null)[];
+  /** Image strip layout: 'scroll' (horizontal scroll, default) or 'wrap' (flex-wrap) */
+  imageLayout?: 'scroll' | 'wrap';
 }
 
 // Re-export ImageSlot for convenience
@@ -93,10 +106,32 @@ export function ImageUploadMultipleInput({
   layout = 'default',
   urlPlaceholder,
   urlHint,
+  imageAnnotations,
+  imageLayout = 'scroll',
   ...inputWrapperProps
 }: ImageUploadMultipleInputProps) {
   const isSlotsMode = !!slots?.length;
   const isUrlInputLayout = layout === 'url-input' && !isSlotsMode;
+  const completedImages = value?.filter((v) => !!v.url) ?? [];
+  const showClearAll = completedImages.length > 1;
+
+  const labelWithClear = showClearAll ? (
+    <div className="flex w-full items-center justify-between">
+      <span>{label}</span>
+      <Text
+        component="button"
+        type="button"
+        size="xs"
+        c="red"
+        className="cursor-pointer border-0 bg-transparent p-0"
+        onClick={() => onChange?.([])}
+      >
+        Clear all
+      </Text>
+    </div>
+  ) : (
+    label
+  );
 
   // Build annotations array from the store for the current images
   const metadataByUrl = useSourceMetadataStore((state) => state.metadataByUrl);
@@ -165,6 +200,7 @@ export function ImageUploadMultipleInput({
         description={description}
         error={error}
         required={required}
+        classNames={{ label: 'w-full' }}
       >
         <SourceImageUploadMultiple
           value={value as SourceImageProps[] | null | undefined}
@@ -184,10 +220,11 @@ export function ImageUploadMultipleInput({
     return (
       <Input.Wrapper
         {...inputWrapperProps}
-        label={label}
+        label={labelWithClear}
         description={description}
         error={error}
         required={required}
+        classNames={{ label: 'w-full' }}
       >
         <SourceImageUploadMultiple
           value={value as SourceImageProps[] | null | undefined}
@@ -212,12 +249,23 @@ export function ImageUploadMultipleInput({
                   />
                 )}
 
-                {/* Horizontal scrolling image strip */}
+                {/* Image strip */}
                 {hasImages && (
-                  <div className="flex gap-3 overflow-x-auto">
+                  <div
+                    className={clsx(
+                      'flex gap-3',
+                      imageLayout === 'wrap' ? 'flex-wrap' : 'overflow-x-auto'
+                    )}
+                  >
                     {previewItems.map((item, i) => (
-                      <div key={i} className="w-[200px] shrink-0">
+                      <div
+                        key={i}
+                        className={clsx('w-[200px]', imageLayout !== 'wrap' && 'shrink-0')}
+                      >
                         <SourceImageUploadMultiple.Image index={i} {...item} />
+                        {imageAnnotations?.[i] && (
+                          <ImageAnnotationBadge annotation={imageAnnotations[i]} />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -241,10 +289,11 @@ export function ImageUploadMultipleInput({
   return (
     <Input.Wrapper
       {...inputWrapperProps}
-      label={label}
+      label={labelWithClear}
       description={description}
       error={error}
       required={required}
+      classNames={{ label: 'w-full' }}
     >
       <SourceImageUploadMultiple
         value={value as SourceImageProps[] | null | undefined}
@@ -284,22 +333,40 @@ export function ImageUploadMultipleInput({
                 </SourceImageUploadMultiple.Dropzone>
               )}
 
-              {/* Horizontal scrolling image strip */}
+              {/* Image grid/strip */}
               {hasImages && (
-                <div className="flex gap-3 overflow-x-auto">
-                  {previewItems.map((item, i) => (
-                    <div key={i} className="w-[200px] shrink-0">
-                      <SourceImageUploadMultiple.Image index={i} {...item} />
+                <div className="flex flex-col gap-1">
+                  {imageLayout === 'wrap' ? (
+                    <div className={classes.imageGridContainer}>
+                      <div className={classes.imageGrid}>
+                        {previewItems.map((item, i) => (
+                          <div key={i} className={classes.imageGridItem}>
+                            <SourceImageUploadMultiple.Image index={i} {...item} />
+                            {imageAnnotations?.[i] && (
+                              <ImageAnnotationBadge annotation={imageAnnotations[i]} />
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="flex gap-3 overflow-x-auto">
+                      {previewItems.map((item, i) => (
+                        <div key={i} className="relative w-[200px] shrink-0">
+                          <SourceImageUploadMultiple.Image index={i} {...item} />
+                          {imageAnnotations?.[i] && (
+                            <ImageAnnotationBadge annotation={imageAnnotations[i]} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {!canAddMore && max > 1 && (
+                    <Text size="xs" c="dimmed">
+                      {completedCount} of {max} images (limit reached)
+                    </Text>
+                  )}
                 </div>
-              )}
-
-              {/* Show count when at limit (only for multi-image mode) */}
-              {!canAddMore && max > 1 && (
-                <Text size="xs" c="dimmed">
-                  {completedCount} of {max} images (limit reached)
-                </Text>
               )}
             </div>
           );
@@ -307,4 +374,32 @@ export function ImageUploadMultipleInput({
       </SourceImageUploadMultiple>
     </Input.Wrapper>
   );
+}
+
+// =============================================================================
+// Per-Image Annotation Badge
+// =============================================================================
+
+function ImageAnnotationBadge({ annotation }: { annotation: ImageStatusAnnotation }) {
+  if (!annotation.label) return null;
+
+  const badge = (
+    <Badge
+      size="xs"
+      color={annotation.color ?? 'gray'}
+      variant="filled"
+      className="absolute bottom-1 left-1 z-10 shadow-sm"
+    >
+      {annotation.label}
+    </Badge>
+  );
+
+  if (annotation.tooltip) {
+    return (
+      <Tooltip label={annotation.tooltip} withArrow>
+        {badge}
+      </Tooltip>
+    );
+  }
+  return badge;
 }

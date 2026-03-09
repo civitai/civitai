@@ -63,6 +63,13 @@ export interface WorkflowConfig {
   modeLabel?: string;
 
   /**
+   * How to display steps in the queue item.
+   * - `'inline'` (default) — all step images in a single flat grid (e.g. batch upscale)
+   * - `'separate'` — each step gets its own labeled section (e.g. generate → upscale pipeline)
+   */
+  stepDisplay?: 'inline' | 'separate';
+
+  /**
    * Base workflow this is a variant of. Variants share the same graph branch
    * and submit as the base workflow, but have their own config (ecosystemIds,
    * excludeModelVersionIds, etc.). Used for mode switcher group resolution.

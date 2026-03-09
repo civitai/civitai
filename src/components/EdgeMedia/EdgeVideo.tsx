@@ -229,7 +229,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       if (isCurrentStack && (canPlay || props.autoPlay)) {
         videoElem.play().catch(() => {
           // Autoplay failed, user interaction required
-          console.log('auto play failed');
           setAutoplayFailed(true);
         });
       } else {

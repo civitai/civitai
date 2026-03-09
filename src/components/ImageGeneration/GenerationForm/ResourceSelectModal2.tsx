@@ -205,7 +205,7 @@ function ResourceSelectModalContent() {
   } = trpc.model.getFeaturedModels.useQuery();
 
   const {
-    steps,
+    data: generationData,
     isFetching: isLoadingGenerations,
     // isError: isErrorGenerations,
   } = useGetTextToImageRequests(
@@ -331,9 +331,15 @@ function ResourceSelectModalContent() {
     }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
-      if (!!steps) {
+      if (!!generationData) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources?.map((r) => (r.model as { id?: number }).id))
+          generationData.flatMap((wf) =>
+            wf.steps.flatMap((step) =>
+              step.resources?.map(
+                (r: any) => (r.model as { id?: number }).id
+              )
+            )
+          )
         );
         meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }

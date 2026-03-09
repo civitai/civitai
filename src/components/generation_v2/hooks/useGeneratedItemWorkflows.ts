@@ -19,6 +19,7 @@ import {
   type WorkflowOption,
   type WorkflowCategory,
   getEcosystemsForWorkflow,
+  bulkWorkflowLimits,
 } from '~/shared/data-graph/generation/config/workflows';
 import {
   getWorkflowsForMediaType,
@@ -31,10 +32,7 @@ import {
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import type {
-  NormalizedGeneratedImage,
-  NormalizedGeneratedImageStep,
-} from '~/server/services/orchestrator';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
 import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
@@ -147,12 +145,11 @@ export function useGeneratedItemWorkflows({
 
 interface ApplyWorkflowOptions {
   workflowId: string;
-  image: NormalizedGeneratedImage;
-  step: Omit<NormalizedGeneratedImageStep, 'images'>;
+  image: BlobData;
 }
 
 /** Check if workflow switches media type (e.g., img2vid) */
-function isCrossMediaWorkflow(image: NormalizedGeneratedImage, workflowId: string): boolean {
+function isCrossMediaWorkflow(image: BlobData, workflowId: string): boolean {
   const currentOutputType = image.type === 'video' ? 'video' : 'image';
   return currentOutputType !== getOutputTypeForWorkflow(workflowId);
 }
@@ -188,12 +185,44 @@ function getTargetEcosystemKey(
 }
 
 /**
+ * Append an image to the upscale batch.
+ * Always uses 'append' runType so the form merges with existing images.
+ * Stores source metadata for enhancement tracking.
+ */
+async function appendUpscaleImage(image: BlobData) {
+  generationGraphPanel.setViewWithReturn('generate');
+
+  // Verify actual image dimensions
+  const dims = await getImageDimensions(image.url).catch(() => ({
+    width: image.width,
+    height: image.height,
+  }));
+
+  // Store source metadata for enhancement tracking
+  if (image.params || image.resources) {
+    sourceMetadataStore.setMetadata(image.url, {
+      params: image.params,
+      resources: image.resources,
+      ...(image.remixOfId != null ? { remixOfId: image.remixOfId } : {}),
+    });
+  }
+
+  generationGraphStore.setData({
+    params: {
+      workflow: 'img2img:upscale',
+      images: [{ url: image.url, width: dims.width, height: dims.height }],
+    },
+    resources: [],
+    runType: 'append',
+  });
+}
+
+/**
  * Send generated output data to the generation form for a specific workflow.
  */
 async function applyWorkflowToForm({
   workflowId,
   image,
-  step,
   ecosystem,
   clearResources,
 }: ApplyWorkflowOptions & { ecosystem?: string; clearResources: boolean }) {
@@ -210,7 +239,6 @@ async function applyWorkflowToForm({
   }
 
   const inputType = getInputTypeForWorkflow(workflowId);
-  const stepParams = step.params;
 
   // Build images in graph format { url, width, height }[]
   // Pass image for workflows that require it (inputType: 'image') OR
@@ -229,26 +257,25 @@ async function applyWorkflowToForm({
     images = [{ url: image.url, width: dims.width, height: dims.height }];
   }
 
-  if (isEnhancement && step.metadata) {
-    // Store source metadata keyed by the image/video URL
-    // Include transformations if this image has already been enhanced
+  if (isEnhancement && (image.params || image.resources)) {
+    // Store original generation data as source metadata
     sourceMetadataStore.setMetadata(image.url, {
-      params: step.metadata.params,
-      resources: step.metadata.resources,
-      transformations: (step.metadata as any).transformations,
+      params: image.params,
+      resources: image.resources,
+      ...(image.remixOfId != null ? { remixOfId: image.remixOfId } : {}),
     });
   }
 
   generationGraphStore.setData({
     params: {
       workflow: workflowId,
-      prompt: stepParams.prompt,
-      negativePrompt: stepParams.negativePrompt,
+      prompt: image.params?.prompt,
+      negativePrompt: image.params?.negativePrompt,
       ...(images ? { images } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
       ...(ecosystem ? { ecosystem } : {}),
     },
-    resources: clearResources ? [] : step.resources,
+    resources: clearResources ? [] : image.resources ?? [],
     runType: 'patch',
   });
 }
@@ -275,28 +302,21 @@ function shouldOpenModal(workflowId: string): boolean {
 
 /**
  * Get source metadata for an image/video from the step.
+ * metadata.params/resources are always the original generation (resolved).
  */
-function getSourceMetadataFromStep(
-  step: Omit<NormalizedGeneratedImageStep, 'images'>
+function getSourceMetadataFromImage(
+  image: BlobData
 ): Omit<SourceMetadata, 'extractedAt'> | undefined {
-  if (!step.metadata) return undefined;
-  return {
-    params: step.metadata.params,
-    resources: step.metadata.resources,
-    transformations: (step.metadata as any).transformations,
-  };
+  if (!image.params && !image.resources) return undefined;
+  return { params: image.params, resources: image.resources };
 }
 
 /**
  * Open the appropriate modal for an enhancement workflow.
  * Returns true if a modal was opened, false otherwise.
  */
-async function openEnhancementModal(
-  workflowId: string,
-  image: NormalizedGeneratedImage,
-  step: Omit<NormalizedGeneratedImageStep, 'images'>
-): Promise<boolean> {
-  const metadata = getSourceMetadataFromStep(step);
+async function openEnhancementModal(workflowId: string, image: BlobData): Promise<boolean> {
+  const metadata = getSourceMetadataFromImage(image);
 
   switch (workflowId) {
     case 'img2img:upscale': {
@@ -347,12 +367,11 @@ async function openEnhancementModal(
  */
 export async function applyWorkflowWithCheck({
   workflowId: rawWorkflowId,
-  ecosystemKey,
   image,
-  step,
   compatible,
   isLightbox,
-}: ApplyWorkflowOptions & { ecosystemKey?: string; compatible: boolean; isLightbox?: boolean }) {
+}: ApplyWorkflowOptions & { compatible: boolean; isLightbox?: boolean }) {
+  const ecosystemKey = image.ecosystemKey;
   // Resolve alias option IDs (e.g., 'img2vid#0') to the actual graph key ('img2vid')
   const option = workflowOptionById.get(rawWorkflowId);
   const workflowId = option?.graphKey ?? rawWorkflowId;
@@ -362,7 +381,7 @@ export async function applyWorkflowWithCheck({
 
   // For legacy generator users, check if we should open a modal instead
   if (shouldOpenModal(workflowId)) {
-    const modalOpened = await openEnhancementModal(workflowId, image, step);
+    const modalOpened = await openEnhancementModal(workflowId, image);
     if (modalOpened) return;
   }
 
@@ -376,10 +395,15 @@ export async function applyWorkflowWithCheck({
 
   // Enhancement and standalone workflows: apply directly (no ecosystem choice needed)
   if (isEnhancement || isStandalone) {
+    // Upscale always appends images to build a batch
+    if (workflowId === 'img2img:upscale') {
+      await appendUpscaleImage(image);
+      return;
+    }
+
     await applyWorkflowToForm({
       workflowId,
       image,
-      step,
       ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
       clearResources: isStandalone || isCrossMedia,
     });
@@ -409,13 +433,13 @@ export async function applyWorkflowWithCheck({
 
     generationGraphStore.setData({
       params: {
-        ...step.metadata.params,
+        ...image.params,
         workflow: workflowId,
         seed: undefined,
         ...(images ? { images } : {}),
         ...(inputType === 'video' ? { video: image.url } : {}),
       },
-      resources: step.resources,
+      resources: image.resources,
       runType: 'replay',
     });
     return;
@@ -447,10 +471,55 @@ export async function applyWorkflowWithCheck({
       applyWorkflowToForm({
         workflowId,
         image,
-        step,
         ecosystem: targetEco,
         clearResources: isCrossMedia || ecosystemChanged,
       });
     },
+  });
+}
+
+// =============================================================================
+// Bulk Workflow Actions
+// =============================================================================
+
+/**
+ * Apply a workflow to multiple images at once.
+ * Slices to the workflow's max batch size, stores source metadata for each,
+ * verifies dimensions in parallel, and sends to the generation form.
+ */
+export async function applyBulkWorkflow(workflowId: string, images: BlobData[]) {
+  const max = bulkWorkflowLimits[workflowId];
+  if (!max) return;
+
+  const batch = images.slice(0, max);
+
+  generationGraphPanel.setViewWithReturn('generate');
+
+  // Store source metadata for each image
+  for (const image of batch) {
+    if (image.params || image.resources) {
+      sourceMetadataStore.setMetadata(image.url, {
+        params: image.params,
+        resources: image.resources,
+        ...(image.remixOfId != null ? { remixOfId: image.remixOfId } : {}),
+      });
+    }
+  }
+
+  // Verify dimensions for all images in parallel
+  const imagesWithDims = await Promise.all(
+    batch.map(async (img) => {
+      const dims = await getImageDimensions(img.url).catch(() => ({
+        width: img.width,
+        height: img.height,
+      }));
+      return { url: img.url, width: dims.width, height: dims.height };
+    })
+  );
+
+  generationGraphStore.setData({
+    params: { workflow: workflowId, images: imagesWithDims },
+    resources: [],
+    runType: 'append',
   });
 }
