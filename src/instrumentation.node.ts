@@ -13,7 +13,8 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 
-// Only enable OTEL if explicitly set AND endpoint is configured
+// Only enable OTEL on DataPacket deployment
+const IS_DATAPACKET = process.env.IS_DATAPACKET === 'true';
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
 const OTEL_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
@@ -25,8 +26,10 @@ console.log('[instrumentation.node] OTEL config:', {
   OTEL_SERVICE_NAME: process.env.OTEL_SERVICE_NAME,
 });
 
-// Skip OTEL if not explicitly enabled or no endpoint configured
-if (!OTEL_ENABLED) {
+// Skip OTEL if not DataPacket, not explicitly enabled, or no endpoint configured
+if (!IS_DATAPACKET) {
+  console.log('[instrumentation.node] OTEL disabled (not DataPacket)');
+} else if (!OTEL_ENABLED) {
   console.log('[instrumentation.node] OTEL disabled (OTEL_ENABLED != true)');
 } else if (!OTEL_ENDPOINT) {
   console.log('[instrumentation.node] OTEL disabled (no OTEL_EXPORTER_OTLP_ENDPOINT)');
