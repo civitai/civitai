@@ -468,7 +468,9 @@ export class DataGraph<
   /** Debug mode flag */
   private _debug = false;
 
-  /** Tracks which discriminator branches are currently active */
+  /** Tracks which discriminator branches are currently active.
+   *  Keyed by `source|discriminatorKey` to support nested discriminators
+   *  that use the same key (e.g., parent and child both discriminating on 'ecosystem'). */
   private activeDiscriminators = new Map<string, ActiveBranch>();
 
   /** Set of computed node keys (for isComputed check) */
@@ -1715,7 +1717,7 @@ export class DataGraph<
         removedKeys.add(entry.key);
       }
       if (entry.kind === 'discriminator') {
-        this.activeDiscriminators.delete(entry.discriminatorKey);
+        this.activeDiscriminators.delete(`${entry.source}|${entry.discriminatorKey}`);
       }
     }
 
@@ -1884,7 +1886,10 @@ export class DataGraph<
           changed.add(entry.key);
         }
       } else if (entry.kind === 'discriminator') {
-        const current = this.activeDiscriminators.get(entry.discriminatorKey);
+        // Scope discriminator tracking by source path to support nested discriminators
+        // with the same key (e.g., parent and child both using 'ecosystem')
+        const discId = `${entry.source}|${entry.discriminatorKey}`;
+        const current = this.activeDiscriminators.get(discId);
 
         // Only process if discriminator key changed OR no branch is active yet
         if (!changed.has(entry.discriminatorKey) && current) {
@@ -1912,7 +1917,7 @@ export class DataGraph<
               entry.source
             );
             for (const key of removedKeys) changed.add(key);
-            this.activeDiscriminators.delete(entry.discriminatorKey);
+            this.activeDiscriminators.delete(discId);
             keyToIndex = rebuildKeyToIndex();
           }
           currentIndex++;
@@ -1960,7 +1965,7 @@ export class DataGraph<
           );
 
           // Track active branch using the effective (group) name
-          this.activeDiscriminators.set(entry.discriminatorKey, {
+          this.activeDiscriminators.set(discId, {
             branch: effectiveBranch,
             entryKeys,
           });

@@ -6,7 +6,7 @@ type Props = {
 };
 
 export function getUserBuzzBonusAmount(user: Props) {
-  if (user.tier) return 5000;
+  if (user.tier && user.tier !== 'free') return 5000;
   if (!!user.createdAt && !checkUserCreatedAfterBuzzLaunch(user)) return 500;
 
   return 100;

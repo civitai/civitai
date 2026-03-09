@@ -3,6 +3,7 @@ import { IconSend } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { CommentReactions } from '~/components/CommentsV2/Comment/CommentReactions';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatRelativeDate } from '~/utils/comic-helpers';
@@ -36,14 +37,19 @@ export function ChapterComments({
     createComment.mutate({ projectId, chapterPosition, content: comment.trim() });
   };
 
+  // Use actual comment array length for display count (more reliable than commentCount field)
+  const commentCount = thread?.comments?.length ?? 0;
+
   return (
     <div>
       <h3 className="text-base font-medium mb-3">
-        Comments {thread?.commentCount ? `(${thread.commentCount})` : ''}
+        Comments {commentCount > 0 ? `(${commentCount})` : ''}
       </h3>
 
       {/* Comment input */}
-      {currentUser ? (
+      {thread?.locked ? (
+        <p className="text-sm text-gray-400 mb-4">Comments are locked for this chapter.</p>
+      ) : currentUser ? (
         <div className="flex gap-2 mb-4">
           <Textarea
             placeholder="Write a comment..."
@@ -89,6 +95,7 @@ export function ChapterComments({
                   <span className="text-xs text-gray-400">{formatRelativeDate(c.createdAt)}</span>
                 </div>
                 <p className="text-sm mt-0.5 whitespace-pre-wrap break-words">{c.content}</p>
+                {c.reactions && <CommentReactions comment={c as any} />}
               </div>
             </div>
           ))}

@@ -10,7 +10,7 @@ import { logToAxiom } from '~/server/logging/client';
 
 const log = createLogger('jobs:challenge-activation', 'blue');
 
-export const challengeActivationJob = createJob('challenge-activation', '* * * * *', async () => {
+export const challengeActivationJob = createJob('challenge-activation', '0 * * * *', async () => {
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) return;
 
   const challengesToStart = await getChallengesReadyToStart();

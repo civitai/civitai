@@ -190,7 +190,7 @@ export const ecosystemGraph = new DataGraph<
       graph: fluxGraph,
     },
     // Image ecosystems - individual families
-    { values: ['Qwen'] as const, graph: qwenGraph },
+    { values: ['Qwen', 'Qwen2'] as const, graph: qwenGraph },
     { values: ['NanoBanana'] as const, graph: nanoBananaGraph },
     { values: ['Seedream'] as const, graph: seedreamGraph },
     { values: ['Imagen4'] as const, graph: imagen4Graph },

@@ -941,6 +941,23 @@ async function main() {
       break;
     }
 
+    case 'ticket-fields': {
+      const data = await freshdeskApi('/ticket_fields');
+      if (jsonOutput) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        for (const field of data) {
+          console.log(`${field.name} (${field.label_for_agents || field.label}) [${field.field_type}]`);
+          if (field.choices && Object.keys(field.choices).length > 0) {
+            for (const choice of Object.values(field.choices)) {
+              console.log(`  - ${choice}`);
+            }
+          }
+        }
+      }
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       showUsage();

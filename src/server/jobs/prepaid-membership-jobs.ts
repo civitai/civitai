@@ -7,9 +7,10 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
-import type {
-  SubscriptionMetadata,
-  SubscriptionProductMetadata,
+import {
+  getMembershipBuzzTransactionId,
+  type SubscriptionMetadata,
+  type SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
 import { withRetries } from '~/utils/errorHandling';
 
@@ -95,7 +96,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           toAccountId: d.userId,
           toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
           type: TransactionType.Purchase,
-          externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}:v3`,
+          externalTransactionId: getMembershipBuzzTransactionId({ date, userId: d.userId, productId: d.productId }),
           amount: amount,
           description: `Membership Bonus`,
           details: {
@@ -152,6 +153,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
                 )}::json)
               ) AS updates
               WHERE "CustomerSubscription"."id" = updates."id"
+              AND NOT COALESCE("metadata"->'buzzTransactionIds', '[]'::jsonb) @> jsonb_build_array(updates.data ->> 'externalTransactionId')
             `;
           }
         },

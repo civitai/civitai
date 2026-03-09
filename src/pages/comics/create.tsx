@@ -19,8 +19,11 @@ import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Page } from '~/components/AppLayout/Page';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { getImageDimensions } from '~/utils/image-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatGenreLabel } from '~/utils/comic-helpers';
 import { ComicGenre } from '~/shared/utils/prisma/enums';
@@ -69,8 +72,27 @@ function CreateComicPage() {
 
   const handleCoverDrop = async (files: File[]) => {
     if (files.length === 0) return;
-    const result = await uploadCoverToCF(files[0]);
-    setCoverUrl(result.id);
+    const file = files[0];
+    const url = URL.createObjectURL(file);
+    const { width, height } = await getImageDimensions(url);
+    dialogStore.trigger({
+      id: 'comic-cover-crop',
+      component: ImageCropModal,
+      props: {
+        images: [{ url, width, height }],
+        aspectRatios: ['3:4'] as `${number}:${number}`[],
+        onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
+          const blob = output[0]?.cropped;
+          const uploadFile = blob
+            ? new File([blob], 'cover.jpg', { type: blob.type })
+            : file;
+          const result = await uploadCoverToCF(uploadFile);
+          setCoverUrl(result.id);
+          URL.revokeObjectURL(url);
+        },
+        onCancel: () => URL.revokeObjectURL(url),
+      },
+    });
   };
 
   const handleHeroDrop = async (files: File[]) => {

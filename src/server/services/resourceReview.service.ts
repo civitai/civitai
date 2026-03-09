@@ -116,10 +116,10 @@ export const getResourceReviewsInfinite = async ({
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
 
   if (username) {
-    const targetUser = await dbRead.user.findUnique({
-      where: { username },
-      select: { id: true },
-    });
+    const userFindArgs = { where: { username }, select: { id: true } };
+    const targetUser =
+      (await dbRead.user.findUnique(userFindArgs)) ??
+      (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw new Error('User not found');
 

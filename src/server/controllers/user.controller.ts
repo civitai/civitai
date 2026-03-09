@@ -3,6 +3,7 @@ import { orderBy } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import { purgeCache } from '~/server/cloudflare/client';
 import { constants } from '~/server/common/constants';
 import type { NotificationCategory } from '~/server/common/enums';
 import {
@@ -194,7 +195,7 @@ export const getUsernameAvailableHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    if (!isUsernamePermitted(input.username)) return false;
+    if (!(await isUsernamePermitted(input.username))) return false;
     const user = await getUserByUsername({ ...input, select: { id: true } });
     return !user || user.id === ctx.user.id;
   } catch (error) {
@@ -301,6 +302,8 @@ export const completeOnboardingHandler = async ({
         break;
       }
       case OnboardingSteps.Profile: {
+        if (input.username && !(await isUsernamePermitted(input.username)))
+          throw throwBadRequestError('Invalid username');
         await dbWrite.user.update({
           where: { id },
           data: { onboarding, username: input.username, email: input.email },
@@ -381,7 +384,8 @@ export const updateUserHandler = async ({
   } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
-  if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
+  if (username && !(await isUsernamePermitted(username)))
+    throw throwBadRequestError('Invalid username');
 
   if (data.image) {
     const valid = verifyAvatar(data.image);
@@ -472,6 +476,8 @@ export const updateUserHandler = async ({
     }
 
     await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+    purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
     return updatedUser;
   } catch (error) {

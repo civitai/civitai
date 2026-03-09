@@ -1,4 +1,6 @@
 import * as z from 'zod';
+import { env } from '~/env/server';
+import { CacheTTL } from '~/server/common/constants';
 import {
   changeModelModifierHandler,
   copyGalleryBrowsingLevelHandler,
@@ -132,7 +134,7 @@ export const modelRouter = router({
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(skipEdgeCache)
-    .use(edgeCacheIt({ ttl: 60 }))
+    .use(edgeCacheIt({ ttl: env.IS_DATAPACKET ? CacheTTL.sm : 60 }))
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))

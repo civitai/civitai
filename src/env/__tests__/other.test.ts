@@ -55,21 +55,21 @@ describe('env/other', () => {
   });
 
   describe('isPreview', () => {
-    it('true when NEXTAUTH_COOKIE_DOMAIN is set', async () => {
-      process.env = { ...originalEnv, NEXTAUTH_COOKIE_DOMAIN: '.civitaic.com' };
+    it('true when IS_PREVIEW is "true"', async () => {
+      process.env = { ...originalEnv, IS_PREVIEW: 'true' };
       const { isPreview } = await import('../other');
       expect(isPreview).toBe(true);
     });
 
-    it('false when NEXTAUTH_COOKIE_DOMAIN is not set', async () => {
-      const { NEXTAUTH_COOKIE_DOMAIN: _, ...envWithout } = originalEnv;
+    it('false when IS_PREVIEW is not set', async () => {
+      const { IS_PREVIEW: _, ...envWithout } = originalEnv;
       process.env = envWithout;
       const { isPreview } = await import('../other');
       expect(isPreview).toBe(false);
     });
 
-    it('false when NEXTAUTH_COOKIE_DOMAIN is empty string', async () => {
-      process.env = { ...originalEnv, NEXTAUTH_COOKIE_DOMAIN: '' };
+    it('false when IS_PREVIEW is not "true"', async () => {
+      process.env = { ...originalEnv, IS_PREVIEW: 'false' };
       const { isPreview } = await import('../other');
       expect(isPreview).toBe(false);
     });

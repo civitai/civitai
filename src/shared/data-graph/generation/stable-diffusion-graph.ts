@@ -133,7 +133,7 @@ export const stableDiffusionGraph = new DataGraph<
       const isImg2Img = ctx.workflow === 'img2img';
       const max = alwaysShow || isImg2Img || hasImages ? 1 : 0.75;
       return {
-        ...sliderNode({ min: 0, max, step: 0.05, defaultValue: 0.75 }),
+        ...sliderNode({ min: 0, max, step: 0.01, defaultValue: 0.75 }),
         when: alwaysShow || showForTxt2imgImages,
       };
     },

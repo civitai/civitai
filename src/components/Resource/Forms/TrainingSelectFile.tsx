@@ -52,6 +52,7 @@ const EpochRow = ({
   modelVersionId,
   canGenerate,
   isVideo,
+  modelName,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   prompts: TrainingResultsV2['sampleImagesPrompts'];
@@ -63,9 +64,38 @@ const EpochRow = ({
   modelVersionId: number;
   canGenerate?: boolean;
   isVideo: boolean;
+  modelName: string;
 }) => {
   const currentUser = useCurrentUser();
-  // const features = useFeatureFlags();
+  const [epochDownloading, setEpochDownloading] = useState(false);
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (epochDownloading) return;
+
+    setEpochDownloading(true);
+    try {
+      const response = await fetch(epoch.modelUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${modelName}_epoch_${epoch.epochNumber}.safetensors`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      showErrorNotification({
+        title: `Failed to download epoch ${epoch.epochNumber}`,
+        error: error instanceof Error ? error : new Error('Unknown error'),
+        autoClose: false,
+      });
+    } finally {
+      setEpochDownloading(false);
+    }
+  };
 
   return (
     <Paper
@@ -86,11 +116,10 @@ const EpochRow = ({
           </Text>
           <Group gap={8} wrap="nowrap">
             <DownloadButton
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              component="a"
+              onClick={handleDownload}
               canDownload
-              href={epoch.modelUrl}
               variant="light"
+              loading={epochDownloading}
             >
               <Text align="center">
                 {epoch.modelSize > 0
@@ -679,6 +708,7 @@ export default function TrainingSelectFile({
             modelVersionId={modelVersion.id}
             canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
             isVideo={isVideo}
+            modelName={model.name}
           />
           {epochs.length > 1 && (
             <>
@@ -702,6 +732,7 @@ export default function TrainingSelectFile({
                     features.privateModels && !!modelVersion.id && canGenerateWithEpochBool
                   }
                   isVideo={isVideo}
+                  modelName={model.name}
                 />
               ))}
             </>

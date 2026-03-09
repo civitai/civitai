@@ -304,6 +304,25 @@ export function SourceImageUploadMultiple({
     }
   }, [value]);
 
+  // Auto-upload data: URLs (e.g., base64 from metadata extraction)
+  // Treat them as if they were dropped in the dropzone.
+  const processedDataUrls = useRef(new Set<string>());
+  useEffect(() => {
+    if (!value) return;
+    const dataUrlItems = value.filter(
+      (v) => v.url.startsWith('data:') && !processedDataUrls.current.has(v.url)
+    );
+    if (dataUrlItems.length === 0) return;
+
+    // Mark as processed so we don't re-trigger
+    for (const item of dataUrlItems) processedDataUrls.current.add(item.url);
+
+    // Remove data: URLs from value and feed them through the upload pipeline
+    const remaining = value.filter((v) => !v.url.startsWith('data:'));
+    onChange?.(remaining.length > 0 ? remaining : null);
+    handleChange(dataUrlItems.map((v) => v.url));
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // TODO - better error messaging
 
   const imagesMissingMetadataCount = previewImages.filter((x) => missingAiMetadata[x.url]).length;

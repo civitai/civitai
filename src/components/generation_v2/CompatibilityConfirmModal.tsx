@@ -6,13 +6,16 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Badge, Button, Card, Group, Modal, Paper, Stack, Text } from '@mantine/core';
+import { Badge, Button, Card, Group, Modal, Paper, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { workflowOptionById } from '~/shared/data-graph/generation/config/workflows';
+import {
+  workflowOptionById,
+  getEcosystemsForWorkflow,
+} from '~/shared/data-graph/generation/config/workflows';
 import {
   ecosystemById,
   ecosystemByKey,
@@ -244,8 +247,10 @@ function CompatibilityConfirmModalContent({
       }
       size="sm"
       centered
+      styles={{ content: { maxHeight: '85vh', display: 'flex', flexDirection: 'column' } }}
+      classNames={{ body: 'p-0' }}
     >
-      <Stack gap="md">
+      <Stack gap="md" pb="xs" px="md">
         {isWorkflowChange && pendingChange.incompatible ? (
           <Text size="sm">
             <strong>{workflowLabel}</strong> is not available for <strong>{currentEcoLabel}</strong>
@@ -323,14 +328,14 @@ function CompatibilityConfirmModalContent({
             </Group>
           </Card>
         )}
-
-        <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={dialog.onClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleConfirm}>Continue</Button>
-        </Group>
       </Stack>
+
+      <Paper className="sticky bottom-0 flex justify-end gap-3 p-3">
+        <Button variant="default" onClick={dialog.onClose}>
+          Cancel
+        </Button>
+        <Button onClick={handleConfirm}>Continue</Button>
+      </Paper>
     </Modal>
   );
 }
@@ -349,4 +354,40 @@ export function openCompatibilityConfirmModal(props: CompatibilityConfirmModalPr
     component: CompatibilityConfirmModalContent,
     props,
   });
+}
+
+/**
+ * Builds a workflow-type PendingChange for the compatibility modal.
+ * Resolves compatible ecosystems and a default ecosystem key for the given workflow.
+ *
+ * @param workflowId - The target workflow graph key
+ * @param currentEcosystem - The ecosystem that is incompatible
+ * @param optionId - Workflow option ID (e.g., 'img2vid#0' for aliases). Defaults to workflowId.
+ * @param defaultEcosystemKey - Override the default ecosystem key. If omitted, uses the first compatible ecosystem.
+ */
+export function buildWorkflowPendingChange({
+  workflowId,
+  currentEcosystem,
+  optionId,
+  defaultEcosystemKey,
+}: {
+  workflowId: string;
+  currentEcosystem: string;
+  optionId?: string;
+  defaultEcosystemKey?: string;
+}): Extract<PendingChange, { type: 'workflow' }> {
+  const compatibleEcosystemIds = getEcosystemsForWorkflow(workflowId);
+  const resolvedDefault =
+    defaultEcosystemKey ??
+    (compatibleEcosystemIds[0] ? ecosystemById.get(compatibleEcosystemIds[0])?.key : undefined) ??
+    '';
+
+  return {
+    type: 'workflow',
+    value: workflowId,
+    optionId: optionId ?? workflowId,
+    currentEcosystem,
+    compatibleEcosystemIds,
+    defaultEcosystemKey: resolvedDefault,
+  };
 }
