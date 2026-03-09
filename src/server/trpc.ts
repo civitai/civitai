@@ -3,6 +3,7 @@ import type { NextApiRequest } from 'next';
 import semver from 'semver';
 import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -11,7 +12,10 @@ import { Flags } from '~/shared/utils/flags';
 import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
-  transformer: superjson,
+  transformer: {
+    serialize: (data: any) => withSpan('trpc:serialize:superjson', () => superjson.serialize(data)),
+    deserialize: superjson.deserialize.bind(superjson),
+  },
   errorFormatter({ shape }) {
     return shape;
   },
