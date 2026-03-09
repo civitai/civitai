@@ -61,7 +61,7 @@ export function UpdateRequiredWatcher({ children }: { children: React.ReactEleme
           component: UpdateRequiredModal,
           props: {
             title: 'Generator Update Available',
-            description: notes || 'Please refresh to get the latest generator.',
+            description: notes || 'Please refresh to get the latest generator updates.',
           },
         });
         generationWarnedVersion = genVersion;

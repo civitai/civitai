@@ -443,6 +443,16 @@ export function FormFooter({
         invalidateWhatIf();
       }
 
+      // Clear media inputs for enhancement workflows so they don't persist in localStorage
+      if (needsSourceMetadata) {
+        const clear: Record<string, unknown> = {};
+        if (snapshot.images?.length) clear.images = [];
+        if (snapshot.video) clear.video = undefined;
+        if (Object.keys(clear).length > 0) {
+          (graph as { set: (v: Record<string, unknown>) => void }).set(clear);
+        }
+      }
+
       onSubmitSuccess?.();
     };
 

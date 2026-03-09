@@ -151,7 +151,9 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
                 ),
                 value: key,
               }))}
-              onChange={(key) => generationGraphPanel.setView(key as GenerationPanelView)}
+              onChange={(key) => {
+                generationGraphPanel.setView(key as GenerationPanelView);
+              }}
               value={view}
             />
           )}

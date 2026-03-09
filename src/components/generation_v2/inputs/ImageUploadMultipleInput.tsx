@@ -111,6 +111,26 @@ export function ImageUploadMultipleInput({
 }: ImageUploadMultipleInputProps) {
   const isSlotsMode = !!slots?.length;
   const isUrlInputLayout = layout === 'url-input' && !isSlotsMode;
+  const completedImages = value?.filter((v) => !!v.url) ?? [];
+  const showClearAll = completedImages.length > 1;
+
+  const labelWithClear = showClearAll ? (
+    <div className="flex w-full items-center justify-between">
+      <span>{label}</span>
+      <Text
+        component="button"
+        type="button"
+        size="xs"
+        c="red"
+        className="cursor-pointer border-0 bg-transparent p-0"
+        onClick={() => onChange?.([])}
+      >
+        Clear all
+      </Text>
+    </div>
+  ) : (
+    label
+  );
 
   // Build annotations array from the store for the current images
   const metadataByUrl = useSourceMetadataStore((state) => state.metadataByUrl);
@@ -179,6 +199,7 @@ export function ImageUploadMultipleInput({
         description={description}
         error={error}
         required={required}
+        classNames={{ label: 'w-full' }}
       >
         <SourceImageUploadMultiple
           value={value as SourceImageProps[] | null | undefined}
@@ -198,10 +219,11 @@ export function ImageUploadMultipleInput({
     return (
       <Input.Wrapper
         {...inputWrapperProps}
-        label={label}
+        label={labelWithClear}
         description={description}
         error={error}
         required={required}
+        classNames={{ label: 'w-full' }}
       >
         <SourceImageUploadMultiple
           value={value as SourceImageProps[] | null | undefined}
@@ -266,10 +288,11 @@ export function ImageUploadMultipleInput({
   return (
     <Input.Wrapper
       {...inputWrapperProps}
-      label={label}
+      label={labelWithClear}
       description={description}
       error={error}
       required={required}
+      classNames={{ label: 'w-full' }}
     >
       <SourceImageUploadMultiple
         value={value as SourceImageProps[] | null | undefined}
@@ -309,36 +332,33 @@ export function ImageUploadMultipleInput({
                 </SourceImageUploadMultiple.Dropzone>
               )}
 
-              {/* Image strip */}
+              {/* Image strip with clear button */}
               {hasImages && (
-                <div
-                  className={clsx(
-                    'flex gap-3',
-                    imageLayout === 'wrap' ? 'flex-wrap' : 'overflow-x-auto'
+                <div className="flex flex-col gap-1">
+                  <div
+                    className={clsx(
+                      'flex gap-3',
+                      imageLayout === 'wrap' ? 'flex-wrap' : 'overflow-x-auto'
+                    )}
+                  >
+                    {previewItems.map((item, i) => (
+                      <div
+                        key={i}
+                        className={clsx('relative w-[200px]', imageLayout !== 'wrap' && 'shrink-0')}
+                      >
+                        <SourceImageUploadMultiple.Image index={i} {...item} />
+                        {imageAnnotations?.[i] && (
+                          <ImageAnnotationBadge annotation={imageAnnotations[i]} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {!canAddMore && max > 1 && (
+                    <Text size="xs" c="dimmed">
+                      {completedCount} of {max} images (limit reached)
+                    </Text>
                   )}
-                >
-                  {previewItems.map((item, i) => (
-                    <div
-                      key={i}
-                      className={clsx(
-                        'relative w-[200px]',
-                        imageLayout !== 'wrap' && 'shrink-0'
-                      )}
-                    >
-                      <SourceImageUploadMultiple.Image index={i} {...item} />
-                      {imageAnnotations?.[i] && (
-                        <ImageAnnotationBadge annotation={imageAnnotations[i]} />
-                      )}
-                    </div>
-                  ))}
                 </div>
-              )}
-
-              {/* Show count when at limit (only for multi-image mode) */}
-              {!canAddMore && max > 1 && (
-                <Text size="xs" c="dimmed">
-                  {completedCount} of {max} images (limit reached)
-                </Text>
               )}
             </div>
           );

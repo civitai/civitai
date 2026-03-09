@@ -19,6 +19,7 @@ import {
   type WorkflowOption,
   type WorkflowCategory,
   getEcosystemsForWorkflow,
+  bulkWorkflowLimits,
 } from '~/shared/data-graph/generation/config/workflows';
 import {
   getWorkflowsForMediaType,
@@ -474,5 +475,51 @@ export async function applyWorkflowWithCheck({
         clearResources: isCrossMedia || ecosystemChanged,
       });
     },
+  });
+}
+
+// =============================================================================
+// Bulk Workflow Actions
+// =============================================================================
+
+/**
+ * Apply a workflow to multiple images at once.
+ * Slices to the workflow's max batch size, stores source metadata for each,
+ * verifies dimensions in parallel, and sends to the generation form.
+ */
+export async function applyBulkWorkflow(workflowId: string, images: BlobData[]) {
+  const max = bulkWorkflowLimits[workflowId];
+  if (!max) return;
+
+  const batch = images.slice(0, max);
+
+  generationGraphPanel.setViewWithReturn('generate');
+
+  // Store source metadata for each image
+  for (const image of batch) {
+    if (image.params || image.resources) {
+      sourceMetadataStore.setMetadata(image.url, {
+        params: image.params,
+        resources: image.resources,
+        ...(image.remixOfId != null ? { remixOfId: image.remixOfId } : {}),
+      });
+    }
+  }
+
+  // Verify dimensions for all images in parallel
+  const imagesWithDims = await Promise.all(
+    batch.map(async (img) => {
+      const dims = await getImageDimensions(img.url).catch(() => ({
+        width: img.width,
+        height: img.height,
+      }));
+      return { url: img.url, width: dims.width, height: dims.height };
+    })
+  );
+
+  generationGraphStore.setData({
+    params: { workflow: workflowId, images: imagesWithDims },
+    resources: [],
+    runType: 'append',
   });
 }

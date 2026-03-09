@@ -256,11 +256,14 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
         }
       }
 
-      // For wildcard groups, remove any keys that are explicitly defined in named groups
-      // This cleans up stale data when keys are moved to explicit groups
+      // For wildcard groups, remove stale explicit keys that are no longer active.
+      // Active explicit keys are being saved by their own group — if both groups
+      // share the same storage key, stripping them would erase the explicit group's save.
       if (group.keys === '*') {
         for (const key of explicitKeys) {
-          delete values[key];
+          if (!activeKeys.has(key)) {
+            delete values[key];
+          }
         }
       }
 

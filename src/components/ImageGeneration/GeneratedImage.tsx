@@ -11,8 +11,6 @@ import clsx from 'clsx';
 import type { DragEvent, MouseEvent } from 'react';
 import { useState } from 'react';
 
-import dynamic from 'next/dynamic';
-
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
@@ -54,11 +52,7 @@ export function GeneratedImage({
   const step = image.step;
   const request = image.workflow;
   const [ref, inView] = useInViewDynamic({ id: image.id });
-  const selected = orchestratorImageSelect.useIsSelected({
-    workflowId: request.id,
-    stepName: step.name,
-    imageId: image.id,
-  });
+  const selected = orchestratorImageSelect.useIsSelected(image);
   const isSelecting = orchestratorImageSelect.useIsSelecting();
 
   const { updateImages } = useUpdateImageStepMetadata();
@@ -66,11 +60,7 @@ export function GeneratedImage({
   const { running, helpers } = useTourContext();
   const available = image.status === 'succeeded';
 
-  const toggleSelect = (checked?: boolean) =>
-    orchestratorImageSelect.toggle(
-      { workflowId: request.id, stepName: step.name, imageId: image.id },
-      checked
-    );
+  const toggleSelect = (checked?: boolean) => orchestratorImageSelect.toggle(image, checked);
 
   const handleImageClick = () => {
     if (!image || !available || isLightbox) return;
@@ -202,7 +192,11 @@ export function GeneratedImage({
   return (
     <TwCard
       ref={ref}
-      className={clsx('max-h-full max-w-full items-center justify-center', classes.imageWrapper)}
+      className={clsx(
+        'max-h-full max-w-full items-center justify-center',
+        classes.imageWrapper,
+        selected && 'ring-2 ring-blue-5/60'
+      )}
       style={{ aspectRatio: image.aspect }}
     >
       {(isLightbox || inView) && (

@@ -1,7 +1,6 @@
-import { Button, Checkbox, Tooltip } from '@mantine/core';
+import { Button, Checkbox, Menu, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDownload, IconTrash } from '@tabler/icons-react';
-import { uniqBy } from 'lodash-es';
+import { IconDownload, IconTrash, IconWand } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import pLimit from 'p-limit';
 import { useMemo, useState } from 'react';
@@ -25,6 +24,12 @@ import { getStepMeta } from './GenerationForm/generation.utils';
 import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import { bulkWorkflowLimits } from '~/shared/data-graph/generation/config/workflows';
+import {
+  useGeneratedItemWorkflows,
+  applyBulkWorkflow,
+} from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -37,13 +42,8 @@ export function GeneratedImageActions({
   const router = useRouter();
   const { data } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
-  const images = useMemo(() => data.flatMap((wf) => wf.steps.flatMap((s) => s.images)), [data]);
   const selectableImages = useMemo(() => data.flatMap((wf) => wf.succeededImages), [data]);
-  const selectableImageIds = selectableImages.map((x) => x.id);
-  const imageIds = images.map((x) => x.id);
-  const selected = orchestratorImageSelect
-    .useSelection()
-    .filter((x) => imageIds.includes(x.imageId));
+  const selected = orchestratorImageSelect.useSelection();
   const deselect = () => orchestratorImageSelect.setSelected([]);
   const [zipping, setZipping] = useState(false);
 
@@ -51,15 +51,6 @@ export function GeneratedImageActions({
     onSuccess: () => deselect(),
   });
   const createPostMutation = trpc.post.create.useMutation();
-  // const updateWorkflows = useUpdateTextToImageWorkflows({ onSuccess: () => deselect() });
-
-  function getSelectedImages() {
-    const selectedIds = selected.map((x) => x.imageId);
-    const grouped = data.flatMap((wf) =>
-      wf.succeededImages.filter((x) => selectedIds.includes(x.id))
-    );
-    return uniqBy(grouped, 'id');
-  }
 
   const deleteSelectedImages = () => {
     openConfirmModal({
@@ -69,18 +60,19 @@ export function GeneratedImageActions({
       confirmProps: { color: 'red' },
       onConfirm: () => {
         updateImages(
-          selected.reduce<UpdateImageStepMetadataArgs[]>(
-            (acc, { workflowId, stepName, imageId }) => {
-              const index = acc.findIndex(
-                (x) => x.workflowId === workflowId && x.stepName === stepName
-              );
-              if (index === -1)
-                acc.push({ workflowId, stepName, images: { [imageId]: { hidden: true } } });
-              else acc[index].images[imageId] = { hidden: true };
-              return acc;
-            },
-            []
-          )
+          selected.reduce<UpdateImageStepMetadataArgs[]>((acc, image) => {
+            const index = acc.findIndex(
+              (x) => x.workflowId === image.workflowId && x.stepName === image.stepName
+            );
+            if (index === -1)
+              acc.push({
+                workflowId: image.workflowId,
+                stepName: image.stepName,
+                images: { [image.id]: { hidden: true } },
+              });
+            else acc[index].images[image.id] = { hidden: true };
+            return acc;
+          }, [])
         );
       },
       zIndex: imageGenerationDrawerZIndex + 2,
@@ -91,10 +83,9 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
-    const selectedImages = getSelectedImages();
-    const imageData = selectedImages.map((image) => ({
+    const imageData = selected.map((image) => ({
       url: image.url,
-      meta: getStepMeta(image),
+      meta: getStepMeta(image.step),
     }));
 
     try {
@@ -109,7 +100,6 @@ export function GeneratedImageActions({
         );
       } else {
         const post = await createPostMutation.mutateAsync({});
-        // updateImages({}) // tODO - show that this image has been posted?
         if (running) helpers?.next();
         await router.push({
           pathname: '/posts/[postId]/edit',
@@ -133,10 +123,9 @@ export function GeneratedImageActions({
 
   async function downloadSelected() {
     setZipping(true);
-    const selectedImages = getSelectedImages();
     const zip = await getJSZip();
     await Promise.all(
-      selectedImages.map((image, index) =>
+      selected.map((image, index) =>
         limit(async () => {
           if (!image.url) return;
           const blob = await fetchBlob(image.url);
@@ -180,7 +169,7 @@ export function GeneratedImageActions({
       });
   }
 
-  const imagesCount = selectableImageIds.length;
+  const imagesCount = selectableImages.length;
   const selectedCount = selected.length;
 
   const allChecked = imagesCount > 0 && selectedCount >= imagesCount;
@@ -188,14 +177,7 @@ export function GeneratedImageActions({
 
   const handleCheckboxClick = (checked: boolean) => {
     if (!checked) orchestratorImageSelect.setSelected([]);
-    else
-      orchestratorImageSelect.setSelected(
-        selectableImages.map(({ workflowId, stepName, id }) => ({
-          workflowId,
-          stepName,
-          imageId: id,
-        }))
-      );
+    else orchestratorImageSelect.setSelected(selectableImages);
   };
 
   const hasSelected = !!selectedCount;
@@ -206,6 +188,12 @@ export function GeneratedImageActions({
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">
+          <BulkWorkflowMenu
+            selected={selected}
+            deselect={deselect}
+            actionIconSize={actionIconSize}
+            iconSize={iconSize}
+          />
           <Tooltip label="Download selected">
             <LegacyActionIcon
               size={actionIconSize}
@@ -252,5 +240,112 @@ export function GeneratedImageActions({
         />
       )}
     </div>
+  );
+}
+
+// =============================================================================
+// Bulk Workflow Menu
+// =============================================================================
+
+type MantineSpacing = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+
+function BulkWorkflowMenu({
+  selected,
+  deselect,
+  actionIconSize,
+  iconSize,
+}: {
+  selected: BlobData[];
+  deselect: () => void;
+  actionIconSize: MantineSpacing;
+  iconSize: number;
+}) {
+  // Split selected by media type
+  const selectedImages = useMemo(() => selected.filter((s) => s.type === 'image'), [selected]);
+  const selectedVideos = useMemo(() => selected.filter((s) => s.type === 'video'), [selected]);
+
+  // Get workflows for each type
+  const imageWorkflows = useGeneratedItemWorkflows({ outputType: 'image', filterBy: 'input' });
+  const videoWorkflows = useGeneratedItemWorkflows({ outputType: 'video', filterBy: 'input' });
+
+  // Filter to only workflows in bulkWorkflowLimits
+  const bulkImageWorkflows = useMemo(
+    () =>
+      imageWorkflows.groups.flatMap((g) =>
+        g.workflows.filter((w) => w.graphKey in bulkWorkflowLimits)
+      ),
+    [imageWorkflows.groups]
+  );
+  const bulkVideoWorkflows = useMemo(
+    () =>
+      videoWorkflows.groups.flatMap((g) =>
+        g.workflows.filter((w) => w.graphKey in bulkWorkflowLimits)
+      ),
+    [videoWorkflows.groups]
+  );
+
+  const hasImageWorkflows = selectedImages.length > 0 && bulkImageWorkflows.length > 0;
+  const hasVideoWorkflows = selectedVideos.length > 0 && bulkVideoWorkflows.length > 0;
+
+  if (!hasImageWorkflows && !hasVideoWorkflows) return null;
+
+  const showCategories = hasImageWorkflows && hasVideoWorkflows;
+
+  return (
+    <Menu zIndex={imageGenerationDrawerZIndex + 2} withinPortal position="bottom-start">
+      <Menu.Target>
+        <Tooltip label="Apply workflow to selected">
+          <LegacyActionIcon size={actionIconSize} variant="light" color="violet">
+            <IconWand size={iconSize} />
+          </LegacyActionIcon>
+        </Tooltip>
+      </Menu.Target>
+      <Menu.Dropdown>
+        {hasImageWorkflows && (
+          <>
+            {showCategories && <Menu.Label>Image</Menu.Label>}
+            {bulkImageWorkflows.map((w) => {
+              const max = bulkWorkflowLimits[w.graphKey];
+              const count = selectedImages.length;
+              const label =
+                count > max ? `${w.label} (${max} of ${count} images)` : `${w.label} (${count})`;
+              return (
+                <Menu.Item
+                  key={w.id}
+                  onClick={() => {
+                    applyBulkWorkflow(w.graphKey, selectedImages);
+                    deselect();
+                  }}
+                >
+                  {label}
+                </Menu.Item>
+              );
+            })}
+          </>
+        )}
+        {hasVideoWorkflows && (
+          <>
+            {showCategories && <Menu.Label>Video</Menu.Label>}
+            {bulkVideoWorkflows.map((w) => {
+              const max = bulkWorkflowLimits[w.graphKey];
+              const count = selectedVideos.length;
+              const label =
+                count > max ? `${w.label} (${max} of ${count} videos)` : `${w.label} (${count})`;
+              return (
+                <Menu.Item
+                  key={w.id}
+                  onClick={() => {
+                    applyBulkWorkflow(w.graphKey, selectedVideos);
+                    deselect();
+                  }}
+                >
+                  {label}
+                </Menu.Item>
+              );
+            })}
+          </>
+        )}
+      </Menu.Dropdown>
+    </Menu>
   );
 }

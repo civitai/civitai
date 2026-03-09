@@ -290,6 +290,15 @@ export const workflowConfigs: WorkflowConfigs = {
 };
 
 // =============================================================================
+// Bulk Workflow Limits
+// =============================================================================
+
+/** Workflows that support bulk image actions and their max image count */
+export const bulkWorkflowLimits: Record<string, number> = {
+  'img2img:upscale': 10,
+};
+
+// =============================================================================
 // Workflow Lookup Utilities
 // =============================================================================
 
