@@ -12,6 +12,7 @@ import type {
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { constants } from '~/server/common/constants';
 import { ThreadSort } from '~/server/common/enums';
+import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 
@@ -410,43 +411,45 @@ export async function getCommentsInfinite({
   cursor,
   excludedUserIds = [],
 }: GetCommentsInfiniteInput & { excludedUserIds?: number[] }) {
-  // 1. Get thread metadata
-  const mainThread = await dbRead.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: { id: true },
+  return withSpan('commentv2:getInfinite', async () => {
+    // 1. Get thread metadata
+    const mainThread = await dbRead.thread.findUnique({
+      where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+      select: { id: true },
+    });
+    if (!mainThread) return null;
+
+    // 2. Fetch pinned comments (only when no cursor = first page)
+    const pinnedComments = !cursor
+      ? await dbRead.commentV2.findMany({
+          where: {
+            threadId: mainThread.id,
+            pinnedAt: { not: null },
+            userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+            hidden,
+          },
+          orderBy: { pinnedAt: 'desc' },
+          select: commentV2Select,
+        })
+      : [];
+
+    // 3. Fetch regular comments using unified pagination
+    const regularComments = await fetchCommentsPaginated({
+      threadId: mainThread.id,
+      limit,
+      cursor,
+      sort,
+      excludedUserIds,
+      hidden,
+    });
+
+    // 4. Determine next cursor and hasMore
+    const nextCursor =
+      regularComments.length === limit ? regularComments[regularComments.length - 1].id : undefined;
+
+    return {
+      comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments,
+      nextCursor,
+    };
   });
-  if (!mainThread) return null;
-
-  // 2. Fetch pinned comments (only when no cursor = first page)
-  const pinnedComments = !cursor
-    ? await dbRead.commentV2.findMany({
-        where: {
-          threadId: mainThread.id,
-          pinnedAt: { not: null },
-          userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-          hidden,
-        },
-        orderBy: { pinnedAt: 'desc' },
-        select: commentV2Select,
-      })
-    : [];
-
-  // 3. Fetch regular comments using unified pagination
-  const regularComments = await fetchCommentsPaginated({
-    threadId: mainThread.id,
-    limit,
-    cursor,
-    sort,
-    excludedUserIds,
-    hidden,
-  });
-
-  // 4. Determine next cursor and hasMore
-  const nextCursor =
-    regularComments.length === limit ? regularComments[regularComments.length - 1].id : undefined;
-
-  return {
-    comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments,
-    nextCursor,
-  };
 }

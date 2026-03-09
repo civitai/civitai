@@ -27,6 +27,7 @@ import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
@@ -761,15 +762,19 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await Promise.all([
-    userBasicCache.fetch(userIds),
-    getProfilePicturesForUsers(userIds),
-    getCosmeticsForUsers(userIds),
-    dataForModelsCache.fetch(modelIds),
-    includeCosmetics
-      ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-      : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-  ]);
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await withSpan(
+    'model:getAll:parallelFetch',
+    () =>
+      Promise.all([
+        userBasicCache.fetch(userIds),
+        getProfilePicturesForUsers(userIds),
+        getCosmeticsForUsers(userIds),
+        dataForModelsCache.fetch(modelIds),
+        includeCosmetics
+          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+      ])
+  );
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -778,7 +783,7 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models
+    items: withSpan('model:getAll:transform', () => models
       .map(({ rank, cursorId, ...model }) => {
         const data = modelData[model.id.toString()];
         if (!data) return null;
@@ -854,7 +859,7 @@ export const getModelsRaw = async ({
           cosmetic: cosmetics[model.id] ?? null,
         };
       })
-      .filter(isDefined),
+      .filter(isDefined)),
     nextCursor,
     isPrivate,
   };
