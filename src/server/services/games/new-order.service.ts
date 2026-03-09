@@ -54,6 +54,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   MediaType,
   NewOrderRankType,
@@ -298,23 +299,25 @@ export async function addImageRating({
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   // Use distributed lock to prevent race conditions
-  const result = await withDistributedLock(
-    {
-      key: `image-rating:${imageId}`,
-      ttl: 30, // 30 second lock
-      maxRetries: 5,
-      retryDelay: 200,
-    },
-    async () => {
-      return await processImageRating({
-        playerId,
-        imageId,
-        rating,
-        damnedReason,
-        chTracker,
-        isModerator,
-      });
-    }
+  const result = await withSpan('games:newOrder:addRating', () =>
+    withDistributedLock(
+      {
+        key: `image-rating:${imageId}`,
+        ttl: 30, // 30 second lock
+        maxRetries: 5,
+        retryDelay: 200,
+      },
+      async () => {
+        return await processImageRating({
+          playerId,
+          imageId,
+          rating,
+          damnedReason,
+          chTracker,
+          isModerator,
+        });
+      }
+    )
   );
 
   if (result === null) {
@@ -346,7 +349,9 @@ async function processImageRating({
 
   // Skip rate limiting for moderators
   if (!isModerator) {
-    const rateLimitResult = await checkVotingRateLimit(playerId);
+    const rateLimitResult = await withSpan('games:newOrder:rateLimit', () =>
+      checkVotingRateLimit(playerId)
+    );
 
     // If abuse threshold exceeded, reset player career
     if (rateLimitResult.isAbuse) {
@@ -642,12 +647,14 @@ async function processImageRating({
   addRatedImage(playerId, imageId);
 
   // Increase all counters
-  const stats = await updatePlayerStats({
-    playerId,
-    status,
-    exp: newOrderConfig.baseExp * multiplier,
-    updateAll: player.rankType !== NewOrderRankType.Acolyte,
-  });
+  const stats = await withSpan('games:newOrder:updateStats', () =>
+    updatePlayerStats({
+      playerId,
+      status,
+      exp: newOrderConfig.baseExp * multiplier,
+      updateAll: player.rankType !== NewOrderRankType.Acolyte,
+    })
+  );
 
   // Check if player should be promoted
   const knightRank = await getNewOrderRanks({ name: 'Knight' });
