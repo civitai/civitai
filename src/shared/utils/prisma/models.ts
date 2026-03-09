@@ -3866,6 +3866,7 @@ export interface ComicProject {
   heroImage?: Image | null;
   heroImagePosition: number;
   status: ComicProjectStatus;
+  tosViolation: boolean;
   baseModel: string | null;
   genre: ComicGenre | null;
   nsfwLevel: number;
@@ -3878,11 +3879,15 @@ export interface ComicProject {
 }
 
 export interface ComicChapter {
+  id: number;
   projectId: number;
   project?: ComicProject;
   name: string;
   position: number;
   status: ComicChapterStatus;
+  availability: Availability;
+  earlyAccessConfig: JsonValue | null;
+  earlyAccessEndsAt: Date | null;
   publishedAt: Date | null;
   nsfwLevel: number;
   createdAt: Date;

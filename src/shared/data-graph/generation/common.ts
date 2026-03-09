@@ -6,6 +6,7 @@
  */
 
 import z from 'zod';
+import { videoValueSchema, videoMetadataSchema } from './media-schemas';
 import {
   baseModelByName,
   ecosystemById,
@@ -18,7 +19,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
-import { isWorkflowAvailable, getWorkflowsForEcosystem } from './config';
+import { isWorkflowAvailable, getWorkflowsForEcosystem, workflowConfigByKey } from './config';
 
 // =============================================================================
 // Helper Functions
@@ -834,6 +835,22 @@ export function createCheckpointGraph(
         }
       },
       ['model']
+    )
+    // When model changes to a version excluded by the current workflow variant,
+    // fall back to the parent workflow. This lets the user re-select the variant
+    // from the dropdown, which will trigger the version constraint to force a valid model.
+    .effect(
+      (ctx, _ext, set) => {
+        const workflow = (ctx as { workflow?: string }).workflow;
+        if (!workflow) return;
+        const config = workflowConfigByKey.get(workflow);
+        if (!config?.variantOf || !config.excludeModelVersionIds?.length) return;
+        const model = ctx.model as { id?: number } | undefined;
+        if (model?.id && config.excludeModelVersionIds.includes(model.id)) {
+          set('workflow', config.variantOf);
+        }
+      },
+      ['model']
     );
 
   // Cast needed: DataGraph infers `model` as required from .node('model', ...) but
@@ -1093,26 +1110,8 @@ export type VideoValue = {
   metadata?: VideoMetadata;
 };
 
-/** Zod schema for image value (url + dimensions) */
-export const imageValueSchema = z.object({
-  url: z.string(),
-  width: z.number(),
-  height: z.number(),
-});
-
-/** Zod schema for video metadata */
-export const videoMetadataSchema = z.object({
-  fps: z.number(),
-  width: z.number(),
-  height: z.number(),
-  duration: z.number(),
-});
-
-/** Zod schema for video value */
-export const videoValueSchema = z.object({
-  url: z.string(),
-  metadata: videoMetadataSchema.optional(),
-});
+// Re-exported from media-schemas.ts to avoid circular dependency TDZ errors
+export { imageValueSchema, videoMetadataSchema, videoValueSchema } from './media-schemas';
 
 /**
  * Creates a video source node.

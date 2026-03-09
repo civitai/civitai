@@ -396,6 +396,12 @@ function normalizeVideoWorkflow(input: Record<string, unknown>): Record<string, 
  * Handles txt2img ↔ img2img:edit and video workflow corrections.
  */
 function normalizeInput(input: Record<string, unknown>): Record<string, unknown> {
+  // Resolve workflow variants to their base workflow before processing.
+  // e.g., 'img2vid:first-last' → 'img2vid' so handlers don't need to know about variants.
+  const config = workflowConfigByKey.get(input.workflow as string);
+  if (config?.variantOf) {
+    input = { ...input, workflow: config.variantOf };
+  }
   return normalizeVideoWorkflow(normalizeImageWorkflow(input));
 }
 

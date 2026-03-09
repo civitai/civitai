@@ -1937,7 +1937,9 @@ export async function updateContentSettings({
 
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
-  await refreshSession(userId);
+  refreshSession(userId).catch((err) => {
+    console.error('Failed to refresh session for user', userId, err);
+  });
 }
 
 export const getUserByPaddleCustomerId = async ({

@@ -5,6 +5,7 @@ import {
   upsertManyUserLinks,
   upsertUserLink,
 } from './../services/user-link.service';
+import { purgeCache } from '~/server/cloudflare/client';
 import type { Context } from '~/server/createContext';
 import type { UpsertManyUserLinkParams, GetUserLinksQuery } from '~/server/schema/user-link.schema';
 import { getUserLinks } from '~/server/services/user-link.service';
@@ -33,6 +34,7 @@ export const upsertManyUserLinksHandler = async ({
   input: UpsertManyUserLinkParams;
 }) => {
   await upsertManyUserLinks({ data: input, userId: ctx.user.id });
+  purgeCache({ tags: [`user-creator-${ctx.user.id}`] }).catch();
 };
 
 export const upsertUserLinkHandler = async ({
@@ -43,6 +45,7 @@ export const upsertUserLinkHandler = async ({
   input: UpsertUserLinkParams;
 }) => {
   await upsertUserLink({ ...input, userId: ctx.user.id });
+  purgeCache({ tags: [`user-creator-${ctx.user.id}`] }).catch();
 };
 
 export const deleteUserLinkHandler = async ({
@@ -53,4 +56,5 @@ export const deleteUserLinkHandler = async ({
   input: GetByIdInput;
 }) => {
   await deleteUserLink({ id: input.id, userId: ctx.user.id });
+  purgeCache({ tags: [`user-creator-${ctx.user.id}`] }).catch();
 };

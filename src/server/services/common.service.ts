@@ -105,15 +105,26 @@ export const hasEntityAccess = async ({
     FROM "Collection" c
     WHERE id IN (${Prisma.join(entityIds, ',')})
   `
-        : // Bounty
-          Prisma.sql`
+        : entityType === 'Bounty'
+        ? Prisma.sql`
     SELECT
       b."id" as "entityId",
       b."userId" as "userId",
       b."availability" as "availability"
     FROM "Bounty" b
     WHERE id IN (${Prisma.join(entityIds, ',')})
-  `;
+  `
+        : entityType === 'ComicChapter'
+        ? Prisma.sql`
+    SELECT
+      cc."id" as "entityId",
+      cp."userId" as "userId",
+      cc."availability" as "availability"
+    FROM "ComicChapter" cc
+    JOIN "ComicProject" cp ON cc."projectId" = cp.id
+    WHERE cc."id" IN (${Prisma.join(entityIds, ',')})
+  `
+        : Prisma.sql`SELECT NULL::int as "entityId", NULL::int as "userId", NULL::"Availability" as "availability" WHERE false`;
 
     data = await dbRead.$queryRaw<EntityAccessDataType[]>(query);
   }

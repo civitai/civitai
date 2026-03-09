@@ -42,6 +42,11 @@ type UserModActivity = {
   activity: 'setRewardsEligibility' | 'removeContent' | 'autoMuteScam';
 };
 
+type ComicProjectModActivity = {
+  entityType: 'comicProject';
+  activity: 'tosViolation' | 'unpublishChapter';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -53,6 +58,7 @@ type ModActivity = {
   | ArticleModActivity
   | ImpersonateModActivity
   | UserModActivity
+  | ComicProjectModActivity
 );
 
 export async function trackModActivity(userId: number, input: ModActivity) {

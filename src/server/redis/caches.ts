@@ -734,7 +734,7 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -755,7 +755,7 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
@@ -1005,7 +1005,7 @@ type ImageResourcesCacheItem = {
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
-  ttl: CacheTTL.sm,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
   lookupFn: async (ids) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
@@ -1053,7 +1053,7 @@ export function getBaseModelFromResources(
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',
-  ttl: CacheTTL.md,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.md,
   lookupFn: async (ids) => {
     const mvInfo = await dbRead.modelVersion.findMany({
       where: { id: { in: ids } },
@@ -1131,7 +1131,7 @@ type UserDownloadsCacheItem = {
 export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
   cacheNotFound: false,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};

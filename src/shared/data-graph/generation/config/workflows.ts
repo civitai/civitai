@@ -93,6 +93,7 @@ const TXT2IMG_IDS = [
 const TXT2VID_IDS = [
   ECO.HyV1,
   ECO.LTXV2,
+  ECO.LTXV23,
   ECO.WanVideo14B_T2V,
   ECO.WanVideo22_TI2V_5B,
   ECO.WanVideo22_T2V_A14B,
@@ -244,20 +245,22 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from an image',
     category: 'video',
     ecosystemIds: [...TXT2VID_IDS, ...I2V_ONLY_IDS],
-    aliases: [
-      {
-        label: 'First/Last Frame',
-        description: 'Generate video from start and end images',
-        ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2],
-      },
-    ],
+  },
+
+  'img2vid:first-last': {
+    label: 'First/Last Frame',
+    description: 'Generate video from start and end images',
+    category: 'video',
+    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23],
+    excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
+    variantOf: 'img2vid',
   },
 
   'img2vid:ref2vid': {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling],
+    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23],
     excludeModelVersionIds: [viduVersionIds.q3],
   },
 
@@ -287,6 +290,13 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'video',
     ecosystemIds: [ECO.Grok],
   },
+
+  // 'vid2vid:extend': {
+  //   label: 'Extend Video',
+  //   description: 'Extend a video with new content',
+  //   category: 'video',
+  //   ecosystemIds: [ECO.LTXV23],
+  // },
 };
 
 // =============================================================================
@@ -394,6 +404,12 @@ export const workflowOptionById = new Map(workflowOptions.map((w) => [w.id, w]))
 /**
  * Check if a workflow is available for an ecosystem.
  */
+/** Check if a workflow key is a specific workflow or a variant of it */
+export function isWorkflowOrVariant(workflow: string, base: string): boolean {
+  if (workflow === base) return true;
+  return workflowConfigByKey.get(workflow)?.variantOf === base;
+}
+
 export function isWorkflowAvailable(workflowId: string, ecosystemId: number): boolean {
   const config = workflowConfigByKey.get(workflowId);
   if (!config) return false;
@@ -582,8 +598,11 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.Qwen2,
   ],
 
-  // Grok vid2vid:edit - no legacy equivalent
+  // Grok/LTXV23 vid2vid:edit - no legacy equivalent
   ['vid2vid:edit', true],
+
+  // vid2vid:extend - no legacy equivalent
+  ['vid2vid:extend', true],
 ]);
 
 /**
@@ -616,7 +635,7 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit', 'vid2vid:extend'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
 ];
@@ -632,7 +651,8 @@ export function getWorkflowModes(
   ecosystemKey: string,
   modelVersionId?: number
 ): { label: string; value: string; description?: string }[] {
-  const group = workflowGroups.find((g) => g.workflows.includes(workflowId));
+  const resolvedId = workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId;
+  const group = workflowGroups.find((g) => g.workflows.includes(resolvedId));
   if (!group) return [];
 
   const ecosystem = ecosystemByKey.get(ecosystemKey);

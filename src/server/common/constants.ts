@@ -661,13 +661,13 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
-const commonAspectRatios = [
+export const commonAspectRatios = [
   { label: 'Square', width: 1024, height: 1024 },
   { label: 'Landscape', width: 1216, height: 832 },
   { label: 'Portrait', width: 832, height: 1216 },
 ];
 
-const seedreamSizes = [
+export const seedreamSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },

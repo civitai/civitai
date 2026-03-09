@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, Text } from '@mantine/core';
+import { ActionIcon, Badge, Menu, Text } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconDotsVertical,
@@ -12,7 +12,29 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { NsfwLevel } from '~/server/common/enums';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
+
+const nsfwBadgeColors: Record<number, string> = {
+  [NsfwLevel.PG]: 'green',
+  [NsfwLevel.PG13]: 'yellow',
+  [NsfwLevel.R]: 'orange',
+  [NsfwLevel.X]: 'red',
+  [NsfwLevel.XXX]: 'red',
+  [NsfwLevel.Blocked]: 'gray',
+};
+
+export function getNsfwLabel(level: number): { label: string; color: string } | null {
+  // Find highest set bit
+  const highest = [NsfwLevel.Blocked, NsfwLevel.XXX, NsfwLevel.X, NsfwLevel.R, NsfwLevel.PG13, NsfwLevel.PG]
+    .find((l) => level & l);
+  if (!highest) return null;
+  return {
+    label: browsingLevelLabels[highest as keyof typeof browsingLevelLabels] ?? 'Unknown',
+    color: nsfwBadgeColors[highest] ?? 'gray',
+  };
+}
 
 export interface PanelCardProps {
   panel: {
@@ -21,6 +43,7 @@ export interface PanelCardProps {
     prompt: string;
     status: string;
     errorMessage: string | null;
+    image?: { nsfwLevel: number } | null;
   };
   position: number;
   referenceNames: string[];
@@ -40,6 +63,7 @@ export function PanelCard({
   onClick,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
+  const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
 
   return (
     <div className={styles.panelCard} onClick={onClick}>
@@ -52,7 +76,14 @@ export function PanelCard({
           />
           <div className={styles.panelOverlay}>
             <div className="flex justify-between items-start">
-              <span className={styles.panelNumber}>#{position}</span>
+              <div className="flex items-center gap-1">
+                <span className={styles.panelNumber}>#{position}</span>
+                {nsfwInfo && (
+                  <Badge size="xs" color={nsfwInfo.color} variant="filled">
+                    {nsfwInfo.label}
+                  </Badge>
+                )}
+              </div>
               <div className={styles.panelMenu}>
                 <Menu position="bottom-end" withinPortal>
                   <Menu.Target>
