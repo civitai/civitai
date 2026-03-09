@@ -223,6 +223,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         // Video workflows with ecosystem support
         'txt2vid',
         'img2vid',
+        'img2vid:first-last',
         'img2vid:ref2vid',
         'vid2vid:edit',
       ] as const,

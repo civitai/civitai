@@ -31,6 +31,7 @@ import {
   resourcesNode,
   createCheckpointGraph,
 } from './common';
+import { isWorkflowOrVariant } from './config/workflows';
 
 // =============================================================================
 // Constants
@@ -77,7 +78,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
   .node(
     'images',
     (ctx) => {
-      if (ctx.workflow === 'img2vid') {
+      if (isWorkflowOrVariant(ctx.workflow, 'img2vid')) {
         return {
           ...imagesNode({
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
@@ -156,7 +157,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
           { label: 'Strong', value: 1 },
         ],
       }),
-      when: ctx.workflow === 'img2vid' && ctx.images?.length === 2, // Only show if both first and last frames are provided
+      when: isWorkflowOrVariant(ctx.workflow, 'img2vid') && ctx.images?.length === 2, // Only show if both first and last frames are provided
     }),
     ['workflow']
   )

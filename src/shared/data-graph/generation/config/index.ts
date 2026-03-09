@@ -17,6 +17,7 @@ export {
 export {
   isWorkflowAvailable,
   isEnhancementWorkflow,
+  isWorkflowOrVariant,
   getWorkflowsForEcosystem,
   getWorkflowsWithCompatibility,
   getAllWorkflowsGrouped,

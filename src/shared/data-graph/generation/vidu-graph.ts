@@ -37,6 +37,7 @@ import {
 } from './common';
 import type { AspectRatioOption } from './common';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import { isWorkflowOrVariant } from './config/workflows';
 
 // =============================================================================
 // Constants
@@ -147,7 +148,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => {
-      if (ctx.workflow === 'img2vid') {
+      if (isWorkflowOrVariant(ctx.workflow, 'img2vid')) {
         return {
           ...imagesNode({
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
@@ -248,7 +249,7 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
     (ctx) => {
       const model = ctx.model as { id?: number } | undefined;
       const isQ3 = model?.id === viduVersionIds.q3;
-      const isImg2Vid = ctx.workflow === 'img2vid';
+      const isImg2Vid = isWorkflowOrVariant(ctx.workflow, 'img2vid');
 
       if (isQ3) {
         const resolution = 'resolution' in ctx ? (ctx.resolution as string) : '720p';
