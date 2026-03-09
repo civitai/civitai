@@ -56,12 +56,10 @@ import {
   IconBulb,
   IconCheck,
   IconClockHour4,
-  IconCrown,
   IconCube,
   IconDotsVertical,
   IconFilter,
   IconGift,
-  IconInfoCircle,
   IconPencil,
   IconPhoto,
   IconShare3,
@@ -75,6 +73,7 @@ import {
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
+import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { slugit } from '~/utils/string-helpers';
@@ -87,7 +86,6 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -103,8 +101,6 @@ import {
   nsfwLevelColors,
 } from '~/shared/constants/browsingLevel.constants';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
-import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants as appConstants } from '~/server/common/constants';
@@ -595,7 +591,6 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   useInjectKeyframes();
   const colorScheme = useComputedColorScheme('dark');
   const cs = colorScheme; // shorthand for style helpers
-  const router = useRouter();
   const currentUser = useCurrentUser();
   const isActive = challenge.status === ChallengeStatus.Active;
   const isDynamicPool = challenge.prizeMode === PrizeMode.Dynamic && challenge.buzzPerAction > 0;
@@ -1398,168 +1393,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
   );
 }
 
-const placeConfig = {
-  1: {
-    label: '1st Place',
-    gradient: 'from-yellow-400 via-amber-500 to-orange-500',
-    border: 'border-yellow-500/50',
-    icon: IconCrown,
-    iconColor: 'text-yellow-500',
-    bgGlow: 'shadow-yellow-500/20',
-  },
-  2: {
-    label: '2nd Place',
-    gradient: 'from-slate-300 via-gray-400 to-slate-500',
-    border: 'border-slate-400/50',
-    icon: IconTrophy,
-    iconColor: 'text-slate-400',
-    bgGlow: 'shadow-slate-500/20',
-  },
-  3: {
-    label: '3rd Place',
-    gradient: 'from-amber-600 via-orange-700 to-amber-800',
-    border: 'border-orange-700/50',
-    icon: IconTrophy,
-    iconColor: 'text-orange-700',
-    bgGlow: 'shadow-orange-700/20',
-  },
-} as const;
-
-function WinnerPodiumCard({
-  winner,
-  isFirst,
-  className = '',
-  isMobile = false,
-  judgeInfo,
-}: {
-  winner: ChallengeDetail['winners'][number];
-  isFirst: boolean;
-  className?: string;
-  isMobile?: boolean;
-  judgeInfo?: JudgeInfo;
-}) {
-  const [reasonExpanded, setReasonExpanded] = useState(false);
-  const colorScheme = useComputedColorScheme('dark');
-  const isDark = colorScheme === 'dark';
-  const config = placeConfig[winner.place as 1 | 2 | 3] ?? placeConfig[3];
-  const PlaceIcon = config.icon;
-
-  // Mobile: full width; Desktop: fixed widths for podium effect
-  const widthClass = isMobile ? 'w-full' : isFirst ? 'w-80' : 'w-64';
-
-  return (
-    <div
-      className={`flex flex-col overflow-hidden rounded-xl border-2 ${config.border} ${
-        isDark ? 'bg-dark-6' : 'bg-white'
-      } ${widthClass} ${isFirst ? 'shadow-xl' : ''} ${config.bgGlow} shadow-lg ${className}`}
-    >
-      {/* Place Header with Gradient */}
-      <div className={`bg-gradient-to-r ${config.gradient} px-4 py-2.5`}>
-        <Group justify="space-between" wrap="nowrap" gap="xs">
-          <Group gap={6} wrap="nowrap">
-            <PlaceIcon size={isMobile ? 20 : isFirst ? 24 : 18} className="text-white" />
-            <Text
-              fw={700}
-              c="white"
-              size={isMobile || isFirst ? 'md' : 'sm'}
-              className="whitespace-nowrap"
-            >
-              {config.label}
-            </Text>
-          </Group>
-          <CurrencyBadge
-            currency={Currency.BUZZ}
-            unitAmount={winner.buzzAwarded}
-            size="sm"
-            style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}
-          />
-        </Group>
-      </div>
-
-      {/* Winner Image */}
-      {winner.imageUrl && (
-        <Link href={`/images/${winner.imageId}`}>
-          <div
-            className={`relative w-full overflow-hidden ${
-              isFirst ? 'aspect-square' : 'aspect-[4/3]'
-            }`}
-            style={{ cursor: 'pointer' }}
-          >
-            <EdgeMedia2
-              src={winner.imageUrl}
-              type={MediaType.image}
-              width={450}
-              className="size-full object-cover transition-transform duration-300 hover:scale-105"
-            />
-            {winner.judgeScore && (
-              <div className="absolute left-2 top-2">
-                <JudgeScoreBadge
-                  score={winner.judgeScore}
-                  imageId={winner.imageId}
-                  judgeInfo={judgeInfo}
-                />
-              </div>
-            )}
-          </div>
-        </Link>
-      )}
-
-      {/* Winner Info */}
-      <div className="flex flex-1 flex-col gap-3 p-4">
-        {/* Username + Avatar */}
-        <Link href={`/user/${winner.username}`}>
-          <Group gap="xs">
-            <UserAvatar
-              user={{
-                id: winner.userId,
-                username: winner.username,
-                profilePicture: winner.profilePicture ?? undefined,
-                cosmetics: winner.cosmetics ?? undefined,
-              }}
-              size="sm"
-              includeAvatar
-              withUsername={false}
-            />
-            <Text fw={600} size={isFirst ? 'md' : 'sm'} className="hover:underline">
-              {winner.username}
-            </Text>
-            {isFirst && <IconCrown size={16} className={config.iconColor} />}
-          </Group>
-        </Link>
-
-        {/* Judge's Reason */}
-        {winner.reason && (
-          <div
-            className={`rounded-lg p-3 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}
-            style={{ borderLeft: `3px solid var(--mantine-color-blue-5)` }}
-          >
-            <Text size="xs" c="dimmed" mb={4}>
-              <IconSparkles size={12} className="mr-1 inline" />
-              Judge&apos;s Note
-            </Text>
-            <Text
-              size="xs"
-              style={{ fontStyle: 'italic', lineHeight: 1.6 }}
-              lineClamp={reasonExpanded ? undefined : 3}
-            >
-              &ldquo;{winner.reason}&rdquo;
-            </Text>
-            {winner.reason.length > 120 && (
-              <Text
-                size="xs"
-                c="blue"
-                className="mt-2 cursor-pointer hover:underline"
-                onClick={() => setReasonExpanded(!reasonExpanded)}
-              >
-                {reasonExpanded ? 'Show less' : 'Read full note'}
-              </Text>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+// WinnerPodiumCard and placeConfig are now shared — imported from ~/components/Challenge/WinnerPodiumCard
 
 function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const theme = useMantineTheme();

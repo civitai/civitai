@@ -23,6 +23,7 @@ import { immer } from 'zustand/middleware/immer';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CooldownBanner } from '~/components/Challenge/CooldownBanner';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
@@ -418,6 +419,10 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           <AlertWithIcon color="yellow" size="sm" icon={<IconInfoCircle size={16} />}>
             You have reached the maximum number of entries for this challenge.
           </AlertWithIcon>
+        )}
+
+        {challenge && (
+          <CooldownBanner challengeId={challengeId} status={challenge.status} />
         )}
 
         <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>

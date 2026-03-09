@@ -2,7 +2,10 @@ import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
-import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
+import type {
+  GetInfiniteChallengesInput,
+  GetCompletedChallengesWithWinnersInput,
+} from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 
 // Default filter values
@@ -56,6 +59,37 @@ export function useQueryChallengeWinners(challengeId: number, options?: { enable
   const { enabled = true } = options ?? {};
 
   return trpc.challenge.getWinners.useQuery(
+    { challengeId },
+    { enabled: enabled && challengeId > 0 }
+  );
+}
+
+// Hook to query completed challenges with inline winners
+export function useQueryCompletedChallengesWithWinners(
+  filters?: Partial<GetCompletedChallengesWithWinnersInput>,
+  options?: { enabled?: boolean }
+) {
+  const { enabled = true } = options ?? {};
+  const browsingLevel = useBrowsingLevelDebounced();
+
+  const { data, ...rest } = trpc.challenge.getCompletedWithWinners.useInfiniteQuery(
+    { limit: 20, ...filters, browsingLevel },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      enabled,
+    }
+  );
+
+  const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
+
+  return { challenges: flatData, ...rest };
+}
+
+// Hook to get winner cooldown status for the current user
+export function useWinnerCooldownStatus(challengeId: number, options?: { enabled?: boolean }) {
+  const { enabled = true } = options ?? {};
+
+  return trpc.challenge.getWinnerCooldownStatus.useQuery(
     { challengeId },
     { enabled: enabled && challengeId > 0 }
   );

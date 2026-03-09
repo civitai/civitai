@@ -4,11 +4,13 @@ import {
   deleteChallengeSchema,
   getChallengeEventsSchema,
   getChallengeWinnersSchema,
+  getCompletedChallengesWithWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   getUserUnjudgedEntriesSchema,
+  getWinnerCooldownStatusSchema,
   requestReviewSchema,
   upsertChallengeSchema,
   upsertChallengeEventSchema,
@@ -37,11 +39,13 @@ import {
   getChallengeDetail,
   getChallengeEvents,
   getChallengeWinners,
+  getCompletedChallengesWithWinners,
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
   getUserEntryCount,
   getUserUnjudgedEntries,
+  getWinnerCooldownStatus,
   requestReview,
   upsertChallenge,
   upsertChallengeEvent,
@@ -82,6 +86,18 @@ export const challengeRouter = router({
     .input(getChallengeWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input }) => getChallengeWinners(input.challengeId)),
+
+  // Get completed challenges with inline winners for previous winners page
+  getCompletedWithWinners: publicProcedure
+    .input(getCompletedChallengesWithWinnersSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getCompletedChallengesWithWinners(input)),
+
+  // Get winner cooldown status for current user on a challenge
+  getWinnerCooldownStatus: protectedProcedure
+    .input(getWinnerCooldownStatusSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input, ctx }) => getWinnerCooldownStatus(input.challengeId, ctx.user.id)),
 
   // Get current user's entry count for a challenge
   getUserEntryCount: protectedProcedure

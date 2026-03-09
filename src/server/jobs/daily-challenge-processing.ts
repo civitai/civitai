@@ -1118,7 +1118,7 @@ export async function pickWinnersForChallenge(
       const [challengeJudgeRow] = await dbRead.$queryRaw<
         [
           | { judgeId: number | null; judgingPrompt: string | null; eventId: number | null }
-          | undefined,
+          | undefined
         ]
       >`
         SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"

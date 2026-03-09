@@ -450,6 +450,8 @@ export async function getChallengeWinners(challengeId: number): Promise<
     username: string;
     imageId: number;
     imageUrl: string;
+    imageNsfwLevel: number;
+    imageHash: string | null;
     place: number;
     buzzAwarded: number;
     pointsAwarded: number;
@@ -464,6 +466,8 @@ export async function getChallengeWinners(challengeId: number): Promise<
       username: string;
       imageId: number;
       imageUrl: string;
+      imageNsfwLevel: number;
+      imageHash: string | null;
       place: number;
       buzzAwarded: number;
       pointsAwarded: number;
@@ -477,6 +481,8 @@ export async function getChallengeWinners(challengeId: number): Promise<
       u.username,
       cw."imageId",
       i.url as "imageUrl",
+      i."nsfwLevel" as "imageNsfwLevel",
+      i.hash as "imageHash",
       cw.place,
       cw."buzzAwarded",
       cw."pointsAwarded",
