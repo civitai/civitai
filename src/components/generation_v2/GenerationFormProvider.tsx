@@ -40,6 +40,10 @@ import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { WhatIfProvider } from './WhatIfProvider';
 import { needsHydration, type PartialResourceValue } from './inputs/resource-select.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
+import {
+  type VersionGroup,
+  getAllVersionIds,
+} from '~/shared/data-graph/generation/common';
 
 // =============================================================================
 // Constants
@@ -487,6 +491,43 @@ function InnerProvider({
 
     // Subscribe to graph changes
     return graph.subscribe(syncPreferredEcosystem);
+  }, [graph]);
+
+  // Enforce version constraints when workflow changes.
+  // If the current model is excluded by the workflow's config (excludeModelVersionIds),
+  // force-switch to the first valid version. This handles ALL entry points (form, store,
+  // modal, generated-item menu) since it reacts to graph state, not the source of change.
+  useEffect(() => {
+    let prevWorkflow: string | undefined;
+    return graph.subscribe(() => {
+      const snapshot = graph.getSnapshot() as Record<string, unknown>;
+      const workflow = snapshot.workflow as string | undefined;
+      if (!workflow || workflow === prevWorkflow) return;
+      prevWorkflow = workflow;
+
+      const config = workflowConfigByKey.get(workflow);
+      if (!config?.excludeModelVersionIds?.length) return;
+
+      const currentModelId = (snapshot.model as { id?: number } | undefined)?.id;
+      if (!currentModelId || !config.excludeModelVersionIds.includes(currentModelId)) return;
+
+      // Current model is excluded — read version options from model meta and pick first valid one
+      const modelMeta = graph.getNodeMeta('model' as never) as
+        | { versions?: VersionGroup }
+        | undefined;
+      if (!modelMeta?.versions) return;
+
+      const allIds = getAllVersionIds(modelMeta.versions);
+      const validId = [...allIds].find((id) => !config.excludeModelVersionIds!.includes(id));
+      if (validId) {
+        // Defer to avoid re-entrant graph.set during notification callback.
+        // queueMicrotask runs before the next paint, so React batches both updates.
+        queueMicrotask(() => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          graph.set({ model: { id: validId, model: { type: 'Checkpoint' } } } as any);
+        });
+      }
+    });
   }, [graph]);
 
   return (

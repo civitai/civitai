@@ -26,6 +26,7 @@ import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButt
 import {
   getAllWorkflowsGrouped,
   workflowOptionById,
+  workflowConfigByKey,
   getWorkflowLabelForEcosystem,
 } from '~/shared/data-graph/generation/config/workflows';
 
@@ -342,7 +343,8 @@ export interface SelectedWorkflowDisplayProps {
 
 /**
  * Displays the currently selected workflow label and description.
- * Uses ecosystem-aware label so Vidu shows "First/Last Frame" instead of "Image to Video".
+ * Resolves variants to their parent workflow so e.g. "img2vid:first-last"
+ * displays as "Image to Video".
  */
 export function SelectedWorkflowDisplay({
   workflowId,
@@ -350,10 +352,13 @@ export function SelectedWorkflowDisplay({
   className,
   onBack,
 }: SelectedWorkflowDisplayProps) {
-  const workflow = workflowId ? workflowOptionById.get(workflowId) : undefined;
+  const resolvedId = workflowId
+    ? (workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId)
+    : undefined;
+  const workflow = resolvedId ? workflowOptionById.get(resolvedId) : undefined;
   if (!workflow) return null;
 
-  const label = getWorkflowLabelForEcosystem(workflowId!, ecosystemId);
+  const label = getWorkflowLabelForEcosystem(resolvedId!, ecosystemId);
 
   return (
     <div

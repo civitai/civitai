@@ -245,13 +245,15 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from an image',
     category: 'video',
     ecosystemIds: [...TXT2VID_IDS, ...I2V_ONLY_IDS],
-    aliases: [
-      {
-        label: 'First/Last Frame',
-        description: 'Generate video from start and end images',
-        ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23],
-      },
-    ],
+  },
+
+  'img2vid:first-last': {
+    label: 'First/Last Frame',
+    description: 'Generate video from start and end images',
+    category: 'video',
+    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23],
+    excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
+    variantOf: 'img2vid',
   },
 
   'img2vid:ref2vid': {
@@ -393,6 +395,12 @@ export const workflowOptionById = new Map(workflowOptions.map((w) => [w.id, w]))
 /**
  * Check if a workflow is available for an ecosystem.
  */
+/** Check if a workflow key is a specific workflow or a variant of it */
+export function isWorkflowOrVariant(workflow: string, base: string): boolean {
+  if (workflow === base) return true;
+  return workflowConfigByKey.get(workflow)?.variantOf === base;
+}
+
 export function isWorkflowAvailable(workflowId: string, ecosystemId: number): boolean {
   const config = workflowConfigByKey.get(workflowId);
   if (!config) return false;
@@ -634,7 +642,8 @@ export function getWorkflowModes(
   ecosystemKey: string,
   modelVersionId?: number
 ): { label: string; value: string; description?: string }[] {
-  const group = workflowGroups.find((g) => g.workflows.includes(workflowId));
+  const resolvedId = workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId;
+  const group = workflowGroups.find((g) => g.workflows.includes(resolvedId));
   if (!group) return [];
 
   const ecosystem = ecosystemByKey.get(ecosystemKey);

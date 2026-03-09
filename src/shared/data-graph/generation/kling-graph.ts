@@ -55,6 +55,7 @@ import {
   type ResourceData,
 } from './common';
 import { removeEmpty } from '~/utils/object-helpers';
+import { isWorkflowOrVariant } from './config/workflows';
 
 // =============================================================================
 // Constants
@@ -281,7 +282,7 @@ const klingV3Graph = new DataGraph<KlingVersionCtx, GenerationCtx>()
       input: z.array(klingV3ElementSchema).max(5).optional(),
       output: z.array(klingV3ElementSchema).max(5).optional(),
       defaultValue: [] as z.infer<typeof klingV3ElementSchema>[],
-      when: ctx.multiShot === true && ctx.workflow === 'img2vid',
+      when: ctx.multiShot === true && isWorkflowOrVariant(ctx.workflow, 'img2vid'),
     }),
     ['multiShot', 'workflow']
   )
@@ -293,7 +294,7 @@ const klingV3Graph = new DataGraph<KlingVersionCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => {
-      if (ctx.workflow === 'img2vid') {
+      if (isWorkflowOrVariant(ctx.workflow, 'img2vid')) {
         return {
           ...imagesNode({
             slots: [
@@ -321,7 +322,7 @@ const klingV3Graph = new DataGraph<KlingVersionCtx, GenerationCtx>()
   // The slot is disabled in that mode, so any stored value should be removed.
   .effect(
     (ctx, _ext, set) => {
-      if (ctx.workflow !== 'img2vid' || ctx.multiShot !== true) return;
+      if (!isWorkflowOrVariant(ctx.workflow, 'img2vid') || ctx.multiShot !== true) return;
       if (ctx.images && ctx.images.length > 1) {
         set('images', [ctx.images[0]]);
       }

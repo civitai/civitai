@@ -325,7 +325,10 @@ export function GenerationForm() {
                     />
                     {modes.length > 0 && (
                       <ButtonGroupInput
-                        value={value as string}
+                        value={
+                          workflowConfigByKey.get(value as string)?.variantOf ??
+                          (value as string)
+                        }
                         onChange={(v) =>
                           graph.set({ workflow: v } as Parameters<typeof graph.set>[0])
                         }
