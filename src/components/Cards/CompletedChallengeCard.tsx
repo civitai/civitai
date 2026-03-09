@@ -88,8 +88,8 @@ export function CompletedChallengeCard({ data }: Props) {
               <WinnerPodiumCard
                 key={winner.place}
                 winner={winner}
-                isFirst={index === 1}
-                className={index === 1 ? 'z-10' : ''}
+                isFirst={winner.place === 1}
+                className={winner.place === 1 ? 'z-10' : ''}
                 compact
               />
             ))}

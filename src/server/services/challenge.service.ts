@@ -2213,6 +2213,7 @@ export async function getCompletedChallengesWithWinners(
   const conditions: Prisma.Sql[] = [
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
+    Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
   ];
 
   if (eventId) {
@@ -2403,10 +2404,9 @@ export async function getCompletedChallengesWithWinners(
       : [];
 
   // Transform results
+  const coverImageMap = new Map(coverImages.map((img) => [img.id, img]));
   const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
-    const coverImage = item.coverImageId
-      ? coverImages.find((img) => img.id === item.coverImageId)
-      : null;
+    const coverImage = item.coverImageId ? coverImageMap.get(item.coverImageId) ?? null : null;
     const metadata = parseChallengeMetadata(item.metadata);
 
     return {
