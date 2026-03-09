@@ -123,6 +123,7 @@ export default function GeneratedImageLightbox({
                         request={image.workflow}
                         step={image.step}
                         isLightbox
+                        isActiveSlide={index === slide}
                       />
                     )}
                 </Embla.Slide>

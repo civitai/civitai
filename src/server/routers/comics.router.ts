@@ -4,6 +4,7 @@ import {
   router,
   protectedProcedure,
   publicProcedure,
+  moderatorProcedure,
   middleware,
   isFlagProtected,
 } from '~/server/trpc';
@@ -11,9 +12,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  Availability,
   ComicReferenceStatus,
   ComicChapterStatus,
   ComicEngagementType,
@@ -38,22 +41,88 @@ import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  EntityAccessPermission,
+  NotificationCategory,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { comicsSearchIndex } from '~/server/search-index';
-import { nanoBananaProSizes } from '~/server/common/constants';
+import {
+  nanoBananaProSizes,
+  seedreamSizes,
+  qwenSizes,
+} from '~/server/common/constants';
+import { hasEntityAccess } from '~/server/services/common.service';
+import {
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { uploadViaUrl } from '~/utils/cf-images-utils';
 
 // Feature flag gate — all procedures require the comicCreator flag
 const comicFlag = isFlagProtected('comicCreator');
 const comicProtectedProcedure = protectedProcedure.use(comicFlag);
 const comicPublicProcedure = publicProcedure.use(comicFlag);
+const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
-// Constants
-const NANOBANANA_VERSION_ID = 2436219;
+// Multi-model configuration for comic panel generation
+const COMIC_MODEL_CONFIG: Record<
+  string,
+  {
+    engine: string;
+    baseModel: string;
+    versionId: number;
+    img2imgVersionId?: number;
+    sizes: { label: string; width: number; height: number }[];
+  }
+> = {
+  NanoBanana: {
+    engine: 'gemini',
+    baseModel: 'NanoBanana',
+    versionId: 2436219,
+    sizes: nanoBananaProSizes,
+  },
+  Seedream: {
+    engine: 'seedream',
+    baseModel: 'Seedream',
+    versionId: 2470991,
+    sizes: seedreamSizes,
+  },
+  OpenAI: {
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    versionId: 2512167,
+    sizes: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
+  },
+  Qwen: {
+    engine: 'qwen',
+    baseModel: 'Qwen',
+    versionId: 2552908,
+    img2imgVersionId: 2558804,
+    sizes: qwenSizes,
+  },
+};
+
+const DEFAULT_COMIC_MODEL = 'NanoBanana';
 const DEFAULT_ASPECT_RATIO = '3:4';
 
-function getAspectRatioDimensions(aspectRatio: string) {
-  const match = nanoBananaProSizes.find((s) => s.label === aspectRatio);
-  return match ?? nanoBananaProSizes.find((s) => s.label === DEFAULT_ASPECT_RATIO)!;
+function getComicModelConfig(baseModel?: string | null) {
+  return COMIC_MODEL_CONFIG[baseModel ?? DEFAULT_COMIC_MODEL] ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL];
+}
+
+function getAspectRatioDimensions(
+  aspectRatio: string,
+  modelConfig?: (typeof COMIC_MODEL_CONFIG)[string]
+) {
+  const sizes = modelConfig?.sizes ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL].sizes;
+  const match = sizes.find((s) => s.label === aspectRatio);
+  return match ?? sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ?? sizes[0];
 }
 
 // Middleware to check project ownership
@@ -130,6 +199,8 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
+const comicModelEnum = z.enum(['NanoBanana', 'Seedream', 'OpenAI', 'Qwen']);
+
 const createPanelSchema = z.object({
   projectId: z.number().int(),
   chapterPosition: z.number().int().min(0),
@@ -140,6 +211,7 @@ const createPanelSchema = z.object({
   includePreviousImage: z.boolean().default(false),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
+  baseModel: comicModelEnum.nullish(),
 });
 
 const updatePanelSchema = z.object({
@@ -202,6 +274,7 @@ const smartCreateChapterSchema = z.object({
     .max(20),
   enhance: z.boolean().default(true),
   aspectRatio: z.string().default('3:4'),
+  baseModel: comicModelEnum.nullish(),
 });
 
 const enhancePanelSchema = z.object({
@@ -216,11 +289,13 @@ const enhancePanelSchema = z.object({
   includePreviousImage: z.boolean().default(false),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
+  baseModel: comicModelEnum.nullish(),
 });
 
 const bulkCreatePanelsSchema = z.object({
   projectId: z.number().int(),
   chapterPosition: z.number().int().min(0),
+  baseModel: comicModelEnum.nullish(),
   panels: z
     .array(
       z.object({
@@ -245,6 +320,7 @@ const updateProjectSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(5000).nullish(),
   genre: z.nativeEnum(ComicGenre).nullish(),
+  baseModel: comicModelEnum.nullish(),
   coverImageId: z.number().int().nullish(),
   coverUrl: z.string().nullish(),
   heroImageId: z.number().int().nullish(),
@@ -255,6 +331,13 @@ const updateProjectSchema = z.object({
 const deleteReferenceSchema = z.object({
   referenceId: z.number().int(),
 });
+
+const chapterEarlyAccessConfigSchema = z
+  .object({
+    buzzPrice: z.number().int().min(1),
+    timeframe: z.number().int().min(1).max(365),
+  })
+  .nullable();
 
 // Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: number) {
@@ -303,6 +386,7 @@ async function createSinglePanel(args: {
   width: number;
   height: number;
   aspectRatio: string;
+  modelConfig: (typeof COMIC_MODEL_CONFIG)[string];
   storyContext?: {
     storyDescription: string;
     previousPanelPrompts: string[];
@@ -324,6 +408,7 @@ async function createSinglePanel(args: {
     width,
     height,
     aspectRatio,
+    modelConfig,
     storyContext,
   } = args;
 
@@ -353,9 +438,9 @@ async function createSinglePanel(args: {
     primaryReferenceName,
     allReferenceNames,
     generationParams: {
-      engine: 'gemini',
-      baseModel: 'NanoBanana',
-      checkpointVersionId: NANOBANANA_VERSION_ID,
+      engine: modelConfig.engine,
+      baseModel: modelConfig.baseModel,
+      checkpointVersionId: modelConfig.versionId,
       width,
       height,
       prompt: fullPrompt,
@@ -388,8 +473,8 @@ async function createSinglePanel(args: {
       params: {
         prompt: fullPrompt,
         negativePrompt: '',
-        engine: 'gemini',
-        baseModel: 'NanoBanana' as any,
+        engine: modelConfig.engine,
+        baseModel: modelConfig.baseModel as any,
         width,
         height,
         aspectRatio,
@@ -403,7 +488,7 @@ async function createSinglePanel(args: {
         sourceImage: null,
         images: refImages,
       },
-      resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+      resources: [{ id: modelConfig.versionId, strength: 1 }],
       tags: ['comics'],
       tips: { creators: 0, civitai: 0 },
       user: ctx.user! as SessionUser,
@@ -505,6 +590,9 @@ export const comicsRouter = router({
                 references: {
                   select: { referenceId: true },
                 },
+                image: {
+                  select: { nsfwLevel: true },
+                },
               },
             },
           },
@@ -601,6 +689,7 @@ export const comicsRouter = router({
       // Build where clause
       const where: any = {
         status: ComicProjectStatus.Active,
+        tosViolation: false,
         chapters: {
           some: {
             status: ComicChapterStatus.Published,
@@ -784,6 +873,7 @@ export const comicsRouter = router({
           genre: true,
           nsfwLevel: true,
           status: true,
+          tosViolation: true,
           user: {
             select: userWithCosmeticsSelect,
           },
@@ -792,12 +882,16 @@ export const comicsRouter = router({
             ...(!isOwnerOrMod ? { where: { status: ComicChapterStatus.Published } } : {}),
             orderBy: { position: 'asc' },
             select: {
+              id: true,
               projectId: true,
               position: true,
               name: true,
               status: true,
               nsfwLevel: true,
               publishedAt: true,
+              availability: true,
+              earlyAccessConfig: true,
+              earlyAccessEndsAt: true,
               panels: {
                 where: {
                   status: ComicPanelStatus.Ready,
@@ -823,21 +917,87 @@ export const comicsRouter = router({
         throw throwNotFoundError('Comic not found');
       }
 
+      // Block TOS-violated projects for non-owner, non-mod
+      const isOwnerOrModViewer =
+        ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
+      if (project.tosViolation && !isOwnerOrModViewer) {
+        throw throwNotFoundError('Comic not found');
+      }
+
       // Check if viewer is the owner or a moderator
       const canViewDrafts =
         ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
 
       // Filter out draft chapters for non-owner, non-mod viewers
       // Also filter out chapters with no ready panels
-      const chapters = project.chapters.filter((ch) => {
+      const filteredChapters = project.chapters.filter((ch) => {
         if (ch.panels.length === 0) return false;
         if (ch.status !== ComicChapterStatus.Published && !canViewDrafts) return false;
         return true;
       });
 
-      if (chapters.length === 0 && !canViewDrafts) {
+      if (filteredChapters.length === 0 && !canViewDrafts) {
         throw throwNotFoundError('Comic not found');
       }
+
+      // Check early access for chapters that are currently in EA
+      const now = new Date();
+      const eaChapters = filteredChapters.filter(
+        (ch) =>
+          ch.availability === Availability.EarlyAccess &&
+          ch.earlyAccessEndsAt &&
+          ch.earlyAccessEndsAt > now
+      );
+
+      let accessMap = new Map<number, boolean>();
+      if (eaChapters.length > 0 && !canViewDrafts) {
+        const eaChapterIds = eaChapters.map((ch) => ch.id);
+        const accessResults = await hasEntityAccess({
+          entityType: 'ComicChapter',
+          entityIds: eaChapterIds,
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        });
+        for (const result of accessResults) {
+          accessMap.set(result.entityId, result.hasAccess);
+        }
+      }
+
+      const chapters = filteredChapters.map((ch) => {
+        const isEa =
+          ch.availability === Availability.EarlyAccess &&
+          ch.earlyAccessEndsAt &&
+          ch.earlyAccessEndsAt > now;
+        const isLocked = isEa && !canViewDrafts && !accessMap.get(ch.id);
+        const eaConfig = ch.earlyAccessConfig as {
+          buzzPrice: number;
+          timeframe: number;
+        } | null;
+
+        return {
+          id: ch.id,
+          projectId: ch.projectId,
+          position: ch.position,
+          name: ch.name,
+          status: ch.status,
+          nsfwLevel: ch.nsfwLevel,
+          publishedAt: ch.publishedAt,
+          availability: ch.availability,
+          earlyAccessConfig: eaConfig,
+          earlyAccessEndsAt: ch.earlyAccessEndsAt,
+          isLocked: !!isLocked,
+          panelCount: ch.panels.length,
+          panels: isLocked ? [] : ch.panels,
+        };
+      });
+
+      // Aggregate tip total from BuzzTip table
+      const tipResult = await dbRead.$queryRaw<[{ total: number }]>`
+        SELECT COALESCE(SUM(amount), 0)::int AS total
+        FROM "BuzzTip"
+        WHERE "entityType" = 'ComicProject' AND "entityId" = ${project.id}
+      `;
+      const tippedAmountCount = tipResult?.[0]?.total ?? 0;
 
       return {
         id: project.id,
@@ -849,22 +1009,27 @@ export const comicsRouter = router({
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
+        tosViolation: project.tosViolation,
+        tippedAmountCount,
         chapters,
       };
     }),
 
   // Dynamic pricing — whatIf cost estimate for panel generation
-  getPanelCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
+  getPanelCostEstimate: comicProtectedProcedure
+    .input(z.object({ baseModel: z.string().nullish() }).optional())
+    .query(async ({ ctx, input }) => {
     try {
       const token = await getOrchestratorToken(ctx.user.id, ctx);
+      const modelConfig = getComicModelConfig(input?.baseModel);
 
-      const defaultDims = getAspectRatioDimensions(DEFAULT_ASPECT_RATIO);
+      const defaultDims = getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, modelConfig);
       const step = await createImageGenStep({
         params: {
           prompt: '',
           negativePrompt: '',
-          engine: 'gemini',
-          baseModel: 'NanoBanana' as any,
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel as any,
           width: defaultDims.width,
           height: defaultDims.height,
           aspectRatio: DEFAULT_ASPECT_RATIO,
@@ -878,7 +1043,7 @@ export const comicsRouter = router({
           sourceImage: null,
           images: null,
         },
-        resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+        resources: [{ id: modelConfig.versionId, strength: 1 }],
         tags: ['comics'],
         tips: { creators: 0, civitai: 0 },
         whatIf: true,
@@ -1047,6 +1212,7 @@ export const comicsRouter = router({
       if (input.name !== undefined) data.name = input.name;
       if (input.description !== undefined) data.description = input.description;
       if (input.genre !== undefined) data.genre = input.genre;
+      if (input.baseModel !== undefined) data.baseModel = input.baseModel;
       if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
 
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
@@ -1173,10 +1339,53 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
-      await dbWrite.comicChapter.delete({
-        where: {
-          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
-        },
+      await dbWrite.$transaction(async (tx) => {
+        await tx.comicChapter.delete({
+          where: {
+            projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+          },
+        });
+
+        // Get remaining chapter positions inside the transaction to avoid race conditions
+        const allChapters = await tx.comicChapter.findMany({
+          where: { projectId: input.projectId },
+          orderBy: { position: 'asc' },
+          select: { position: true },
+        });
+        const remaining = allChapters;
+
+        // Re-compact positions so chapters are sequential (0, 1, 2, ...)
+        if (remaining.length > 0) {
+          const TEMP_OFFSET = 10000;
+          // Phase 1: move to temp positions to avoid PK conflicts
+          for (let i = 0; i < remaining.length; i++) {
+            if (remaining[i].position !== i) {
+              await tx.comicChapter.update({
+                where: {
+                  projectId_position: { projectId: input.projectId, position: remaining[i].position },
+                },
+                data: { position: TEMP_OFFSET + i },
+              });
+            }
+          }
+          // Phase 2: move from temp to final sequential positions
+          for (let i = 0; i < remaining.length; i++) {
+            if (remaining[i].position !== i) {
+              await tx.comicChapter.update({
+                where: {
+                  projectId_position: { projectId: input.projectId, position: TEMP_OFFSET + i },
+                },
+                data: { position: i },
+              });
+            }
+          }
+        }
+
+        // Clear stale readChapters since positions may have shifted
+        await tx.comicProjectEngagement.updateMany({
+          where: { projectId: input.projectId, readChapters: { isEmpty: false } },
+          data: { readChapters: [] },
+        });
       });
 
       // Recalculate project NSFW level after chapter removal
@@ -1329,7 +1538,7 @@ export const comicsRouter = router({
       };
     }),
 
-  // Panels — NanoBanana generation via createImageGen
+  // Panels — generation via createImageGen (model determined by project)
   createPanel: comicProtectedProcedure
     .input(createPanelSchema)
     .use(isChapterOwner)
@@ -1341,7 +1550,7 @@ export const comicsRouter = router({
         },
         include: {
           project: {
-            select: { id: true, userId: true },
+            select: { id: true, userId: true, baseModel: true },
           },
         },
       });
@@ -1439,8 +1648,10 @@ export const comicsRouter = router({
 
       // Conditionally use previous panel context for prompt enhancement
       const effectiveContext = input.useContext ? contextPanel : null;
+      const modelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
       const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(
-        input.aspectRatio
+        input.aspectRatio,
+        modelConfig
       );
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -1480,9 +1691,9 @@ export const comicsRouter = router({
         primaryReferenceName,
         allReferenceNames,
         generationParams: {
-          engine: 'gemini',
-          baseModel: 'NanoBanana',
-          checkpointVersionId: NANOBANANA_VERSION_ID,
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel,
+          checkpointVersionId: modelConfig.versionId,
           width: panelWidth,
           height: panelHeight,
           prompt: fullPrompt,
@@ -1511,14 +1722,14 @@ export const comicsRouter = router({
         });
       }
 
-      // Submit NanoBanana generation workflow
+      // Submit generation workflow
       try {
         const result = await createImageGen({
           params: {
             prompt: fullPrompt,
             negativePrompt: '',
-            engine: 'gemini',
-            baseModel: 'NanoBanana' as any,
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
             width: panelWidth,
             height: panelHeight,
             aspectRatio: input.aspectRatio,
@@ -1532,7 +1743,7 @@ export const comicsRouter = router({
             sourceImage: null,
             images: allImages,
           },
-          resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+          resources: [{ id: modelConfig.versionId, strength: 1 }],
           tags: ['comics'],
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
@@ -1757,20 +1968,23 @@ export const comicsRouter = router({
           name: ref.name,
           images: ref.images,
         })),
-        generation: {
-          engine: 'gemini',
-          baseModel: 'NanoBanana',
-          checkpointVersionId: NANOBANANA_VERSION_ID,
-          dimensions: (panel.metadata as any)?.generationParams
-            ? {
-                width: (panel.metadata as any).generationParams.width,
-                height: (panel.metadata as any).generationParams.height,
-              }
-            : {
-                width: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width,
-                height: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height,
-              },
-        },
+        generation: (() => {
+          const mc = getComicModelConfig(panel.chapter.project.baseModel);
+          return {
+            engine: mc.engine,
+            baseModel: mc.baseModel,
+            checkpointVersionId: mc.versionId,
+            dimensions: (panel.metadata as any)?.generationParams
+              ? {
+                  width: (panel.metadata as any).generationParams.width,
+                  height: (panel.metadata as any).generationParams.height,
+                }
+              : {
+                  width: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, mc).width,
+                  height: getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, mc).height,
+                },
+          };
+        })(),
         workflow: workflowInfo,
       };
     }),
@@ -1832,10 +2046,31 @@ export const comicsRouter = router({
           const imgHeight =
             genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
+          // Upload to Cloudflare — orchestrator URLs expire within 30 days
+          let cfImageId: string;
+          try {
+            const result = await uploadViaUrl(imageUrl, {
+              userId: ctx.user!.id,
+              source: 'comic-panel',
+              panelId: panel.id,
+            });
+            cfImageId = result.id;
+          } catch (e) {
+            console.error(`Failed to upload panel ${panel.id} image to CF:`, e);
+            await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: {
+                status: ComicPanelStatus.Failed,
+                errorMessage: 'Image upload failed. Please regenerate.',
+              },
+            });
+            return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
+          }
+
           // Create Image record for content moderation pipeline
           const image = await dbWrite.image.create({
             data: {
-              url: imageUrl,
+              url: cfImageId,
               userId: ctx.user!.id,
               width: imgWidth,
               height: imgHeight,
@@ -1848,7 +2083,7 @@ export const comicsRouter = router({
             where: { id: panel.id },
             data: {
               status: ComicPanelStatus.Ready,
-              imageUrl,
+              imageUrl: cfImageId,
               imageId: image.id,
             },
           });
@@ -1918,6 +2153,13 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      // Fetch project baseModel for generation config
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: { baseModel: true },
+      });
+      const modelConfig = getComicModelConfig(input.baseModel ?? project?.baseModel);
+
       // Create the chapter
       const lastChapter = await dbRead.comicChapter.findFirst({
         where: { projectId: input.projectId },
@@ -1966,7 +2208,8 @@ export const comicsRouter = router({
       // Create panels sequentially — each panel uses the previous as context
       // Build story context so the enhancer sees the full narrative arc
       const { width: smartWidth, height: smartHeight } = getAspectRatioDimensions(
-        input.aspectRatio
+        input.aspectRatio,
+        modelConfig
       );
       const createdPanels: any[] = [];
       const previousPanelPrompts: string[] = [];
@@ -2002,6 +2245,7 @@ export const comicsRouter = router({
           width: smartWidth,
           height: smartHeight,
           aspectRatio: input.aspectRatio,
+          modelConfig,
           storyContext: {
             storyDescription: input.storyDescription,
             previousPanelPrompts: [...previousPanelPrompts],
@@ -2029,7 +2273,13 @@ export const comicsRouter = router({
   // ──── Phase 3: Publish/Unpublish ────
 
   publishChapter: comicProtectedProcedure
-    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+        earlyAccessConfig: chapterEarlyAccessConfigSchema.optional(),
+      })
+    )
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       const chapter = await dbRead.comicChapter.findUnique({
@@ -2087,6 +2337,9 @@ export const comicsRouter = router({
         data: {
           status: ComicChapterStatus.Published,
           ...(isFirstPublish ? { publishedAt: new Date() } : {}),
+          ...(input.earlyAccessConfig !== undefined
+            ? { earlyAccessConfig: input.earlyAccessConfig ?? undefined }
+            : {}),
         },
       });
 
@@ -2139,6 +2392,20 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
+      // Block unpublish if anyone has purchased early access
+      const purchaseCount = await dbRead.entityAccess.count({
+        where: {
+          accessToId: chapter.id,
+          accessToType: 'ComicChapter',
+          accessorType: 'User',
+        },
+      });
+      if (purchaseCount > 0) {
+        throw throwBadRequestError(
+          'This chapter cannot be unpublished because readers have purchased early access to it.'
+        );
+      }
+
       const updated = await dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
@@ -2152,6 +2419,259 @@ export const comicsRouter = router({
       ]);
 
       return updated;
+    }),
+
+  purchaseChapterAccess: comicProtectedProcedure
+    .input(
+      z.object({
+        chapterId: z.number().int(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        select: {
+          id: true,
+          name: true,
+          availability: true,
+          earlyAccessConfig: true,
+          earlyAccessEndsAt: true,
+          status: true,
+          project: { select: { id: true, name: true, userId: true } },
+        },
+      });
+
+      if (!chapter) throw throwNotFoundError('Chapter not found.');
+      if (chapter.project.userId === ctx.user.id) {
+        throw throwBadRequestError('You cannot purchase access to your own chapter.');
+      }
+      if (chapter.status !== ComicChapterStatus.Published) {
+        throw throwBadRequestError('Chapter is not published.');
+      }
+
+      const eaConfig = chapter.earlyAccessConfig as {
+        buzzPrice: number;
+        timeframe: number;
+      } | null;
+
+      if (
+        !eaConfig ||
+        chapter.availability !== Availability.EarlyAccess ||
+        !chapter.earlyAccessEndsAt ||
+        chapter.earlyAccessEndsAt <= new Date()
+      ) {
+        throw throwBadRequestError('This chapter is not in early access.');
+      }
+
+      // Check if user already has access
+      const [access] = await hasEntityAccess({
+        entityIds: [chapter.id],
+        entityType: 'ComicChapter',
+        userId: ctx.user.id,
+      });
+
+      if (access?.hasAccess) {
+        throw throwBadRequestError('You already have access to this chapter.');
+      }
+
+      let buzzTransactionId: string | undefined;
+      try {
+        const externalTransactionIdPrefix = `comic-ea-${chapter.id}-${ctx.user.id}`;
+        const data = await createMultiAccountBuzzTransaction({
+          fromAccountId: ctx.user.id,
+          toAccountId: chapter.project.userId,
+          amount: eaConfig.buzzPrice,
+          type: TransactionType.Purchase,
+          description: `Early access: ${chapter.project.name} - ${chapter.name}`,
+          details: { comicChapterId: chapter.id, earlyAccessPurchase: true },
+          externalTransactionIdPrefix,
+          fromAccountTypes: ['yellow'],
+        });
+
+        if (data?.transactionCount === 0) {
+          throw throwBadRequestError('Failed to create Buzz transaction.');
+        }
+
+        buzzTransactionId = externalTransactionIdPrefix;
+
+        await dbWrite.$transaction(async (tx) => {
+          await tx.entityAccess.create({
+            data: {
+              accessToId: chapter.id,
+              accessToType: 'ComicChapter',
+              accessorId: ctx.user.id,
+              accessorType: 'User',
+              permissions:
+                EntityAccessPermission.EarlyAccessDownload +
+                EntityAccessPermission.EarlyAccessGeneration,
+              meta: { buzzTransactionId },
+              addedById: ctx.user.id,
+            },
+          });
+        });
+
+        return { success: true };
+      } catch (error) {
+        if (buzzTransactionId) {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: buzzTransactionId,
+            description: `Refund early access: ${chapter.project.name} - ${chapter.name}`,
+          });
+        }
+        throw throwDbError(error);
+      }
+    }),
+
+  updateChapterEarlyAccess: comicProtectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+        earlyAccessConfig: chapterEarlyAccessConfigSchema,
+      })
+    )
+    .use(isChapterOwner)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        select: {
+          status: true,
+          earlyAccessConfig: true,
+          project: { select: { userId: true } },
+        },
+      });
+
+      if (!chapter || chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+      if (chapter.status !== ComicChapterStatus.Published) {
+        throw throwBadRequestError('Chapter must be published to update early access.');
+      }
+
+      const currentConfig = chapter.earlyAccessConfig as {
+        buzzPrice: number;
+        timeframe: number;
+      } | null;
+
+      // If chapter already has EA config, only allow reducing price/timeframe
+      if (currentConfig && input.earlyAccessConfig) {
+        if (input.earlyAccessConfig.buzzPrice > currentConfig.buzzPrice) {
+          throw throwBadRequestError('Cannot increase Buzz price after publishing.');
+        }
+        if (input.earlyAccessConfig.timeframe > currentConfig.timeframe) {
+          throw throwBadRequestError('Cannot increase timeframe after publishing.');
+        }
+      }
+
+      return dbWrite.comicChapter.update({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        data: {
+          earlyAccessConfig: input.earlyAccessConfig ?? undefined,
+        },
+      });
+    }),
+
+  // ──── Moderator Tools ────
+
+  setTosViolation: comicModeratorProcedure
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.id },
+        select: { id: true, userId: true, name: true, tosViolation: true },
+      });
+
+      if (!project) throw throwNotFoundError('Comic not found');
+
+      await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data: { tosViolation: !project.tosViolation },
+      });
+
+      // Notify the creator
+      await createNotification({
+        userId: project.userId,
+        type: 'tos-violation',
+        key: `tos-violation:comicProject:${input.id}`,
+        category: NotificationCategory.System,
+        details: {
+          entityType: 'ComicProject',
+          entityId: input.id,
+          entityName: project.name,
+        },
+      }).catch((e) => console.error('Failed to send TOS violation notification:', e));
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.id,
+        activity: 'tosViolation',
+      });
+
+      // Remove from search index if flagged
+      await comicsSearchIndex.queueUpdate([
+        {
+          id: input.id,
+          action: !project.tosViolation
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+        },
+      ]);
+
+      return { success: true, tosViolation: !project.tosViolation };
+    }),
+
+  moderatorUnpublishChapter: comicModeratorProcedure
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        include: { project: { select: { userId: true, name: true } } },
+      });
+
+      if (!chapter) throw throwNotFoundError('Chapter not found');
+
+      await dbWrite.comicChapter.update({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        data: { status: ComicChapterStatus.Draft },
+      });
+
+      // Notify the creator
+      await createNotification({
+        userId: chapter.project.userId,
+        type: 'tos-violation',
+        key: `mod-unpublish:comicChapter:${input.projectId}:${input.chapterPosition}`,
+        category: NotificationCategory.System,
+        details: {
+          entityType: 'ComicChapter',
+          entityId: input.projectId,
+          entityName: `${chapter.project.name} - ${chapter.name}`,
+        },
+      }).catch((e) => console.error('Failed to send mod unpublish notification:', e));
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.projectId,
+        activity: 'unpublishChapter',
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return { success: true };
     }),
 
   // ──── Phase 3: Comic Engagement (Follow/Hide) ────
@@ -2264,7 +2784,7 @@ export const comicsRouter = router({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
-        include: { project: { select: { id: true, userId: true } } },
+        include: { project: { select: { id: true, userId: true, baseModel: true } } },
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
@@ -2354,8 +2874,12 @@ export const comicsRouter = router({
         });
       }
       const effectiveContext = input.useContext ? contextPanel : null;
+      const modelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
+      // For Qwen img2img, use the img2img version if available
+      const effectiveVersionId = modelConfig.img2imgVersionId ?? modelConfig.versionId;
       const { width: panelWidth, height: panelHeight } = getAspectRatioDimensions(
-        input.aspectRatio
+        input.aspectRatio,
+        modelConfig
       );
 
       const allUserRefs = await dbRead.comicReference.findMany({
@@ -2420,9 +2944,9 @@ export const comicsRouter = router({
         primaryReferenceName,
         allReferenceNames,
         generationParams: {
-          engine: 'gemini',
-          baseModel: 'NanoBanana',
-          checkpointVersionId: NANOBANANA_VERSION_ID,
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel,
+          checkpointVersionId: effectiveVersionId,
           width: panelWidth,
           height: panelHeight,
           prompt: fullPrompt,
@@ -2454,8 +2978,8 @@ export const comicsRouter = router({
           params: {
             prompt: fullPrompt,
             negativePrompt: '',
-            engine: 'gemini',
-            baseModel: 'NanoBanana' as any,
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
             width: panelWidth,
             height: panelHeight,
             aspectRatio: input.aspectRatio,
@@ -2469,7 +2993,7 @@ export const comicsRouter = router({
             sourceImage: null,
             images: allImages,
           },
-          resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+          resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['comics'],
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
@@ -2523,11 +3047,13 @@ export const comicsRouter = router({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
-        include: { project: { select: { id: true, userId: true } } },
+        include: { project: { select: { id: true, userId: true, baseModel: true } } },
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+
+      const bulkModelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
 
       // Get next position after existing panels
       const lastPanel = await dbWrite.comicPanel.findFirst({
@@ -2688,8 +3214,13 @@ export const comicsRouter = router({
             ...combinedRefImages,
           ];
 
+          // For Qwen img2img, use the img2img version if available
+          const bulkVersionId = panelDef.sourceImageUrl
+            ? (bulkModelConfig.img2imgVersionId ?? bulkModelConfig.versionId)
+            : bulkModelConfig.versionId;
           const { width: bulkPanelW, height: bulkPanelH } = getAspectRatioDimensions(
-            panelDef.aspectRatio
+            panelDef.aspectRatio,
+            bulkModelConfig
           );
 
           const metadata = {
@@ -2701,9 +3232,9 @@ export const comicsRouter = router({
             primaryReferenceName,
             allReferenceNames,
             generationParams: {
-              engine: 'gemini',
-              baseModel: 'NanoBanana',
-              checkpointVersionId: NANOBANANA_VERSION_ID,
+              engine: bulkModelConfig.engine,
+              baseModel: bulkModelConfig.baseModel,
+              checkpointVersionId: bulkVersionId,
               width: bulkPanelW,
               height: bulkPanelH,
               prompt: fullPrompt,
@@ -2735,8 +3266,8 @@ export const comicsRouter = router({
               params: {
                 prompt: fullPrompt,
                 negativePrompt: '',
-                engine: 'gemini',
-                baseModel: 'NanoBanana' as any,
+                engine: bulkModelConfig.engine,
+                baseModel: bulkModelConfig.baseModel as any,
                 width: bulkPanelW,
                 height: bulkPanelH,
                 aspectRatio: panelDef.aspectRatio,
@@ -2750,7 +3281,7 @@ export const comicsRouter = router({
                 sourceImage: null,
                 images: allImages,
               },
-              resources: [{ id: NANOBANANA_VERSION_ID, strength: 1 }],
+              resources: [{ id: bulkVersionId, strength: 1 }],
               tags: ['comics'],
               tips: { creators: 0, civitai: 0 },
               user: ctx.user! as SessionUser,
@@ -2818,7 +3349,8 @@ export const comicsRouter = router({
           });
 
           const { width: txtPanelW, height: txtPanelH } = getAspectRatioDimensions(
-            panelDef.aspectRatio
+            panelDef.aspectRatio,
+            bulkModelConfig
           );
           const panel = await createSinglePanel({
             projectId: input.projectId,
@@ -2836,6 +3368,7 @@ export const comicsRouter = router({
             width: txtPanelW,
             height: txtPanelH,
             aspectRatio: panelDef.aspectRatio,
+            modelConfig: bulkModelConfig,
           });
 
           createdPanels.push(panel);
@@ -3005,6 +3538,7 @@ export const comicsRouter = router({
               content: true,
               createdAt: true,
               user: { select: userWithCosmeticsSelect },
+              reactions: { select: { userId: true, reaction: true } },
             },
           },
         },
@@ -3055,6 +3589,36 @@ export const comicsRouter = router({
         where: { id: thread.id },
         data: { commentCount: { increment: 1 } },
       });
+
+      // Notify the comic project owner (if commenter is not the owner)
+      const project = await dbRead.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: { userId: true, name: true },
+      });
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: {
+            projectId: input.projectId,
+            position: input.chapterPosition,
+          },
+        },
+        select: { name: true },
+      });
+
+      if (project && project.userId !== ctx.user.id) {
+        createNotification({
+          type: 'new-comic-comment',
+          key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
+          category: NotificationCategory.Comment,
+          userId: project.userId,
+          details: {
+            comicProjectId: String(input.projectId),
+            comicProjectName: project.name,
+            chapterName: chapter?.name ?? `Chapter ${input.chapterPosition + 1}`,
+            commenterUsername: ctx.user.username ?? 'Someone',
+          },
+        }).catch((e) => console.error('Failed to send comic comment notification:', e));
+      }
 
       return comment;
     }),

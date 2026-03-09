@@ -133,12 +133,31 @@ type AuthedRequest = {
   };
 };
 
+// JWT session errors that are expected and non-actionable (expired tokens, corrupt cookies)
+const jwtSessionWarnCodes = new Set(['JWT_SESSION_ERROR']);
+
 export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   const options: NextAuthOptions = {
     adapter: CustomPrismaAdapter(dbWrite),
     session: {
       strategy: 'jwt',
       maxAge: 30 * 24 * 60 * 60, // 30 days
+    },
+    logger: {
+      error(code, metadata) {
+        const message = metadata instanceof Error ? metadata.message : (metadata as any).error?.message ?? '';
+        if (jwtSessionWarnCodes.has(code)) {
+          console.warn(`[next-auth][warn][${code}]`, message);
+        } else {
+          console.error(`[next-auth][error][${code}]`, metadata);
+        }
+      },
+      warn(code) {
+        console.warn(`[next-auth][warn][${code}]`);
+      },
+      debug(code, metadata) {
+        if (isDev) console.log(`[next-auth][debug][${code}]`, metadata);
+      },
     },
     events: {
       createUser: async ({ user }) => {

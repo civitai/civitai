@@ -1296,6 +1296,7 @@ export default function ModelDetailsV2({
                 canDiscuss={canDiscuss}
                 onlyEarlyAccess={onlyEarlyAccess}
                 modelId={model.id}
+                modelUserId={model.user.id}
                 locked={model.locked || model.meta?.commentsLocked}
               />
             </Container>

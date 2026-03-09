@@ -9,9 +9,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  imageMetaCache,
+  imageResourcesCache,
   modelVersionAccessCache,
   postStatCache,
   thumbnailCache,
+  imageMetadataCache,
   userBasicCache,
   userPostCountCache,
 } from '~/server/redis/caches';
@@ -1049,6 +1052,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true, url: true, userId: true },
   });
+  await imageMetadataCache.bust(image.id);
+  await imageMetaCache.bust(image.id);
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
@@ -1174,13 +1179,10 @@ export const addResourceToPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
+  await imageResourcesCache.bust(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
-
-  // for (const imageId of imageIds) {
-  //   purgeImageGenerationDataCache(imageId);
-  // }
 
   for (const image of images) {
     if (!!image.postId) {
@@ -1222,13 +1224,9 @@ export const removeResourceFromPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
+  await imageResourcesCache.bust(imageId);
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-  // await bustCacheTag(`images-model:${modelVersion.model.id}`);
-
-  // for (const imageId of imageIds) {
-  //   purgeImageGenerationDataCache(imageId);
-  // }
 
   if (!!image.postId) {
     await preventReplicationLag('postImages', image.postId);

@@ -17,6 +17,7 @@ import {
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '../db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
   CreateBuzzWithdrawalRequestSchema,
@@ -226,9 +227,15 @@ export const cancelBuzzWithdrawalRequest = async ({
   userId: number;
 }) => {
   // Check if the user has  a pending withdrawal request:
-  const request = await dbRead.buzzWithdrawalRequest.findUniqueOrThrow({
+  const requestFindArgs = {
     where: { id },
-  });
+  } as const;
+  const request = await dbRead.buzzWithdrawalRequest
+    .findUniqueOrThrow(requestFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'buzzWithdrawalRequest', caller: 'cancelBuzzWithdrawalRequest' });
+      return dbWrite.buzzWithdrawalRequest.findUniqueOrThrow(requestFindArgs);
+    });
 
   if (request.status !== BuzzWithdrawalRequestStatus.Requested) {
     throw throwBadRequestError('The request you are trying to cancel is not on a pending status');
@@ -504,12 +511,18 @@ export const updateBuzzWithdrawalRequest = async ({
     }
 
     if (status === BuzzWithdrawalRequestStatus.Reverted) {
-      const transferRecord = await dbRead.buzzWithdrawalRequestHistory.findFirstOrThrow({
+      const transferRecordFindArgs = {
         where: {
           requestId,
           status: BuzzWithdrawalRequestStatus.Transferred,
         },
-      });
+      } as const;
+      const transferRecord = await dbRead.buzzWithdrawalRequestHistory
+        .findFirstOrThrow(transferRecordFindArgs)
+        .catch(() => {
+          dbReadFallbackCounter.inc({ entity: 'buzzWithdrawalRequestHistory', caller: 'updateBuzzWithdrawalRequest' });
+          return dbWrite.buzzWithdrawalRequestHistory.findFirstOrThrow(transferRecordFindArgs);
+        });
 
       const transferRecordMetadata =
         transferRecord.metadata as BuzzWithdrawalRequestHistoryMetadataSchema;

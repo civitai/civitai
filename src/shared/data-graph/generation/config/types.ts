@@ -47,11 +47,17 @@ export interface WorkflowConfig {
   /** Ecosystem IDs that support this workflow */
   ecosystemIds: number[];
 
+  /** Model version IDs that should NOT see this workflow */
+  excludeModelVersionIds?: number[];
+
   /** Whether this is an enhancement workflow (e.g. upscale, remove-background) */
   enhancement?: boolean;
 
   /** Whether this workflow requires membership */
   memberOnly?: boolean;
+
+  /** When true, no FormFooter (submit/quantity/reset) is shown for this workflow */
+  noSubmit?: boolean;
 
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
@@ -61,6 +67,8 @@ export interface WorkflowConfig {
     label: string;
     description?: string;
     ecosystemIds: number[];
+    /** Model version IDs that should NOT see this alias (e.g., Q3 doesn't support First/Last Frame) */
+    excludeModelVersionIds?: number[];
   }[];
 }
 

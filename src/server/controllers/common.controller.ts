@@ -15,7 +15,8 @@ import {
   hasEntityAccess,
 } from '~/server/services/common.service';
 import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -88,8 +89,10 @@ export const updateEntityAvailabilityHandler = async ({
     // Update search index:
     switch (entityType) {
       case 'ModelVersion':
-        const modelVersion = await dbRead.modelVersion.findUniqueOrThrow({
-          where: { id: entityId },
+        const findArgs = { where: { id: entityId } } as const;
+        const modelVersion = await dbRead.modelVersion.findUniqueOrThrow(findArgs).catch(() => {
+          dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'updateEntityAvailabilityHandler' });
+          return dbWrite.modelVersion.findUniqueOrThrow(findArgs);
         });
 
         await modelsSearchIndex.queueUpdate([

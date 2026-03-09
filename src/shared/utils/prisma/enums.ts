@@ -829,6 +829,7 @@ export type ChallengeSource = (typeof ChallengeSource)[keyof typeof ChallengeSou
 export const ChallengeStatus = {
   Scheduled: 'Scheduled',
   Active: 'Active',
+  Completing: 'Completing',
   Completed: 'Completed',
   Cancelled: 'Cancelled',
 } as const;

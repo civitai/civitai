@@ -192,13 +192,14 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists orchestration.resourceCompensations
     (
-        date           DateTime,
+        date           Date,
         modelVersionId Int32,
-        accountType    String,        
-        amount         UInt32,
+        accountType    LowCardinality(String),
+        amount         Float64
     )
-        engine = ReplacingMergeTree()
-            ORDER BY (date, modelVersionId)
+        engine = SummingMergeTree()
+            PARTITION BY toYYYYMM(date)
+            ORDER BY (date, modelVersionId, accountType)
             SETTINGS index_granularity = 8192;
 
     create table if not exists default.commentEvents

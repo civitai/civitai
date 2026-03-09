@@ -6,6 +6,7 @@
  */
 
 import z from 'zod';
+import { videoValueSchema, videoMetadataSchema } from './media-schemas';
 import {
   baseModelByName,
   ecosystemById,
@@ -37,7 +38,10 @@ function getEcosystemKeyForBaseModel(baseModelName: string): string | undefined 
 
 /** Snap a value to the nearest step multiple and clamp to [min, max]. */
 function snapToStep(val: number, step: number, min: number, max: number): number {
-  return Math.min(Math.max(Math.round(val / step) * step, min), max);
+  const precision = Math.max(0, -Math.floor(Math.log10(step)));
+  const snapped = Math.round(val / step) * step;
+  const rounded = parseFloat(snapped.toFixed(precision));
+  return Math.min(Math.max(rounded, min), max);
 }
 
 // =============================================================================
@@ -971,6 +975,15 @@ export interface ImagesNodeConfig {
    * Used for video generation flows where source image metadata improves output quality.
    */
   warnOnMissingAiMetadata?: boolean;
+  /**
+   * Allowed aspect ratios for image cropping.
+   * When provided, images are cropped to fit one of these aspect ratios on upload.
+   */
+  aspectRatios?: `${number}:${number}`[];
+  /**
+   * When true, crops subsequent images to match the first image's aspect ratio.
+   */
+  cropToFirstImage?: boolean;
 }
 
 /**
@@ -998,6 +1011,8 @@ export function imagesNode({
   slots,
   modes,
   warnOnMissingAiMetadata,
+  aspectRatios,
+  cropToFirstImage,
 }: ImagesNodeConfig = {}) {
   // When slots are provided, max is derived from slots length
   const effectiveMax = slots?.length ?? max;
@@ -1039,6 +1054,8 @@ export function imagesNode({
       slots,
       modes,
       warnOnMissingAiMetadata,
+      aspectRatios,
+      cropToFirstImage,
     },
   };
 }
@@ -1077,26 +1094,8 @@ export type VideoValue = {
   metadata?: VideoMetadata;
 };
 
-/** Zod schema for image value (url + dimensions) */
-export const imageValueSchema = z.object({
-  url: z.string(),
-  width: z.number(),
-  height: z.number(),
-});
-
-/** Zod schema for video metadata */
-export const videoMetadataSchema = z.object({
-  fps: z.number(),
-  width: z.number(),
-  height: z.number(),
-  duration: z.number(),
-});
-
-/** Zod schema for video value */
-export const videoValueSchema = z.object({
-  url: z.string(),
-  metadata: videoMetadataSchema.optional(),
-});
+// Re-exported from media-schemas.ts to avoid circular dependency TDZ errors
+export { imageValueSchema, videoMetadataSchema, videoValueSchema } from './media-schemas';
 
 /**
  * Creates a video source node.

@@ -1,11 +1,18 @@
 /**
- * Qwen Ecosystem Handler
+ * Qwen Family Handler
  *
- * Handles Qwen workflows using imageGen step type.
- * Supports txt2img (createImage) and img2img (editImage) operations.
+ * Handles Qwen and Qwen 2 workflows using imageGen step type.
+ * Discriminates between ecosystems:
+ * - Qwen: sdcpp engine, model version-based routing, LoRA support
+ * - Qwen 2: fal engine, aspect ratio mapped to imageSize enum
  */
 
-import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
+import type {
+  Qwen20bCreateImageGenInput,
+  Qwen20bEditImageGenInput,
+  Qwen2CreateFalImageGenInput,
+  Qwen2EditFalImageGenInput,
+} from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
@@ -13,12 +20,19 @@ import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type QwenCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' };
+type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' };
 
 // Return type union
-type QwenInput = Qwen20bCreateImageGenInput | Qwen20bEditImageGenInput;
+type QwenFamilyInput =
+  | Qwen20bCreateImageGenInput
+  | Qwen20bEditImageGenInput
+  | Qwen2CreateFalImageGenInput
+  | Qwen2EditFalImageGenInput;
 
-// Model version mapping
+// =============================================================================
+// Qwen version mapping
+// =============================================================================
+
 type Txt2ImgVersion = '2509' | '2512';
 type Img2ImgVersion = '2509' | '2511';
 const qwenModelVersionMap = new Map<
@@ -31,14 +45,56 @@ const qwenModelVersionMap = new Map<
   [2558804, { process: 'img2img', version: '2511' }],
 ]);
 
+// =============================================================================
+// Qwen 2 imageSize mapping
+// =============================================================================
+
+/** Map standard aspect ratio values to fal imageSize enum */
+const imageSizeMap: Record<string, Qwen2CreateFalImageGenInput['imageSize']> = {
+  '1:1': 'square_hd',
+  '4:3': 'landscape_4_3',
+  '3:4': 'portrait_4_3',
+  '16:9': 'landscape_16_9',
+  '9:16': 'portrait_16_9',
+};
+
+// =============================================================================
+// Unified handler
+// =============================================================================
+
 /**
- * Creates imageGen input for Qwen ecosystem.
- * Handles both txt2img and img2img operations based on model version.
+ * Creates imageGen input for Qwen family ecosystems.
+ * Routes to Qwen (sdcpp) or Qwen 2 (fal) based on ecosystem.
  */
-export const createQwenInput = defineHandler<QwenCtx, QwenInput>((data, ctx) => {
+export const createQwenInput = defineHandler<QwenFamilyCtx, QwenFamilyInput>((data, ctx) => {
+  const isTxt2Img = data.workflow.startsWith('txt');
   const quantity = data.quantity ?? 1;
 
-  // Determine process type and version from model
+  // Qwen 2 — fal engine
+  if (data.ecosystem === 'Qwen2') {
+    const imageSize = data.aspectRatio?.value ? imageSizeMap[data.aspectRatio.value] : undefined;
+
+    const baseInput = {
+      engine: 'fal' as const,
+      model: 'qwen2' as const,
+      prompt: data.prompt,
+      negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+      imageSize,
+      quantity,
+      seed: data.seed,
+    };
+
+    if (isTxt2Img) {
+      return removeEmpty({ ...baseInput, operation: 'createImage' }) as Qwen2CreateFalImageGenInput;
+    }
+    return removeEmpty({
+      ...baseInput,
+      operation: 'editImage',
+      images: data.images?.map((x) => x.url) ?? [],
+    }) as Qwen2EditFalImageGenInput;
+  }
+
+  // Qwen — sdcpp engine
   let process: 'txt2img' | 'img2img' = 'txt2img';
   let version: Txt2ImgVersion | Img2ImgVersion = '2512';
   if (data.model) {
@@ -49,7 +105,6 @@ export const createQwenInput = defineHandler<QwenCtx, QwenInput>((data, ctx) => 
     }
   }
 
-  // Build loras from additional resources (excluding checkpoint)
   const loras: Record<string, number> = {};
   if ('resources' in data && Array.isArray(data.resources)) {
     for (const resource of data.resources as ResourceData[]) {
@@ -74,15 +129,11 @@ export const createQwenInput = defineHandler<QwenCtx, QwenInput>((data, ctx) => 
   };
 
   if (process === 'txt2img') {
-    return removeEmpty({
-      ...baseInput,
-      operation: 'createImage',
-    }) as Qwen20bCreateImageGenInput;
-  } else {
-    return removeEmpty({
-      ...baseInput,
-      operation: 'editImage',
-      images: data.images?.map((x) => x.url) ?? [],
-    }) as Qwen20bEditImageGenInput;
+    return removeEmpty({ ...baseInput, operation: 'createImage' }) as Qwen20bCreateImageGenInput;
   }
+  return removeEmpty({
+    ...baseInput,
+    operation: 'editImage',
+    images: data.images?.map((x) => x.url) ?? [],
+  }) as Qwen20bEditImageGenInput;
 });

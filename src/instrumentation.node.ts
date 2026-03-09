@@ -9,6 +9,9 @@ import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
+import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { PrismaInstrumentation } from '@prisma/instrumentation';
+import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
@@ -54,10 +57,15 @@ if (!OTEL_ENABLED) {
     });
     logs.setGlobalLoggerProvider(loggerProvider);
 
-    // Create SDK with trace processor
+    // Create SDK with trace processor and auto-instrumentations
     const sdk = new NodeSDK({
       resource,
       spanProcessor: new BatchSpanProcessor(traceExporter),
+      instrumentations: [
+        new HttpInstrumentation(),
+        new PrismaInstrumentation(),
+        new RedisInstrumentation(),
+      ],
     });
 
     sdk.start();

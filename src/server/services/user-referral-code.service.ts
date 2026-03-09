@@ -1,5 +1,6 @@
 import randomstring from 'randomstring';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { isModerator } from '~/server/routers/base.router';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -50,7 +51,11 @@ export const upsertUserReferralCode = async ({
       },
     });
   } else {
-    const user = await dbRead.user.findUniqueOrThrow({ where: { id: userId } });
+    const findArgs = { where: { id: userId } } as const;
+    const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'user', caller: 'upsertUserReferralCode' });
+      return dbWrite.user.findUniqueOrThrow(findArgs);
+    });
     const generateString = (length = 3) =>
       randomstring.generate({
         length,
@@ -103,7 +108,13 @@ export const deleteUserReferralCode = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
-  const userReferralCode = await dbRead.userReferralCode.findUniqueOrThrow({ where: { id } });
+  const referralCodeFindArgs = { where: { id } } as const;
+  const userReferralCode = await dbRead.userReferralCode
+    .findUniqueOrThrow(referralCodeFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'userReferralCode', caller: 'deleteUserReferralCode' });
+      return dbWrite.userReferralCode.findUniqueOrThrow(referralCodeFindArgs);
+    });
 
   if (userReferralCode.userId !== userId && !isModerator) {
     throw throwBadRequestError('You do not have permission to delete this referral code');

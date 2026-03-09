@@ -7,7 +7,13 @@ import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.
 import { getModeratedTags } from '~/server/services/system-cache';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
-const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
+const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
+const HIDDEN_CACHE_JITTER_MAX = 60 * 30; // up to 30 minutes of jitter
+// Jitter prevents thundering herd: without it, all users' caches expire at the
+// same 4-hour boundary, causing a simultaneous DB query storm at ~300 req/s.
+function getHiddenCacheExpiry() {
+  return HIDDEN_CACHE_EXPIRY_BASE + Math.floor(Math.random() * HIDDEN_CACHE_JITTER_MAX);
+}
 // const log = createLogger('user-preferences', 'green');
 
 function createUserCache<T, TArgs extends { userId?: number }>({
@@ -38,7 +44,7 @@ function createUserCache<T, TArgs extends { userId?: number }>({
     // console.timeEnd(key);
 
     await redis.packed.set(getKey({ userId }), data, {
-      EX: HIDDEN_CACHE_EXPIRY,
+      EX: getHiddenCacheExpiry(),
     });
 
     return data;

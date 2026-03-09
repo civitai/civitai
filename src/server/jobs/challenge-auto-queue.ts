@@ -35,7 +35,8 @@ async function getDatesWithoutChallenges(horizonDays: number): Promise<Date[]> {
     AND "startsAt" <= ${endDate.toDate()}
     AND status IN (
       ${ChallengeStatus.Scheduled}::"ChallengeStatus",
-      ${ChallengeStatus.Active}::"ChallengeStatus"
+      ${ChallengeStatus.Active}::"ChallengeStatus",
+      ${ChallengeStatus.Completing}::"ChallengeStatus"
     )
   `;
 

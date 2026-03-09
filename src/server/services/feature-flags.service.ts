@@ -293,6 +293,8 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
   } else {
     ctx.isLoggedIn = 'false';
   }
+  const deploymentId = process.env.FLIPT_DEPLOYMENT_ID;
+  if (deploymentId) ctx.deploymentId = deploymentId;
   return ctx;
 }
 

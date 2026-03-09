@@ -452,6 +452,50 @@
   gap: 0;
 }
 
+/* ── Pages (bifold) reading mode ─────────────────── */
+.readerPagesSpread {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  height: calc(100dvh - 140px);
+  padding: 16px;
+  background: light-dark(#fff, #000);
+  overflow: hidden;
+
+  > * {
+    flex: 1;
+    max-width: 50%;
+    max-height: 100%;
+
+    &:only-child {
+      max-width: 60%;
+    }
+  }
+
+  /* Scope to direct panel images only — avoid bleeding into blur-effect images */
+  > * > img,
+  > * > div > img:first-child:not([aria-hidden]) {
+    width: 100%;
+    height: auto;
+    max-height: calc(100dvh - 172px);
+    object-fit: contain;
+    display: block;
+    border-radius: 4px;
+  }
+
+  @media (max-width: 640px) {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+
+    > * {
+      max-width: 100%;
+    }
+  }
+}
+
+
 .readerPanel {
   width: 100%;
   display: block;
@@ -492,6 +536,7 @@
   padding: 32px 0 48px;
   display: flex;
   justify-content: center;
+  align-items: center;
   gap: 12px;
 }
 

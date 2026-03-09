@@ -9,12 +9,13 @@
  *   mute <id|username>              Toggle mute status
  *   leaderboard <id|username> <bool> Set leaderboard eligibility
  *   remove-content <id|username>    Remove all user content
+ *   dm <id|username>                Send a DM to a user
  *
  * Options:
  *   --json                Output raw JSON
  *   --dry-run             Preview without making changes
  *   --reason <code>       Ban reason code
- *   --message <text>      External message for user
+ *   --message <text>      External message for user / DM content
  *   --internal <text>     Internal notes
  */
 
@@ -107,12 +108,13 @@ Commands:
   mute <id|username>              Toggle mute status
   leaderboard <id|username> <bool> Set leaderboard eligibility
   remove-content <id|username>    Remove all user content
+  dm <id|username>                Send a DM to a user
 
 Options:
   --json                Output raw JSON
   --dry-run             Preview without making changes
   --reason <code>       Ban reason code
-  --message <text>      External message for user
+  --message <text>      External message for user / DM content
   --internal <text>     Internal notes
 
 Ban Reason Codes:
@@ -125,6 +127,7 @@ Examples:
   node query.mjs mute 3879899
   node query.mjs leaderboard 3879899 false
   node query.mjs remove-content 3879899 --dry-run
+  node query.mjs dm 3879899 --message "Hello, this is a message from the mod team"
 
 Configuration:
   Set CIVITAI_API_KEY and CIVITAI_API_URL in .claude/skills/mod-actions/.env
@@ -233,6 +236,59 @@ async function setLeaderboardEligibility(userId, eligible) {
 // Remove all content
 async function removeAllContent(userId) {
   return await trpcCall('user.removeAllContent', { id: userId }, 'POST');
+}
+
+// Resolve the mod's user ID from the API key via user.getToken tRPC endpoint
+let _modUserId = null;
+async function getModUserId() {
+  if (_modUserId) return _modUserId;
+  if (process.env.MOD_USER_ID) {
+    _modUserId = parseInt(process.env.MOD_USER_ID);
+    return _modUserId;
+  }
+  try {
+    // user.getToken returns a JWT containing { userId }
+    const result = await trpcCall('user.getToken', undefined, 'GET');
+    const token = result.token;
+    // Decode JWT payload (base64url-encoded second segment)
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+    if (payload.userId) {
+      _modUserId = payload.userId;
+      return _modUserId;
+    }
+  } catch (e) {
+    console.error(`Warning: Could not resolve mod user ID via API: ${e.message}`);
+  }
+  throw new Error(
+    'Could not resolve moderator user ID. Set MOD_USER_ID in .claude/skills/mod-actions/.env'
+  );
+}
+
+// Create or find a 1-on-1 chat between the mod and a target user
+async function createOrFindChat(modUserId, targetUserId) {
+  return await trpcCall('chat.createChat', { userIds: [modUserId, targetUserId] }, 'POST');
+}
+
+// Send a message in a chat
+async function sendChatMessage(chatId, content) {
+  return await trpcCall('chat.createMessage', {
+    chatId,
+    content,
+    contentType: 'Markdown',
+  }, 'POST');
+}
+
+// Send a DM to a user (create chat + send message)
+async function sendDm(targetUserId, message) {
+  const modUserId = await getModUserId();
+
+  // Create or find existing 1:1 chat
+  const chat = await createOrFindChat(modUserId, targetUserId);
+  const chatId = chat.id;
+
+  // Send the message
+  const result = await sendChatMessage(chatId, message);
+  return { chatId, messageId: result.id, modUserId };
 }
 
 // Format action result
@@ -408,6 +464,44 @@ async function main() {
         console.log(JSON.stringify(result, null, 2));
       } else {
         console.log(formatResult('remove-content', user, result));
+      }
+      break;
+    }
+
+    case 'dm': {
+      if (!targetInput) {
+        console.error('Error: User ID or username required');
+        showUsage();
+      }
+      if (!messageText) {
+        console.error('Error: --message is required for dm command');
+        console.error('Usage: node query.mjs dm <id|username> --message "Your message here"');
+        process.exit(1);
+      }
+
+      const user = await lookupUser(targetInput);
+      if (!user) {
+        console.error('Error: User not found');
+        process.exit(1);
+      }
+
+      if (dryRun) {
+        console.log(`[DRY RUN] Would send DM:`);
+        console.log(`To: ${user.username} (ID: ${user.id})`);
+        console.log(`Message: ${messageText}`);
+        break;
+      }
+
+      const dmResult = await sendDm(user.id, messageText);
+
+      if (jsonOutput) {
+        console.log(JSON.stringify({ ...dmResult, user: { id: user.id, username: user.username } }, null, 2));
+      } else {
+        console.log(`Action: DM SENT`);
+        console.log(`To: ${user.username} (ID: ${user.id})`);
+        console.log(`Chat ID: ${dmResult.chatId}`);
+        console.log(`Message ID: ${dmResult.messageId}`);
+        console.log(`Success: Yes`);
       }
       break;
     }
