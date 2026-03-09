@@ -32,6 +32,7 @@ export type WinnerPodiumData = {
 export const placeConfig = {
   1: {
     label: '1st Place',
+    shortLabel: '1st',
     gradient: 'from-yellow-400 via-amber-500 to-orange-500',
     border: 'border-yellow-500/50',
     icon: IconCrown,
@@ -40,6 +41,7 @@ export const placeConfig = {
   },
   2: {
     label: '2nd Place',
+    shortLabel: '2nd',
     gradient: 'from-slate-300 via-gray-400 to-slate-500',
     border: 'border-slate-400/50',
     icon: IconTrophy,
@@ -48,6 +50,7 @@ export const placeConfig = {
   },
   3: {
     label: '3rd Place',
+    shortLabel: '3rd',
     gradient: 'from-amber-600 via-orange-700 to-amber-800',
     border: 'border-orange-700/50',
     icon: IconTrophy,
@@ -90,30 +93,37 @@ export function WinnerPodiumCard({
 
   return (
     <div
-      className={`flex flex-col overflow-hidden rounded-xl border-2 ${config.border} ${
+      className={`flex min-w-0 flex-col overflow-hidden rounded-xl border-2 ${config.border} ${
         isDark ? 'bg-dark-6' : 'bg-white'
       } ${widthClass} ${isFirst ? 'shadow-xl' : ''} ${config.bgGlow} shadow-lg ${className}`}
     >
       {/* Place Header with Gradient */}
-      <div className={`bg-gradient-to-r ${config.gradient} px-4 py-2.5`}>
+      <div
+        className={`bg-gradient-to-r ${config.gradient} ${compact ? 'px-2 py-1.5' : 'px-4 py-2.5'}`}
+      >
         <Group justify="space-between" wrap="nowrap" gap="xs">
-          <Group gap={6} wrap="nowrap">
-            <PlaceIcon size={isMobile || compact ? 20 : isFirst ? 24 : 18} className="text-white" />
+          <Group gap={compact ? 4 : 6} wrap="nowrap">
+            <PlaceIcon
+              size={compact ? 16 : isMobile ? 20 : isFirst ? 24 : 18}
+              className="text-white"
+            />
             <Text
               fw={700}
               c="white"
-              size={isMobile || compact || isFirst ? 'md' : 'sm'}
+              size={compact ? 'xs' : isMobile || isFirst ? 'md' : 'sm'}
               className="whitespace-nowrap"
             >
-              {config.label}
+              {compact ? config.shortLabel : config.label}
             </Text>
           </Group>
-          <CurrencyBadge
-            currency={Currency.BUZZ}
-            unitAmount={winner.buzzAwarded}
-            size="sm"
-            style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}
-          />
+          {!compact && (
+            <CurrencyBadge
+              currency={Currency.BUZZ}
+              unitAmount={winner.buzzAwarded}
+              size="sm"
+              style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}
+            />
+          )}
         </Group>
       </div>
 
@@ -157,6 +167,7 @@ export function WinnerPodiumCard({
                       score={winner.judgeScore}
                       imageId={winner.imageId}
                       judgeInfo={judgeInfo}
+                      size={compact ? 'xs' : 'sm'}
                     />
                   )}
                 </div>
@@ -167,10 +178,10 @@ export function WinnerPodiumCard({
       )}
 
       {/* Winner Info */}
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className={`flex flex-1 flex-col ${compact ? 'gap-1 p-2' : 'gap-3 p-4'}`}>
         {/* Username + Avatar */}
         <Link href={`/user/${winner.username}`}>
-          <Group gap="xs">
+          <Group gap={compact ? 4 : 'xs'} wrap="nowrap">
             <UserAvatar
               user={{
                 id: winner.userId,
@@ -178,13 +189,13 @@ export function WinnerPodiumCard({
                 profilePicture: winner.profilePicture ?? undefined,
                 cosmetics: winner.cosmetics ?? undefined,
               }}
-              size="sm"
+              size={compact ? 'xs' : 'sm'}
               includeAvatar
               withUsername={false}
             />
             <Text
               fw={600}
-              size={compact ? 'sm' : isFirst ? 'md' : 'sm'}
+              size={compact ? 'xs' : isFirst ? 'md' : 'sm'}
               className="hover:underline"
               lineClamp={1}
             >

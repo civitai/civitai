@@ -25,7 +25,13 @@ export function CompletedChallengeCard({ data }: Props) {
   ].filter(isDefined) as ChallengeWinnerSummary[];
 
   return (
-    <Paper radius="lg" withBorder py="lg" px="xl" className="mx-auto w-full max-w-4xl">
+    <Paper
+      radius="lg"
+      withBorder
+      py={{ base: 'sm', sm: 'lg' }}
+      px={{ base: 'sm', sm: 'xl' }}
+      className="mx-auto w-full max-w-4xl"
+    >
       <Stack gap="md">
         {/* Header */}
         <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -77,7 +83,7 @@ export function CompletedChallengeCard({ data }: Props) {
 
         {/* Winner podium — same [2nd, 1st, 3rd] layout as detail page */}
         {podiumOrder.length > 0 && (
-          <div className="flex items-end justify-center gap-3">
+          <div className="flex items-end justify-center gap-2">
             {podiumOrder.map((winner, index) => (
               <WinnerPodiumCard
                 key={winner.place}
