@@ -25,7 +25,7 @@ import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { getGetUrl } from '~/utils/s3-utils';
+import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import {
   getTrainingFields,
@@ -294,7 +294,9 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
-  const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
+  const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
+    ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
+    : await getGetUrl(modelVersion.trainingUrl);
 
   if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
