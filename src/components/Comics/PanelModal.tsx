@@ -506,8 +506,8 @@ export function PanelModal({
       )}
 
       <Text size="xs" c="dimmed">
-        Generated panels use NanoBanana and are SFW only. Uploaded or imported images can be NSFW
-        but will be scanned.
+        Generated panels use the selected AI model and some are SFW only. Uploaded or imported images can
+        be NSFW but will be scanned.
       </Text>
 
       {panelMode === 'generate' ? (

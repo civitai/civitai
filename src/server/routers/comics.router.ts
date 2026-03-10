@@ -3578,26 +3578,31 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
-      await dbWrite.comicReferenceImage.delete({
-        where: {
-          referenceId_imageId: { referenceId: input.referenceId, imageId: input.imageId },
-        },
-      });
+      await dbWrite.$transaction(async (tx) => {
+        await tx.comicReferenceImage.delete({
+          where: {
+            referenceId_imageId: { referenceId: input.referenceId, imageId: input.imageId },
+          },
+        });
 
-      // Re-compact positions
-      const remaining = await dbWrite.comicReferenceImage.findMany({
-        where: { referenceId: input.referenceId },
-        orderBy: { position: 'asc' },
-        select: { imageId: true },
-      });
-      await dbWrite.$transaction(
-        remaining.map((r, i) =>
-          dbWrite.comicReferenceImage.update({
-            where: { referenceId_imageId: { referenceId: input.referenceId, imageId: r.imageId } },
+        // Re-compact positions
+        const remaining = await tx.comicReferenceImage.findMany({
+          where: { referenceId: input.referenceId },
+          orderBy: { position: 'asc' },
+          select: { imageId: true },
+        });
+        for (let i = 0; i < remaining.length; i++) {
+          await tx.comicReferenceImage.update({
+            where: {
+              referenceId_imageId: {
+                referenceId: input.referenceId,
+                imageId: remaining[i].imageId,
+              },
+            },
             data: { position: i },
-          })
-        )
-      );
+          });
+        }
+      });
 
       return { success: true };
     }),
@@ -3616,6 +3621,18 @@ export const comicsRouter = router({
       });
       if (!reference || reference.userId !== ctx.user.id) {
         throw throwAuthorizationError();
+      }
+
+      // Verify all imageIds belong to this reference
+      const existingImages = await dbRead.comicReferenceImage.findMany({
+        where: { referenceId: input.referenceId },
+        select: { imageId: true },
+      });
+      const existingIds = new Set(existingImages.map((img) => img.imageId));
+      for (const imageId of input.imageIds) {
+        if (!existingIds.has(imageId)) {
+          throw throwBadRequestError(`Image ${imageId} does not belong to this reference`);
+        }
       }
 
       await dbWrite.$transaction(

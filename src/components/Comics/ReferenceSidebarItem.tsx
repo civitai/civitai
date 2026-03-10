@@ -2,15 +2,9 @@ import { ActionIcon, Badge } from '@mantine/core';
 import { IconAlertTriangle, IconTrash, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
+import { refTypeBadge } from '~/components/Comics/comic-project-constants';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
-
-const refTypeBadge: Record<string, { label: string; color: string }> = {
-  Character: { label: 'Char', color: 'blue' },
-  Location: { label: 'Loc', color: 'teal' },
-  Item: { label: 'Item', color: 'grape' },
-  Style: { label: 'Style', color: 'orange' },
-};
 
 export function ReferenceSidebarItem({
   character: ref,

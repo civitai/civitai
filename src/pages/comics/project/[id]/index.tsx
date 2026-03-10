@@ -95,7 +95,7 @@ function ProjectWorkspace() {
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
-    'NanoBanana' | 'Seedream' | 'OpenAI' | 'Qwen' | null
+    'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | null
   >(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);

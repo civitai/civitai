@@ -38,7 +38,7 @@ export const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; h
 
 export const COMIC_MODEL_MAX_IMAGES: Record<string, number> = {
   NanoBanana: 7,
-  Flux2: 7,
+  Flux2: 4,
   Seedream: 7,
   OpenAI: 7,
   Qwen: 3,
