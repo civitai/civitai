@@ -30,6 +30,7 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
+  B2_TRAINING_UPLOAD = 'b2-training-upload',
   COMIC_CREATOR = 'comic-creator',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   IMAGE_INDEX_FEED = 'image-index-feed',
