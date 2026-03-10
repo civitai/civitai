@@ -857,12 +857,12 @@ function ProjectWorkspace() {
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
                 <span>References</span>
-                {totalRefImageCount > 6 && (
+                {totalRefImageCount > maxReferenceImages && (
                   <Tooltip
-                    label={`${totalRefImageCount} images across refs — only the first 6 will be used for generation`}
+                    label={`${totalRefImageCount} images across refs — only the first ${maxReferenceImages} will be used for generation`}
                   >
                     <Badge size="xs" color="yellow" variant="light">
-                      {totalRefImageCount}/6
+                      {totalRefImageCount}/{maxReferenceImages}
                     </Badge>
                   </Tooltip>
                 )}
