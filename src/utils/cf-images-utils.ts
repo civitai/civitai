@@ -130,9 +130,38 @@ export async function uploadViaBuffer(
     throw new Error(`Failed to download image: ${imageResponse.status} ${imageResponse.statusText}`);
   const blob = await imageResponse.blob();
 
+  // Derive a reasonable filename based on URL extension or Content-Type
+  const contentType = imageResponse.headers.get('content-type') || '';
+  let extension = '';
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const lastSegment = pathname.split('/').pop() ?? '';
+    const dotIndex = lastSegment.lastIndexOf('.');
+    if (dotIndex !== -1 && dotIndex < lastSegment.length - 1) {
+      extension = lastSegment.slice(dotIndex + 1).toLowerCase();
+    }
+  } catch {
+    // If URL parsing fails, we'll fall back to content-type below.
+  }
+
+  if (!extension) {
+    if (contentType.includes('image/jpeg') || contentType.includes('image/jpg')) {
+      extension = 'jpg';
+    } else if (contentType.includes('image/png')) {
+      extension = 'png';
+    } else if (contentType.includes('image/webp')) {
+      extension = 'webp';
+    } else if (contentType.includes('image/gif')) {
+      extension = 'gif';
+    }
+  }
+
+  const filename = extension ? `image.${extension}` : 'image';
+
   metadata ??= {};
   const body = new FormData();
-  body.append('file', blob, 'image.png');
+  body.append('file', blob, filename);
   body.append('requireSignedURLs', 'false');
   body.append('metadata', JSON.stringify(metadata));
 
