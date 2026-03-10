@@ -1279,7 +1279,15 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
-async function getRatedImages({
+/**
+ * Ensures the rated images cache is populated for a user.
+ * On cache miss, fetches from ClickHouse and populates the Redis set.
+ * Returns the Redis key for subsequent SMISMEMBER checks.
+ *
+ * Uses a sentinel member '0' (no real image has ID 0) to distinguish
+ * "cache populated but user has no ratings" from "cache not populated".
+ */
+async function ensureRatedImagesCache({
   userId,
   startAt,
   rankType,
@@ -1292,13 +1300,9 @@ async function getRatedImages({
 
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
 
-  // Try to get from Redis Set first
-  const cachedImageIds = await redis.sMembers(key);
-
-  // If cache exists, return the cached image IDs as numbers
-  if (cachedImageIds && cachedImageIds.length > 0) {
-    return cachedImageIds.map(Number);
-  }
+  // Check if cache is already populated (O(1))
+  const exists = await redis.exists(key);
+  if (exists) return key;
 
   // Cache miss - fetch from ClickHouse
   const AND = [
@@ -1315,12 +1319,23 @@ async function getRatedImages({
 
   const imageIds = results.map((r) => r.imageId);
 
-  // Store in Redis Set (only if we have results to avoid empty sets)
-  if (imageIds.length > 0) {
-    await redis.multi().sAdd(key, imageIds.map(String)).expire(key, CacheTTL.day).exec();
-  }
+  // Always populate the set with a sentinel '0' so EXISTS returns true on next call.
+  // Real image IDs are always > 0, so the sentinel never interferes with SMISMEMBER checks.
+  const members = imageIds.length > 0 ? ['0', ...imageIds.map(String)] : ['0'];
+  await redis.multi().sAdd(key, members).expire(key, CacheTTL.day).exec();
 
-  return imageIds;
+  return key;
+}
+
+/**
+ * Check which image IDs have already been rated using SMISMEMBER (O(N) where N = candidates).
+ * This replaces the old SMEMBERS approach which was O(M) where M = total rated images (up to 141K).
+ */
+async function filterUnratedImages(key: string, imageIds: number[]): Promise<number[]> {
+  if (!redis || imageIds.length === 0) return imageIds;
+
+  const membership = await redis.smIsMember(key, imageIds.map(String));
+  return imageIds.filter((_, i) => !membership[i]);
 }
 
 // Helper function to add a newly rated image to the cache
@@ -1408,12 +1423,15 @@ export async function getImagesQueue({
   const activeSlot = await getActiveSlot(effectiveRankType, 'rating');
   const rankPools = poolCounters[effectiveRankType][activeSlot];
 
-  const ratedImages = await getRatedImages({
+  // Ensure the rated images cache is populated (O(1) EXISTS check, ClickHouse on miss).
+  // Uses SMISMEMBER per-batch instead of SMEMBERS on the full set (which was 39K-141K members
+  // for active users, taking 10-38ms and blocking the Redis shard).
+  const ratedKey = await ensureRatedImagesCache({
     userId: playerId,
     startAt: player.startAt,
     rankType: player.rankType,
   });
-  const seenImageIds = new Set<number>(ratedImages);
+  const seenImageIds = new Set<number>();
   const isKnight = effectiveRankType === NewOrderRankType.Knight;
 
   const overflowLimit = imageCount * 2;
@@ -1434,8 +1452,15 @@ export async function getImagesQueue({
         .filter(({ score }) => (isKnight ? score < newOrderConfig.limits.knightVotes : true))
         .map(({ value }) => Number(value));
 
-      // Filter out already rated images and previously seen images before doing the DB query
-      const unratedImageIds = imageIds.filter((id) => !seenImageIds.has(id));
+      // Filter out images already seen in this request
+      const unseenImageIds = imageIds.filter((id) => !seenImageIds.has(id));
+      if (unseenImageIds.length === 0) {
+        offset += overflowLimit;
+        continue;
+      }
+
+      // Filter out already rated images using SMISMEMBER (O(N) where N = candidates, single command)
+      const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
       if (unratedImageIds.length === 0) {
         offset += overflowLimit;
         continue;
@@ -1453,7 +1478,7 @@ export async function getImagesQueue({
         select: { id: true, url: true, nsfwLevel: true, metadata: true },
       });
 
-      // Add new image IDs to the seen set
+      // Add new image IDs to the seen set (for dedup within this request)
       images.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
