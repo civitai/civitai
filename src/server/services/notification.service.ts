@@ -179,7 +179,7 @@ export const markNotificationsRead = async ({
           AND un.viewed IS FALSE
           AND n."category" = ${category}::"NotificationCategory"
       `);
-      await notificationCache.clearCategory(userId, category);
+      notificationCache.clearCategory(userId, category).catch(() => {});
     } else {
       // No join needed - faster query
       await notifDbWrite.query(Prisma.sql`
@@ -190,7 +190,7 @@ export const markNotificationsRead = async ({
           un."userId" = ${userId}
           AND un.viewed IS FALSE
       `);
-      await notificationCache.bustUser(userId);
+      notificationCache.bustUser(userId).catch(() => {});
     }
   } else {
     const resp = await notifDbWrite.query(Prisma.sql`
@@ -217,7 +217,7 @@ export const markNotificationsRead = async ({
       `);
       const catData = await catQuery.result();
       if (catData && catData.length)
-        await notificationCache.decrementUser(userId, catData[0].category);
+        notificationCache.decrementUser(userId, catData[0].category).catch(() => {});
     }
   }
 };

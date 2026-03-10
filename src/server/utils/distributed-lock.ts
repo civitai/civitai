@@ -4,7 +4,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 
 export interface DistributedLockOptions {
   key: string;
-  ttl?: number; // TTL in seconds, default 30
+  ttl?: number; // TTL in seconds, default 5
   retryDelay?: number; // Retry delay in ms, default 100
   maxRetries?: number; // Max retries, default 10
 }
@@ -18,7 +18,7 @@ export class DistributedLock {
 
   constructor(options: DistributedLockOptions) {
     this.lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${options.key}`;
-    this.ttl = options.ttl ?? 30;
+    this.ttl = options.ttl ?? 5;
     this.retryDelay = options.retryDelay ?? 100;
     this.maxRetries = options.maxRetries ?? 10;
   }
