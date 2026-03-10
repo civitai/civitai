@@ -1,10 +1,11 @@
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { env } from '~/env/server';
 import { handleLogError } from '~/server/utils/errorHandling';
 
 export interface DistributedLockOptions {
   key: string;
-  ttl?: number; // TTL in seconds, default 30
+  ttl?: number; // TTL in seconds, default 5 on DP / 30 on DOKS
   retryDelay?: number; // Retry delay in ms, default 100
   maxRetries?: number; // Max retries, default 10
 }
@@ -18,7 +19,7 @@ export class DistributedLock {
 
   constructor(options: DistributedLockOptions) {
     this.lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${options.key}`;
-    this.ttl = options.ttl ?? 30;
+    this.ttl = options.ttl ?? (env.IS_DATAPACKET ? 5 : 30);
     this.retryDelay = options.retryDelay ?? 100;
     this.maxRetries = options.maxRetries ?? 10;
   }
