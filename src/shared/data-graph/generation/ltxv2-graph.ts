@@ -43,6 +43,9 @@ const ltxv2VersionOptions = [
   { label: '19B Distilled', value: 2600562 },
 ];
 
+/** LTXV2 distilled model version ID */
+const ltxv2DistilledId = 2600562;
+
 /** LTXV2 aspect ratio options */
 const ltxv2AspectRatios = [
   { label: '16:9', value: '16:9', width: 848, height: 480 },
@@ -116,38 +119,46 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
     ['workflow']
   )
 
-  // CFG scale node
+  // CFG scale node - hidden for distilled models
   .node(
     'cfgScale',
-    sliderNode({
-      min: 1,
-      max: 10,
-      step: 0.5,
-      defaultValue: 3,
-      presets: [
-        { label: 'Low', value: 2 },
-        { label: 'Balanced', value: 3 },
-        { label: 'High', value: 5 },
-      ],
-    })
+    (ctx) => ({
+      ...sliderNode({
+        min: 1,
+        max: 10,
+        step: 0.5,
+        defaultValue: 3,
+        presets: [
+          { label: 'Low', value: 2 },
+          { label: 'Balanced', value: 3 },
+          { label: 'High', value: 5 },
+        ],
+      }),
+      when: ctx.model?.id !== ltxv2DistilledId,
+    }),
+    ['model']
   )
 
   // Duration node
   .node('duration', enumNode({ options: ltxv2Durations, defaultValue: 5 }))
 
-  // Steps node
+  // Steps node - hidden for distilled models
   .node(
     'steps',
-    sliderNode({
-      min: 10,
-      max: 50,
-      defaultValue: 30,
-      presets: [
-        { label: 'Fast', value: 20 },
-        { label: 'Balanced', value: 30 },
-        { label: 'Quality', value: 50 },
-      ],
-    })
+    (ctx) => ({
+      ...sliderNode({
+        min: 10,
+        max: 50,
+        defaultValue: 30,
+        presets: [
+          { label: 'Fast', value: 20 },
+          { label: 'Balanced', value: 30 },
+          { label: 'Quality', value: 50 },
+        ],
+      }),
+      when: ctx.model?.id !== ltxv2DistilledId,
+    }),
+    ['model']
   )
 
   // Frame guide strength - img2vid only (first/last frame conditioning)

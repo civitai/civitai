@@ -79,13 +79,20 @@ function resolveImageDimensions(data: LTXV23Ctx) {
   };
 }
 
+/** LTXV23 distilled model version ID */
+const LTXV23_DISTILLED_ID = 2749948;
+
 /** Gets the model string from the version ID */
 function getModel(data: LTXV23Ctx): ComfyLtx23CreateVideoInput['model'] {
   const modelId = data.model?.id;
-  // 2749948 = Distilled
-  if (modelId === 2749948) return '22b-distilled';
+  if (modelId === LTXV23_DISTILLED_ID) return '22b-distilled';
   // Default to dev
   return '22b-dev';
+}
+
+/** Check if the model is distilled */
+function isDistilled(data: LTXV23Ctx) {
+  return data.model?.id === LTXV23_DISTILLED_ID;
 }
 
 /** Creates createVideo input for txt2vid and img2vid:ref2vid workflows */
@@ -94,6 +101,7 @@ function createVideoInput(
   ctx: Parameters<Parameters<typeof defineHandler>[0]>[1]
 ): ComfyLtx23CreateVideoInput {
   const loras = buildLoras(data, ctx);
+  const distilled = isDistilled(data);
 
   return removeEmpty({
     engine: 'ltx2.3',
@@ -102,8 +110,8 @@ function createVideoInput(
     width: data.aspectRatio?.width,
     height: data.aspectRatio?.height,
     model: getModel(data),
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
+    guidanceScale: distilled ? 1 : 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: distilled ? 8 : 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
     seed: data.seed,
     images: data.images?.map((x) => x.url),
@@ -119,6 +127,7 @@ function createFirstLastFrameInput(
   const loras = buildLoras(data, ctx);
   const images = data.images;
   const { width, height } = resolveImageDimensions(data);
+  const distilled = isDistilled(data);
 
   return removeEmpty({
     engine: 'ltx2.3',
@@ -127,8 +136,8 @@ function createFirstLastFrameInput(
     width,
     height,
     model: getModel(data),
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
+    guidanceScale: distilled ? 1 : 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: distilled ? 8 : 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
     firstFrame: images?.[0]?.url,
     lastFrame: images && images.length > 1 ? images[1]?.url : undefined,
@@ -145,6 +154,7 @@ function createEditVideoInput(
   ctx: Parameters<Parameters<typeof defineHandler>[0]>[1]
 ): ComfyLtx23EditVideoInput {
   const loras = buildLoras(data, ctx);
+  const distilled = isDistilled(data);
 
   return removeEmpty({
     engine: 'ltx2.3',
@@ -153,8 +163,8 @@ function createEditVideoInput(
     width: data.video?.metadata?.width,
     height: data.video?.metadata?.height,
     model: getModel(data),
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
+    guidanceScale: distilled ? 1 : 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: distilled ? 8 : 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
     sourceVideo: data.video?.url,
     cannyLowThreshold: 'cannyLowThreshold' in data ? (data.cannyLowThreshold as number) : undefined,
@@ -172,6 +182,7 @@ function createExtendVideoInput(
   ctx: Parameters<Parameters<typeof defineHandler>[0]>[1]
 ): ComfyLtx23ExtendVideoInput {
   const loras = buildLoras(data, ctx);
+  const distilled = isDistilled(data);
 
   return removeEmpty({
     engine: 'ltx2.3',
@@ -180,8 +191,8 @@ function createExtendVideoInput(
     width: data.video?.metadata?.width,
     height: data.video?.metadata?.height,
     model: getModel(data),
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
+    guidanceScale: distilled ? 1 : 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: distilled ? 8 : 'steps' in data ? data.steps : undefined,
     sourceVideo: data.video?.url,
     numFrames: 'numFrames' in data ? (data.numFrames as number) : undefined,
     seed: data.seed,

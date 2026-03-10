@@ -51,6 +51,9 @@ const ltxv23VersionOptions = [
   { label: 'Distilled', value: 2749948 },
 ];
 
+/** LTXV23 distilled model version ID */
+const ltxv23DistilledId = 2749948;
+
 /** LTXV23 aspect ratio options by resolution */
 const ltxv23AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
   '720p': [
@@ -177,20 +180,24 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
     ['workflow', 'resolution']
   )
 
-  // CFG scale node
+  // CFG scale node - hidden for distilled models
   .node(
     'cfgScale',
-    sliderNode({
-      min: 1,
-      max: 10,
-      step: 0.5,
-      defaultValue: 3,
-      presets: [
-        { label: 'Low', value: 2 },
-        { label: 'Balanced', value: 3 },
-        { label: 'High', value: 5 },
-      ],
-    })
+    (ctx) => ({
+      ...sliderNode({
+        min: 1,
+        max: 10,
+        step: 0.5,
+        defaultValue: 3,
+        presets: [
+          { label: 'Low', value: 2 },
+          { label: 'Balanced', value: 3 },
+          { label: 'High', value: 5 },
+        ],
+      }),
+      when: ctx.model?.id !== ltxv23DistilledId,
+    }),
+    ['model']
   )
 
   // Duration node - max varies by resolution (720p: 3-20, 1080p: 3-15)
@@ -209,19 +216,23 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
     ['resolution']
   )
 
-  // Steps node
+  // Steps node - hidden for distilled models
   .node(
     'steps',
-    sliderNode({
-      min: 10,
-      max: 50,
-      defaultValue: 30,
-      presets: [
-        { label: 'Fast', value: 20 },
-        { label: 'Balanced', value: 30 },
-        { label: 'Quality', value: 50 },
-      ],
-    })
+    (ctx) => ({
+      ...sliderNode({
+        min: 10,
+        max: 50,
+        defaultValue: 30,
+        presets: [
+          { label: 'Fast', value: 20 },
+          { label: 'Balanced', value: 30 },
+          { label: 'Quality', value: 50 },
+        ],
+      }),
+      when: ctx.model?.id !== ltxv23DistilledId,
+    }),
+    ['model']
   )
 
   // Frame guide strength - img2vid only (first/last frame conditioning)

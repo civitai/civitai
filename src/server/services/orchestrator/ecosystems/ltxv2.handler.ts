@@ -16,6 +16,9 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { ltxv2AspectRatios } from '~/shared/data-graph/generation/ltxv2-graph';
 import { defineHandler } from './handler-factory';
 
+/** LTXV2 distilled model version ID */
+const LTXV2_DISTILLED_ID = 2600562;
+
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type LTXV2Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV2' };
@@ -45,12 +48,18 @@ function buildLoras(data: LTXV2Ctx, ctx: Parameters<Parameters<typeof defineHand
   return Object.keys(loras).length > 0 ? loras : undefined;
 }
 
+/** Check if the model is distilled */
+function isDistilled(data: LTXV2Ctx) {
+  return data.model?.id === LTXV2_DISTILLED_ID;
+}
+
 /** Creates createVideo input for txt2vid workflow */
 function createVideoInput(
   data: LTXV2Ctx,
   ctx: Parameters<Parameters<typeof defineHandler>[0]>[1]
 ): ComfyLtx2CreateVideoInput {
   const loras = buildLoras(data, ctx);
+  const distilled = isDistilled(data);
 
   return removeEmpty({
     engine: 'ltx2',
@@ -58,8 +67,8 @@ function createVideoInput(
     prompt: data.prompt,
     width: data.aspectRatio?.width,
     height: data.aspectRatio?.height,
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
+    guidanceScale: distilled ? 1 : 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: distilled ? 8 : 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
     quantity: data.quantity ?? 1,
     seed: data.seed,
@@ -90,6 +99,7 @@ function createFirstLastFrameInput(
   const loras = buildLoras(data, ctx);
   const images = data.images;
   const { width, height } = resolveImageDimensions(data);
+  const distilled = isDistilled(data);
 
   return removeEmpty({
     engine: 'ltx2',
@@ -97,8 +107,8 @@ function createFirstLastFrameInput(
     prompt: data.prompt,
     width,
     height,
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
+    guidanceScale: distilled ? 1 : 'cfgScale' in data ? data.cfgScale : undefined,
+    steps: distilled ? 8 : 'steps' in data ? data.steps : undefined,
     duration: 'duration' in data ? data.duration : undefined,
     firstFrame: images?.[0]?.url,
     lastFrame: images && images.length > 1 ? images[1]?.url : undefined,

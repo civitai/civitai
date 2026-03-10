@@ -40,10 +40,7 @@ import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { WhatIfProvider } from './WhatIfProvider';
 import { needsHydration, type PartialResourceValue } from './inputs/resource-select.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import {
-  type VersionGroup,
-  getAllVersionIds,
-} from '~/shared/data-graph/generation/common';
+import { type VersionGroup, getAllVersionIds } from '~/shared/data-graph/generation/common';
 
 // =============================================================================
 // Constants
@@ -373,11 +370,22 @@ function InnerProvider({
       } else if (data.runType === 'append') {
         // Append: merge incoming images with existing, dedup by URL, cap at max
         const snapshot = graph.getSnapshot() as Record<string, unknown>;
-        // Only keep existing images if already on the same workflow; otherwise start fresh
-        const existingImages =
-          snapshot.workflow === data.params.workflow
-            ? (((snapshot.images ?? []) as Array<{ url: string }>) || [])
-            : [];
+        let existingImages: Array<{ url: string }> = [];
+        if (snapshot.workflow === data.params.workflow) {
+          // Same workflow — use live snapshot images
+          existingImages = ((snapshot.images ?? []) as Array<{ url: string }>) || [];
+        } else {
+          // Switching workflows — read persisted images for the target workflow from localStorage
+          try {
+            const stored = localStorage.getItem(`${STORAGE_KEY}.workflow.${data.params.workflow}`);
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              existingImages = (parsed.images as Array<{ url: string }>) || [];
+            }
+          } catch {
+            // Invalid JSON, start fresh
+          }
+        }
         const incomingImages =
           ((data.params.images ?? []) as Array<{ url: string; width: number; height: number }>) ||
           [];
