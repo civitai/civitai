@@ -48,6 +48,7 @@ export function CivitaiSessionProvider({
       isPaidMember,
       memberInBadState: user.memberInBadState,
       refresh: update,
+      tier: user.tier ?? 'free',
       settings: {
         showNsfw: user.showNsfw,
         browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : user.browsingLevel,

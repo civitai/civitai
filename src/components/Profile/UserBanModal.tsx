@@ -11,9 +11,10 @@ import { trpc } from '~/utils/trpc';
 type Props = {
   userId: number;
   username: string;
+  onSuccess?: () => void;
 };
 
-export default function UserBanModal({ username, userId }: Props) {
+export default function UserBanModal({ username, userId, onSuccess }: Props) {
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
   const [reasonCode, setReasonCode] = useState<BanReasonCode>(BanReasonCode.Other);
@@ -47,6 +48,7 @@ export default function UserBanModal({ username, userId }: Props) {
     },
     async onSuccess() {
       await queryUtils.userProfile.get.invalidate({ username });
+      onSuccess?.();
       dialog.onClose();
     },
     onError(_error, _vars, context) {

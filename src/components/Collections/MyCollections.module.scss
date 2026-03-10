@@ -1,0 +1,37 @@
+.navLinkWrapper {
+  transition: all 150ms ease;
+
+  &:hover {
+    background-color: light-dark(
+      var(--mantine-color-gray-0),
+      var(--mantine-color-dark-6)
+    );
+  }
+}
+
+.typeIcon {
+  opacity: 0.8;
+  transition: opacity 150ms ease;
+
+  .navLinkWrapper:hover & {
+    opacity: 1;
+  }
+}
+
+.typeBadge {
+  opacity: 0.6;
+  transition: opacity 150ms ease;
+
+  .navLinkWrapper:hover & {
+    opacity: 0.9;
+  }
+}
+
+.nameGroup {
+  flex: 1;
+  min-width: 0;
+}
+
+.nameText {
+  flex: 1;
+}

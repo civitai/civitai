@@ -96,3 +96,10 @@ export function insertSorted(arr: number[], toInsert: number, order: 'asc' | 'de
   // Insert at the correct position
   arr.splice(left, 0, toInsert);
 }
+
+export function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i])) return i;
+  }
+  return -1;
+}

@@ -94,6 +94,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       defaultValue: state.muted ? 0 : 0.5,
     });
 
+    useEffect(() => {
+      const video = ref.current;
+      if (!video) return;
+      // When prop forces mute, always mute. When prop allows audio, respect user's volume preference.
+      const shouldMute = initialMuted || volume === 0;
+      video.muted = shouldMute;
+      setState((current) => ({ ...current, muted: shouldMute }));
+    }, [initialMuted]); // eslint-disable-line react-hooks/exhaustive-deps
+
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
         if (ref.current) {
@@ -220,7 +229,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       if (isCurrentStack && (canPlay || props.autoPlay)) {
         videoElem.play().catch(() => {
           // Autoplay failed, user interaction required
-          console.log('auto play failed');
           setAutoplayFailed(true);
         });
       } else {

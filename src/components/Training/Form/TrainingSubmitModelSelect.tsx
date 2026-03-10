@@ -29,11 +29,13 @@ import {
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsFlux2,
+  trainingDetailsBaseModelsFlux2Klein,
   trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
-  trainingDetailsBaseModelsZImageTurbo,
+  trainingDetailsBaseModelsZImage,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { TrainingRun, TrainingRunUpdate } from '~/store/training.store';
@@ -68,6 +70,7 @@ const ModelSelector = ({
   isNew = false,
   isCustom = false,
   isVideo = false,
+  allowedKeys,
 }: {
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -78,9 +81,11 @@ const ModelSelector = ({
   isNew?: boolean;
   isCustom?: boolean;
   isVideo?: boolean;
+  allowedKeys?: string[];
 }) => {
   const versions = Object.entries(trainingModelInfo).filter(
-    ([, v]) => v.type === baseType && v.disabled !== true
+    ([k, v]) =>
+      v.type === baseType && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
   );
   if (!versions.length) return null;
 
@@ -176,8 +181,22 @@ const ModelSelector = ({
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
                   ? 'qwen'
-                  : ([...getBaseModelsByGroup('ZImageTurbo')] as string[]).includes(baseModel)
-                  ? 'zimageturbo'
+                  : (
+                      [
+                        ...getBaseModelsByGroup('ZImageTurbo'),
+                        ...getBaseModelsByGroup('ZImageBase'),
+                      ] as string[]
+                    ).includes(baseModel)
+                  ? 'zimage'
+                  : (
+                      [
+                        ...getBaseModelsByGroup('Flux2Klein_4B'),
+                        ...getBaseModelsByGroup('Flux2Klein_4B_base'),
+                        ...getBaseModelsByGroup('Flux2Klein_9B'),
+                        ...getBaseModelsByGroup('Flux2Klein_9B_base'),
+                      ] as string[]
+                    ).includes(baseModel)
+                  ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
                   : 'sd15';
@@ -228,9 +247,13 @@ export const ModelSelect = ({
     // Determine the appropriate engine based on the base type and model
     const engineToUse =
       data.params?.engine ??
-      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined) : defaultEngine);
+      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined, features) : defaultEngine);
 
     const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
+
+    // Ensure the engine param reflects the computed default (getDefaultTrainingParams
+    // uses the static trainingSettings default of 'kohya' for the engine field itself)
+    defaultParams.engine = engineToUse;
 
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
@@ -329,9 +352,19 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
-  const baseModelZImageTurbo =
+  const baseModelZImage =
     !!formBaseModel &&
-    (trainingDetailsBaseModelsZImageTurbo as ReadonlyArray<string>).includes(formBaseModel)
+    (trainingDetailsBaseModelsZImage as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelFlux2Klein =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsFlux2Klein as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelLtx2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsLtx2 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -437,13 +470,28 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.zimageturboTraining && (
+                  {(features.zimageturboTraining || features.zimagebaseTraining) && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="yellow"
                       name="Z Image"
-                      value={baseModelZImageTurbo}
-                      baseType="zimageturbo"
+                      value={baseModelZImage}
+                      baseType="zimage"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                      allowedKeys={[
+                        ...(features.zimageturboTraining ? ['zimageturbo'] : []),
+                        ...(features.zimagebaseTraining ? ['zimagebase'] : []),
+                      ]}
+                    />
+                  )}
+                  {features.fluxTwoKleinTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="pink"
+                      name="Flux.2 Klein"
+                      value={baseModelFlux2Klein}
+                      baseType="flux2klein"
                       makeDefaultParams={makeDefaultParams}
                       isNew
                     />
@@ -472,6 +520,18 @@ export const ModelSelect = ({
                     isVideo
                     isNew={new Date() < new Date('2025-04-30')}
                   />
+                  {features.ltx2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="lime"
+                      name="LTX2"
+                      value={baseModelLtx2}
+                      baseType="ltx2"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'image' && (
@@ -515,7 +575,9 @@ export const ModelSelect = ({
                     Note: custom models may see a higher failure rate than normal, and cost more
                     Buzz.
                   </AlertWithIcon>
-                ) : selectedRun.baseType === 'hunyuan' || selectedRun.baseType === 'wan' ? (
+                ) : selectedRun.baseType === 'hunyuan' ||
+                  selectedRun.baseType === 'wan' ||
+                  selectedRun.baseType === 'ltx2' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.

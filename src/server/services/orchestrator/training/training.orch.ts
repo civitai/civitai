@@ -31,6 +31,7 @@ import {
   getTrainingFields,
   isInvalidRapid,
   isInvalidAiToolkit,
+  isAiToolkitEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -165,7 +166,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   let trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
-    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
+    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma, zimageturbo, zimagebase) until @civitai/client is updated
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
     trainingData: {
@@ -188,7 +189,9 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     flipAugmentation: aiToolkitParams.flipAugmentation,
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
-  };
+    numberOfRepeats: aiToolkitParams.numRepeats ?? undefined,
+    triggerWord: loraName,
+  } as AiToolkitTrainingInput & { triggerWord: string };
 
   if (aiToolkitParams.ecosystem === 'sd1') {
     trainingInput = {
@@ -230,6 +233,7 @@ export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
   user,
+  features,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
@@ -253,6 +257,8 @@ export const createTrainingWorkflow = async ({
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
     WHERE mv.id = ${modelVersionId}
       AND m."deletedAt" is null
+    ORDER BY mf.id DESC
+    LIMIT 1
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
@@ -284,6 +290,9 @@ export const createTrainingWorkflow = async ({
 
   if (isInvalidAiToolkit(baseModelType, trainingParams.engine))
     throw throwBadRequestError('AI Toolkit training is not supported for this model.');
+
+  if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
+    throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 

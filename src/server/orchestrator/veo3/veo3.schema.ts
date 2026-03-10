@@ -125,7 +125,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
         data.aspectRatio = findClosestAspectRatio(image, [...veo3AspectRatios]);
       }
     }
-    return data;
+    return { ...data, baseModel: 'Veo3' };
   },
   // transformFn: (data) => {
   //   if (!data.sourceImage) {
@@ -156,14 +156,15 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ images, ...args }): Veo3VideoGenInput => {
+  inputFn: ({ images, ...args }) => {
     const checkpoint = getVeo3Checkpoint(args.resources);
     const mode = veo3ModelOptions.find((x) => x.value === checkpoint.air)?.mode ?? 'fast';
     const fastMode = mode === 'fast';
     return {
       ...args,
+      duration: args.duration as Veo3VideoGenInput['duration'],
       fastMode,
       images: images?.map((x) => x.url),
-    };
+    } as Veo3VideoGenInput;
   },
 });

@@ -3,27 +3,39 @@ import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead } from '~/server/db/client';
 import {
+  getChallengeById,
+  type RecentEntry,
+  type SelectedResource,
+} from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  challengeToLegacyFormat,
   getChallengeConfig,
-  getChallengeDetails,
-  getChallengeTypeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   generateArticle,
   generateCollectionDetails,
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
-import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  createUpcomingChallenge,
+  getCoverOfModel,
+  getJudgedEntries,
+} from '~/server/jobs/daily-challenge-processing';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
   .object({
-    action: z.enum(['article', 'collection', 'review', 'winners']),
+    action: z.enum(['content', 'collection', 'review', 'winners', 'create-challenge']),
     modelId: z.coerce.number().optional(),
-    type: z.string().optional(),
     imageId: z.coerce.number().optional(),
     theme: z.string().optional(),
     challengeId: z.coerce.number().optional(),
+    dryRun: z
+      .string()
+      .optional()
+      .transform((v) => v === 'true'),
   })
   .superRefine((data, ctx) => {
     if (data.action === 'review' && !data.imageId) {
@@ -43,11 +55,11 @@ const schema = z
     if (data.action === 'winners' && !data.challengeId) {
       ctx.addIssue({
         code: 'custom',
-        message: 'collectionId is required for action winners',
+        message: 'challengeId is required for action winners',
       });
     }
 
-    if ((data.action === 'article' || data.action === 'collection') && !data.modelId) {
+    if ((data.action === 'content' || data.action === 'collection') && !data.modelId) {
       ctx.addIssue({
         code: 'custom',
         message: 'modelId is required for action article or collection',
@@ -57,13 +69,14 @@ const schema = z
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const payload = schema.parse(req.query);
-  const { action, modelId, type, imageId, challengeId } = payload;
+  const { action, modelId, imageId, challengeId } = payload;
   let { theme } = payload;
 
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(type ?? config.challengeType);
+  if (!config.defaultJudge) throw new Error('defaultJudge not configured in Redis');
+  const judgingConfig = config.defaultJudge;
 
-  if (action === 'article' || action === 'collection') {
+  if (action === 'content' || action === 'collection') {
     // Get resource details
     const [resource] = await dbRead.$queryRaw<SelectedResource[]>`
       SELECT
@@ -77,16 +90,16 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     `;
 
     const image = await getCoverOfModel(modelId!);
-    if (action === 'article') {
+    if (action === 'content') {
       const result = await generateArticle({
         resource,
         image,
-        collectionId: 123,
         challengeDate: new Date(),
         prizes: config.prizes,
         entryPrize: config.entryPrize,
         entryPrizeRequirement: config.entryPrizeRequirement,
-        config: challengeTypeConfig,
+        allowedNsfwLevel: sfwBrowsingLevelsFlag,
+        config: judgingConfig,
       });
       return res.status(200).json(result);
     }
@@ -95,7 +108,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       const result = await generateCollectionDetails({
         resource,
         image,
-        config: challengeTypeConfig,
+        config: judgingConfig,
       });
       return res.status(200).json(result);
     }
@@ -114,51 +127,52 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     `;
 
     if (!theme) {
-      const challengeDetails = await getChallengeDetails(challengeId!);
-      if (!challengeDetails) return res.status(404).json({ error: 'Challenge not found' });
-      theme = challengeDetails.theme;
+      const challengeRecord = await getChallengeById(challengeId!);
+      if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
+      theme = challengeRecord.theme ?? '';
     }
 
     const result = await generateReview({
       theme,
       creator: entry.username,
       imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
-      config: challengeTypeConfig,
+      config: judgingConfig,
     });
     return res.status(200).json(result);
   }
 
   if (action === 'winners') {
-    const challengeDetails = await getChallengeDetails(challengeId!);
-    if (!challengeDetails) return res.status(404).json({ error: 'Challenge not found' });
+    const challengeRecord = await getChallengeById(challengeId!);
+    if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
+    const challengeDetails = challengeToLegacyFormat(challengeRecord);
     const judgedEntries = await getJudgedEntries(challengeDetails.collectionId, config);
 
     const result = await generateWinners({
-      theme: challengeDetails.theme,
+      theme: challengeRecord.theme ?? '',
       entries: judgedEntries.map((entry) => ({
         creator: entry.username,
         creatorId: entry.userId,
         summary: entry.summary,
         score: entry.score,
       })),
-      config: challengeTypeConfig,
+      config: judgingConfig,
     });
     return res.status(200).json(result);
+  }
+
+  if (action === 'create-challenge') {
+    if (payload.dryRun) {
+      return res.status(200).json({
+        action: 'create-challenge',
+        dryRun: true,
+        message: 'Would execute createUpcomingChallenge() to create a new scheduled challenge',
+      });
+    }
+    const challenge = await createUpcomingChallenge();
+    return res.status(200).json({ success: true, action: 'create-challenge', challenge });
   }
 
   return res.status(200).json({ how: 'did i get here?' });
 });
 
-// Types
-// ----------------------------------------------
-type RecentEntry = {
-  imageId: number;
-  userId: number;
-  username: string;
-  url: string;
-};
-type SelectedResource = {
-  modelId: number;
-  creator: string;
-  title: string;
-};
+// Types imported from challenge-helpers

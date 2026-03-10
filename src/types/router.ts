@@ -166,3 +166,6 @@ export type GetPlayer = NewOrderRouter['getPlayer'];
 export type GetPlayersItem = NewOrderRouter['getPlayers']['items'][number];
 export type GetImagesQueueItem = NewOrderRouter['getImagesQueue'][number];
 export type GetImageRaters = NewOrderRouter['getImageRaters'];
+
+type ChallengeRouter = RouterOutput['challenge'];
+export type GetActiveJudgesItem = ChallengeRouter['getJudges'][number];

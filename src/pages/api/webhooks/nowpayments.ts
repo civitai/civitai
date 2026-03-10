@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
 import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { logToAxiom } from '~/server/logging/client';
@@ -19,8 +20,10 @@ const log = (data: MixedObject) => {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     const sig = req.headers['x-nowpayments-sig'];
-
     const webhookSecret = env.NOW_PAYMENTS_IPN_KEY;
+
+    // Track to ClickHouse (fire and forget, never throws)
+    trackWebhookEvent('nowpayments', JSON.stringify(req.body)).catch(() => {});
 
     try {
       if (!sig || !webhookSecret) {

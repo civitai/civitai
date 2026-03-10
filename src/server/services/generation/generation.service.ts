@@ -15,12 +15,10 @@ import type {
   GenerationStatus,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
+  ResolveImageMetaInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
-import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
@@ -28,6 +26,7 @@ import { getFilesForModelVersionCache } from '~/server/services/model-file.servi
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -40,12 +39,10 @@ import {
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
-  getBaseModelSetType,
-  getClosestAspectRatio,
-  getResourceGenerationType,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
-import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
@@ -57,9 +54,13 @@ import {
   getBaseModelEngine,
   getBaseModelMediaType,
   getBaseModelsByGroup,
-  getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
+import {
+  hasGenerationSupport,
+  getResourceGenerationSupport,
+} from '~/shared/constants/basemodel.constants';
 import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
+import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 type GenerationResourceSimple = {
   id: number;
@@ -231,12 +232,19 @@ export type RemixOfProps = {
   similarity?: number;
   createdAt: Date;
 };
+/**
+ * Generation data returned from the API.
+ * Uses flat resources array + params format for storage compatibility.
+ * Clients should use splitResourcesByType() to route resources to graph nodes.
+ */
 export type GenerationData = {
   type: MediaType;
   remixOfId?: number;
-  resources: GenerationResource[];
-  params: Partial<TextToImageParams>;
   remixOf?: RemixOfProps;
+  /** Flat array of all resources (checkpoint, LoRAs, VAE, etc.) */
+  resources: GenerationResource[];
+  /** Generation parameters (prompt, seed, steps, etc.) */
+  params: Record<string, unknown>;
 };
 
 export const getGenerationData = async ({
@@ -255,12 +263,14 @@ export const getGenerationData = async ({
         versionIds: [{ id: query.id, epoch: query.epoch }],
         user,
         generation: query.generation,
+        withPreview: query.withPreview,
       });
     case 'modelVersions':
       return await getModelVersionGenerationData({
         user,
         versionIds: query.ids,
         generation: query.generation,
+        withPreview: query.withPreview,
       });
     default:
       throw new Error('unsupported generation data type');
@@ -336,131 +346,65 @@ async function getMediaGenerationData({
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
   const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
-  const supportedResources = normalized.baseModel
-    ? getGenerationBaseModelGroup(normalized.baseModel)
-    : undefined;
-  const resources = !supportedResources
+  const resources = !normalized.ecosystem
     ? allResources
-    : allResources.filter((x) =>
-        supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
+    : allResources.filter(
+        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
       );
 
-  const common = {
-    prompt: normalized.prompt,
-    negativePrompt: normalized.negativePrompt,
+  // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
+  // Cast to Record for loose field access (normalizeMeta returns a union type)
+  const meta = normalized as Record<string, unknown>;
+  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  if (type === 'audio') throw new Error('not implemented');
+
+  // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
+  return {
+    type,
+    remixOfId: media.id, // TODO - remove
+    remixOf,
+    resources,
+    params,
   };
-
-  switch (type) {
-    case 'image':
-      let aspectRatio = '0';
-      try {
-        if (width && height) {
-          aspectRatio = getClosestAspectRatio(width, height, baseModel);
-        }
-      } catch (e) {}
-
-      const {
-        'Clip skip': legacyClipSkip,
-        clipSkip = legacyClipSkip,
-        cfgScale,
-        steps,
-        seed,
-        sampler,
-        // comfy, // don't return to client
-        // external, // don't return to client
-        // ...meta
-      } = imageGenerationSchema.parse(media.meta);
-
-      return {
-        type: 'image',
-        remixOfId: media.id, // TODO - remove
-        remixOf,
-        resources,
-        params: {
-          ...common,
-          cfgScale: cfgScale !== 0 ? cfgScale : undefined,
-          steps: steps !== 0 ? steps : undefined,
-          seed: seed !== 0 ? seed : undefined,
-          sampler: sampler,
-          width,
-          height,
-          aspectRatio,
-          baseModel,
-          clipSkip,
-          engine,
-        },
-      };
-    case 'video':
-      return {
-        type: 'video',
-        remixOfId: media.id, // TODO - remove,
-        remixOf,
-        resources,
-        params: {
-          ...normalized,
-          ...common,
-          width,
-          height,
-          engine,
-        },
-      };
-    case 'audio':
-      throw new Error('not implemented');
-  }
 }
 
 const getModelVersionGenerationData = async ({
   versionIds,
   user,
   generation,
+  withPreview = false,
 }: {
   versionIds: { id: number; epoch?: number }[] | number[];
   user?: SessionUser;
   generation: boolean;
-}) => {
+  withPreview?: boolean;
+}): Promise<GenerationData> => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await getResourceData(versionIds, user, generation);
-  const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
+  const resources = await getResourceData(versionIds, user, generation, withPreview);
+  const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await getResourceData([checkpoint.vaeId], user, generation);
     if (vae) resources.push({ ...vae, vaeId: undefined });
   }
 
   const deduped = uniqBy(resources, 'id');
-  const baseModel = getBaseModelFromResourcesWithDefault(
-    deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+
+  // Build params from checkpoint settings
+  const params = mapDataToGraphInput(
+    {
+      clipSkip: checkpoint?.clipSkip,
+    },
+    deduped
   );
 
-  const engine = getBaseModelEngine(baseModel);
-
-  let version: string | undefined;
-  let process: string | undefined;
-  switch (engine) {
-    case 'wan':
-      version = getWanVersion(baseModel);
-      process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
-      break;
-    case 'hunyuan':
-      process = 'txt2vid';
-      break;
-    case 'veo3':
-      process = getVeo3ProcessFromAir(resources[0].air);
-      break;
-  }
-
-  // TODO - refactor this elsewhere
-
+  // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {
-    type: getResourceGenerationType(baseModel),
+    type: getBaseModelMediaType(params.baseModel as string),
     resources: deduped,
-    params: {
-      baseModel,
-      clipSkip: checkpoint?.clipSkip ?? undefined,
-      engine,
-      process,
-      version,
-      fluxMode: baseModel === 'FluxKrea' ? fluxKreaAir : undefined,
-    },
+    params,
   };
 };
 
@@ -538,54 +482,14 @@ export async function getShouldChargeForResources(
   );
 }
 
-type GenerationResourceBase = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  vaeId?: number;
-  baseModel: string;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig;
-  canGenerate: boolean;
-  hasAccess: boolean;
-  air?: string;
-  // covered: boolean;
-  additionalResourceCost?: boolean;
-  availability?: Availability;
-  epochNumber?: number;
-  // settings
-  clipSkip?: number;
-  minStrength: number;
-  maxStrength: number;
-  strength: number;
-};
-
-export type GenerationResource = GenerationResourceBase & {
-  model: {
-    id: number;
-    name: string;
-    type: ModelType;
-    nsfw?: boolean;
-    poi?: boolean;
-    minor?: boolean;
-    sfwOnly?: boolean;
-    // userId: number;
-  };
-  epochDetails?: {
-    jobId: string;
-    fileName: string;
-    epochNumber: number;
-    isExpired: boolean;
-  };
-  substitute?: GenerationResourceBase;
-};
-
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
 export async function getResourceData(
   versionIds: { id: number; epoch?: number }[] | number[],
   user: { id?: number; isModerator?: boolean } = {},
-  generation = false
+  generation = false,
+  withPreview = false
 ): Promise<(GenerationResource & { air: string })[]> {
   if (!versionIds.length) return [];
   const args = (
@@ -595,14 +499,46 @@ export async function getResourceData(
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
 
-  function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
+  function transformGenerationData(
+    { settings, ...item }: GenerationResourceDataModel,
+    epochNumber?: number
+  ) {
     const isUnavailable = unavailableResources.includes(item.id);
 
-    const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
+    const isOwnedByUser = !!user.id && user.id === item.model.userId;
+    const hasAccess = !!(item.hasAccess || isOwnedByUser || user.isModerator);
     const covered =
       (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-    const canGenerate = covered;
-    const epochNumber = args.find((x) => x.id === item.id)?.epoch;
+
+    // Valid statuses for generation: Draft (training epochs), Training, Published
+    // Other statuses (Deleted, Unpublished, etc.) cannot be used for generation
+    const validGenerationStatuses = ['Draft', 'Training', 'Published'];
+    const hasValidStatus = validGenerationStatuses.includes(item.status);
+
+    // Resource is private if:
+    // 1. Availability is explicitly Private, OR
+    // 2. Status is Draft or Training (unpublished/training epochs)
+    const isPrivate =
+      item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
+
+    // canGenerate is the definitive "can this user use this resource" flag
+    // Requires: covered by orchestrator AND valid status AND (not private OR user owns it OR moderator)
+    let canGenerate = !!(
+      covered &&
+      hasValidStatus &&
+      (!isPrivate || isOwnedByUser || user.isModerator)
+    );
+
+    // InternalGeneration models are restricted to moderators (consistent with mini endpoint)
+    if (item.usageControl === 'InternalGeneration' && !user.isModerator) {
+      canGenerate = false;
+    }
+
+    if (!canGenerate) {
+      // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
+      delete item.model.sfwOnly;
+      delete item.model.minor;
+    }
 
     return {
       ...item,
@@ -612,6 +548,8 @@ export async function getResourceData(
       hasAccess,
       canGenerate,
       epochNumber,
+      isOwnedByUser,
+      isPrivate,
     };
   }
 
@@ -643,7 +581,7 @@ export async function getResourceData(
 
     return await resourceDataCache
       .fetch(substituteIds)
-      .then((data) => data.map(transformGenerationData));
+      .then((data) => data.map((item) => transformGenerationData(item)));
   }
 
   async function getEntityAccess(resources: ReturnType<typeof transformGenerationData>[]) {
@@ -681,8 +619,7 @@ export async function getResourceData(
     if (resource.status !== 'Published') {
       const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
       if (trainingFile) {
-        const epoch = args.find((x) => x.id === resource.id)?.epoch;
-        const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
+        const details = getTrainingFileEpochNumberDetails(trainingFile, resource.epochNumber);
         if (!details?.isExpired) {
           return details;
         }
@@ -749,9 +686,22 @@ export async function getResourceData(
     }
   }
 
+  // Expand cache results to produce one entry per unique (id, epoch) pair.
+  // The cache deduplicates by model version ID, but different epochs of the same
+  // model version need separate entries with their own epochDetails.
+  const uniqueIds = [...new Set(args.map((x) => x.id))];
   const resources = await resourceDataCache
-    .fetch(args.map((x) => x.id))
-    .then((resources) => resources.map(transformGenerationData))
+    .fetch(uniqueIds)
+    .then((cachedResources) => {
+      const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
+      return args
+        .map((arg) => {
+          const cached = resourceById.get(arg.id);
+          if (!cached) return null;
+          return transformGenerationData(cached, arg.epoch);
+        })
+        .filter(isDefined);
+    })
     .then(async (resources) => {
       const substitutes = await getResourceDataSubstitutes(resources);
       const entityAccess = await getEntityAccess([...resources, ...substitutes]);
@@ -776,12 +726,259 @@ export async function getResourceData(
       });
     });
 
+  if (withPreview) {
+    const imageCache = await imagesForModelVersionsCache.fetch(resources.map((r) => r.id));
+    for (const resource of resources as (GenerationResource & { air: string })[]) {
+      const first = imageCache[resource.id]?.images[0];
+      if (first) {
+        resource.image = {
+          id: first.id,
+          url: first.url,
+          width: first.width,
+          height: first.height,
+          hash: first.hash,
+          type: first.type,
+          nsfwLevel: first.nsfwLevel,
+        };
+      }
+    }
+  }
+
   // TODO - check if resource id is in "EcosystemCheckpoint" table
   return generation
-    ? resources.filter((resource) => {
-        const baseModel = getBaseModelSetType(resource.baseModel);
-        const size = getGenerationBaseModelGroup(baseModel)?.supportMap.size;
-        return !!size;
-      })
+    ? resources.filter((resource) => hasGenerationSupport(resource.baseModel))
     : resources;
+}
+
+// =============================================================================
+// Resolve Resources from Metadata
+// =============================================================================
+
+const EMPTY_HASH = 'e3b0c44298fc';
+
+type HashCandidate = {
+  hash: string;
+  name: string;
+  strength: number | null;
+};
+
+type ResolvedCandidate = {
+  modelVersionId: number;
+  strength: number | null;
+};
+
+/**
+ * Extract resource-identification fields from raw EXIF metadata.
+ * Returns a normalized shape for hash resolution + civitaiResources.
+ */
+function extractResourceInputFromMeta(metadata: Record<string, unknown>) {
+  const resources = metadata.resources as
+    | { name?: string; type?: string; hash?: string; weight?: number; modelVersionId?: number }[]
+    | undefined;
+  const hashes = metadata.hashes as Record<string, string> | undefined;
+  const modelHash = (metadata['Model hash'] ?? metadata.modelHash) as string | undefined;
+  const modelName = (metadata['Model'] ?? metadata.modelName) as string | undefined;
+  const civitaiResources = metadata.civitaiResources as
+    | { type?: string; weight?: number; modelVersionId: number }[]
+    | undefined;
+
+  // Merge resources with explicit modelVersionId into civitaiResources
+  const idResources = Array.isArray(resources)
+    ? resources
+        .filter((r): r is typeof r & { modelVersionId: number } => !!r.modelVersionId)
+        .map((r) => ({
+          type: r.type,
+          weight: r.weight ?? ((r as Record<string, unknown>).strength as number | undefined),
+          modelVersionId: r.modelVersionId,
+        }))
+    : [];
+  const allCivitaiResources = [...(civitaiResources ?? []), ...idResources];
+
+  return {
+    resources: Array.isArray(resources) ? resources.filter((r) => r.hash) : undefined,
+    hashes,
+    modelHash,
+    modelName,
+    civitaiResources: allCivitaiResources.length > 0 ? allCivitaiResources : undefined,
+  };
+}
+
+/**
+ * Extract hash candidates from metadata (mirrors get_image_resources.sql stages 1-3).
+ */
+function extractHashCandidates(
+  input: ReturnType<typeof extractResourceInputFromMeta>
+): HashCandidate[] {
+  const candidates: HashCandidate[] = [];
+
+  // Stage 1: meta.resources[] — resources with hashes
+  if (input.resources) {
+    for (const r of input.resources) {
+      if (!r.hash || r.name === 'vae') continue;
+      const hash = r.hash.toLowerCase();
+      if (hash === EMPTY_HASH) continue;
+      candidates.push({
+        hash,
+        name: r.name ?? r.type ?? 'unknown',
+        strength: r.weight != null ? Math.round(r.weight * 100) : null,
+      });
+    }
+  }
+
+  // Stage 2: meta.hashes — key-value pairs (e.g. {"lora:name": "abc123"})
+  if (input.hashes) {
+    for (const [key, value] of Object.entries(input.hashes)) {
+      if (key === 'vae') continue;
+      const hash = value.toLowerCase();
+      if (hash === EMPTY_HASH) continue;
+      candidates.push({ hash, name: key, strength: null });
+    }
+  }
+
+  // Stage 3: Legacy 'Model hash' field (only if no hashes object)
+  if (input.modelHash && !input.hashes) {
+    const hash = input.modelHash.toLowerCase();
+    if (hash !== EMPTY_HASH) {
+      candidates.push({ hash, name: input.modelName ?? 'model', strength: null });
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolve resources from raw image EXIF metadata and transform to graph-compatible params.
+ *
+ * Mirrors the logic of get_image_resources.sql for resource resolution, then applies
+ * the same normalizeMeta → mapDataToGraphInput pipeline as getMediaGenerationData.
+ *
+ * Returns { resources, params } where params are ready for the generation graph.
+ */
+export async function resolveImageMeta({
+  input,
+  user,
+}: {
+  input: ResolveImageMetaInput;
+  user?: SessionUser;
+}): Promise<{ resources: GenerationResource[]; params: Record<string, unknown> }> {
+  const metadata = input.metadata;
+  const resourceInput = extractResourceInputFromMeta(metadata);
+  const resolved = new Map<number, ResolvedCandidate>();
+
+  // --- Hash resolution (stages 1-3) ---
+  const hashCandidates = extractHashCandidates(resourceInput);
+  const uniqueHashes = [...new Set(hashCandidates.map((c) => c.hash))];
+
+  if (uniqueHashes.length > 0) {
+    // Batch query: hash → ModelFileHash → ModelFile → ModelVersion
+    // Same JOIN chain as get_image_resources.sql lines 98-104
+    const hashResults = await dbRead.$queryRaw<
+      Array<{
+        hash: string;
+        modelVersionId: number;
+        fileId: number;
+        versionPublished: boolean;
+        versionDate: Date;
+        excludeFromAutoDetection: boolean;
+      }>
+    >`
+      SELECT
+        LOWER(mfh.hash::text) AS hash,
+        mf."modelVersionId",
+        mf.id AS "fileId",
+        mv.status = 'Published' AS "versionPublished",
+        COALESCE(mv."publishedAt", mv."createdAt") AS "versionDate",
+        COALESCE(mv.meta->>'excludeFromAutoDetection', '') != '' AS "excludeFromAutoDetection"
+      FROM "ModelFileHash" mfh
+      JOIN "ModelFile" mf ON mf.id = mfh."fileId"
+      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mfh.hash IN (${Prisma.join(uniqueHashes)})
+        AND m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation')
+    `;
+
+    // Build a map of hash → best matching modelVersionId
+    // When multiple files match the same hash, prefer published > recent > lowest fileId
+    const bestByHash = new Map<string, (typeof hashResults)[0]>();
+    for (const row of hashResults) {
+      if (row.excludeFromAutoDetection) continue;
+      const existing = bestByHash.get(row.hash);
+      if (
+        !existing ||
+        (!existing.versionPublished && row.versionPublished) ||
+        (existing.versionPublished === row.versionPublished &&
+          row.versionDate > existing.versionDate) ||
+        (existing.versionPublished === row.versionPublished &&
+          existing.versionDate === row.versionDate &&
+          row.fileId < existing.fileId)
+      ) {
+        bestByHash.set(row.hash, row);
+      }
+    }
+
+    // Match hash candidates to resolved version IDs
+    for (const candidate of hashCandidates) {
+      const match = bestByHash.get(candidate.hash);
+      if (!match) continue;
+
+      const existing = resolved.get(match.modelVersionId);
+      // Prefer entries with strength info (mirrors SQL's IIF(strength IS NOT NULL,0,1))
+      if (!existing || (existing.strength == null && candidate.strength != null)) {
+        resolved.set(match.modelVersionId, {
+          modelVersionId: match.modelVersionId,
+          strength: candidate.strength,
+        });
+      }
+    }
+  }
+
+  // --- Direct civitaiResources (stage 4) ---
+  if (resourceInput.civitaiResources) {
+    for (const r of resourceInput.civitaiResources) {
+      if (!r.modelVersionId) continue;
+      const existing = resolved.get(r.modelVersionId);
+      const strength = r.weight != null ? Math.round(r.weight * 100) : null;
+      // civitaiResources are authoritative — override hash-only matches
+      if (!existing || (existing.strength == null && strength != null)) {
+        resolved.set(r.modelVersionId, { modelVersionId: r.modelVersionId, strength });
+      }
+    }
+  }
+
+  // --- Enrich via getResourceData() ---
+  let allResources: GenerationResource[] = [];
+  if (resolved.size > 0) {
+    const versionIds = [...resolved.keys()];
+    allResources = (await getResourceData(versionIds, user, false, true)).map((resource) => {
+      const candidate = resolved.get(resource.id);
+      if (candidate?.strength != null) {
+        return { ...resource, strength: candidate.strength / 100 };
+      }
+      return resource;
+    });
+  }
+
+  // --- Normalize metadata + map to graph params (same pipeline as getMediaGenerationData) ---
+  const initialMeta = metadata as ImageMetaProps;
+  const baseModel = getBaseModelFromResources(
+    allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+  );
+  const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
+  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
+
+  // Filter resources by ecosystem compatibility
+  const resources = !normalized.ecosystem
+    ? allResources
+    : allResources.filter(
+        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
+      );
+
+  // Map to graph-compatible params
+  const meta = normalized as Record<string, unknown>;
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const width = (meta.width as number) ?? 0;
+  const height = (meta.height as number) ?? 0;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  return { resources, params };
 }

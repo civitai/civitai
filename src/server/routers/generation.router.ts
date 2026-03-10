@@ -3,6 +3,8 @@ import {
   checkResourcesCoverageSchema,
   getGenerationDataSchema,
   getGenerationResourcesSchema,
+  getResourceDataByIdsSchema,
+  resolveImageMetaSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -10,8 +12,10 @@ import {
   getGenerationData,
   getGenerationResources,
   getGenerationStatus,
+  getResourceData,
   getUnavailableResources,
   getUnstableResources,
+  resolveImageMeta,
   // textToImage,
   // textToImageTestRun,
   toggleUnavailableResource,
@@ -64,4 +68,10 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
+  getResourceDataByIds: publicProcedure
+    .input(getResourceDataByIdsSchema)
+    .query(({ input, ctx }) => getResourceData(input.ids, ctx.user, false, true)),
+  resolveImageMeta: publicProcedure
+    .input(resolveImageMetaSchema)
+    .query(({ input, ctx }) => resolveImageMeta({ input, user: ctx.user })),
 });

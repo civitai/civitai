@@ -598,6 +598,25 @@ export const userCollectionCountCache = createUserContentCountCache<UserCollecti
   `
 );
 
+type UserComicCount = { id: number; comicCount: number };
+export const userComicCountCache = createUserContentCountCache<UserComicCount>(
+  'comicCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      p."userId" as id,
+      COUNT(DISTINCT p.id)::INT as "comicCount"
+    FROM "ComicProject" p
+    WHERE p."userId" IN (${Prisma.join(userIds)})
+      AND p."status" = 'Active'
+      AND EXISTS (
+        SELECT 1 FROM "ComicChapter" c
+        WHERE c."projectId" = p.id
+          AND c."status" = 'Published'
+      )
+    GROUP BY p."userId"
+  `
+);
+
 type UserHasReceivedReviews = { id: number; hasReceivedReviews: boolean };
 export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasReceivedReviews>(
   'hasReceivedReviews',
@@ -623,6 +642,7 @@ type UserContentOverview = {
   bountyEntryCount: number;
   hasReceivedReviews: boolean;
   collectionCount: number;
+  comicCount: number;
 };
 
 // Helper function to fetch all user content overview data using individual caches
@@ -642,6 +662,7 @@ export const getUserContentOverview = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
+    comicCounts,
   ] = await Promise.all([
     userModelCountCache.fetch(ids),
     userPostCountCache.fetch(ids),
@@ -651,6 +672,7 @@ export const getUserContentOverview = async (
     userBountyEntryCountCache.fetch(ids),
     userCollectionCountCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids),
+    userComicCountCache.fetch(ids),
   ]);
 
   // Merge results
@@ -667,6 +689,7 @@ export const getUserContentOverview = async (
         bountyCount: bountyCounts[id]?.bountyCount ?? 0,
         bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,
         collectionCount: collectionCounts[id]?.collectionCount ?? 0,
+        comicCount: comicCounts[id]?.comicCount ?? 0,
         hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
       },
     ])
@@ -688,6 +711,7 @@ export const userContentOverviewCache = {
       userBountyEntryCountCache.bust(ids),
       userCollectionCountCache.bust(ids),
       userHasReceivedReviewsCache.bust(ids),
+      userComicCountCache.bust(ids),
     ]);
   },
 };
@@ -710,7 +734,7 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -731,7 +755,7 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
@@ -981,7 +1005,7 @@ type ImageResourcesCacheItem = {
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
-  ttl: CacheTTL.sm,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
   lookupFn: async (ids) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
@@ -1029,7 +1053,7 @@ export function getBaseModelFromResources(
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',
-  ttl: CacheTTL.md,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.md,
   lookupFn: async (ids) => {
     const mvInfo = await dbRead.modelVersion.findMany({
       where: { id: { in: ids } },
@@ -1107,7 +1131,7 @@ type UserDownloadsCacheItem = {
 export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
   cacheNotFound: false,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};

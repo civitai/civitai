@@ -1,4 +1,5 @@
 import type { SessionUser } from 'next-auth';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import {
@@ -25,7 +26,6 @@ const aiToolkitBaseParams = z.object({
   trainTextEncoder: z.boolean(),
   lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
   optimizerType: z.enum([
-    'adam',
     'adamw',
     'adamw8bit',
     'adam8bit',
@@ -35,6 +35,7 @@ const aiToolkitBaseParams = z.object({
     'adagrad',
     'prodigy',
     'prodigy8bit',
+    'automagic',
   ]),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
@@ -43,6 +44,7 @@ const aiToolkitBaseParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  numRepeats: z.number().optional(),
 });
 
 // Use discriminated union to enforce modelVariant requirements per ecosystem
@@ -68,7 +70,15 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('zimageturbo'),
     modelVariant: z.undefined().optional(),
   }),
-  // SD3, Flux1, and Wan require modelVariant
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('zimagebase'),
+    modelVariant: z.undefined().optional(),
+  }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('ltx2'),
+    modelVariant: z.undefined().optional(),
+  }),
+  // SD3, Flux1, Flux2Klein, and Wan require modelVariant
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('sd3'),
     modelVariant: z.enum(['large', 'medium']),
@@ -80,6 +90,10 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('wan'),
     modelVariant: z.enum(['2.1', '2.2']),
+  }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('flux2klein'),
+    modelVariant: z.enum(['4b', '9b']),
   }),
 ]);
 
@@ -135,6 +149,7 @@ const whatIfAiToolkitParams = z.object({
     'adagrad',
     'prodigy',
     'prodigy8bit',
+    'automagic',
   ]),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
@@ -143,6 +158,7 @@ const whatIfAiToolkitParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  numRepeats: z.number().optional(),
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
@@ -175,6 +191,7 @@ const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
 });
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
+  features: FeatureAccess;
 };
 
 // Can't extend a union, so we need to merge with an intersection

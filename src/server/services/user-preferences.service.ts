@@ -1,5 +1,5 @@
 import type { NsfwLevel } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -7,7 +7,13 @@ import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.
 import { getModeratedTags } from '~/server/services/system-cache';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
-const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
+const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
+const HIDDEN_CACHE_JITTER_MAX = 60 * 30; // up to 30 minutes of jitter
+// Jitter prevents thundering herd: without it, all users' caches expire at the
+// same 4-hour boundary, causing a simultaneous DB query storm at ~300 req/s.
+function getHiddenCacheExpiry() {
+  return HIDDEN_CACHE_EXPIRY_BASE + Math.floor(Math.random() * HIDDEN_CACHE_JITTER_MAX);
+}
 // const log = createLogger('user-preferences', 'green');
 
 function createUserCache<T, TArgs extends { userId?: number }>({
@@ -38,7 +44,7 @@ function createUserCache<T, TArgs extends { userId?: number }>({
     // console.timeEnd(key);
 
     await redis.packed.set(getKey({ userId }), data, {
-      EX: HIDDEN_CACHE_EXPIRY,
+      EX: getHiddenCacheExpiry(),
     });
 
     return data;
@@ -76,7 +82,7 @@ const HiddenTags = createUserCache({
   key: 'hidden-tags-4',
   callback: async ({ userId }) => {
     const tagEngagment = (
-      await dbWrite.tagEngagement.findMany({
+      await dbRead.tagEngagement.findMany({
         where: { userId, type: TagEngagementType.Hide },
         select: { tag: { select: { id: true, name: true } } },
       })
@@ -94,7 +100,7 @@ export const HiddenImages = createUserCache({
   key: 'hidden-images-3',
   callback: async ({ userId }) =>
     (
-      await dbWrite.imageEngagement.findMany({
+      await dbRead.imageEngagement.findMany({
         where: { userId, type: UserEngagementType.Hide },
         select: { imageId: true },
       })
@@ -113,7 +119,7 @@ const getVotedHideImages = async ({
 }) => {
   const allHidden = [...new Set([...hiddenTagIds, ...moderatedTagIds])];
   if (!allHidden.length) return [];
-  const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
+  const votedHideImages = await dbRead.tagsOnImageVote.findMany({
     where: { userId, tagId: { in: allHidden }, vote: { gt: 0 }, applied: false },
     select: { imageId: true, tagId: true },
   });
@@ -152,7 +158,7 @@ export const HiddenModels = createUserCache({
   key: 'hidden-models-3',
   callback: async ({ userId }) =>
     (
-      await dbWrite.modelEngagement.findMany({
+      await dbRead.modelEngagement.findMany({
         where: { userId, type: UserEngagementType.Hide },
         select: { modelId: true },
       })
@@ -162,7 +168,7 @@ export const HiddenModels = createUserCache({
 export const HiddenUsers = createUserCache({
   key: 'hidden-users-3',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number }[]>`
         SELECT
           ue."targetUserId" "id"
         FROM "UserEngagement" ue
@@ -173,7 +179,7 @@ export const HiddenUsers = createUserCache({
 export const BlockedUsers = createUserCache({
   key: 'blocked-users',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number }[]>`
         SELECT
           ue."targetUserId" "id"
         FROM "UserEngagement" ue
@@ -184,7 +190,7 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number }[]>`
         SELECT
           ue."userId" "id"
         FROM "UserEngagement" ue

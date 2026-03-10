@@ -98,6 +98,19 @@ async function createWorktree(branch) {
     process.exit(1);
   }
 
+  // Initialize git submodules
+  console.log('\nInitializing git submodules...');
+  try {
+    execSync('git submodule update --init --recursive', {
+      cwd: worktreePath,
+      stdio: 'inherit',
+    });
+    console.log('Submodules initialized');
+  } catch (error) {
+    console.error('\nWarning: git submodule init failed. You may need to run it manually:');
+    console.error(`  cd "${worktreePath}" && git submodule update --init --recursive`);
+  }
+
   // Copy .env file
   const envSource = resolve(MAIN_WORKTREE, '.env');
   const envDest = resolve(worktreePath, '.env');

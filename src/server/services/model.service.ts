@@ -15,10 +15,8 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import {
-  DEPRECATED_BASE_MODELS,
-  getBaseModelGenerationSupported,
-} from '~/shared/constants/base-model.constants';
+import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
+import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -29,6 +27,7 @@ import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
@@ -410,10 +409,10 @@ export const getModelsRaw = async ({
   }
 
   if (username || user) {
-    const targetUser = await dbRead.user.findUnique({
-      where: { username: (username || user) ?? '' },
-      select: { id: true },
-    });
+    const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
+    const targetUser =
+      (await dbRead.user.findUnique(userFindArgs)) ??
+      (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw new Error('User not found');
 
@@ -456,7 +455,10 @@ export const getModelsRaw = async ({
     isPrivate = true;
   }
 
-  // Base model filtering: either via EXISTS subquery (standard) or direct mbm."baseModel" (base model metrics)
+  // Base model filtering:
+  // - Standard path: EXISTS subquery on ModelVersion
+  // - Base model metrics, single base model: direct equality on mbm."baseModel" (preserves index scan)
+  // - Base model metrics, multiple base models: filter is inside the FROM subquery (see fromClause)
   if (baseModels?.length && !useBaseModelMetrics) {
     AND.push(
       Prisma.sql`EXISTS (
@@ -465,9 +467,9 @@ export const getModelsRaw = async ({
             AND mv."baseModel" IN (${Prisma.join(baseModels, ',')})
         )`
     );
-  } else if (useBaseModelMetrics) {
-    // Direct equality filter on ModelBaseModelMetric
-    AND.push(Prisma.sql`mbm."baseModel" IN (${Prisma.join(baseModels, ',')})`);
+  } else if (useBaseModelMetrics && baseModels!.length === 1) {
+    // Single base model: filter in WHERE clause so covering indexes can be fully utilized
+    AND.push(Prisma.sql`mbm."baseModel" = ${baseModels![0]}`);
   }
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
@@ -673,12 +675,36 @@ export const getModelsRaw = async ({
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   // Build dynamic FROM clause based on query path
-  const fromClause = useBaseModelMetrics
+  // Three paths:
+  // 1. Standard: ModelMetric JOIN Model (no base model metrics)
+  // 2. Base model metrics, single base model: direct JOIN on ModelBaseModelMetric
+  //    (preserves covering index scan + sort order + early LIMIT termination)
+  // 3. Base model metrics, multiple base models: aggregate subquery on ModelBaseModelMetric
+  //    (GROUP BY modelId prevents duplicates when a model has versions in multiple matching base models)
+  const fromClause = !useBaseModelMetrics
+    ? Prisma.sql`FROM "ModelMetric" mm
+      JOIN "Model" m ON m."id" = mm."modelId"`
+    : baseModels!.length === 1
     ? Prisma.sql`FROM "ModelBaseModelMetric" mbm
       JOIN "Model" m ON m."id" = mbm."modelId"
       JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`
-    : Prisma.sql`FROM "ModelMetric" mm
-      JOIN "Model" m ON m."id" = mm."modelId"`;
+    : Prisma.sql`FROM (
+        SELECT "modelId",
+          SUM("downloadCount")::int as "downloadCount",
+          SUM("thumbsUpCount")::int as "thumbsUpCount",
+          SUM("imageCount")::int as "imageCount",
+          MIN("status") as "status",
+          MIN("nsfwLevel") as "nsfwLevel",
+          MIN("availability") as "availability",
+          MIN("mode") as "mode",
+          MAX("minor"::int)::bool as "minor",
+          MAX("poi"::int)::bool as "poi"
+        FROM "ModelBaseModelMetric"
+        WHERE "baseModel" IN (${Prisma.join(baseModels!, ',')})
+        GROUP BY "modelId"
+      ) mbm
+      JOIN "Model" m ON m."id" = mbm."modelId"
+      JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`;
 
   // Unified query - uses pSql for denormalized fields and per-base-model stats
   const modelQuery = Prisma.sql`
@@ -736,15 +762,19 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await Promise.all([
-    userBasicCache.fetch(userIds),
-    getProfilePicturesForUsers(userIds),
-    getCosmeticsForUsers(userIds),
-    dataForModelsCache.fetch(modelIds),
-    includeCosmetics
-      ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-      : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-  ]);
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await withSpan(
+    'model:getAll:parallelFetch',
+    () =>
+      Promise.all([
+        userBasicCache.fetch(userIds),
+        getProfilePicturesForUsers(userIds),
+        getCosmeticsForUsers(userIds),
+        dataForModelsCache.fetch(modelIds),
+        includeCosmetics
+          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+      ])
+  );
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -753,7 +783,7 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models
+    items: withSpan('model:getAll:transform', () => models
       .map(({ rank, cursorId, ...model }) => {
         const data = modelData[model.id.toString()];
         if (!data) return null;
@@ -829,7 +859,7 @@ export const getModelsRaw = async ({
           cosmetic: cosmetics[model.id] ?? null,
         };
       })
-      .filter(isDefined),
+      .filter(isDefined)),
     nextCursor,
     isPrivate,
   };
@@ -1195,7 +1225,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         const canGenerate =
           !!version?.covered &&
           unavailableGenResources.indexOf(version.id) === -1 &&
-          getBaseModelGenerationSupported(version.baseModel, model.type);
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,
@@ -1860,6 +1890,7 @@ export const publishModelById = async ({
             modelVersionIds: versionIds,
             publishedAt: !republishing ? publishedAt : undefined,
             tx,
+            republishing,
           });
         } else if (status === ModelStatus.Scheduled) {
           // Schedule model versions:
@@ -1870,16 +1901,17 @@ export const publishModelById = async ({
         }
 
         await tx.$executeRaw`
-          UPDATE "Post"
+          UPDATE "Post" p
           SET "publishedAt" = CASE
-                                WHEN "metadata" ->> 'prevPublishedAt' IS NOT NULL
-                                  THEN to_timestamp("metadata" ->> 'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
-                                ELSE ${publishedAt}
+                                WHEN p."metadata" ->> 'prevPublishedAt' IS NOT NULL
+                                  THEN (p."metadata" ->> 'prevPublishedAt')::timestamptz
+                                ELSE mv."publishedAt"
             END,
-              "metadata"    = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
-          WHERE
-            "userId" = ${model.userId}
-          AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+              "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          FROM "ModelVersion" mv
+          WHERE mv.id = p."modelVersionId"
+            AND p."userId" = ${model.userId}
+            AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
         `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });

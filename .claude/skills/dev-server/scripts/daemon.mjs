@@ -102,6 +102,37 @@ function generateSessionId() {
   return randomBytes(4).toString('hex');
 }
 
+// Update URL-related env vars to use the correct port
+function updateEnvUrlsForPort(envVars, port) {
+  const defaultPort = 3000;
+  if (port === defaultPort) return envVars;
+
+  // List of env vars that contain localhost URLs that need port updates
+  const urlVars = [
+    'NEXTAUTH_URL',
+    'NEXTAUTH_URL_INTERNAL',
+    'NEXT_PUBLIC_BASE_URL',
+    'NEXT_PUBLIC_SERVER_DOMAIN_BLUE', // This one uses domain:port format
+  ];
+
+  for (const varName of urlVars) {
+    if (envVars[varName]) {
+      // Replace localhost:3000 with localhost:<port>
+      envVars[varName] = envVars[varName].replace(
+        /localhost:3000/g,
+        `localhost:${port}`
+      );
+    }
+  }
+
+  // Also ensure NEXT_PUBLIC_BASE_URL is set if NEXTAUTH_URL is set
+  if (!envVars.NEXT_PUBLIC_BASE_URL && envVars.NEXTAUTH_URL) {
+    envVars.NEXT_PUBLIC_BASE_URL = envVars.NEXTAUTH_URL;
+  }
+
+  return envVars;
+}
+
 // Load environment variables from .env file
 function loadEnvFile(envPath) {
   if (!existsSync(envPath)) return {};
@@ -186,6 +217,8 @@ class DevSession {
     this.ready = false;
     this.readyAt = null;
     this.healthCheckTimer = null;
+    this.healthCheckAbortController = null;
+    this.healthCheckRunning = false;
   }
 
   addLog(level, message) {
@@ -220,7 +253,10 @@ class DevSession {
     this.branch = getGitBranch(this.worktree) || 'unknown';
 
     // Load environment variables
-    const envVars = loadEnvFile(this.envPath);
+    let envVars = loadEnvFile(this.envPath);
+
+    // Update URL-related env vars if using non-default port
+    envVars = updateEnvUrlsForPort(envVars, this.port);
 
     // Set PORT in environment
     envVars.PORT = String(this.port);
@@ -321,9 +357,27 @@ class DevSession {
   startHealthCheck() {
     const url = healthCheckConfig.healthCheckUrl.replace('{port}', String(this.port));
     const startTime = Date.now();
+    this.healthCheckRunning = true;
+
+    this.addLog('info', `Starting health check polling: ${url}`);
+
+    const scheduleNextCheck = () => {
+      // Don't schedule if health check has been stopped
+      if (!this.healthCheckRunning) {
+        return;
+      }
+      this.healthCheckTimer = setTimeout(check, healthCheckConfig.healthCheckInterval);
+    };
 
     const check = async () => {
+      // Early exit if health check was stopped
+      if (!this.healthCheckRunning) {
+        this.addLog('info', 'Health check cancelled before request');
+        return;
+      }
+
       if (this.ready || this.status !== 'running') {
+        this.addLog('info', `Health check stopping: ready=${this.ready}, status=${this.status}`);
         this.stopHealthCheck();
         return;
       }
@@ -334,27 +388,77 @@ class DevSession {
         return;
       }
 
+      // Create AbortController for this request
+      this.healthCheckAbortController = new AbortController();
+
+      // Per-request timeout (5 seconds) to prevent hanging on zombie servers
+      // This is separate from the overall health check timeout (healthCheckTimeout)
+      const REQUEST_TIMEOUT = 5000;
+      const requestTimeoutId = setTimeout(() => {
+        this.healthCheckAbortController?.abort();
+      }, REQUEST_TIMEOUT);
+
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, {
+          signal: this.healthCheckAbortController.signal,
+        });
+
+        // Clear timeouts and controller after successful fetch
+        clearTimeout(requestTimeoutId);
+        this.healthCheckAbortController = null;
+
         if (response.status === healthCheckConfig.healthCheckStatus) {
           this.ready = true;
           this.readyAt = new Date().toISOString();
           this.addLog('info', 'Server ready (health check passed)');
           this.stopHealthCheck();
+        } else {
+          // Non-matching status, schedule next check
+          scheduleNextCheck();
         }
-      } catch {
-        // Server not ready yet, continue polling
+      } catch (err) {
+        clearTimeout(requestTimeoutId);
+        this.healthCheckAbortController = null;
+
+        if (err.name === 'AbortError') {
+          // Check if health check was manually stopped (stopHealthCheck sets healthCheckRunning to false)
+          if (!this.healthCheckRunning) {
+            this.addLog('info', 'Health check request cancelled (manual stop)');
+            // Don't reschedule - health check was intentionally stopped
+            return;
+          }
+          // Per-request timeout (5s) hit - server might be slow, retry
+          scheduleNextCheck();
+          return;
+        }
+
+        // Server not ready yet (connection refused, etc.), schedule next check
+        scheduleNextCheck();
       }
     };
 
-    this.healthCheckTimer = setInterval(check, healthCheckConfig.healthCheckInterval);
-    check(); // Initial check
+    // Start with first check immediately
+    check();
   }
 
   stopHealthCheck() {
+    if (!this.healthCheckRunning) {
+      return;
+    }
+
+    this.addLog('info', 'Stopping health check polling');
+    this.healthCheckRunning = false;
+
+    // Clear any pending timeout
     if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
+      clearTimeout(this.healthCheckTimer);
       this.healthCheckTimer = null;
+    }
+
+    // Abort any in-flight request
+    if (this.healthCheckAbortController) {
+      this.healthCheckAbortController.abort();
+      this.healthCheckAbortController = null;
     }
   }
 

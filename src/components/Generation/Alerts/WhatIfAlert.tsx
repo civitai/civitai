@@ -1,12 +1,22 @@
-import { Alert } from '@mantine/core';
+/**
+ * WhatIfAlert
+ *
+ * Displays error messages from whatIf cost calculation queries.
+ */
 
-export function WhatIfAlert({ error }: { error?: any }) {
+import { Alert } from '@mantine/core';
+import { IconAlertCircle } from '@tabler/icons-react';
+
+interface WhatIfAlertProps {
+  error?: { message?: string } | null;
+}
+
+export function WhatIfAlert({ error }: WhatIfAlertProps) {
   if (!error) return null;
 
-  const message =
-    typeof error.message === 'string' && error.message.trim().length > 0
-      ? error.message
-      : 'Error calculating cost. Please try updating your values';
-
-  return <Alert color="yellow">{message}</Alert>;
+  return (
+    <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+      {error.message || 'Failed to calculate cost'}
+    </Alert>
+  );
 }

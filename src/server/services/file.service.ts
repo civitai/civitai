@@ -13,7 +13,7 @@ import {
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -272,7 +272,7 @@ export const getFileForModelVersion = async ({
     file,
   });
   try {
-    const { url } = await getDownloadUrl(file.url, filename);
+    const { url } = await resolveDownloadUrl(file.id, file.url, filename);
     return {
       status: 'success',
       url,

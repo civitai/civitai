@@ -1,8 +1,8 @@
-import { Center, Group, Stack, Tabs, Text, ThemeIcon } from '@mantine/core';
-import { IconClockHour9 } from '@tabler/icons-react';
-import { IconGridDots, IconLock } from '@tabler/icons-react';
-import React from 'react';
+import { Group, Tabs } from '@mantine/core';
+import { IconClockHour9, IconGridDots } from '@tabler/icons-react';
+import React, { useRef } from 'react';
 import { Page } from '~/components/AppLayout/Page';
+import { GenerationMutedNotice } from '~/components/Generation/GenerationMutedNotice';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { Queue } from '~/components/ImageGeneration/Queue';
@@ -11,8 +11,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import type { GenerationPanelView } from '~/store/generation.store';
-import { useGenerationStore } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getLoginLink } from '~/utils/login-helpers';
 
 /**
@@ -37,23 +36,17 @@ export const getServerSideProps = createServerSideProps({
 function GeneratePage() {
   const currentUser = useCurrentUser();
   const view = useGenerationPanelStore((state) => state.view);
-  const setView = useGenerationStore((state) => state.setView);
+  const setView = generationGraphPanel.setView;
 
-  if (currentUser?.muted)
-    return (
-      <Center h="100%" w="75%" mx="auto">
-        <Stack gap="xl" align="center">
-          <ThemeIcon size="xl" radius="xl" color="yellow">
-            <IconLock />
-          </ThemeIcon>
-          <Text align="center">
-            Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within 2 business days. You do not need to contact us.
-          </Text>
-        </Stack>
-      </Center>
-    );
+  // On this page the generate form lives in the sidebar, so the tabs only
+  // switch between queue and feed. Ignore transient 'generate' values
+  // (e.g. from workflow menu items) to avoid unmounting content and losing
+  // scroll position.
+  const tabViewRef = useRef<'queue' | 'feed'>(view !== 'generate' ? view : 'queue');
+  if (view !== 'generate') tabViewRef.current = view as 'queue' | 'feed';
+  const tabView = view === 'generate' ? tabViewRef.current : view;
+
+  if (currentUser?.muted) return <GenerationMutedNotice />;
 
   // desktop view
   return (
@@ -62,10 +55,10 @@ function GeneratePage() {
 
       <Tabs
         variant="pills"
-        value={view}
+        value={tabView}
         onChange={(view) => {
           // tab can be null
-          if (view) setView(view as GenerationPanelView);
+          if (view) setView(view as 'generate' | 'queue' | 'feed');
         }}
         radius="xl"
         color="gray"
@@ -89,7 +82,7 @@ function GeneratePage() {
             <GeneratedImageActions />
           </Group>
         </Tabs.List>
-        <ScrollArea scrollRestore={{ key: view }}>
+        <ScrollArea scrollRestore={{ key: tabView }}>
           <Tabs.Panel value="queue">
             <Queue />
           </Tabs.Panel>

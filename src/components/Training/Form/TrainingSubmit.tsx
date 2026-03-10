@@ -86,11 +86,12 @@ const maxRuns = 5;
 const prefersCaptions: TrainingBaseModelType[] = [
   'flux',
   'flux2',
+  'flux2klein',
   'sd35',
   'hunyuan',
   'wan',
   'chroma',
-  'zimageturbo',
+  'zimage',
 ];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
@@ -170,11 +171,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
     // Transform parameters for AI Toolkit
     if (selectedRun.params.engine === 'ai-toolkit') {
-      const ecosystem = getAiToolkitEcosystem(formBaseModel);
+      const ecosystem = getAiToolkitEcosystem(formBaseModel, selectedRun.baseType);
       const modelVariant = getAiToolkitModelVariant(formBaseModel as TrainingDetailsBaseModelList);
 
       if (!ecosystem) {
-        console.error('Failed to determine ecosystem for AI Toolkt whatIf query');
+        console.error('Failed to determine ecosystem for AI Toolkit whatIf query');
         return null;
       }
 
@@ -189,6 +190,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         AdamW8Bit: 'adamw8bit',
         Adafactor: 'adafactor',
         Prodigy: 'prodigy',
+        Automagic: 'automagic',
       };
       const optimizerType =
         optimizerTypeMap[selectedRun.params.optimizerType] ||
@@ -212,6 +214,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         flipAugmentation: selectedRun.params.flipAugmentation || false,
         shuffleTokens: selectedRun.params.shuffleCaption,
         keepTokens: selectedRun.params.keepTokens,
+        numRepeats: selectedRun.params.numRepeats,
       } as any;
       return retData;
     }
@@ -512,7 +515,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       // Transform params for AI Toolkit if needed
       let finalParams: any = paramData;
       if (paramData.engine === 'ai-toolkit') {
-        const ecosystem = getAiToolkitEcosystem(base);
+        const ecosystem = getAiToolkitEcosystem(base, baseType);
         const modelVariant = getAiToolkitModelVariant(base as TrainingDetailsBaseModelList);
 
         if (!ecosystem) {
@@ -559,6 +562,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           flipAugmentation: paramData.flipAugmentation || false,
           shuffleTokens: paramData.shuffleCaption,
           keepTokens: paramData.keepTokens,
+          numRepeats: paramData.numRepeats,
         };
       }
 
@@ -878,7 +882,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </AlertWithIcon>
       )}
 
-      {selectedRun.baseType === 'zimageturbo' && (
+      {selectedRun.baseType === 'zimage' && (
         <AlertWithIcon
           icon={<IconAlertTriangle size={16} />}
           iconColor="yellow"
@@ -889,8 +893,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         >
           <Group gap="sm" justify="space-between" wrap="nowrap">
             <Text>
-              Z&ndash;Image Turbo training is experimental, and we’re still fine-tuning things
-              behind the scenes{' '}
+              Z&ndash;Image training is experimental, and we're still fine-tuning things behind the
+              scenes{' '}
             </Text>
           </Group>
         </AlertWithIcon>
@@ -968,29 +972,33 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Text>{dryRunResult.data?.precedingJobs ?? 'Unknown'}</Text>
               )}
 
-              <Divider orientation="vertical" />
+              {selectedRun.params.engine !== 'ai-toolkit' && (
+                <>
+                  <Divider orientation="vertical" />
 
-              <Badge>
-                <Group gap={4} wrap="nowrap">
-                  <Text inherit>ETA</Text>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How long your job is expected to run</Text>
-                  </InfoPopover>
-                </Group>
-              </Badge>
+                  <Badge>
+                    <Group gap={4} wrap="nowrap">
+                      <Text inherit>ETA</Text>
+                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                        <Text size="sm">How long your job is expected to run</Text>
+                      </InfoPopover>
+                    </Group>
+                  </Badge>
 
-              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
-                <Text>{minsToHours(rapidEta)}</Text>
-              ) : dryRunResult.isLoading ? (
-                <Loader size="sm" />
-              ) : (
-                <Text>
-                  {!isDefined(dryRunResult.data?.eta)
-                    ? 'Unknown'
-                    : dryRunResult.data?.eta > 20000
-                    ? 'Forever'
-                    : minsToHours(dryRunResult.data?.eta)}
-                </Text>
+                  {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+                    <Text>{minsToHours(rapidEta)}</Text>
+                  ) : dryRunResult.isLoading ? (
+                    <Loader size="sm" />
+                  ) : (
+                    <Text>
+                      {!isDefined(dryRunResult.data?.eta)
+                        ? 'Unknown'
+                        : dryRunResult.data?.eta > 20000
+                        ? 'Forever'
+                        : minsToHours(dryRunResult.data?.eta)}
+                    </Text>
+                  )}
+                </>
               )}
 
               <Divider orientation="vertical" />

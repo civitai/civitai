@@ -1,7 +1,7 @@
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
   Currency,
@@ -134,7 +134,7 @@ export const constants = {
     [ReviewReactions.Cry]: '😢',
   },
   richTextEditor: {
-    maxFileSize: 1024 * 1024 * 5, // 5MB
+    maxFileSize: 1024 * 1024 * 50, // 50MB
     accept: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE],
     // Taken from https://v5.mantine.dev/others/tiptap/#text-color
     presetColors: [
@@ -507,6 +507,22 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://purplesmart.ai/license',
     name: 'Pony',
   },
+  ltxv2: {
+    url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
+    name: 'LTXV2',
+  },
+  anima: {
+    url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
+    name: 'Anima',
+  },
+  kling: {
+    url: 'https://klingai.com/terms-of-service',
+    name: 'Kling',
+  },
+  vidu: {
+    url: 'https://www.vidu.com/terms',
+    name: 'Vidu Q1',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -559,6 +575,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
+  LTXV2: baseLicenses['ltxv2'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
@@ -580,6 +597,11 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],
+  ZImageBase: baseLicenses['apache 2.0'],
+  Anima: baseLicenses['anima'],
+  Kling: baseLicenses['kling'],
+  'Vidu Q1': baseLicenses['vidu'],
+  Seedance: baseLicenses['seedream'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -644,13 +666,13 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
-const commonAspectRatios = [
+export const commonAspectRatios = [
   { label: 'Square', width: 1024, height: 1024 },
   { label: 'Landscape', width: 1216, height: 832 },
   { label: 'Portrait', width: 832, height: 1216 },
 ];
 
-const seedreamSizes = [
+export const seedreamSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
@@ -682,7 +704,7 @@ export const ponyV7Sizes = [
   { label: '2:3', width: 1024, height: 1536 },
 ];
 
-const nanoBananaProSizes = [
+export const nanoBananaProSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
@@ -894,6 +916,82 @@ export const generationConfig = {
       model: {
         id: 2165902,
         name: 'FLUX.2',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_9B: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612554,
+      name: '9b',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 9B',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_9B_base: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612548,
+      name: '9b-base',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 9B-base',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_4B: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612557,
+      name: '4b',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 4B',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_4B_base: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612552,
+      name: '4b-base',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 4B-base',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
         type: 'Checkpoint',
       },
     } as GenerationResource,
@@ -1110,6 +1208,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  ZImageBase: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2635223,
+      name: 'Base',
+      trainedWords: [],
+      baseModel: 'ZImageBase',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2342797,
+        name: 'Z Image Base',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
 
   Other: {
     aspectRatios: commonAspectRatios,
@@ -1141,6 +1258,7 @@ export const generation = {
     cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
+    scheduler: 'simple',
     seed: null,
     clipSkip: 2,
     quantity: 2,
@@ -1195,6 +1313,7 @@ export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
+export const COMICS_SEARCH_INDEX = 'comics_v1';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

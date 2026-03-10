@@ -113,6 +113,17 @@ export async function throwOnBlockedLinkDomain(value: string) {
 }
 // #endregion
 
+// #region [blocked message patterns]
+export async function throwOnBlockedMessagePattern(value: string) {
+  const blockedPatterns = await getBlocklistData(BlocklistType.MessagePattern);
+  if (!blockedPatterns.length) return;
+
+  const lowerValue = value.toLowerCase();
+  const matched = blockedPatterns.find((pattern) => lowerValue.includes(pattern));
+  if (matched) throw new Error(`Message blocked by content filter`);
+}
+// #endregion
+
 // #region [blocked emails]
 export async function getBlockedEmailDomains() {
   return await getBlocklistData(BlocklistType.EmailDomain);

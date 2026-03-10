@@ -4,6 +4,7 @@ import {
   PurchasableRewardViewMode,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -181,7 +182,7 @@ export const purchasableRewardUpsert = async ({
 
     return record;
   } else {
-    const purchasableReward = await dbRead.purchasableReward.findUniqueOrThrow({
+    const purchasableRewardFindArgs = {
       where: { id: input.id },
       select: {
         id: true,
@@ -192,7 +193,13 @@ export const purchasableRewardUpsert = async ({
           },
         },
       },
-    });
+    } as const;
+    const purchasableReward = await dbRead.purchasableReward
+      .findUniqueOrThrow(purchasableRewardFindArgs)
+      .catch(() => {
+        dbReadFallbackCounter.inc({ entity: 'purchasableReward', caller: 'upsertPurchasableReward' });
+        return dbWrite.purchasableReward.findUniqueOrThrow(purchasableRewardFindArgs);
+      });
 
     if (input.unitPrice !== purchasableReward.unitPrice && purchasableReward._count.purchases > 0) {
       throw throwBadRequestError('Cannot change the price of a reward that has been purchased.');
@@ -332,13 +339,19 @@ export const purchasableRewardPurchase = async ({
 };
 
 export const getPurchasableReward = async ({ id }: GetByIdInput) => {
-  const data = await dbRead.purchasableReward.findUniqueOrThrow({
+  const rewardDetailFindArgs = {
     where: { id },
     select: {
       ...purchasableRewardDetails,
       codes: true,
     },
-  });
+  } as const;
+  const data = await dbRead.purchasableReward
+    .findUniqueOrThrow(rewardDetailFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'purchasableReward', caller: 'getPurchasableReward' });
+      return dbWrite.purchasableReward.findUniqueOrThrow(rewardDetailFindArgs);
+    });
 
   return {
     ...data,

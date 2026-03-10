@@ -2,24 +2,46 @@ import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { IMAGE_MIME_TYPE, getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
+import {
+  getExtensionsFromMimeTypes,
+  getMimeTypesFromMediaTypes,
+} from '~/shared/constants/mime-types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { constants } from '~/server/common/constants';
+import { formatBytes } from '~/utils/number-helpers';
+import { showWarningNotification } from '~/utils/notifications';
 
-export function InsertImageControl({ accepts = ['image'], ...props }: Props) {
+type Props = Omit<RichTextEditorControlProps, 'icon' | 'onClick'> & {
+  accepts?: MediaType[];
+  maxFileSize?: number;
+};
+
+export function InsertImageControl({ accepts = ['image'], maxFileSize, ...props }: Props) {
   const { editor } = useRichTextEditorContext();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const acceptedMimeTypes = getMimeTypesFromMediaTypes(accepts);
 
   const handleClick = () => {
     inputRef.current?.click();
   };
 
-  const handleFileChange = async (fileList: FileList) => {
+  const handleFileChange = (fileList: FileList) => {
     if (!editor) return;
 
     for (const file of Array.from(fileList)) {
+      if (!acceptedMimeTypes.includes(file.type)) {
+        showWarningNotification({
+          message: `Unsupported file type. Supported types: ${getExtensionsFromMimeTypes(
+            acceptedMimeTypes
+          )}`,
+        });
+        continue;
+      }
+      if (maxFileSize && file.size > maxFileSize) {
+        showWarningNotification({
+          message: `File is too big. Max file size is ${formatBytes(maxFileSize)}`,
+        });
+        continue;
+      }
       editor.commands.addMedia(file);
     }
   };
@@ -34,7 +56,7 @@ export function InsertImageControl({ accepts = ['image'], ...props }: Props) {
       <IconPhoto size={16} stroke={1.5} />
       <input
         type="file"
-        accept={getMimeTypesFromMediaTypes(accepts).join(',')}
+        accept={acceptedMimeTypes.join(',')}
         ref={inputRef}
         onChange={(e) => {
           const { files } = e.target;
@@ -46,30 +68,36 @@ export function InsertImageControl({ accepts = ['image'], ...props }: Props) {
   );
 }
 
-type Props = Omit<RichTextEditorControlProps, 'icon' | 'onClick'> & { accepts?: MediaType[] };
-
-export function InsertImageControlLegacy(props: Props) {
+export function InsertImageControlLegacy({ accepts = ['image'], maxFileSize, ...props }: Props) {
   const { editor } = useRichTextEditorContext();
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const { uploadToCF } = useCFImageUpload();
+  const acceptedMimeTypes = getMimeTypesFromMediaTypes(accepts);
 
   const handleClick = () => {
     inputRef.current?.click();
   };
 
-  const handleFileChange = async (fileList: FileList) => {
-    const files = Array.from(fileList);
-    const images = await Promise.all(files.map((file) => uploadToCF(file))).catch((error) => {
-      console.error(error);
-      window.alert(`Failed to upload image. ${error.message}`);
-      return [];
-    });
-
-    if (images.length > 0)
-      images.map((image) =>
-        editor?.commands.setImage({ src: getEdgeUrl(image.id, { width: 525 }) })
-      );
+  const handleFileChange = (fileList: FileList) => {
+    for (const file of Array.from(fileList)) {
+      if (!acceptedMimeTypes.includes(file.type)) {
+        showWarningNotification({
+          message: `Unsupported file type. Supported types: ${getExtensionsFromMimeTypes(
+            acceptedMimeTypes
+          )}`,
+        });
+        continue;
+      }
+      if (maxFileSize && file.size > maxFileSize) {
+        showWarningNotification({
+          message: `File is too big. Max file size is ${formatBytes(maxFileSize)}`,
+        });
+        continue;
+      }
+      editor?.commands.insertContent({
+        type: 'image',
+        attrs: { src: URL.createObjectURL(file), filename: file.name },
+      });
+    }
   };
 
   return (
@@ -82,7 +110,7 @@ export function InsertImageControlLegacy(props: Props) {
       <IconPhoto size={16} stroke={1.5} />
       <input
         type="file"
-        accept={IMAGE_MIME_TYPE.join(',')}
+        accept={acceptedMimeTypes.join(',')}
         ref={inputRef}
         onChange={(e) => {
           const { files } = e.target;

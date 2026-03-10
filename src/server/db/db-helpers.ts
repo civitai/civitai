@@ -74,14 +74,16 @@ export function getClient(
 
   const pool = new Pool({
     connectionString,
-    connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    connectionTimeoutMillis: env.IS_DATAPACKET
+      ? env.DATABASE_CONNECTION_TIMEOUT || 5000
+      : env.DATABASE_CONNECTION_TIMEOUT,
     min: 0,
     max: env.DATABASE_POOL_MAX,
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
       instance === 'notificationRead'
-        ? undefined // standby seems to not support this
+        ? (env.IS_DATAPACKET ? env.DATABASE_READ_TIMEOUT ?? 10000 : undefined) // standby seems to not support this on DOKS
         : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,

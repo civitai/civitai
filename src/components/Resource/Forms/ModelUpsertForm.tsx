@@ -263,19 +263,6 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
     };
   }, []); // eslint-disable-line
 
-  useEffect(() => {
-    if (model)
-      form.reset({
-        ...model,
-        tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
-        category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-        description: model.description ?? '',
-        poi: model?.poi == null ? '' : model?.poi === true ? 'true' : 'false',
-        attestation: !!model?.id,
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultCategory, model]);
-
   const modelUser = model?.user?.username ?? currentUser?.username;
 
   function isLocked(key: string) {

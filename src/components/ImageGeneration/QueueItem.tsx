@@ -1,9 +1,10 @@
 import type { RingProgressProps, TooltipProps } from '@mantine/core';
 import {
+  ActionIcon,
   Alert,
   Badge,
+  Button,
   Card,
-  Group,
   Loader,
   RingProgress,
   Text,
@@ -15,6 +16,7 @@ import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
   IconBan,
+  IconPlus,
   IconCheck,
   IconFlagQuestion,
   IconInfoHexagon,
@@ -24,7 +26,6 @@ import {
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
-import { Collection } from '~/components/Collection/Collection';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -33,6 +34,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
+  matchesMarkerTags,
   useCancelTextToImageRequest,
   useDeleteTextToImageRequest,
   useUpdateWorkflow,
@@ -45,13 +47,10 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
-import type {
-  NormalizedGeneratedImageResponse,
-  NormalizedGeneratedImageStep,
-} from '~/server/services/orchestrator';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -65,9 +64,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { useAppContext } from '~/providers/AppProvider';
-import { isDefined } from '~/utils/type-guards';
-import type { BlobData } from '~/components/ImageGeneration/utils/BlobData';
+import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -80,14 +77,14 @@ const delayTimeouts = new Map<string, NodeJS.Timeout>();
 export function QueueItem({
   request,
   id,
+  markerTags,
 }: {
-  request: NormalizedGeneratedImageResponse;
+  request: WorkflowData;
   id: string;
+  markerTags?: string[];
 }) {
-  const step = request.steps[0];
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { domain } = useAppContext();
   const [ref, inView] = useInViewDynamic({ id });
 
   const generationStatus = useGenerationStatus();
@@ -97,13 +94,15 @@ export function QueueItem({
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
-  const { params, resources = [] } = step;
+  const params = request.params;
+  const resources = request.resources;
 
-  const images = step.images as BlobData[];
+  const allImages = request.steps.flatMap((s) => s.images);
 
-  const failureReason = step.errors
-    ? step.errors.join(',\n')
-    : images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
+  const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
+  const failureReason = stepErrors.length
+    ? stepErrors.join(',\n')
+    : allImages.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
@@ -136,22 +135,28 @@ export function QueueItem({
     };
   }, [request.id, request.createdAt, cancellable]);
 
-  const refundTime = dayjs(request.createdAt)
-    .add(step.timeout ? new TimeSpan(step.timeout).minutes : EXPIRY_TIME, 'minute')
-    .toDate();
+  const minTimeout = request.steps.reduce((min, s) => {
+    const minutes = s.timeout ? new TimeSpan(s.timeout).minutes : EXPIRY_TIME;
+    return Math.min(min, minutes);
+  }, EXPIRY_TIME);
+  const refundTime = dayjs(request.createdAt).add(minTimeout, 'minute').toDate();
 
   const handleCopy = () => {
     copy(request.id);
   };
 
   const handleGenerate = () => {
-    generationStore.setData({
-      resources: (step.resources as any) ?? [],
-      params: { ...(step.params as any), seed: null },
-      remixOfId: step.metadata?.remixOfId,
-      type: images[0].type, // TODO - type based off type of media
-      workflow: step.params.workflow,
-      engine: (step.params as any).engine,
+    const isTxt2Img = request.params?.workflow === 'txt2img';
+    generationGraphStore.setData({
+      params: {
+        ...request.params,
+        seed: null,
+        // Clear images for txt2img to avoid stale data
+        ...(isTxt2Img ? { images: null } : {}),
+      },
+      resources: request.resources,
+      runType: 'replay',
+      remixOfId: request.remixOfId,
     });
   };
 
@@ -165,34 +170,21 @@ export function QueueItem({
       ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
       : status;
 
-  const completedCount = images.filter((x) => x.status === 'succeeded').length;
-  const processingCount = images.filter((x) => x.status === 'processing').length;
+  const completedCount = request.completedCount;
+  const processingCount = request.processingCount;
 
   const canRemix =
-    (step.params.workflow &&
-      !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow)) ||
-    (!!(step.params as any).engine && step.images.length > 0);
+    (params.workflow &&
+      !['img2img-upscale', 'img2img-background-removal'].includes(params.workflow as string)) ||
+    (!!params.engine && allImages.length > 0);
 
-  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
-  const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
+  const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
 
-  const engine =
-    step.metadata.params && 'engine' in step.metadata.params
-      ? (step.metadata.params.engine as string)
-      : undefined;
-  const version =
-    step.metadata.params && 'version' in step.metadata.params
-      ? (step.metadata.params.version as string)
-      : undefined;
+  const engine = params.engine as string | undefined;
+  const version = params.version as string | undefined;
 
-  const transformations = step.metadata.transformations ?? [];
-
-  const queuePosition = request.steps?.[0]?.queuePosition;
-
-  const displayImages = images.filter((x) =>
-    domain.green ? !x.blockedReason : !x.blockedReason || x.canUpgrade
-  );
-  const blockedReasons = images.map((x) => x.blockedReason).filter(isDefined);
+  const queuePosition = request.steps.find((s) => s.queuePosition)?.queuePosition;
+  const stepDisplay = workflowDefinition?.stepDisplay ?? 'inline';
 
   return (
     <Card ref={ref} withBorder px="xs" id={id}>
@@ -200,12 +192,12 @@ export function QueueItem({
         <Card.Section py={4} inheritPadding withBorder>
           <div className="flex justify-between">
             <div className="flex flex-wrap items-center gap-1">
-              {!!images.length && (
+              {!!allImages.length && (
                 <GenerationStatusBadge
                   status={request.status}
                   complete={completedCount}
                   processing={processingCount}
-                  quantity={images.length}
+                  quantity={allImages.length}
                   tooltipLabel={overwriteStatusLabel}
                   progress
                 />
@@ -228,9 +220,29 @@ export function QueueItem({
               {!!request.duration && currentUser?.isModerator && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
               )}
+              {workflowDefinition && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {workflowDefinition.label}
+                </Badge>
+              )}
+              {engine && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {`${engine}${version ? ` ${version}` : ''}`}
+                </Badge>
+              )}
             </div>
             <div className="flex gap-1">
-              <SubmitBlockedImagesForReviewButton step={step} workflowId={request.id} />
+              <SubmitBlockedImagesForReviewButton request={request} />
               {currentUser?.isModerator && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
@@ -267,137 +279,72 @@ export function QueueItem({
       {inView && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {showDelayedMessage && cancellable && request.steps[0]?.$type !== 'videoGen' && (
-              <Alert color="yellow" p={0}>
-                <div className="flex items-center gap-2 px-2 py-1">
-                  <Text size="xs" c="yellow" lh={1}>
-                    <IconAlertTriangleFilled size={20} />
-                  </Text>
-                  <Text size="xs" lh={1.2} c="yellow">
-                    <Text fw={500} component="span">
-                      This is taking longer than usual.
+            {showDelayedMessage &&
+              cancellable &&
+              !request.steps.some((s) => s.$type === 'videoGen') && (
+                <Alert color="yellow" p={0}>
+                  <div className="flex items-center gap-2 px-2 py-1">
+                    <Text size="xs" c="yellow" lh={1}>
+                      <IconAlertTriangleFilled size={20} />
                     </Text>
-                    {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
-                      refundTime
-                    )} we'll refund you automatically.`}
-                  </Text>
-                </div>
-              </Alert>
-            )}
+                    <Text size="xs" lh={1.2} c="yellow">
+                      <Text fw={500} component="span">
+                        This is taking longer than usual.
+                      </Text>
+                      {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
+                        refundTime
+                      )} we'll refund you automatically.`}
+                    </Text>
+                  </div>
+                </Alert>
+              )}
 
             {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
-            <div className="-my-2 flex gap-2">
-              {workflowDefinition && (
-                <Badge
-                  radius="sm"
-                  color="violet"
-                  size="sm"
-                  classNames={{ label: 'overflow-hidden' }}
-                >
-                  {workflowDefinition.label}
-                </Badge>
-              )}
-              {engine && (
-                <Badge
-                  radius="sm"
-                  color="violet"
-                  size="sm"
-                  classNames={{ label: 'overflow-hidden' }}
-                >
-                  {`${engine}${version ? ` ${version}` : ''}`}
-                </Badge>
-              )}
-            </div>
-            <div className="5 flex flex-col gap-0">
-              {transformations.length > 0 && (
-                <div className="flex items-center gap-1">
-                  <Text size="sm">Transformations:</Text>
-                  {transformations.map((transformation, i) => (
-                    <Badge key={i} size="sm">
-                      {transformation.type}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-              {resources.length > 0 && (
-                <div className="flex items-center gap-1">
-                  <Text size="sm">Resources:</Text>
-                  <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
-                </div>
-              )}
-            </div>
+            {resources.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {resources.map((resource) => (
+                  <ResourceRow key={resource.id} resource={resource} />
+                ))}
+              </div>
+            )}
 
-            {failureReason && <Alert color="red">{failureReason}</Alert>}
+            {stepDisplay === 'inline' && failureReason && (
+              <Alert color="red">{failureReason}</Alert>
+            )}
 
-            <div
-              className={clsx(classes.grid, {
-                [classes.asSidebar]: !features.largerGenerationImages,
-              })}
-            >
-              {displayImages.map((image, index) => (
-                <GeneratedImage key={index} image={image} request={request} step={step} />
-              ))}
-              <BlockedBlocks
-                blockedReasons={blockedReasons}
-                workflowId={request.id}
-                transactions={request.transactions}
+            {stepDisplay === 'separate' ? (
+              request.steps.map((step) => {
+                const stepConfig =
+                  workflowConfigs[step.params.workflow as keyof typeof workflowConfigs];
+                return (
+                  <div key={step.name} className="flex flex-col gap-2">
+                    <Text size="xs" c="dimmed" fw={500}>
+                      {stepConfig?.label ?? step.name}
+                    </Text>
+                    <StepImages
+                      step={step}
+                      request={request}
+                      features={features}
+                      pending={pending}
+                      processing={processing}
+                      queuePosition={queuePosition}
+                      markerTags={markerTags}
+                    />
+                  </div>
+                );
+              })
+            ) : (
+              <StepImages
+                step={null}
+                request={request}
+                features={features}
+                pending={pending}
+                processing={processing}
+                queuePosition={queuePosition}
+                markerTags={markerTags}
               />
-
-              {(pending || processing) && (
-                <TwCard
-                  className="items-center justify-center border"
-                  style={{
-                    aspectRatio: images[0].aspect,
-                  }}
-                >
-                  {processing && (
-                    <>
-                      {/* {images[0].type === 'video' &&
-                      images[0].progress &&
-                      images[0].progress < 1 ? (
-                        <ProgressIndicator progress={images[0].progress} />
-                      ) : (
-                        <>
-                          <Loader size={24} />
-                          <Text c="dimmed" size="xs" align="center">
-                            Generating
-                          </Text>
-                        </>
-                      )} */}
-                      <Loader size={24} />
-                      <Text c="dimmed" size="xs" align="center">
-                        Generating
-                      </Text>
-                    </>
-                  )}
-                  {pending &&
-                    (queuePosition ? (
-                      <>
-                        {queuePosition.support === 'unavailable' && (
-                          <Text c="dimmed" size="xs" align="center">
-                            Currently unavailable
-                          </Text>
-                        )}
-                        {!!queuePosition.precedingJobs && (
-                          <Text c="dimmed" size="xs" align="center">
-                            Your position in queue: {queuePosition.precedingJobs}
-                          </Text>
-                        )}
-                        {queuePosition.startAt && (
-                          <Text size="xs" c="dimmed">
-                            Estimated start time: {formatDateMin(new Date(queuePosition.startAt))}
-                          </Text>
-                        )}
-                      </>
-                    ) : (
-                      <Text c="dimmed" size="xs" align="center">
-                        Pending
-                      </Text>
-                    ))}
-                </TwCard>
-              )}
-            </div>
+            )}
           </div>
         </>
       )}
@@ -416,73 +363,142 @@ export function QueueItem({
   );
 }
 
-const ResourceBadge = (props: GenerationResource) => {
+function ResourceRow({ resource }: { resource: GenerationResource }) {
   const { unstableResources } = useUnstableResources();
-
-  const { model, id, name, epochDetails } = props;
+  const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
-  const hasEpochDetails = !!epochDetails?.epochNumber;
-
-  const badge = (
-    <Group gap={4} wrap="nowrap">
-      <Badge
-        size="sm"
-        color={unstable ? 'yellow' : undefined}
-        style={{
-          maxWidth: 200,
-          cursor: 'pointer',
-          borderTopRightRadius: hasEpochDetails ? 0 : undefined,
-          borderBottomRightRadius: hasEpochDetails ? 0 : undefined,
-        }}
-        classNames={{ label: '!overflow-hidden' }}
-        component={Link}
-        href={`/models/${model.id}?modelVersionId=${id}`}
-        onClick={() => generationPanel.close()}
-      >
-        {model.name} - {name}
-      </Badge>
-      {epochDetails?.epochNumber && (
-        <Tooltip label={`Epoch: #${epochDetails?.epochNumber}`}>
-          <Badge
-            size="sm"
-            color={unstable ? 'yellow' : undefined}
-            style={{
-              borderTopLeftRadius: hasEpochDetails ? 0 : undefined,
-              borderBottomLeftRadius: hasEpochDetails ? 0 : undefined,
-            }}
-            classNames={{ label: '!overflow-hidden' }}
-          >
-            #{epochDetails?.epochNumber}
-          </Badge>
-        </Tooltip>
-      )}
-    </Group>
-  );
-
-  return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
-};
-
-const ProgressIndicator = ({
-  progress,
-  ...ringProgressProps
-}: Omit<RingProgressProps, 'sections'> & { progress: number }) => {
-  const color = progress >= 1 ? 'green' : 'blue';
-  const value = progress * 100;
 
   return (
-    <RingProgress
-      {...ringProgressProps}
-      size={100}
-      thickness={8}
-      sections={[{ value, color }]}
-      label={
-        <Text c="blue" fw={700} align="center">
-          {value.toFixed(0)}%
-        </Text>
-      }
-    />
+    <Button.Group>
+      <Button
+        size="compact-sm"
+        variant="default"
+        component={Link}
+        href={`/models/${model.id}?modelVersionId=${id}`}
+        onClick={() => generationGraphPanel.close()}
+        leftSection={
+          unstable ? (
+            <Tooltip label="Unstable resource">
+              <IconAlertTriangleFilled size={14} className="text-yellow-500" />
+            </Tooltip>
+          ) : undefined
+        }
+        color={unstable ? 'yellow' : undefined}
+      >
+        {model.name} - {name}
+        {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
+      </Button>
+      <ButtonTooltip {...tooltipProps} label="Generate with this resource">
+        <Button
+          size="compact-sm"
+          variant="default"
+          px={4}
+          onClick={() => {
+            generationGraphStore.setData({
+              params: { ecosystem: resource.baseModel },
+              resources: [resource],
+              runType: 'run',
+            });
+            generationGraphPanel.open();
+          }}
+        >
+          <IconPlus size={14} />
+        </Button>
+      </ButtonTooltip>
+    </Button.Group>
   );
-};
+}
+
+/**
+ * Renders the image grid for a single step or all steps (inline mode).
+ * When `step` is null, renders all workflow images flattened.
+ */
+function StepImages({
+  step,
+  request,
+  features,
+  pending,
+  processing,
+  queuePosition,
+  markerTags,
+}: {
+  step: StepData | null;
+  request: WorkflowData;
+  features: ReturnType<typeof useFeatureFlags>;
+  pending: boolean;
+  processing: boolean;
+  queuePosition?: WorkflowData['steps'][number]['queuePosition'];
+  markerTags?: string[];
+}) {
+  const images = step ? step.images : request.steps.flatMap((s) => s.images);
+  const allDisplayImages = step ? step.displayImages : request.displayImages;
+  const displayImages = allDisplayImages.filter((img) => matchesMarkerTags(img, markerTags));
+  const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
+
+  const stepFailure = step
+    ? step.errors?.join(',\n') ||
+      step.images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason
+    : undefined;
+
+  return (
+    <>
+      {stepFailure && <Alert color="red">{stepFailure}</Alert>}
+      <div
+        className={clsx(classes.grid, {
+          [classes.asSidebar]: !features.largerGenerationImages,
+        })}
+      >
+        {displayImages.map((image) => (
+          <GeneratedImage key={image.id} image={image} />
+        ))}
+        <BlockedBlocks
+          blockedReasons={blockedReasons}
+          workflowId={request.id}
+          transactions={request.transactions}
+        />
+        {(pending || processing) && images[0] && (
+          <TwCard
+            className="items-center justify-center border"
+            style={{ aspectRatio: images[0].aspect }}
+          >
+            {processing && (
+              <>
+                <Loader size={24} />
+                <Text c="dimmed" size="xs" align="center">
+                  Generating
+                </Text>
+              </>
+            )}
+            {pending &&
+              (queuePosition ? (
+                <>
+                  {queuePosition.support === 'unavailable' && (
+                    <Text c="dimmed" size="xs" align="center">
+                      Request queued — your generation will begin shortly
+                    </Text>
+                  )}
+                  {!!queuePosition.precedingJobs && (
+                    <Text c="dimmed" size="xs" align="center">
+                      Your position in queue: {queuePosition.precedingJobs}
+                    </Text>
+                  )}
+                  {queuePosition.startAt && (
+                    <Text size="xs" c="dimmed">
+                      Estimated start time: {formatDateMin(new Date(queuePosition.startAt))}
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Text c="dimmed" size="xs" align="center">
+                  Pending
+                </Text>
+              ))}
+          </TwCard>
+        )}
+      </div>
+    </>
+  );
+}
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -536,16 +552,9 @@ function CancelOrDeleteWorkflow({
   );
 }
 
-function SubmitBlockedImagesForReviewButton({
-  step,
-  workflowId,
-}: {
-  step: NormalizedGeneratedImageStep;
-  workflowId: string;
-}) {
-  const blockedImages = step.images.filter((x) => !!x.blockedReason);
+function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData }) {
   const currentUser = useCurrentUser();
-  if (!blockedImages.length || !currentUser?.username) return null;
+  if (!request.blockedCount || !currentUser?.username) return null;
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
@@ -559,10 +568,10 @@ function SubmitBlockedImagesForReviewButton({
         href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
           currentUser.username
         )}&Prompt=${encodeURIComponent(
-          (step.params as any).prompt
+          (request.params?.prompt as string) ?? ''
         )}&Negative%20Prompt=${encodeURIComponent(
-          (step.params as any).negativePrompt
-        )}&Workflow%20ID=${workflowId}`}
+          (request.params?.negativePrompt as string) ?? ''
+        )}&Workflow%20ID=${request.id}`}
       >
         <IconFlagQuestion size={20} />
       </LegacyActionIcon>

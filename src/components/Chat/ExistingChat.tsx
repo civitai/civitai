@@ -1,5 +1,6 @@
 import type { StackProps } from '@mantine/core';
 import {
+  Alert,
   Anchor,
   Box,
   Button,
@@ -20,6 +21,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
+  IconAlertTriangle,
   IconArrowBack,
   IconChevronDown,
   IconChevronLeft,
@@ -62,6 +64,9 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
 import { BlurText } from '~/components/BlurText/BlurText';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 type TypingStatus = {
@@ -69,6 +74,28 @@ type TypingStatus = {
 };
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
+
+function ScamWarningContent({ chatId }: { chatId: number }) {
+  return (
+    <Text size="xs">
+      Beware of scam messages. Civitai staff will only message you from{' '}
+      <Text span c="red" fw={700}>
+        red-nameplate
+      </Text>{' '}
+      accounts and have a Civitai moderator badge next to their name (not the profile picture!). Do
+      not click unknown links or share payment info.{' '}
+      <Anchor
+        component="button"
+        type="button"
+        size="xs"
+        onClick={() => openReportModal({ entityType: ReportEntity.Chat, entityId: chatId })}
+      >
+        Report suspicious DMs
+      </Anchor>{' '}
+      immediately.
+    </Text>
+  );
+}
 
 export function ExistingChat() {
   const currentUser = useCurrentUser();
@@ -403,6 +430,17 @@ export function ExistingChat() {
         myMember.status === ChatMemberStatus.Left ||
         myMember.status === ChatMemberStatus.Kicked ? (
         <>
+          <DismissibleAlert
+            id="chat-scam-warning"
+            className="shrink-0"
+            color="yellow"
+            icon={<IconAlertTriangle className="shrink-0" size={20} />}
+            size="sm"
+            p="xs"
+            m="xs"
+          >
+            <ScamWarningContent chatId={existingChatId!} />
+          </DismissibleAlert>
           <Box p="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
               <Center h="100%">
@@ -482,6 +520,9 @@ export function ExistingChat() {
         myMember.status === ChatMemberStatus.Ignored ? (
         <Center h="100%">
           <Stack>
+            <Alert color="yellow" icon={<IconAlertTriangle size={20} />} p="xs" mx="sm">
+              <ScamWarningContent chatId={existingChatId!} />
+            </Alert>
             {allChats.length > 0 && (
               <Text mb="md" p="sm" size="xs" italic align="center">{`"${allChats[0].content.slice(
                 0,

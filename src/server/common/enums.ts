@@ -139,6 +139,8 @@ export enum SignalMessages {
   TopicUpdate = 'topic:connections',
   NewOrderQueueUpdate = 'new-order:queue-update',
   NewOrderPlayerUpdate = 'new-order:player-update',
+  MetricUpdate = 'metric:update',
+  SessionRefresh = 'session:refresh',
 }
 
 export enum BountySort {
@@ -186,6 +188,28 @@ export enum BlockedReason {
   Moderated = 'moderated',
   CSAM = 'CSAM',
   AiNotVerified = 'AiNotVerified',
+}
+
+export enum ViolationType {
+  RealPerson = 'realPerson',
+  RealPersonNsfw = 'realPersonNsfw',
+  RealisticMinor = 'realisticMinor',
+  RealisticMinorNsfw = 'realisticMinorNsfw',
+  AnimatedMinorNsfw = 'animatedMinorNsfw',
+  SchoolNsfw = 'schoolNsfw',
+  Bestiality = 'bestiality',
+  SexualViolence = 'sexualViolence',
+  MindAlteredNsfw = 'mindAlteredNsfw',
+  FecalMatter = 'fecalMatter',
+  Gore = 'gore',
+  Diaper = 'diaper',
+  Anorexia = 'anorexia',
+  BodilyFluids = 'bodilyFluids',
+  Incest = 'incest',
+  Hate = 'hate',
+  NonAi = 'non-ai',
+  Spam = 'spam',
+  Other = 'other',
 }
 
 export enum ThreadSort {
@@ -334,6 +358,9 @@ export enum OrchEngineTypes {
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
   LinkDomain = 'LinkDomain',
+  MessagePattern = 'MessagePattern',
+  UsernameExact = 'UsernameExact',
+  UsernamePartial = 'UsernamePartial',
 }
 
 export enum ToolSort {
@@ -356,6 +383,7 @@ export enum SignalTopic {
   ModelVersion = 'model-version', // with :modelVersionId
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
+  Metric = 'metrics', // with :entityType:entityId
 }
 
 export enum NewOrderImageRatingStatus {

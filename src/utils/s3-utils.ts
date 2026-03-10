@@ -24,6 +24,33 @@ const missingEnvs = (): string[] => {
   return keys;
 };
 
+export type UploadBackend = 'default' | 'b2';
+
+export function getB2S3Client() {
+  if (!env.S3_UPLOAD_B2_ACCESS_KEY || !env.S3_UPLOAD_B2_SECRET_KEY || !env.S3_UPLOAD_B2_ENDPOINT) {
+    throw new Error('B2 upload credentials not configured');
+  }
+  return new S3Client({
+    credentials: {
+      accessKeyId: env.S3_UPLOAD_B2_ACCESS_KEY,
+      secretAccessKey: env.S3_UPLOAD_B2_SECRET_KEY,
+    },
+    region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+    endpoint: env.S3_UPLOAD_B2_ENDPOINT,
+    forcePathStyle: true,
+  });
+}
+
+export function getUploadS3Client(backend: UploadBackend = 'default') {
+  if (backend === 'b2') return getB2S3Client();
+  return getS3Client();
+}
+
+export function getUploadBucket(backend: UploadBackend = 'default') {
+  if (backend === 'b2') return env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles';
+  return env.S3_UPLOAD_BUCKET;
+}
+
 type S3Clients = 'model' | 'image';
 export function getS3Client(destination: S3Clients = 'model') {
   const missing = missingEnvs();

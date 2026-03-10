@@ -15,7 +15,6 @@ import type {
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -26,7 +25,7 @@ import type {
   generateImageSchema,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import type {
   GeneratedImageWorkflow,
@@ -34,7 +33,6 @@ import type {
 } from '~/server/services/orchestrator/types';
 import {
   getWorkflow,
-  queryWorkflows,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -56,6 +54,7 @@ import {
   getIsQwen,
   getIsSD3,
   getIsZImageTurbo,
+  getIsZImageBase,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -74,6 +73,7 @@ import type {
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -83,9 +83,6 @@ type WorkflowStepAggregate =
   | VideoEnhancementStep
   | VideoUpscalerStep
   | VideoInterpolationStep;
-
-// Re-export for backward compatibility
-export { createOrchestratorClient, internalOrchestratorClient };
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
@@ -214,6 +211,7 @@ export async function parseGenerateImageInput({
   whatIf?: boolean;
   batchAll?: boolean;
 }) {
+  delete originalParams.scheduler;
   delete originalParams.resolution;
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
@@ -241,6 +239,7 @@ export async function parseGenerateImageInput({
     originalParams.draft = false;
     originalParams.negativePrompt = '';
     delete originalParams.clipSkip;
+    delete originalParams.enhancedCompatibility;
     if (originalParams.fluxMode === fluxDraftAir) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
@@ -250,7 +249,7 @@ export async function parseGenerateImageInput({
       delete originalParams.cfgScale;
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
-      delete originalParams.enhancedCompatibility;
+      // delete originalParams.enhancedCompatibility;
     }
   }
 
@@ -267,6 +266,13 @@ export async function parseGenerateImageInput({
     delete originalParams.negativePrompt;
   }
 
+  const isZImageBase = getIsZImageBase(originalParams.baseModel);
+  if (isZImageBase) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
+    delete originalParams.negativePrompt;
+  }
+
   const isFlux2 = getIsFlux2(originalParams.baseModel);
   if (isFlux2) {
     originalParams.sampler = 'undefined';
@@ -275,15 +281,15 @@ export async function parseGenerateImageInput({
     delete originalParams.clipSkip;
   }
 
-  const isSD3 = getIsSD3(originalParams.baseModel);
-  if (isSD3) {
-    originalParams.sampler = 'undefined';
-    originalParams.draft = false;
-    if (originalResources.find((x) => x.id === 983611)) {
-      originalParams.steps = 4;
-      originalParams.cfgScale = 1;
-    }
-  }
+  // const isSD3 = getIsSD3(originalParams.baseModel);
+  // if (isSD3) {
+  //   originalParams.sampler = 'undefined';
+  //   originalParams.draft = false;
+  //   if (originalResources.find((x) => x.id === 983611)) {
+  //     originalParams.steps = 4;
+  //     originalParams.cfgScale = 1;
+  //   }
+  // }
 
   const status = await getGenerationStatus();
   if (!status.available && !user.isModerator)
@@ -436,12 +442,18 @@ function getResources(step: WorkflowStep) {
 
 function combineResourcesWithInputResource(
   allResources: GenerationResource[],
-  resources: { id: number; strength?: number | null }[]
+  resources: { id: number; strength?: number | null; epochNumber?: number }[]
 ): GenerationResource[] {
-  return allResources
-    .map((resource) => {
-      const original = resources.find((x) => x.id === resource.id);
-      if (!original) return null;
+  return resources
+    .map((original) => {
+      // Match by both id and epochNumber to handle the same model version used with different epochs
+      const resource =
+        allResources.find(
+          (x) =>
+            x.id === original.id &&
+            (x.epochDetails?.epochNumber ?? x.epochNumber) === original.epochNumber
+        ) ?? allResources.find((x) => x.id === original.id);
+      if (!resource) return null;
       return { ...resource, strength: original.strength ?? resource.strength };
     })
     .filter(isDefined);
@@ -514,6 +526,7 @@ function formatWorkflowStep(args: {
     case 'comfy':
       return formatComfyStep(args);
     case 'imageGen':
+    case 'imageUpscaler':
       return formatImageGenStep(args);
     case 'videoGen':
     case 'videoUpscaler':
@@ -571,9 +584,9 @@ function formatVideoGenStep({
       ? params.resources
       : (metadata.resources as unknown as ResourceInput[])) ?? // this casting is not ideal, but we are now assigning a resource value here when we call createVideoGenStep
     []
-  ).map(({ air, strength }) => {
-    const { version } = parseAIR(air);
-    return { id: version, strength };
+  ).map((r) => {
+    const version = 'air' in r ? parseAIR(r.air).version : ((r as any).id as number);
+    return { id: version, strength: r.strength };
   });
 
   // it's silly, but video resources are nested in the params, where image resources are not
@@ -718,31 +731,12 @@ export function formatComfyStep({
   };
 }
 
-export type GeneratedImageWorkflowModel = AsyncReturnType<
-  typeof queryGeneratedImageWorkflows
->['items'][0];
-export async function queryGeneratedImageWorkflows({
-  user,
-  ...props
-}: Parameters<typeof queryWorkflows>[0] & {
-  token: string;
-  user?: SessionUser;
-  hideMatureContent: boolean;
-}) {
-  const { nextCursor, items } = await queryWorkflows(props);
-
-  return {
-    items: await formatGenerationResponse(items as GeneratedImageWorkflow[], user),
-    nextCursor,
-  };
-}
-
 export async function updateWorkflow({
   user,
   ...props
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
   const workflow = await clientUpdateWorkflow(props);
-  const [formatted] = await formatGenerationResponse([workflow] as GeneratedImageWorkflow[], user);
+  const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
 }
 
@@ -789,6 +783,8 @@ export interface NormalizedWorkflowStepOutput {
   blockedReason?: string | null;
   previewUrl?: string | null;
   previewUrlExpiresAt?: string | null;
+  width: number;
+  height: number;
 }
 
 function formatWorkflowStepOutput({
@@ -813,7 +809,7 @@ function formatWorkflowStepOutput({
         sourceImage?: SourceImageProps;
         images?: SourceImageProps[];
         engine?: string;
-        aspectRatio?: string;
+        aspectRatio?: string | { value?: string; width?: number; height?: number };
       };
 
       width = params.width;
@@ -821,9 +817,33 @@ function formatWorkflowStepOutput({
 
       if (!width || !height) {
         if (params.aspectRatio) {
-          const split = params.aspectRatio.split(':').map(Number);
-          width = split[0];
-          height = split[1];
+          // Handle both string ("16:9") and object ({ value, width, height }) formats
+          if (typeof params.aspectRatio === 'object') {
+            width = params.aspectRatio.width;
+            height = params.aspectRatio.height;
+            if (!width || !height) {
+              const arValue = params.aspectRatio.value ?? '1:1';
+              const split = arValue.split(':').map(Number);
+              width = split[0];
+              height = split[1];
+            }
+          } else {
+            // Handle both string ("16:9") and object ({ value, width, height }) formats
+            if (typeof params.aspectRatio === 'object') {
+              width = (params.aspectRatio as any).width;
+              height = (params.aspectRatio as any).height;
+              if (!width || !height) {
+                const arValue = (params.aspectRatio as any).value ?? '1:1';
+                const split = arValue.split(':').map(Number);
+                width = split[0];
+                height = split[1];
+              }
+            } else {
+              const split = params.aspectRatio.split(':').map(Number);
+              width = split[0];
+              height = split[1];
+            }
+          }
         } else {
           const image = params.sourceImage ?? params.images?.[0];
           if (image) {
@@ -842,8 +862,11 @@ function formatWorkflowStepOutput({
             aspect = 1.325;
             break;
           default: {
-            if (!params.aspectRatio) params.aspectRatio = '16:9';
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            const arValue =
+              typeof params.aspectRatio === 'object'
+                ? params.aspectRatio?.value ?? '16:9'
+                : params.aspectRatio ?? '16:9';
+            const [rw, rh] = arValue.split(':').map(Number);
             aspect = rw / rh;
             break;
           }
@@ -865,6 +888,8 @@ function formatWorkflowStepOutput({
       seed: seed ? seed + index : undefined,
       status: item.available ? 'succeeded' : job?.status ?? ('unassignend' as WorkflowStatus),
       aspect,
+      width,
+      height,
     };
   });
   const errors: string[] = [];
@@ -883,27 +908,4 @@ function formatWorkflowStepOutput({
     images,
     errors,
   };
-}
-
-export type WorkflowStatusUpdate = AsyncReturnType<typeof getWorkflowStatusUpdate>;
-export async function getWorkflowStatusUpdate({
-  token,
-  workflowId,
-}: {
-  token: string;
-  workflowId: string;
-}) {
-  const result = await getWorkflow({ token, path: { workflowId: workflowId as string } });
-  if (result) {
-    return {
-      id: workflowId,
-      status: result.status!,
-      steps: result.steps?.map((step) => ({
-        name: step.name,
-        status: step.status,
-        completedAt: step.completedAt,
-        ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
-      })),
-    };
-  }
 }

@@ -25,4 +25,19 @@ export const buzzNotifications = createNotificationProcessor({
       };
     },
   },
+  'redeemable-code-ready': {
+    displayName: 'Redeemable Code Ready',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      const description =
+        details.codeType === 'Buzz'
+          ? `${Number(details.unitValue).toLocaleString()} Buzz`
+          : `${details.unitValue}-month Membership`;
+      return {
+        message: `Your crypto payment has been confirmed! Your redeemable code for ${description} is ready. View it in your account settings.`,
+        url: '/user/account#purchased-codes',
+      };
+    },
+  },
 });

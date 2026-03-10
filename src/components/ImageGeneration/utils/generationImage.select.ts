@@ -1,35 +1,77 @@
-import { createSelectStore } from '~/store/select.store';
+import { useCallback } from 'react';
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 
-type OrchestratorImageSelectArgs = { workflowId: string; stepName: string; imageId: string };
+// =============================================================================
+// Key helpers
+// =============================================================================
 
-const stringify = ({ workflowId, stepName, imageId }: OrchestratorImageSelectArgs) =>
-  `${workflowId}:${stepName}:${imageId}`;
+const makeKey = (image: { workflowId: string; stepName: string; id: string }) =>
+  `${image.workflowId}:${image.stepName}:${image.id}`;
 
-const parseValue = (value: string) => {
-  const [workflowId, stepName, imageId] = value.split(':') as [
-    workflowId: string,
-    stepName: string,
-    imageId: string
-  ];
-  return { workflowId, stepName, imageId };
+// =============================================================================
+// Store (plain zustand — no immer, BlobData has private fields)
+// =============================================================================
+
+interface OrchestratorImageSelectState {
+  selected: Record<string, BlobData>;
+}
+
+const initialState: OrchestratorImageSelectState = {
+  selected: {},
 };
 
-const selectStore = createSelectStore<string>('generated-image-select');
+const useStore = create<OrchestratorImageSelectState>()(
+  devtools(() => initialState, { name: 'generated-image-select' })
+);
+
+// =============================================================================
+// Public API
+// =============================================================================
+
 export const orchestratorImageSelect = {
-  useSelection: () => {
-    return selectStore.useSelection().map(parseValue);
+  // ---------------------------------------------------------------------------
+  // Selection
+  // ---------------------------------------------------------------------------
+
+  useSelection: (): BlobData[] => {
+    const selected = useStore((state) => state.selected);
+    return Object.values(selected);
   },
-  useIsSelected: (args: OrchestratorImageSelectArgs) => {
-    return selectStore.useIsSelected(stringify(args));
+
+  useIsSelected: (image: { workflowId: string; stepName: string; id: string }): boolean => {
+    const key = makeKey(image);
+    return useStore(useCallback((state) => !!state.selected[key], [key]));
   },
-  useIsSelecting: selectStore.useIsSelecting,
-  setSelected: (args: OrchestratorImageSelectArgs[]) => {
-    return selectStore.setSelected(args.map(stringify));
+
+  useIsSelecting: (): boolean => {
+    return useStore((state) => Object.keys(state.selected).length > 0);
   },
-  toggle: (args: OrchestratorImageSelectArgs, value?: boolean) => {
-    return selectStore.toggle(stringify(args), value);
+
+  setSelected: (images: BlobData[]) => {
+    useStore.setState({
+      selected: Object.fromEntries(images.map((img) => [makeKey(img), img])),
+    });
   },
-  getSelected: () => {
-    return selectStore.getSelected().map(parseValue);
+
+  toggle: (image: BlobData, value?: boolean) => {
+    const state = useStore.getState();
+    const key = makeKey(image);
+    const isSelected = !!state.selected[key];
+    const newValue = value ?? !isSelected;
+
+    if (newValue === isSelected) return;
+
+    if (newValue) {
+      useStore.setState({ selected: { ...state.selected, [key]: image } });
+    } else {
+      const { [key]: _, ...rest } = state.selected;
+      useStore.setState({ selected: rest });
+    }
+  },
+
+  getSelected: (): BlobData[] => {
+    return Object.values(useStore.getState().selected);
   },
 };

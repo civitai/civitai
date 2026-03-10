@@ -90,8 +90,9 @@ export const useSignalTopic = (
           setRegisteredTopics((prev) => prev.filter((t) => t !== topic));
       }
     };
-    // }, [interval, notify, topic, worker]);
-  }, [topic, worker]);
+    // Note: `registeredTopics` intentionally excluded to avoid infinite re-render loop
+    // since this effect modifies it. `interval` is stable (Mantine ref-based).
+  }, [topic, worker, notify]);
 };
 
 const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;

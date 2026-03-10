@@ -1,10 +1,9 @@
 import { Button, Title } from '@mantine/core';
-import { generationStore, generationFormStore } from '~/store/generation.store';
+import { generationGraphStore } from '~/store/generation-graph.store';
 
 export function ResetGenerationPanel({ onResetClick }: { onResetClick?: VoidFunction }) {
   const handleReset = () => {
-    generationStore.clearData();
-    generationFormStore.reset();
+    generationGraphStore.clearData();
     onResetClick?.();
   };
 

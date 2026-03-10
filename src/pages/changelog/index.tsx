@@ -17,7 +17,7 @@ export default function Page() {
       <Meta
         title="Civitai Changelog | The latest updates to Civitai"
         description="List of the recent features, fixes, and improvements to Civitai."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/changelog`, rel: 'canonical' }]}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/changelog`, rel: 'canonical' }]}
       />
       <Container size="lg" p="md" my="xl">
         <Changelogs />

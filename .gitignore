@@ -19,6 +19,9 @@ prisma/schema.prisma
 /.next/
 /out/
 
+# ladle
+.ladle/stubs/
+
 # production
 /build
 
@@ -52,6 +55,7 @@ yarn-error.log*
 # browser automation (local session/profile data)
 .browser/sessions/
 .browser/profiles/
+.browser/storage/
 /clickhouse*
 /undefined
 /.docker
@@ -91,6 +95,9 @@ trace/types.json
 src/pages/api/dev-local/*
 /.playwright-mcp/
 
+# Ladle (local dev artifacts)
+.ladle/stubs/
+
 # LLM
 /.serena/
 
@@ -106,6 +113,7 @@ scripts/local-dev/
 # Claude agent temp directories
 tmpclaude-*-cwd
 .claude/skills/flipt/.env
+.claude/skills/freshdesk/.env
 
 # Ralph agent
 scripts/ralph/prd.json

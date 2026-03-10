@@ -5,7 +5,8 @@
 }
 
 .imageWrapper {
-  &:hover .actionsWrapper {
+  &:hover .actionsWrapper,
+  & .actionsVisible {
     box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
     background: light-dark(
       alpha(var(--mantine-color-gray-0), 0.6),
@@ -37,11 +38,15 @@
 
 .improveMenu {
   border-radius: var(--mantine-radius-sm);
-  background: light-dark(
-    alpha(var(--mantine-color-gray-0), 0.8),
-    alpha(var(--mantine-color-dark-6), 0.8)
-  );
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
   border: none;
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
   padding: 4px;
+}
+
+.scrollableDropdown {
+  @media (max-height: 700px) {
+    max-height: calc(90dvh - 32px);
+    overflow-y: auto;
+  }
 }

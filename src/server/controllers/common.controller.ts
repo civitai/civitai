@@ -15,7 +15,9 @@ import {
   hasEntityAccess,
 } from '~/server/services/common.service';
 import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
-import { dbRead } from '../db/client';
+import { withSpan } from '~/server/utils/otel-helpers';
+import { dbRead, dbWrite } from '../db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -37,12 +39,14 @@ export const getEntityAccessHandler = async ({
       throw throwBadRequestError(`Unsupported entity type: ${entityType}`);
     }
 
-    const entityAccess = await hasEntityAccess({
-      entityIds: entityId,
-      entityType: entityType as SupportedAvailabilityResources,
-      userId: ctx.user?.id,
-      isModerator: !!ctx.user?.isModerator,
-    });
+    const entityAccess = await withSpan('common:getEntityAccess', () =>
+      hasEntityAccess({
+        entityIds: entityId,
+        entityType: entityType as SupportedAvailabilityResources,
+        userId: ctx.user?.id,
+        isModerator: !!ctx.user?.isModerator,
+      })
+    );
 
     return entityAccess;
   } catch (error) {
@@ -88,8 +92,10 @@ export const updateEntityAvailabilityHandler = async ({
     // Update search index:
     switch (entityType) {
       case 'ModelVersion':
-        const modelVersion = await dbRead.modelVersion.findUniqueOrThrow({
-          where: { id: entityId },
+        const findArgs = { where: { id: entityId } } as const;
+        const modelVersion = await dbRead.modelVersion.findUniqueOrThrow(findArgs).catch(() => {
+          dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'updateEntityAvailabilityHandler' });
+          return dbWrite.modelVersion.findUniqueOrThrow(findArgs);
         });
 
         await modelsSearchIndex.queueUpdate([

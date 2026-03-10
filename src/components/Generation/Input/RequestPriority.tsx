@@ -274,12 +274,14 @@ export function RequestPriorityCompact({
 }) {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isPaidMember ?? false;
-  const selected = value ? priorityOptionsMap[value] : undefined;
+  // For members, 'low' displays as 'normal' (High priority, free for members)
+  const displayOptions = isMember && value === 'low' ? priorityOptionsMap['normal'] : undefined;
+  const selected = displayOptions ?? (value ? priorityOptionsMap[value] : undefined);
 
-  // Auto-select High priority for members if Standard is selected or no value
+  // For members, convert 'normal' to 'low' (members get High priority free at 'low')
   useEffect(() => {
-    if (isMember && (!value || value === 'low')) {
-      onChange?.('normal' as Priority);
+    if (isMember && value === 'normal') {
+      onChange?.('low' as Priority);
     } else if (!isMember && value === 'high') {
       onChange?.('low');
     }
@@ -302,7 +304,7 @@ export function RequestPriorityCompact({
               <span
                 className={clsx(
                   'flex items-center',
-                  isMember && value === 'normal' && 'line-through opacity-50'
+                  isMember && value === 'low' && 'line-through opacity-50'
                 )}
               >
                 <span className="text-xs">+</span>
@@ -320,12 +322,16 @@ export function RequestPriorityCompact({
         {Object.values(Priority)
           .reverse()
           .filter((priority) => {
-            // Hide Standard option for members
-            if (isMember && priority === 'low') return false;
+            // Hide 'normal' option for members (they get it as 'low' instead)
+            if (isMember && priority === 'normal') return false;
             return true;
           })
           .map((priority) => {
-            const options = priorityOptionsMap[priority];
+            // For members, show 'low' with 'normal' priority's label/options
+            const options =
+              isMember && priority === 'low'
+                ? priorityOptionsMap['normal']
+                : priorityOptionsMap[priority];
             const disabled = options.memberOnly && !currentUser?.isPaidMember;
 
             if (disabled)
@@ -352,7 +358,7 @@ export function RequestPriorityCompact({
                 <PriorityLabel
                   {...options}
                   modifier={modifier}
-                  isFreeForMember={isMember && priority === 'normal'}
+                  isFreeForMember={isMember && priority === 'low'}
                 />
               </Menu.Item>
             );

@@ -845,6 +845,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         loading: false,
       });
 
+      setModelFileId(response.id);
       setInitialImageList(model.id, thisMediaType, imageList);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
@@ -1034,148 +1035,161 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     const zip = await getJSZip();
 
+    let failedImages = 0;
     await Promise.all(
       imageList.map(async (imgData, idx) => {
-        const filenameBase = String(idx).padStart(3, '0');
+        try {
+          const filenameBase = String(idx).padStart(3, '0');
 
-        let label = imgData.label;
+          let label = imgData.label;
 
-        if (triggerWord.length) {
-          const separator = labelType === 'caption' ? '' : ',';
-          const regMatch =
-            labelType === 'caption'
-              ? new RegExp(`^${triggerWord}( |$)`)
-              : new RegExp(`^${triggerWord}(${separator}|$)`);
+          if (triggerWord.length) {
+            const separator = labelType === 'caption' ? '' : ',';
+            const regMatch =
+              labelType === 'caption'
+                ? new RegExp(`^${triggerWord}( |$)`)
+                : new RegExp(`^${triggerWord}(${separator}|$)`);
 
-          if (!regMatch.test(label)) {
-            label =
-              label.length > 0
-                ? labelType === 'caption'
-                  ? [triggerWord, label].join(' ')
-                  : [triggerWord, label].join(`${separator} `)
-                : triggerWord;
-          }
-        }
-
-        label.length > 0 && zip.file(`${filenameBase}.txt`, label);
-
-        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
-
-        // TODO [bw] unregister here
-
-        zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
-      })
-    );
-    // TODO [bw] handle error
-    zip.generateAsync({ type: 'blob' }).then(async (content) => {
-      const fileName = `${thisModelVersion.id}_training_data.zip`;
-
-      if (dlOnly) {
-        saveAs(content, fileName);
-        setZipping(false);
-        return;
-      }
-
-      hideNotification(notificationId);
-      showNotification({
-        id: notificationId,
-        loading: true,
-        autoClose: false,
-        withCloseButton: false,
-        title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
-      });
-
-      try {
-        await upsertVersionMutation.mutateAsync({
-          id: thisModelVersion.id,
-          name: thisModelVersion.name,
-          modelId: model.id,
-          baseModel: thisModelVersion.baseModel as BaseModel,
-          trainedWords: triggerWord.length ? [triggerWord] : [],
-        });
-      } catch (e: unknown) {
-        setZipping(false);
-        updateNotification({
-          ...notificationFailBase,
-          message:
-            e instanceof Error
-              ? e.message.startsWith('Unexpected token')
-                ? 'Server error :('
-                : e.message
-              : '',
-        });
-        return;
-      }
-
-      const blobFile = new File([content], fileName, {
-        type: 'application/zip',
-      });
-
-      try {
-        const uploadResp = await upload(
-          {
-            file: blobFile,
-            type: UploadType.TrainingImages,
-            meta: {
-              versionId: thisModelVersion.id,
-              labelType,
-              ownRights,
-              shareDataset,
-              numImages: imageList.length,
-              numCaptions: imageList.filter((i) => i.label.length > 0).length,
-            },
-          },
-          async ({ meta, size, ...result }) => {
-            const { versionId, ...metadata } = meta as {
-              versionId: number;
-            };
-            if (versionId) {
-              try {
-                await upsertFileMutation.mutateAsync({
-                  ...result,
-                  ...(modelFileId && { id: modelFileId }),
-                  sizeKB: bytesToKB(size),
-                  modelVersionId: versionId,
-                  type: 'Training Data',
-                  visibility:
-                    ownRights && shareDataset
-                      ? ModelFileVisibility.Public
-                      : ownRights
-                      ? ModelFileVisibility.Sensitive
-                      : ModelFileVisibility.Private,
-                  metadata,
-                });
-              } catch (e: unknown) {
-                setZipping(false);
-                updateNotification({
-                  ...notificationFailBase,
-                });
-              }
-            } else {
-              throw new Error('Missing version data.');
+            if (!regMatch.test(label)) {
+              label =
+                label.length > 0
+                  ? labelType === 'caption'
+                    ? [triggerWord, label].join(' ')
+                    : [triggerWord, label].join(`${separator} `)
+                  : triggerWord;
             }
           }
-        );
-        if (!uploadResp) {
-          setZipping(false);
-          updateNotification({
-            ...notificationFailBase,
-          });
+
+          label.length > 0 && zip.file(`${filenameBase}.txt`, label);
+
+          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+
+          zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
+        } catch (e) {
+          failedImages++;
+          console.error(`Failed to add image ${idx} to zip:`, e);
         }
-      } catch (e) {
+      })
+    );
+
+    if (failedImages > 0) {
+      setZipping(false);
+      updateNotification({
+        ...notificationFailBase,
+        message: `Failed to package ${failedImages} image(s). Please try again.`,
+      });
+      return;
+    }
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const fileName = `${thisModelVersion.id}_training_data.zip`;
+
+    if (dlOnly) {
+      saveAs(content, fileName);
+      setZipping(false);
+      return;
+    }
+
+    hideNotification(notificationId);
+    showNotification({
+      id: notificationId,
+      loading: true,
+      autoClose: false,
+      withCloseButton: false,
+      title: 'Creating and uploading archive',
+      message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
+    });
+
+    try {
+      await upsertVersionMutation.mutateAsync({
+        id: thisModelVersion.id,
+        name: thisModelVersion.name,
+        modelId: model.id,
+        baseModel: thisModelVersion.baseModel as BaseModel,
+        trainedWords: triggerWord.length ? [triggerWord] : [],
+      });
+    } catch (e: unknown) {
+      setZipping(false);
+      updateNotification({
+        ...notificationFailBase,
+        message:
+          e instanceof Error
+            ? e.message.startsWith('Unexpected token')
+              ? 'Server error :('
+              : e.message
+            : '',
+      });
+      return;
+    }
+
+    const blobFile = new File([content], fileName, {
+      type: 'application/zip',
+    });
+
+    try {
+      const uploadResp = await upload(
+        {
+          file: blobFile,
+          type: UploadType.TrainingImages,
+          meta: {
+            versionId: thisModelVersion.id,
+            labelType,
+            ownRights,
+            shareDataset,
+            numImages: imageList.length,
+            numCaptions: imageList.filter((i) => i.label.length > 0).length,
+          },
+        },
+        async ({ meta, size, ...result }) => {
+          const { versionId, ...metadata } = meta as {
+            versionId: number;
+          };
+          if (versionId) {
+            try {
+              const fileId = modelFileId ?? existingDataFile?.id;
+              await upsertFileMutation.mutateAsync({
+                ...result,
+                ...(fileId && { id: fileId }),
+                sizeKB: bytesToKB(size),
+                modelVersionId: versionId,
+                type: 'Training Data',
+                visibility:
+                  ownRights && shareDataset
+                    ? ModelFileVisibility.Public
+                    : ownRights
+                    ? ModelFileVisibility.Sensitive
+                    : ModelFileVisibility.Private,
+                metadata,
+              });
+            } catch (e: unknown) {
+              setZipping(false);
+              updateNotification({
+                ...notificationFailBase,
+              });
+            }
+          } else {
+            throw new Error('Missing version data.');
+          }
+        }
+      );
+      if (!uploadResp) {
         setZipping(false);
         updateNotification({
           ...notificationFailBase,
-          message:
-            e instanceof Error
-              ? e.message.startsWith('Unexpected token')
-                ? 'Server error :('
-                : e.message
-              : '',
         });
       }
-    });
+    } catch (e) {
+      setZipping(false);
+      updateNotification({
+        ...notificationFailBase,
+        message:
+          e instanceof Error
+            ? e.message.startsWith('Unexpected token')
+              ? 'Server error :('
+              : e.message
+            : '',
+      });
+    }
   };
 
   const handleNext = async () => {

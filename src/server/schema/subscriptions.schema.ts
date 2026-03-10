@@ -40,6 +40,18 @@ export const subscriptionProductMetadataSchema = z.looseObject({
   supportLevel: z.string().optional(),
 });
 
+export function getMembershipBuzzTransactionId({
+  date,
+  userId,
+  productId,
+}: {
+  date: string;
+  userId: number;
+  productId: string;
+}) {
+  return `civitai-membership:${date}:${userId}:${productId}:v3`;
+}
+
 export type SubscriptionMetadata = z.infer<typeof subscriptionMetadata>;
 
 export const subscriptionMetadata = z.looseObject({

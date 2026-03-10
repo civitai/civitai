@@ -97,6 +97,54 @@ async function getMatchingGiftNotices(buzzValue: number): Promise<GiftNotice[]> 
   return matchingNotices;
 }
 
+export async function getCodeByOrderId({ orderId, userId }: { orderId: string; userId: number }) {
+  // Validate that orderId belongs to the requesting user
+  // Format: code-{userId}-{timestamp}
+  const expectedPrefix = `code-${userId}-`;
+  if (!orderId.startsWith(expectedPrefix)) {
+    return null;
+  }
+
+  const code = await dbRead.redeemableCode.findFirst({
+    where: {
+      metadata: { path: ['orderId'], equals: orderId },
+      userId,
+    },
+    select: {
+      code: true,
+      type: true,
+      unitValue: true,
+    },
+  });
+
+  return code;
+}
+
+export async function getMyPurchasedCodes({ userId }: { userId: number }) {
+  return dbRead.redeemableCode.findMany({
+    where: {
+      userId,
+    },
+    select: {
+      code: true,
+      type: true,
+      unitValue: true,
+      createdAt: true,
+      expiresAt: true,
+      redeemedAt: true,
+      priceId: true,
+      price: {
+        select: {
+          product: {
+            select: { metadata: true },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
 export async function createRedeemableCodes({
   unitValue,
   type,
@@ -277,6 +325,10 @@ export async function consumeRedeemableCode({
         });
 
         let activeUserMembership = userMembership;
+        // Track whether to grant buzz immediately
+        // Only grant buzz for: new users (no membership) or upgrades (higher tier)
+        // Do NOT grant buzz for: same tier extensions or downgrades
+        let shouldGrantBuzzImmediately = false;
 
         const consumedProductMetadata = consumedCode.price.product
           .metadata as SubscriptionProductMetadata;
@@ -343,6 +395,7 @@ export async function consumeRedeemableCode({
             // At this point, we can safely extend or improve the membership:
             if (consumedTierOrder === membershipTierOrder) {
               // If it's the same tier, we just extend the current period:
+              // Do NOT grant buzz immediately - all tokens go to prepaids
               await tx.customerSubscription.update({
                 where: { id: activeUserMembership.id },
                 data: {
@@ -352,13 +405,9 @@ export async function consumeRedeemableCode({
                       ...subscriptionMetadata.prepaids,
                       [consumedProductTier]:
                         (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue -
-                        1, // -1 because we grant buzz right away
+                        consumedCode.unitValue, // All tokens go to prepaids, no immediate buzz
                     },
-                    buzzTransactionIds: [
-                      ...(subscriptionMetadata.buzzTransactionIds ?? []),
-                      externalTransactionId,
-                    ],
+                    // Do NOT add to buzzTransactionIds since no buzz is granted
                   },
                   status: 'active',
                   currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
@@ -369,7 +418,9 @@ export async function consumeRedeemableCode({
                     .toDate(),
                 },
               });
+              // shouldGrantBuzzImmediately remains false for same tier
             } else if (consumedTierOrder > membershipTierOrder) {
+              // Upgrade to higher tier - grant buzz immediately
               const now = dayjs();
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
@@ -414,9 +465,11 @@ export async function consumeRedeemableCode({
                   },
                 },
               });
+              shouldGrantBuzzImmediately = true; // Upgrade grants buzz immediately
             } else {
-              // We'll only update the metadata for downgrades.
+              // Downgrade (user has higher tier) - do NOT grant buzz immediately
               // The system will handle the downgrade logic automatically when the time comes.
+              // All tokens go to prepaids for the lower tier
               await tx.customerSubscription.update({
                 where: { id: activeUserMembership.id },
                 data: {
@@ -426,22 +479,19 @@ export async function consumeRedeemableCode({
                       ...subscriptionMetadata.prepaids,
                       [consumedProductTier]:
                         (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue -
-                        1, // -1 because we grant buzz right away
+                        consumedCode.unitValue, // All tokens go to prepaids, no immediate buzz
                     },
-                    buzzTransactionIds: [
-                      ...(subscriptionMetadata.buzzTransactionIds ?? []),
-                      externalTransactionId,
-                    ],
+                    // Do NOT add to buzzTransactionIds since no buzz is granted
                   },
                 },
               });
+              // shouldGrantBuzzImmediately remains false for downgrade
             }
           }
         }
 
         if (!activeUserMembership) {
-          // Create a new membership:
+          // Create a new membership - grant buzz immediately for new users
           const now = dayjs();
           const metadata = {
             prepaids: {
@@ -470,30 +520,35 @@ export async function consumeRedeemableCode({
               createdAt: now.toDate(),
             },
           });
+          shouldGrantBuzzImmediately = true; // New user gets buzz immediately
         }
 
-        await withRetries(async () => {
-          // Grant buzz right away:
-          await createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: userId,
-            toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
-            type: TransactionType.Purchase,
-            externalTransactionId: externalTransactionId,
-            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
-            description: `Membership bonus`,
-            details: {
-              type: 'membership-purchase',
-              date: date,
-              productId: consumedCode.price!.product.id,
-            },
-          });
+        // Only grant buzz immediately for new users and upgrades
+        // Same tier extensions and downgrades do NOT get immediate buzz
+        if (shouldGrantBuzzImmediately) {
+          await withRetries(async () => {
+            // Grant buzz right away:
+            await createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: userId,
+              toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+              type: TransactionType.Purchase,
+              externalTransactionId: externalTransactionId,
+              amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
+              description: `Membership bonus`,
+              details: {
+                type: 'membership-purchase',
+                date: date,
+                productId: consumedCode.price!.product.id,
+              },
+            });
 
-          await deliverMonthlyCosmetics({
-            userIds: [userId],
-            tx,
+            await deliverMonthlyCosmetics({
+              userIds: [userId],
+              tx,
+            });
           });
-        });
+        }
       }
 
       return consumedCode;

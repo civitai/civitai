@@ -15,6 +15,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -326,6 +327,7 @@ type CollectionForPermission = {
   userId: number;
   write: CollectionWriteConfiguration;
   imageId?: number;
+  type?: CollectionType;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -340,7 +342,7 @@ export const getUserCollectionsWithPermissions = async <
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type"`
   );
 
   if (input.type) {
@@ -1135,7 +1137,13 @@ export const getCollectionItemsByCollectionId = async ({
     throw throwAuthorizationError('You do not have permission to view review items');
   }
 
-  const collection = await dbRead.collection.findUniqueOrThrow({ where: { id: collectionId } });
+  const collectionFindArgs = { where: { id: collectionId } } as const;
+  const collection = await dbRead.collection
+    .findUniqueOrThrow(collectionFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'collection', caller: 'getAllCollectionItems' });
+      return dbWrite.collection.findUniqueOrThrow(collectionFindArgs);
+    });
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
 
@@ -1550,11 +1558,17 @@ export const deleteCollectionById = async ({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator?: boolean }) => {
-  const collection = await dbRead.collection.findFirstOrThrow({
+  const collectionDeleteFindArgs = {
     // Confirm the collection belongs to the user:
     where: { id, userId: isModerator ? undefined : userId },
     select: { id: true, mode: true },
-  });
+  } as const;
+  const collection = await dbRead.collection
+    .findFirstOrThrow(collectionDeleteFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'collection', caller: 'deleteCollectionById' });
+      return dbWrite.collection.findFirstOrThrow(collectionDeleteFindArgs);
+    });
 
   if (collection.mode === CollectionMode.Bookmark) {
     throw throwBadRequestError('You cannot delete a bookmark collection');
@@ -2017,7 +2031,9 @@ export const validateContestCollectionEntry = async ({
     });
 
     // filter images that are above the forced browsing level
-    const invalidImages = images.filter((image) => !allowedLevels.includes(image.nsfwLevel));
+    const invalidImages = images.filter(
+      (image) => image.nsfwLevel !== 0 && !allowedLevels.includes(image.nsfwLevel)
+    );
     if (invalidImages.length > 0) {
       throw throwBadRequestError(
         `Some images have a higher rating than the allowed for the contest. Please ensure all images have a rating of ${allowedLevels
@@ -2253,6 +2269,18 @@ export const bulkSaveItems = async ({
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
+
+  // Check for challenge entry prize eligibility (Contest mode collections only)
+  if (collection.mode === CollectionMode.Contest && count > 0) {
+    // Import dynamically to avoid circular dependencies
+    const { checkAndAwardEntryPrize } = await import(
+      '~/server/games/daily-challenge/challenge-prize'
+    );
+    // Fire and forget - don't block the response
+    checkAndAwardEntryPrize({ userId, collectionId }).catch(() => {
+      // Silently ignore errors - prize distribution is not critical path
+    });
+  }
 
   // return imageIds for use in controller updateEntityMetrics
   return {
@@ -2559,12 +2587,18 @@ export const setItemScore = async ({
 };
 
 export const getCollectionItemById = ({ id }: GetByIdInput) => {
-  return dbRead.collectionItem.findUniqueOrThrow({
+  const collectionItemFindArgs = {
     where: { id },
     include: {
       collection: true,
     },
-  });
+  } as const;
+  return dbRead.collectionItem
+    .findUniqueOrThrow(collectionItemFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'collectionItem', caller: 'getCollectionItemById' });
+      return dbWrite.collectionItem.findUniqueOrThrow(collectionItemFindArgs);
+    });
 };
 
 export async function getCollectionEntryCount({

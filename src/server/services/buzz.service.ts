@@ -1033,7 +1033,7 @@ export const getDailyCompensationRewardByUser = async ({
     SELECT
       date,
       modelVersionId,
-	    MAX(FLOOR(amount))::int AS total
+	    SUM(FLOOR(amount))::int AS total
     FROM orchestration.resourceCompensations
     WHERE date BETWEEN ${minDate} AND ${maxDate}
       AND modelVersionId IN (SELECT id FROM user_resources)

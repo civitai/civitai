@@ -2,13 +2,19 @@ import { useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useSession } from 'next-auth/react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
+import {
+  SESSION_REFRESH_HEADER,
+  SESSION_REFRESH_COOKIE,
+  GENERATION_UPDATE_HEADER,
+} from '~/shared/constants/auth.constants';
 
 const UpdateRequiredModal = dynamic(
   () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal')
 );
 
 let warned = false;
+/** Tracks the version we last showed a generation update modal for */
+let generationWarnedVersion: string | undefined;
 let originalFetch: typeof window.fetch | undefined;
 let sessionRefreshPending = false;
 
@@ -46,8 +52,23 @@ export function UpdateRequiredWatcher({ children }: { children: React.ReactEleme
     window.fetch = async (...args) => {
       const response = await originalFetch!(...args);
 
-      // Handle update required
-      if (response.headers.has('x-update-required') && !warned) {
+      // Handle generation-panel-specific update (new implementation)
+      const genVersion = response.headers.get(GENERATION_UPDATE_HEADER);
+      if (genVersion && genVersion !== generationWarnedVersion) {
+        const notes = response.headers.get('x-generation-update-notes');
+        dialogStore.trigger({
+          id: 'update-required-modal',
+          component: UpdateRequiredModal,
+          props: {
+            title: 'Generator Update Available',
+            description: notes || 'Please refresh to get the latest generator updates.',
+          },
+        });
+        generationWarnedVersion = genVersion;
+      }
+
+      // Handle global update required — skip if generation-specific header already handled it
+      if (response.headers.has('x-update-required') && !warned && !generationWarnedVersion) {
         dialogStore.trigger({
           id: 'update-required-modal',
           component: UpdateRequiredModal,

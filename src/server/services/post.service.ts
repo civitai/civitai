@@ -9,9 +9,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  imageMetaCache,
+  imageResourcesCache,
   modelVersionAccessCache,
   postStatCache,
   thumbnailCache,
+  imageMetadataCache,
   userBasicCache,
   userPostCountCache,
 } from '~/server/redis/caches';
@@ -24,6 +27,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
@@ -452,31 +456,35 @@ export const getPostsInfinite = async ({
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
   // Get user data
   const userIds = postsRaw.map((i) => i.userId);
-  const [images, postStats, userData, cosmetics, modelVersions] = await Promise.all([
-    postsRaw.length
-      ? await getImagesForPosts({
-          postIds: postsRaw.map((x) => x.id),
-          // excludedIds: excludedImageIds,
-          user,
-          browsingLevel,
-          pending,
-          disablePoi,
-          disableMinor,
-          poiOnly,
-          minorOnly,
-        })
-      : Promise.resolve([]),
-    postsRaw.length > 0
-      ? getPostStatsObject(postsRaw)
-      : Promise.resolve({} as ReturnType<typeof getPostStatsObject>),
-    userBasicCache.fetch(userIds),
-    includeCosmetics
-      ? getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
-      : Promise.resolve({} as ReturnType<typeof getCosmeticsForEntity>),
-    modelVersionIds.length > 0 && filterByPermissionContent
-      ? modelVersionAccessCache.fetch(modelVersionIds)
-      : Promise.resolve({} as ReturnType<typeof modelVersionAccessCache.fetch>),
-  ]);
+  const [images, postStats, userData, cosmetics, modelVersions] = await withSpan(
+    'post:getInfinite:parallelFetch',
+    () =>
+      Promise.all([
+        postsRaw.length
+          ? getImagesForPosts({
+              postIds: postsRaw.map((x) => x.id),
+              // excludedIds: excludedImageIds,
+              user,
+              browsingLevel,
+              pending,
+              disablePoi,
+              disableMinor,
+              poiOnly,
+              minorOnly,
+            })
+          : Promise.resolve([]),
+        postsRaw.length > 0
+          ? getPostStatsObject(postsRaw)
+          : Promise.resolve({} as ReturnType<typeof getPostStatsObject>),
+        userBasicCache.fetch(userIds),
+        includeCosmetics
+          ? getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
+          : Promise.resolve({} as ReturnType<typeof getCosmeticsForEntity>),
+        modelVersionIds.length > 0 && filterByPermissionContent
+          ? modelVersionAccessCache.fetch(modelVersionIds)
+          : Promise.resolve({} as ReturnType<typeof modelVersionAccessCache.fetch>),
+      ])
+  );
 
   // Filter to collections with permissions:
   const collectionIds = postsRaw.map((p) => p.collectionId).filter(isDefined);
@@ -496,7 +504,7 @@ export const getPostsInfinite = async ({
 
   return {
     nextCursor,
-    items: postsRaw
+    items: withSpan('post:getInfinite:transform', () => postsRaw
       // remove unlisted resources the user has no access to:
       .filter((p) => {
         // Allow mods and owners to view all.
@@ -544,7 +552,7 @@ export const getPostsInfinite = async ({
           cosmetic: cosmetics[post.id] ?? null,
         };
       })
-      .filter((x) => x.imageCount !== 0),
+      .filter((x) => x.imageCount !== 0)),
   };
 };
 
@@ -1049,6 +1057,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true, url: true, userId: true },
   });
+  await imageMetadataCache.bust(image.id);
+  await imageMetaCache.bust(image.id);
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
@@ -1174,13 +1184,10 @@ export const addResourceToPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
+  await imageResourcesCache.bust(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
-
-  // for (const imageId of imageIds) {
-  //   purgeImageGenerationDataCache(imageId);
-  // }
 
   for (const image of images) {
     if (!!image.postId) {
@@ -1222,13 +1229,9 @@ export const removeResourceFromPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
+  await imageResourcesCache.bust(imageId);
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-  // await bustCacheTag(`images-model:${modelVersion.model.id}`);
-
-  // for (const imageId of imageIds) {
-  //   purgeImageGenerationDataCache(imageId);
-  // }
 
   if (!!image.postId) {
     await preventReplicationLag('postImages', image.postId);

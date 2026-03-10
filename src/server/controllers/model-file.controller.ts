@@ -13,6 +13,7 @@ import {
   updateFile,
 } from '~/server/services/model-file.service';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { registerFileLocation } from '~/utils/storage-resolver';
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
@@ -31,8 +32,11 @@ export const createFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    // Extract B2-specific fields before passing to createFile (they aren't DB columns)
+    const { backend, s3Path, ...createInput } = input;
+
     const file = await createFile({
-      ...input,
+      ...createInput,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       select: {
@@ -41,12 +45,28 @@ export const createFileHandler = async ({
         modelVersion: {
           select: {
             id: true,
+            modelId: true,
             status: true,
             _count: { select: { posts: { where: { publishedAt: { not: null } } } } },
           },
         },
       },
     });
+
+    // Register with storage-resolver for B2 uploads so downloads work
+    if (backend === 'b2' && s3Path) {
+      registerFileLocation({
+        fileId: file.id,
+        modelVersionId: file.modelVersion.id,
+        modelId: file.modelVersion.modelId,
+        backend: 'backblaze',
+        path: s3Path,
+        sizeKb: input.sizeKB,
+      }).catch((err) => {
+        console.error('Failed to register file location with storage-resolver:', err);
+      });
+    }
+
     ctx.track
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);

@@ -8,6 +8,7 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
 } from '~/server/common/constants';
 
 const searchIndexes = [
@@ -18,6 +19,7 @@ const searchIndexes = [
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
 ] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
 export const SearchIndexEntityTypes = {
@@ -28,6 +30,7 @@ export const SearchIndexEntityTypes = {
   [COLLECTIONS_SEARCH_INDEX]: 'Collection',
   [BOUNTIES_SEARCH_INDEX]: 'Bounty',
   [TOOLS_SEARCH_INDEX]: 'Tool',
+  [COMICS_SEARCH_INDEX]: 'Comic',
 } as const;
 
 export type SearchIndexEntityType =

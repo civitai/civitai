@@ -9,39 +9,45 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { middleware } from '~/server/trpc';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import type { ExtendedUser } from '~/types/next-auth';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  const _input = input as UserPreferencesInput | undefined;
-  if (_input !== undefined && typeof _input === 'object' && !Array.isArray(_input)) {
-    // _input.browsingLevel ??= ctx.browsingLevel;
+  return withSpan('trpc:middleware:applyUserPreferences', async () => {
+    const _input = input as UserPreferencesInput | undefined;
+    if (_input !== undefined && typeof _input === 'object' && !Array.isArray(_input)) {
+      // _input.browsingLevel ??= ctx.browsingLevel;
 
-    // TODO.hiddenPreferences - update this once `disableHidden` comes in with rest of user settings
-    const result = booleanString().optional().safeParse(ctx.req.cookies['disableHidden']);
-    const disableHidden = result.success ? result.data ?? false : false;
+      // TODO.hiddenPreferences - update this once `disableHidden` comes in with rest of user settings
+      const result = booleanString().optional().safeParse(ctx.req.cookies['disableHidden']);
+      const disableHidden = result.success ? result.data ?? false : false;
 
-    const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
-      userId: ctx.user?.id,
+      const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
+        userId: ctx.user?.id,
+      });
+
+      const tagsToHide = hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => x.id);
+
+      const imagesToHide = hiddenImages
+        .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
+        .map((x) => x.id);
+
+      _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
+      _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
+      _input.excludedUserIds = [
+        ...(_input.excludedUserIds ?? []),
+        ...hiddenUsers.map((x) => x.id),
+      ];
+      _input.excludedModelIds = [
+        ...(_input.excludedModelIds ?? []),
+        ...hiddenModels.map((x) => x.id),
+      ];
+    }
+
+    return next({
+      ctx: { user: ctx.user },
     });
-
-    const tagsToHide = hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => x.id);
-
-    const imagesToHide = hiddenImages
-      .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
-      .map((x) => x.id);
-
-    _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
-    _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
-    _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];
-    _input.excludedModelIds = [
-      ...(_input.excludedModelIds ?? []),
-      ...hiddenModels.map((x) => x.id),
-    ];
-  }
-
-  return next({
-    ctx: { user: ctx.user },
   });
 });
 
@@ -70,9 +76,8 @@ export function cacheIt<TInput extends object>({
         if (value) cacheKeyObj[key] = value;
       }
     }
-    const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hashifyObject(
-      cacheKeyObj
-    )}` as const;
+    const hash = withSpan('trpc:middleware:cacheIt:hash', () => hashifyObject(cacheKeyObj));
+    const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hash}` as const;
     const cached = await redis.packed.get(cacheKey);
     if (cached) {
       return { ok: true, data: cached, marker: 'fromCache' as any, ctx };

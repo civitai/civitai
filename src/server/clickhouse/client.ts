@@ -230,6 +230,21 @@ export type TrackRequest = {
   fingerprint?: string;
 };
 
+/** Track a webhook event to ClickHouse (fire and forget) */
+export async function trackWebhookEvent(type: string, payload: string) {
+  if (!clickhouse) return;
+
+  try {
+    await clickhouse.insert({
+      table: 'webhook_events_buffer',
+      values: [{ type, payload }],
+      format: 'JSONEachRow',
+    });
+  } catch (error: any) {
+    console.error(`Failed to track ${type} webhook to ClickHouse:`, error.message);
+  }
+}
+
 export class Tracker {
   private actor: TrackRequest = {
     userId: 0,
@@ -399,7 +414,12 @@ export class Tracker {
   }
 
   public action(values: { type: ActionType; details?: any }) {
-    return this.track('actions', values);
+    const { details, ...rest } = values;
+    return this.track('actions', {
+      ...rest,
+      details:
+        details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
+    });
   }
 
   public activity(activity: string) {
@@ -497,6 +517,8 @@ export class Tracker {
       tags: string[];
       ownerId: number;
       tosReason?: string;
+      violationType?: string;
+      violationDetails?: string;
       resources?: number[];
       userId?: number;
     }[]
@@ -578,7 +600,12 @@ export class Tracker {
   }
 
   public search(values: { query: string; index: string; filters?: any }) {
-    return this.track('search', values);
+    const { filters, ...rest } = values;
+    return this.track('search', {
+      ...rest,
+      filters:
+        filters != null ? (typeof filters === 'string' ? filters : JSON.stringify(filters)) : '',
+    });
   }
 
   public newOrderImageRating(

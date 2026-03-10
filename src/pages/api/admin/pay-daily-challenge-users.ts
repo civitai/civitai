@@ -3,7 +3,8 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
 import * as z from 'zod';
 
-import { getChallengeDetails } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
+import { challengeToLegacyFormat } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { withRetries } from '~/utils/errorHandling';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -18,8 +19,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const result = schema.safeParse(req.query);
   if (!result.success) return res.status(400).json(result.error);
 
-  const challenge = await getChallengeDetails(result.data.challengeId);
-  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+  const challengeRecord = await getChallengeById(result.data.challengeId);
+  if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
+  const challenge = challengeToLegacyFormat(challengeRecord);
 
   const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
     SELECT
@@ -35,7 +37,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   `;
 
   if (earnedPrizes.length > 0) {
-    const dateStr = dayjs(challenge.date).format('YYYY-MM-DD');
     await withRetries(() =>
       createBuzzTransactionMany(
         earnedPrizes.map(({ userId }) => ({
@@ -43,8 +44,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount: challenge.entryPrize.buzz,
-          description: `Challenge Entry Prize: ${dateStr}`,
-          externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
+          description: `Challenge Entry Prize: ${challenge.title}`,
+          externalTransactionId: `challenge-entry-prize-${challenge.challengeId}-${userId}`,
           toAccountType: 'blue',
         }))
       )

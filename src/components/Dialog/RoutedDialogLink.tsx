@@ -18,7 +18,17 @@ export function triggerRoutedDialog<T extends DialogKey>({
   state: ComponentProps<(typeof dialogs)[T]['component']>;
 }) {
   const browserRouter = getBrowserRouter();
-  const { url, asPath, state: sessionState } = resolveDialog(name, browserRouter.query, state);
+  const query = browserRouter.query ?? {};
+
+  // Skip if the dialog is already open with the same params
+  const currentDialogs = ([] as DialogKey[]).concat(query.dialog ?? []);
+  if (currentDialogs.includes(name)) {
+    const dialog = dialogs[name];
+    const result = dialog.resolve(query, state) as { query: Record<string, unknown> };
+    if (QS.stringify(result.query) === QS.stringify(query)) return;
+  }
+
+  const { url, asPath, state: sessionState } = resolveDialog(name, query, state);
   browserRouter.push(url, asPath, sessionState);
 }
 
@@ -31,6 +41,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   style,
   onClick,
   variant = 'text',
+  rel,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
@@ -40,6 +51,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   style?: React.CSSProperties;
   onClick?: () => void;
   variant?: AnchorProps['variant'];
+  rel?: string;
 }) {
   const router = useRouter();
   const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
@@ -58,6 +70,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
     return cloneElement(children as React.ReactElement, {
       href: asPath,
       onClick: handleClick,
+      rel,
       // className,
       // style,
     });
@@ -70,6 +83,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       className={className}
       style={style}
       variant={variant}
+      rel={rel}
     >
       {children}
     </Anchor>

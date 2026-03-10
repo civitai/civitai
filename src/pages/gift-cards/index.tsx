@@ -18,9 +18,8 @@ import {
   IconExternalLink,
   IconCheck,
   IconBolt,
-  IconBuildingStore,
-  IconArrowRight,
   IconAlertTriangle,
+  IconCoinBitcoin,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
@@ -28,6 +27,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { PromoNotification } from '~/components/PromoNotification/PromoNotification';
 import { KinguinCheckout } from '~/components/KinguinCheckout';
 import { useKinguinSDK } from '~/hooks/useKinguinSDK';
+import { useMutateCoinbaseCodeOrder, useCoinbaseStatus } from '~/components/Coinbase/util';
 import type { Vendor } from '~/utils/gift-cards/vendors';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getVendorDiscount } from '~/utils/gift-cards/discount-utils';
@@ -104,62 +104,67 @@ const GiftCardItem = ({
         </Text>
 
         <Card.Section p="sm">
-          <UnstyledButton
-            component="a"
-            href={primaryUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="relative block"
-          >
-            {/* Slanted corner discount banner - positioned over top left of image */}
-            {hasDiscount && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: 150,
-                  height: 150,
-                  overflow: 'hidden',
-                  zIndex: 2,
-                  pointerEvents: 'none',
-                }}
-              >
+          {primaryUrl ? (
+            <UnstyledButton
+              component="a"
+              href={primaryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="relative block"
+            >
+              {hasDiscount && (
                 <div
                   style={{
                     position: 'absolute',
-                    top: 35,
-                    left: -45,
-                    width: 180,
-                    padding: '10px 0',
-                    background: 'linear-gradient(135deg, #ff6b1a 0%, #8b2fc9 100%)',
-                    transform: 'rotate(-45deg)',
-                    textAlign: 'center',
-                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                    top: 0,
+                    left: 0,
+                    width: 150,
+                    height: 150,
+                    overflow: 'hidden',
+                    zIndex: 2,
+                    pointerEvents: 'none',
                   }}
                 >
-                  <Text
-                    size="sm"
-                    fw={700}
-                    c="white"
+                  <div
                     style={{
-                      textShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
-                      letterSpacing: '0.5px',
+                      position: 'absolute',
+                      top: 35,
+                      left: -45,
+                      width: 180,
+                      padding: '10px 0',
+                      background: 'linear-gradient(135deg, #ff6b1a 0%, #8b2fc9 100%)',
+                      transform: 'rotate(-45deg)',
+                      textAlign: 'center',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
                     }}
                   >
-                    {discountPercentage}% OFF
-                  </Text>
+                    <Text
+                      size="sm"
+                      fw={700}
+                      c="white"
+                      style={{
+                        textShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
+                        letterSpacing: '0.5px',
+                      }}
+                    >
+                      {discountPercentage}% OFF
+                    </Text>
+                  </div>
                 </div>
-              </div>
-            )}
-            <Image
-              src={image}
-              alt={imageAlt}
-              height={200}
-              fit="contain"
-              style={{ cursor: 'pointer' }}
-            />
-          </UnstyledButton>
+              )}
+              <Image
+                src={image}
+                alt={imageAlt}
+                height={200}
+                fit="contain"
+                style={{ cursor: 'pointer' }}
+              />
+            </UnstyledButton>
+          ) : (
+            <div className="relative">
+              <Image src={image} alt={imageAlt} height={200} fit="contain" />
+            </div>
+          )}
         </Card.Section>
 
         <Stack gap="sm">{actions}</Stack>
@@ -175,11 +180,13 @@ interface GiftCardsPageProps {
 export const getServerSideProps = createServerSideProps<GiftCardsPageProps>({
   useSession: true,
   resolver: async ({ session }) => {
-    const enabledVendors = await getEnabledVendorsServer(session?.user?.id);
+    const enabledVendors = await getEnabledVendorsServer(session?.user);
 
     return {
       props: {
-        enabledVendors,
+        // JSON round-trip to convert Date objects to ISO strings,
+        // which Next.js can serialize in getServerSideProps.
+        enabledVendors: JSON.parse(JSON.stringify(enabledVendors)),
       },
     };
   },
@@ -200,6 +207,10 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
 
   // Load Kinguin SDK when vendor is Kinguin
   const kinguinSDK = useKinguinSDK(selectedVendor?.id === 'kinguin');
+
+  // Crypto purchase hooks
+  const { createCodeOrder, creatingCodeOrder } = useMutateCoinbaseCodeOrder();
+  const { healthy: coinbaseHealthy } = useCoinbaseStatus();
 
   // Handle vendor selection from URL
   useEffect(() => {
@@ -484,7 +495,24 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
                             className={classes.card}
                             type="buzz"
                             actions={
-                              selectedVendor.id === 'kinguin' ? (
+                              selectedVendor.id === 'crypto' ? (
+                                <Button
+                                  onClick={() =>
+                                    createCodeOrder({
+                                      type: 'Buzz',
+                                      buzzAmount: card.amount,
+                                    })
+                                  }
+                                  disabled={creatingCodeOrder || !coinbaseHealthy}
+                                  loading={creatingCodeOrder}
+                                  leftSection={<IconCoinBitcoin size={16} />}
+                                  fullWidth
+                                  size="md"
+                                  className={classes.buzzButton}
+                                >
+                                  Buy with Crypto
+                                </Button>
+                              ) : selectedVendor.id === 'kinguin' ? (
                                 <Button
                                   onClick={() =>
                                     handleKinguinPurchase(
@@ -550,7 +578,27 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
                                     duration.months
                                   } Month${duration.months > 1 ? 's' : ''}`;
 
-                                  return selectedVendor.id === 'kinguin' ? (
+                                  return selectedVendor.id === 'crypto' ? (
+                                    <Button
+                                      key={duration.months}
+                                      onClick={() =>
+                                        createCodeOrder({
+                                          type: 'Membership',
+                                          tier: membership.tier.toLowerCase() as
+                                            | 'bronze'
+                                            | 'silver'
+                                            | 'gold',
+                                          months: duration.months,
+                                        })
+                                      }
+                                      disabled={creatingCodeOrder || !coinbaseHealthy}
+                                      loading={creatingCodeOrder}
+                                      size="sm"
+                                      className={classes.membershipButton}
+                                    >
+                                      {duration.months} Mo{duration.months > 1 ? 's' : ''}
+                                    </Button>
+                                  ) : selectedVendor.id === 'kinguin' ? (
                                     <Button
                                       key={duration.months}
                                       onClick={() =>
@@ -588,9 +636,6 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
             </>
           )}
 
-          {/* Wholesale Program Callout */}
-          {!showKinguinCheckout && <WholesaleCallout />}
-
           {/* Disclaimer */}
           {!showKinguinCheckout && (
             <Text size="xs" c="dimmed" ta="center" mt="md">
@@ -613,79 +658,3 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
   );
 }
 
-// Wholesale Program Callout Component
-const WholesaleCallout = () => {
-  return (
-    <Card
-      shadow="lg"
-      padding="xl"
-      radius="md"
-      withBorder
-      mt="xl"
-      className={classes.wholesaleCallout}
-    >
-      {/* New Plans Badge */}
-      <div className={classes.newPlansBadge}>
-        <Text size="xs" fw={700} c="white">
-          New Plans Available
-        </Text>
-      </div>
-
-      <Grid align="center">
-        <Grid.Col span={{ base: 12, md: 8 }}>
-          <Stack gap="md">
-            <Group gap="md">
-              <div className={classes.wholesaleIconWrapper}>
-                <IconBuildingStore size={32} />
-              </div>
-              <Stack gap={4}>
-                <Title order={2} className={classes.wholesaleTitle}>
-                  Run a Store? Sell Buzz Gift Cards
-                </Title>
-                <Text size="lg" c="dimmed">
-                  Join our Wholesale Program and offer Buzz gift cards to your customers
-                </Text>
-              </Stack>
-            </Group>
-            <Group gap="xl" ml={60} wrap="wrap">
-              <Group gap="xs">
-                <IconBolt size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Starting at just $1k/month
-                </Text>
-              </Group>
-              <Group gap="xs">
-                <IconBolt size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Up to 10% discount
-                </Text>
-              </Group>
-              <Group gap="xs">
-                <IconCheck size={20} className={classes.wholesaleHighlight} />
-                <Text size="sm" fw={500}>
-                  Featured on gift cards page
-                </Text>
-              </Group>
-            </Group>
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 4 }}>
-          <Stack gap="sm" className={classes.wholesaleCTAWrapper}>
-            <Button
-              component={NextLink}
-              href="/buzz-wholesale"
-              size="lg"
-              rightSection={<IconArrowRight size={20} />}
-              className={classes.wholesaleCTA}
-            >
-              Learn More
-            </Button>
-            <Text size="xs" c="dimmed" className={classes.wholesaleCTAText}>
-              Perfect for retailers, resellers, and online stores
-            </Text>
-          </Stack>
-        </Grid.Col>
-      </Grid>
-    </Card>
-  );
-};

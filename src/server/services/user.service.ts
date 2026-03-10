@@ -6,6 +6,7 @@ import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constan
 import {
   BanReasonCode,
   BlockedReason,
+  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -13,9 +14,10 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
-import { userUpdateCounter } from '~/server/prom/client';
+import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -103,6 +105,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
+import { getBlocklistData } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -150,75 +153,79 @@ export const getUserCreator = async ({
   leaderboardId?: string;
   isModerator?: boolean;
 }) => {
-  const user = await dbRead.user.findFirst({
-    where: {
-      ...where,
-      deletedAt: null,
-      AND: [
-        { id: { not: constants.system.user.id } },
-        { username: { not: constants.system.user.username } },
-      ],
-    },
-    select: {
-      id: true,
-      image: true,
-      username: true,
-      muted: true,
-      bannedAt: true,
-      deletedAt: true,
-      createdAt: true,
-      publicSettings: true,
-      excludeFromLeaderboards: true,
-      links: {
-        select: {
-          url: true,
-          type: true,
-        },
+  const user = await withSpan('user:getCreator:findUser', () =>
+    dbRead.user.findFirst({
+      where: {
+        ...where,
+        deletedAt: null,
+        AND: [
+          { id: { not: constants.system.user.id } },
+          { username: { not: constants.system.user.username } },
+        ],
       },
-      stats: {
-        select: {
-          downloadCountAllTime: true,
-          thumbsUpCountAllTime: true,
-          followerCountAllTime: true,
-          reactionCountAllTime: true,
-          uploadCountAllTime: true,
-          generationCountAllTime: true,
-        },
-      },
-      rank: {
-        select: {
-          leaderboardRank: true,
-          leaderboardId: true,
-          leaderboardTitle: true,
-          leaderboardCosmetic: true,
-        },
-      },
-      cosmetics: {
-        where: { equippedAt: { not: null } },
-        select: {
-          data: true,
-          cosmetic: {
-            select: simpleCosmeticSelect,
+      select: {
+        id: true,
+        image: true,
+        username: true,
+        muted: true,
+        bannedAt: true,
+        deletedAt: true,
+        createdAt: true,
+        publicSettings: true,
+        excludeFromLeaderboards: true,
+        links: {
+          select: {
+            url: true,
+            type: true,
           },
         },
+        stats: {
+          select: {
+            downloadCountAllTime: true,
+            thumbsUpCountAllTime: true,
+            followerCountAllTime: true,
+            reactionCountAllTime: true,
+            uploadCountAllTime: true,
+            generationCountAllTime: true,
+          },
+        },
+        rank: {
+          select: {
+            leaderboardRank: true,
+            leaderboardId: true,
+            leaderboardTitle: true,
+            leaderboardCosmetic: true,
+          },
+        },
+        cosmetics: {
+          where: { equippedAt: { not: null } },
+          select: {
+            data: true,
+            cosmetic: {
+              select: simpleCosmeticSelect,
+            },
+          },
+        },
+        profilePicture: {
+          select: profileImageSelect,
+        },
       },
-      profilePicture: {
-        select: profileImageSelect,
-      },
-    },
-  });
+    })
+  );
   if (!user) return null;
 
   /**
    * TODO: seems to be deprecated, we are getting model count from the stats
    * though it might be bugged since we are not updating stats if user deletes/unpublishes models
    */
-  const modelCount = await dbRead.model.count({
-    where: {
-      userId: user?.id,
-      status: 'Published',
-    },
-  });
+  const modelCount = await withSpan('user:getCreator:countModels', () =>
+    dbRead.model.count({
+      where: {
+        userId: user?.id,
+        status: 'Published',
+      },
+    })
+  );
 
   return {
     ...user,
@@ -348,14 +355,22 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
-export const isUsernamePermitted = (username: string) => {
+export const isUsernamePermitted = async (username: string): Promise<boolean> => {
   const lower = username.toLowerCase();
-  const isPermitted = !(
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x)
-  );
 
-  return isPermitted;
+  // Static JSON baseline (always enforced, can't be removed via UI)
+  const staticBlocked =
+    blockedUsernames.partial.some((x) => lower.includes(x)) ||
+    blockedUsernames.exact.some((x) => lower === x);
+  if (staticBlocked) return false;
+
+  // Dynamic blocklist from DB/Redis/in-memory cache
+  const [dynamicExact, dynamicPartial] = await Promise.all([
+    getBlocklistData(BlocklistType.UsernameExact),
+    getBlocklistData(BlocklistType.UsernamePartial),
+  ]);
+
+  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
 };
 
 export const updateUserById = async ({
@@ -1636,9 +1651,13 @@ export const createUserReferral = async ({
   loginRedirectReason?: string;
   ip?: string;
 }) => {
-  const user = await dbRead.user.findUniqueOrThrow({
+  const findArgs = {
     where: { id },
     select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
+  } as const;
+  const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'user', caller: 'createUserReferral' });
+    return dbWrite.user.findUniqueOrThrow(findArgs);
   });
 
   if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
@@ -1923,7 +1942,9 @@ export async function updateContentSettings({
 
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
-  await refreshSession(userId);
+  refreshSession(userId).catch((err) => {
+    console.error('Failed to refresh session for user', userId, err);
+  });
 }
 
 export const getUserByPaddleCustomerId = async ({

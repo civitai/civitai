@@ -2,7 +2,6 @@ import { Badge, Text } from '@mantine/core';
 import React from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
@@ -12,21 +11,30 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import clsx from 'clsx';
 
 export function ArticleCard({ data, aspectRatio }: Props) {
+  return (
+    <MetricSubscriptionProvider entityType="Article" entityId={data.id}>
+      <ArticleCardContent data={data} aspectRatio={aspectRatio} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ArticleCardContent({ data, aspectRatio }: Props) {
   const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
-  const { commentCount, viewCount, collectedCount, tippedAmountCount } = stats || {
-    commentCount: 0,
-    viewCount: 0,
-    favoriteCount: 0,
-    collectedCount: 0,
-    likeCount: 0,
-    tippedAmountCount: 0,
-  };
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: data.id });
+
+  // Live metrics for article stats
+  const liveMetrics = useLiveMetrics('Article', data.id, {
+    commentCount: stats?.commentCount ?? 0,
+    viewCount: stats?.viewCount ?? 0,
+    collectedCount: stats?.collectedCount ?? 0,
+    tippedAmountCount: stats?.tippedAmountCount ?? 0,
+  });
 
   return (
     <AspectRatioImageCard
@@ -76,20 +84,20 @@ export function ArticleCard({ data, aspectRatio }: Props) {
               <div className="flex items-center gap-0.5">
                 <IconBookmark size={14} strokeWidth={2.5} />
                 <Text fw="bold" size="xs">
-                  {abbreviateNumber(collectedCount)}
+                  <AnimatedCount value={liveMetrics.collectedCount} />
                 </Text>
               </div>
               <div className="flex items-center gap-0.5">
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
                 <Text fw="bold" size="xs">
-                  {abbreviateNumber(commentCount)}
+                  <AnimatedCount value={liveMetrics.commentCount} />
                 </Text>
               </div>
               <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
                 <div className="flex items-center gap-0.5">
                   <IconBolt size={14} strokeWidth={2.5} />
-                  <Text fw="bold" size="xs" tt="uppercase">
-                    {abbreviateNumber(tippedAmountCount + tippedAmount)}
+                  <Text fw="bold" size="xs">
+                    <AnimatedCount value={liveMetrics.tippedAmountCount + tippedAmount} />
                   </Text>
                 </div>
               </InteractiveTipBuzzButton>
@@ -102,7 +110,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
               <div className="flex items-center gap-0.5">
                 <IconEye size={14} strokeWidth={2.5} />
                 <Text fw="bold" size="xs">
-                  {abbreviateNumber(viewCount)}
+                  <AnimatedCount value={liveMetrics.viewCount} />
                 </Text>
               </div>
             </Badge>

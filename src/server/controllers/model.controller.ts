@@ -2,10 +2,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
-import {
-  getBaseModelGenerationSupported,
-  type BaseModel,
-} from '~/shared/constants/base-model.constants';
+import { type BaseModel } from '~/shared/constants/base-model.constants';
+import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -132,7 +130,7 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
@@ -231,7 +229,7 @@ export const getModelHandler = async ({
         (version) =>
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1 &&
-          getBaseModelGenerationSupported(version.baseModel, model.type)
+          isBaseModelGenerationSupported(version.baseModel, model.type)
       ),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta
@@ -265,7 +263,7 @@ export const getModelHandler = async ({
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1 &&
-          getBaseModelGenerationSupported(version.baseModel, model.type);
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -806,6 +804,7 @@ export const getDownloadCommandHandler = async ({
         files: {
           where: fileWhere,
           select: {
+            id: true,
             url: true,
             name: true,
             type: true,
@@ -884,7 +883,7 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
-    const { url } = await getDownloadUrl(file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -914,7 +913,8 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await getDownloadUrl(additionalFile.url, additionalFileName)).url,
+          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
+            .url,
         },
       });
     }
@@ -1397,7 +1397,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const canGenerate =
           !!version.covered &&
           !unavailableGenResources.includes(version.id) &&
-          getBaseModelGenerationSupported(version.baseModel, model.type);
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,

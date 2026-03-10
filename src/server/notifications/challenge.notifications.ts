@@ -11,7 +11,7 @@ export const challengeNotifications = createNotificationProcessor({
       message: `You placed ${asOrdinal(details.position)} in the "${
         details.challengeName
       }" challenge! You've won ${numberWithCommas(details.prize)} Buzz.`,
-      url: `/articles/${details.articleId}`,
+      url: `/challenges/${details.challengeId}`,
     }),
   },
   'challenge-participation': {
@@ -22,7 +22,7 @@ export const challengeNotifications = createNotificationProcessor({
       message: `You've submitted enough entries to earn the participation prize in the "${
         details.challengeName
       }" challenge! You've won ${numberWithCommas(details.prize)} Buzz.`,
-      url: `/articles/${details.articleId}`,
+      url: `/challenges/${details.challengeId}`,
     }),
   },
   'challenge-rejection': {
@@ -31,7 +31,7 @@ export const challengeNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `${details.count} entries to the "${details.challengeName}" challenge have been declined. Consider making new entries to improve your chances of winning!`,
-      url: `/articles/${details.articleId}`,
+      url: `/challenges/${details.challengeId}`,
     }),
   },
   'challenge-resource': {
@@ -40,7 +40,7 @@ export const challengeNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Your resource "${details.resourceName}" has been selected for the "${details.challengeName}" challenge! Check all the details by clicking on this notification.`,
-      url: `/articles/${details.articleId}`,
+      url: `/challenges/${details.challengeId}`,
     }),
   },
 });

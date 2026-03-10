@@ -1,3 +1,11 @@
+/**
+ * GenerationFormProvider (Legacy)
+ *
+ * Adapted from civitai GenerationFormProvider.tsx.
+ * Uses generation-graph.store.ts instead of generation.store.ts,
+ * and mapGraphToLegacyParams to convert incoming data to legacy format.
+ */
+
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
@@ -10,10 +18,7 @@ import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import type {
-  GenerationData,
-  GenerationResource,
-} from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   fluxKreaAir,
   fluxModeOptions,
@@ -22,16 +27,18 @@ import {
   getBaseModelSetType,
   getClosestAspectRatio,
   getIsFluxUltra,
+  getIsZImageBase,
+  getIsZImageTurbo,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import {
   fetchGenerationData,
-  generationStore,
-  useGenerationFormStore,
-  useGenerationStore,
-} from '~/store/generation.store';
+  generationGraphStore,
+  useGenerationGraphStore,
+} from '~/store/generation-graph.store';
+import { mapGraphToLegacyParams } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { useDebouncer } from '~/utils/debouncer';
 import type { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -40,16 +47,25 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import {
+  flux2KleinSampleMethods,
+  flux2KleinSchedules,
+  getIsFlux2KleinGroup,
+} from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import { zImageSampleMethods, zImageSchedules } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { imageAnnotationsSchema } from '~/components/Generation/Input/DrawingEditor/drawing.utils';
+import { isNewFormOnly } from '~/shared/data-graph/generation/config/workflows';
+import { openSwitchToNewFormModal } from '~/components/generation_v2/SwitchToNewFormModal';
+import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
 
 // #region [schemas]
 
 // We'll define these types after createFormSchema
 type PartialFormData = Partial<z.input<ReturnType<typeof createFormSchema>>>;
-// type DeepPartialFormData = DeepPartial<z.input<ReturnType<typeof createFormSchema>>>;
 export type GenerationFormOutput = z.infer<ReturnType<typeof createFormSchema>>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
@@ -69,7 +85,7 @@ const baseSchema = textToImageParamsSchema
   });
 const partialSchema = baseSchema.partial();
 
-function createFormSchema(domainColor: string) {
+function createFormSchema(_domainColor: string) {
   return baseSchema
     .transform(({ ...data }) => {
       const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
@@ -84,10 +100,16 @@ function createFormSchema(domainColor: string) {
       });
     })
     .superRefine((data, ctx) => {
-      if (data.workflow.startsWith('txt2img')) {
-        // Prompt is optional if imageAnnotations exists and is not empty
+      if (getIsFlux2KleinGroup(data.baseModel)) {
+        if (!data.prompt || data.prompt.length === 0) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Prompt is required',
+            path: ['prompt'],
+          });
+        }
+      } else if (data.workflow.startsWith('txt2img')) {
         const hasAnnotations = data.imageAnnotations && data.imageAnnotations.length > 0;
-
         if (!hasAnnotations && (!data.prompt || data.prompt.length === 0)) {
           ctx.addIssue({
             code: 'custom',
@@ -121,9 +143,6 @@ function createFormSchema(domainColor: string) {
         });
       }
 
-      // Note: Prompt auditing is now handled server-side in the generation endpoints
-      // This allows for proper allowMatureContent logic and centralized violation tracking
-
       if (data.workflow.startsWith('img2img') && !data.sourceImage) {
         ctx.addIssue({
           code: 'custom',
@@ -132,7 +151,6 @@ function createFormSchema(domainColor: string) {
         });
       }
 
-      // Qwen img2img models require at least one image
       if (getIsQwenImageEditModel(data.model.id) && (!data.images || data.images.length === 0)) {
         ctx.addIssue({
           code: 'custom',
@@ -145,21 +163,30 @@ function createFormSchema(domainColor: string) {
 // #endregion
 
 // #region [data formatter]
+// Bump this timestamp to force a one-time form reset for all users on next load.
+const FORM_RESET_TIMESTAMP = new Date('2026-02-27T00:00:00.000Z').getTime();
+const FORM_LAST_RESET_KEY = 'generation-form-last-reset';
+
 const defaultValues = generation.defaultValues;
-function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormData {
-  const { quantity, ...params } = data.params;
-  // check for new model in resources, otherwise use stored model
+
+interface LegacyGenerationData {
+  params: Record<string, unknown>;
+  resources: GenerationResource[];
+  remixOfId?: number;
+}
+
+function formatGenerationData(data: LegacyGenerationData): PartialFormData {
+  const { quantity, ...params } = data.params as Record<string, unknown> & { quantity?: number };
   let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
   let vae = data.resources.find((x) => x.model.type === 'VAE') ?? null;
   const baseModel =
-    params.baseModel ??
+    (params.baseModel as string) ??
     getBaseModelFromResourcesWithDefault(
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
   const config = getGenerationConfig(baseModel, checkpoint?.id);
 
-  // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
   if (
     !checkpoint ||
     getBaseModelSetType(checkpoint.baseModel) !== baseModel ||
@@ -167,22 +194,46 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   ) {
     checkpoint = config.checkpoint;
   }
-  // if current vae doesn't match baseModel, set vae to undefined
+
   if (
     !vae ||
-    !getGenerationBaseModelAssociatedGroups(vae.baseModel, vae.model.type).includes(baseModel) ||
+    !getGenerationBaseModelAssociatedGroups(vae.baseModel, vae.model.type).includes(
+      baseModel as BaseModelGroup
+    ) ||
     !vae.canGenerate
   )
     vae = null;
 
   if (
     params.sampler === 'undefined' ||
-    (params.sampler && !(generation.samplers as string[]).includes(params.sampler))
+    (params.sampler && !(generation.samplers as string[]).includes(params.sampler as string))
   )
     params.sampler = defaultValues.sampler;
 
-  // filter out any additional resources that don't belong
-  // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
+  if (
+    getIsFlux2KleinGroup(baseModel) &&
+    (!params.sampler || !flux2KleinSampleMethods.includes(params.sampler as any))
+  )
+    params.sampler = 'euler';
+
+  if (
+    getIsFlux2KleinGroup(baseModel) &&
+    (!params.scheduler || !flux2KleinSchedules.includes(params.scheduler as any))
+  )
+    params.scheduler = 'simple';
+
+  if (
+    (getIsZImageBase(baseModel) || getIsZImageTurbo(baseModel)) &&
+    (!params.sampler || !zImageSampleMethods.includes(params.sampler as any))
+  )
+    params.sampler = 'euler';
+
+  if (
+    (getIsZImageBase(baseModel) || getIsZImageTurbo(baseModel)) &&
+    (!params.scheduler || !zImageSchedules.includes(params.scheduler as any))
+  )
+    params.scheduler = 'simple';
+
   const resources = data.resources.filter((resource) => {
     if (
       resource.model.type === 'Checkpoint' ||
@@ -194,7 +245,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
       resource.baseModel,
       resource.model.type
     );
-    return baseModelSetKeys.includes(baseModel);
+    return baseModelSetKeys.includes(baseModel as BaseModelGroup);
   });
 
   if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
@@ -208,14 +259,24 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
       params.workflow = 'txt2img';
   }
 
+  // Normalize aspectRatio: legacy metadata stores it as an object { value, width, height }
+  if (params.aspectRatio && typeof params.aspectRatio === 'object') {
+    params.aspectRatio = (params.aspectRatio as { value: string }).value;
+  }
+
   return {
+    // Explicitly default image fields so stale values from the previous form state
+    // don't survive the merge in setValues (which does {...formData, ...params}).
+    sourceImage: null,
+    images: [],
+    imageAnnotations: [],
     ...params,
     baseModel,
     model: checkpoint,
     resources,
     vae,
     remixOfId: data.remixOfId,
-  };
+  } as PartialFormData;
 }
 
 // #endregion
@@ -236,21 +297,27 @@ export function useGenerationForm() {
   return context;
 }
 
-export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
-  const storeData = useGenerationStore((state) => state.data);
+export function GenerationFormProvider({
+  children,
+  debug = false,
+}: {
+  children: React.ReactNode;
+  debug?: boolean;
+}) {
+  // Use generation-graph.store instead of generation.store
+  const storeData = useGenerationGraphStore((state) => state.data);
+  const storeCounter = useGenerationGraphStore((state) => state.counter);
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
-  const type = useGenerationFormStore((state) => state.type);
   const domainColor = useDomainColor();
-  // const browsingSettingsAddons = useBrowsingSettingsAddons();
+
+  const prevCounterRef = useRef(0);
 
   const getValues = useCallback(
     (storageValues: any): any => {
-      // Ensure we always get similarity accordingly.
       if (storageValues.remixOfId && storageValues.prompt) {
         checkSimilarity(storageValues.remixOfId, storageValues.prompt);
       }
-
       return getDefaultValues(storageValues);
     },
     [currentUser, status] // eslint-disable-line
@@ -268,9 +335,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     defaultValues: getValues,
-    // values: getValues,
     exclude: ['remixSimilarity', 'remixPrompt', 'remixNegativePrompt'],
-    storage: localStorage,
+    storage: typeof window !== 'undefined' ? localStorage : undefined,
   });
 
   function checkSimilarity(id: number, prompt?: string) {
@@ -278,19 +344,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       form.setValue(
         'remixSimilarity',
         !!data.params.prompt && !!prompt
-          ? promptSimilarity(data.params.prompt, prompt).adjustedCosine
+          ? promptSimilarity(data.params.prompt as string, prompt).adjustedCosine
           : undefined
       );
-      form.setValue('remixPrompt', data.params.prompt);
-      form.setValue('remixNegativePrompt', data.params.negativePrompt);
-      // setValues({
-      //   remixSimilarity:
-      //     !!data.params.prompt && !!prompt
-      //       ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
-      //       : undefined,
-      //   remixPrompt: data.params.prompt,
-      //   remixNegativePrompt: data.params.negativePrompt,
-      // });
+      form.setValue('remixPrompt', data.params.prompt as string);
+      form.setValue('remixNegativePrompt', data.params.negativePrompt as string);
     });
   }
 
@@ -300,60 +358,122 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }, 0);
   }, []);
 
-  // TODO.Briant - determine a better way to pipe the data into the form
-  // #region [effects]
+  // Listen to generation-graph.store data and convert to legacy format
   useEffect(() => {
-    if (type === 'image' && storeData) {
-      const { runType, remixOfId, resources, params } = storeData;
-      if (!params.sourceImage && !params.workflow)
-        form.setValue('workflow', params.process ?? 'txt2img');
-
-      const formData = form.getValues();
-      switch (runType) {
-        case 'replay':
-          setValues(formatGenerationData(storeData));
-          break;
-        case 'remix':
-        case 'run':
-          const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
-          const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources = [
-            formData.model,
-            ...(formData.resources ?? []),
-            formData.vae,
-          ].filter(isDefined) as GenerationResource[];
-
-          const data = formatGenerationData({
-            params: {
-              aspectRatio: formData.aspectRatio,
-              ...params,
-              workflow,
-            },
-            remixOfId: runType === 'remix' ? remixOfId : undefined,
-            resources:
-              runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
-          });
-
-          const values =
-            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
-          setValues(values);
-          break;
+    // Auto-reset form if user hasn't reset since the last FORM_RESET_TIMESTAMP bump
+    if (typeof window !== 'undefined') {
+      const lastReset = Number(localStorage.getItem(FORM_LAST_RESET_KEY) || '0');
+      if (lastReset < FORM_RESET_TIMESTAMP) {
+        reset();
       }
-
-      if (remixOfId) {
-        checkSimilarity(remixOfId, params.prompt);
-      }
-
-      if (runType === 'remix' && resources.length && resources.some((x) => !x.canGenerate)) {
-        showNotification({
-          color: 'yellow',
-          title: 'Remix',
-          message: 'Some resources used to generate this image are unavailable',
-        });
-      }
-      generationStore.clearData();
     }
-  }, [status, currentUser, storeData]); // eslint-disable-line
+
+    // Only process if counter changed (new data)
+    if (storeCounter === prevCounterRef.current || !storeData) return;
+
+    const { runType, remixOfId, resources: graphResources, params: graphParams } = storeData;
+
+    // Check if this data requires the new generation form
+    const workflowKey = graphParams.workflow as string | undefined;
+    const ecosystemKey = graphParams.ecosystem as string | undefined;
+    const ecosystemId = ecosystemKey ? ecosystemByKey.get(ecosystemKey)?.id : undefined;
+    const checkpointModelId = graphResources.find((r) => r.model.type === 'Checkpoint')?.id;
+
+    if (workflowKey && isNewFormOnly(workflowKey, ecosystemId, checkpointModelId)) {
+      prevCounterRef.current = storeCounter;
+      openSwitchToNewFormModal({
+        onConfirm: () => {
+          // Switch to new form — data stays in store for the new provider to pick up
+          useLegacyGeneratorStore.getState().switchToNew();
+        },
+        onCancel: () => {
+          generationGraphStore.clearData();
+        },
+      });
+      return;
+    }
+
+    prevCounterRef.current = storeCounter;
+
+    // Legacy form store type sync is handled centrally by syncLegacyFormStore
+    // in generation-graph.store.ts (called from setData/open)
+
+    const resources = graphResources;
+
+    // Convert graph params to legacy format
+    const legacyParams = mapGraphToLegacyParams(graphParams);
+
+    if (!legacyParams.sourceImage && !legacyParams.workflow)
+      form.setValue('workflow', (legacyParams.process as string) ?? 'txt2img');
+
+    const formData = form.getValues();
+    switch (runType) {
+      case 'replay':
+        setValues(formatGenerationData({ params: legacyParams, resources, remixOfId }));
+        break;
+      case 'remix':
+      case 'run':
+        const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
+        const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
+        const formResources = [formData.model, ...(formData.resources ?? []), formData.vae].filter(
+          isDefined
+        ) as GenerationResource[];
+
+        const data = formatGenerationData({
+          params: {
+            aspectRatio: formData.aspectRatio,
+            ...legacyParams,
+            workflow,
+          },
+          remixOfId: runType === 'remix' ? remixOfId : undefined,
+          resources:
+            runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
+        });
+
+        const values =
+          runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
+        setValues(values);
+        break;
+      case 'patch': {
+        // Patch: partial update from workflow menu items on generated outputs.
+        // Merge incoming resources with current form resources so the user keeps
+        // their model/LoRAs when the ecosystem is compatible. formatGenerationData
+        // handles filtering out incompatible resources when the base model changes.
+        const patchFormResources = [
+          formData.model,
+          ...(formData.resources ?? []),
+          formData.vae,
+        ].filter(isDefined) as GenerationResource[];
+        const patchResources =
+          resources.length > 0
+            ? uniqBy([...resources, ...patchFormResources], 'id')
+            : patchFormResources;
+
+        const patchData = formatGenerationData({
+          params: legacyParams,
+          resources: patchResources,
+        });
+
+        setValues({ ...removeEmpty(patchData), resources: patchData.resources });
+        break;
+      }
+    }
+
+    if (remixOfId) {
+      checkSimilarity(remixOfId, legacyParams.prompt as string);
+    }
+
+    if (runType === 'remix' && resources.length && resources.some((x) => !x.canGenerate)) {
+      showNotification({
+        color: 'yellow',
+        title: 'Remix',
+        message: 'Some resources used to generate this image are unavailable',
+      });
+    }
+
+    // Clear the store data after consuming
+    generationGraphStore.clearData();
+  }, [storeCounter, storeData]); // eslint-disable-line
 
   const baseModel = form.watch('baseModel');
   useEffect(() => {
@@ -380,7 +500,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
       }
 
-      // handle model change to update baseModel value
       if (name !== 'baseModel') {
         if (
           watchedValues.model &&
@@ -410,13 +529,38 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               form.setValue('cfgScale', 1);
               form.setValue('steps', 9);
             }, 0);
+          } else if (baseModel === 'ZImageBase' && prevBaseModel !== baseModel) {
+            setTimeout(() => {
+              form.setValue('cfgScale', 4);
+              form.setValue('steps', 20);
+              form.setValue('scheduler', 'simple');
+            }, 0);
+          } else if (baseModel === 'LTXV2' && prevBaseModel !== baseModel) {
+            setTimeout(() => {
+              form.setValue('steps', 20);
+            }, 0);
+          } else if (
+            (baseModel === 'Flux2Klein_4B' || baseModel === 'Flux2Klein_9B') &&
+            prevBaseModel !== baseModel
+          ) {
+            setTimeout(() => {
+              form.setValue('cfgScale', 1);
+              form.setValue('steps', 8);
+            }, 0);
           } else if (baseModel === 'Qwen' && prevBaseModel !== baseModel) {
             form.setValue('cfgScale', 2.5);
           } else if (
             baseModel !== 'ZImageTurbo' &&
+            baseModel !== 'ZImageBase' &&
             baseModel !== 'Qwen' &&
+            baseModel !== 'Flux2Klein_4B' &&
+            baseModel !== 'Flux2Klein_9B' &&
             !fluxBaseModels.includes(baseModel) &&
-            (prevBaseModel === 'ZImageTurbo' || fluxBaseModels.includes(prevBaseModel))
+            (prevBaseModel === 'ZImageTurbo' ||
+              prevBaseModel === 'ZImageBase' ||
+              prevBaseModel === 'Flux2Klein_4B' ||
+              prevBaseModel === 'Flux2Klein_9B' ||
+              fluxBaseModels.includes(prevBaseModel))
           ) {
             setTimeout(() => {
               form.setValue('cfgScale', 7);
@@ -433,6 +577,45 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           form.setValue('sampler', 'Euler a');
         }
 
+        if (baseModel && getIsFlux2KleinGroup(baseModel)) {
+          setTimeout(() => {
+            const currentSampler = form.getValues('sampler');
+            const currentScheduler = form.getValues('scheduler');
+            if (!currentSampler || !flux2KleinSampleMethods.includes(currentSampler as any)) {
+              form.setValue('sampler', 'euler');
+            }
+            if (!currentScheduler || !flux2KleinSchedules.includes(currentScheduler as any)) {
+              form.setValue('scheduler', 'simple');
+            }
+          }, 0);
+        }
+
+        if (baseModel && getIsZImageBase(baseModel)) {
+          setTimeout(() => {
+            const currentSampler = form.getValues('sampler');
+            const currentScheduler = form.getValues('scheduler');
+            if (!currentSampler || !zImageSampleMethods.includes(currentSampler as any)) {
+              form.setValue('sampler', 'euler');
+            }
+            if (!currentScheduler || !zImageSchedules.includes(currentScheduler as any)) {
+              form.setValue('scheduler', 'simple');
+            }
+          }, 0);
+        }
+
+        const wasUsingsdcppSamplers =
+          prevBaseModel && (getIsZImageBase(prevBaseModel) || getIsFlux2KleinGroup(prevBaseModel));
+        const nowUsingUISamplers =
+          baseModel && !getIsZImageBase(baseModel) && !getIsFlux2KleinGroup(baseModel);
+        if (
+          wasUsingsdcppSamplers &&
+          nowUsingUISamplers &&
+          watchedValues.sampler &&
+          !generation.samplers.includes(watchedValues.sampler as any)
+        ) {
+          form.setValue('sampler', 'Euler a');
+        }
+
         prevBaseModelRef.current = watchedValues.baseModel;
       }
 
@@ -445,7 +628,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
       }
 
-      // handle setting flux mode to standard when flux loras are added
       if (
         watchedValues.baseModel === 'Flux1' &&
         !!watchedValues.resources?.length &&
@@ -471,31 +653,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     };
   }, []);
 
-  // useEffect(() => {
-  //   if (browsingSettingsAddons.settings.generationDefaultValues) {
-  //     const { generationDefaultValues } = browsingSettingsAddons.settings;
-  //     Object.keys(generationDefaultValues ?? {}).forEach((key) => {
-  //       // @ts-ignore
-  //       const value = generationDefaultValues[key as keyof generationDefaultValues];
-  //       if (value !== undefined) {
-  //         form.setValue(key as keyof PartialFormData, value);
-  //       }
-  //     });
-  //   }
-  // }, [browsingSettingsAddons, form]);
-  // #endregion
-
   // #region [handlers]
   function setValues(data: PartialFormData) {
-    // don't overwrite quantity
     const { quantity, ...params } = data;
     const formData = form.getValues();
     const parsed = partialSchema.parse({ ...formData, ...params });
     const limited = sanitizeTextToImageParams(parsed, status.limits);
     form.reset(limited, { keepDefaultValues: true });
-    // for (const [key, value] of Object.entries(limited)) {
-    //   form.setValue(key as keyof PartialFormData, value);
-    // }
   }
 
   function getDefaultValues(overrides: PartialFormData): PartialFormData {
@@ -504,14 +668,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     const sanitized = sanitizeTextToImageParams(
       {
         ...defaultValues,
-        // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
         quantity: overrides.quantity ?? defaultValues.quantity,
-        // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
-        // Preserve priority once set by the user, defaulting to 'normal' (High) for members
         priority: overrides.priority ?? (isMember ? 'normal' : defaultValues.priority),
-        // Preserve outputFormat once set by the user
         outputFormat: overrides.outputFormat ?? defaultValues.outputFormat,
       },
       status.limits
@@ -522,7 +682,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function reset() {
     form.reset(getDefaultValues(form.getValues()), { keepDefaultValues: false });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(FORM_LAST_RESET_KEY, String(Date.now()));
+    }
   }
+
   // #endregion
 
   return (

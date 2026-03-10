@@ -16,6 +16,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
+import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -24,6 +25,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
@@ -32,7 +34,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
@@ -41,6 +43,14 @@ import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
+  return (
+    <MetricSubscriptionProvider entityType="Image" entityId={data.id}>
+      <ImagesCardContent data={data} height={height} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { getImages, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
@@ -71,7 +81,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
       e.preventDefault();
       e.stopPropagation();
 
-      generationPanel.open({
+      generationGraphPanel.open({
         type: image.type,
         id: image.id,
       });
@@ -86,17 +96,14 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     return !image.cosmetic?.data ? { height } : undefined;
   }, [image.cosmetic, height]);
 
-  const reactionMetrics = useMemo(
-    () => ({
-      likeCount: image.stats?.likeCountAllTime,
-      dislikeCount: image.stats?.dislikeCountAllTime,
-      heartCount: image.stats?.heartCountAllTime,
-      laughCount: image.stats?.laughCountAllTime,
-      cryCount: image.stats?.cryCountAllTime,
-      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-    }),
-    [image.stats]
-  );
+  const reactionMetrics = useLiveMetrics('Image', image.id, {
+    likeCount: image.stats?.likeCountAllTime ?? 0,
+    dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+    heartCount: image.stats?.heartCountAllTime ?? 0,
+    laughCount: image.stats?.laughCountAllTime ?? 0,
+    cryCount: image.stats?.cryCountAllTime ?? 0,
+    tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
+  });
 
   function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
     const index = images.findIndex((x) => x.id === imageId);
@@ -154,6 +161,13 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       'duration' in image.metadata && (
                         <DurationBadge duration={image.metadata.duration ?? 0} />
                       )}
+                    {safe && image.judgeScore && (
+                      <JudgeScoreBadge
+                        score={image.judgeScore}
+                        imageId={image.id}
+                        judgeInfo={contextProps.judgeInfo}
+                      />
+                    )}
                     {isModerator && image.minor && (
                       <Badge variant="filled" radius="xl" h={26} color="pink.3">
                         Minor

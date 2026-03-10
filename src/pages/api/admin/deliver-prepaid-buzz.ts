@@ -4,9 +4,10 @@ import { dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import type {
-  SubscriptionMetadata,
-  SubscriptionProductMetadata,
+import {
+  getMembershipBuzzTransactionId,
+  type SubscriptionMetadata,
+  type SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -121,7 +122,7 @@ export default WebhookEndpoint(async (req, res) => {
         continue;
       }
 
-      const externalTransactionId = `civitai-membership:${date}:${subscription.userId}:${subscription.product.id}:v3`;
+      const externalTransactionId = getMembershipBuzzTransactionId({ date, userId: subscription.userId, productId: subscription.product.id });
 
       // Check if this bonus was already delivered
       const existingTransactionIds = subscriptionMetadata.buzzTransactionIds ?? [];

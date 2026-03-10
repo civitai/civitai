@@ -10,16 +10,20 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
-import {
-  getGenerationBaseModelConfigs,
-  baseModelGroupConfig,
-  type BaseModelGroup,
-} from '~/shared/constants/base-model.constants';
-import { WORKFLOW_TAGS, PROCESS_TYPE_OPTIONS } from '~/shared/constants/generation.constants';
+import { ecosystems, getEcosystemSupport } from '~/shared/constants/basemodel.constants';
+import { workflowConfigsArray } from '~/shared/data-graph/generation/config/workflows';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { titleCase } from '~/utils/string-helpers';
 
-// Get all base models dynamically from config
-const baseModelGroups = getGenerationBaseModelConfigs();
+// Get workflow options split by category (exclude utility workflows)
+const allWorkflowOptions = workflowConfigsArray.filter((w) => !w.noSubmit);
+const imageWorkflows = allWorkflowOptions.filter((w) => w.category === 'image');
+const videoWorkflows = allWorkflowOptions.filter((w) => w.category === 'video');
+
+// Get top-level ecosystems that support generation
+const generationEcosystems = ecosystems
+  .filter((e) => !e.parentEcosystemId && getEcosystemSupport(e.id, 'generation'))
+  .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -159,7 +163,7 @@ export function DumbMarkerFiltersDropdown({
               )}
 
               {/* Base Model Filter */}
-              <Divider label="Base Model" className="text-sm font-bold" />
+              <Divider label="Ecosystem" className="text-sm font-bold" />
               <div className="flex flex-wrap gap-2">
                 <FilterChip
                   checked={!filters.baseModel}
@@ -167,19 +171,19 @@ export function DumbMarkerFiltersDropdown({
                 >
                   All Models
                 </FilterChip>
-                {baseModelGroups.map((group) => (
+                {generationEcosystems.map((eco) => (
                   <FilterChip
-                    key={group}
-                    checked={filters.baseModel === group}
-                    onChange={(checked) => setFilters({ baseModel: checked ? group : undefined })}
+                    key={eco.key}
+                    checked={filters.baseModel === eco.key}
+                    onChange={(checked) => setFilters({ baseModel: checked ? eco.key : undefined })}
                   >
-                    {baseModelGroupConfig[group as BaseModelGroup]?.name ?? group}
+                    {eco.displayName}
                   </FilterChip>
                 ))}
               </div>
 
-              {/* Process Type Filter */}
-              <Divider label="Process Type" className="text-sm font-bold" />
+              {/* Workflow Filter */}
+              <Divider label="Image Workflows" className="text-sm font-bold" />
               <div className="flex flex-wrap gap-2">
                 <FilterChip
                   checked={!filters.processType}
@@ -187,13 +191,26 @@ export function DumbMarkerFiltersDropdown({
                 >
                   All
                 </FilterChip>
-                {PROCESS_TYPE_OPTIONS.map(({ value, label }) => (
+                {imageWorkflows.map((w) => (
                   <FilterChip
-                    key={value}
-                    checked={filters.processType === value}
-                    onChange={(checked) => setFilters({ processType: checked ? value : undefined })}
+                    key={w.key}
+                    checked={filters.processType === w.key}
+                    onChange={(checked) => setFilters({ processType: checked ? w.key : undefined })}
                   >
-                    {label}
+                    {w.label}
+                  </FilterChip>
+                ))}
+              </div>
+
+              <Divider label="Video Workflows" className="text-sm font-bold" />
+              <div className="flex flex-wrap gap-2">
+                {videoWorkflows.map((w) => (
+                  <FilterChip
+                    key={w.key}
+                    checked={filters.processType === w.key}
+                    onChange={(checked) => setFilters({ processType: checked ? w.key : undefined })}
+                  >
+                    {w.label}
                   </FilterChip>
                 ))}
               </div>

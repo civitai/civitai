@@ -42,6 +42,7 @@ export const soraGenerationConfig = VideoGenerationConfig2({
 
     return {
       ...data,
+      baseModel: 'Sora2',
       resources: [{ id: 2320065, air: 'urn:air:sora:checkpoint:civitai:2049999@2320065' }],
     };
   },

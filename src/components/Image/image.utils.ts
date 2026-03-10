@@ -38,6 +38,7 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     hidden: booleanString(),
+    includeBaseModel: booleanString(),
     limit: numericString(),
     modelId: numericString(),
     modelVersionId: numericString(),

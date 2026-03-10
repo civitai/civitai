@@ -4,7 +4,7 @@ export const kinguinVendor: Vendor = {
   id: 'kinguin',
   name: 'Kinguin',
   displayName: 'Kinguin',
-  enabled: true,
+  enabled: false,
   promo: {
     code: 'HEIST',
     discount: '6% off',

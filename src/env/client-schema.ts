@@ -39,6 +39,9 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY: z.string().optional(),
   NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY: z.string().optional(),
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: z.string().optional(),
+  // Auth proxy URL for PR previews - when set, OAuth flows redirect through this URL
+  // instead of handling locally (e.g., "https://auth.civitaic.com")
+  NEXT_PUBLIC_AUTH_PROXY_URL: z.string().optional(),
 });
 
 /**
@@ -82,4 +85,5 @@ export const clientEnv = {
   NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY:
     process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
+  NEXT_PUBLIC_AUTH_PROXY_URL: process.env.NEXT_PUBLIC_AUTH_PROXY_URL,
 };

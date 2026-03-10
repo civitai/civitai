@@ -12,6 +12,7 @@ export function ModerationNav() {
     () =>
       [
         { label: 'Reports', href: '/moderator/reports' },
+        { label: 'Strikes', href: '/moderator/strikes', hidden: !features.strikes },
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
@@ -20,16 +21,27 @@ export function ModerationNav() {
           href: '/moderator/training-models',
           hidden: !features.trainingModelsModeration,
         },
+        {
+          label: 'Training Data Review',
+          href: '/moderator/review/training-data',
+          hidden: !features.reviewTrainingData,
+        },
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
+        {
+          label: 'Cash Management',
+          href: '/moderator/cash-management',
+          hidden: !features.cashManagement,
+        },
         // { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/moderator/auditor' },
         // { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
+        { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         // {
         //   label: 'Paddle Adjustments',
@@ -55,8 +67,23 @@ export function ModerationNav() {
           href: '/moderator/contests',
         },
         {
+          label: 'Auctions',
+          href: '/moderator/auctions',
+          hidden: !features.auctionsMod,
+        },
+        {
           label: 'Generator Flagged',
           href: '/moderator/orchestrator/flagged',
+          hidden: !features.csamReports,
+        },
+        {
+          label: 'Generator Restrictions',
+          href: '/moderator/generation-restrictions',
+          hidden: !features.csamReports,
+        },
+        {
+          label: 'Prompt Audit Test',
+          href: '/moderator/prompt-audit-test',
           hidden: !features.csamReports,
         },
       ]

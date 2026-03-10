@@ -316,8 +316,9 @@ function getBaseClient(type: 'cache' | 'system') {
       return 'unknown';
     };
     const fliptHostname = getFliptHostname();
-    const fliptContext = { hostname: fliptHostname };
-    log(`Flipt context for enhanced failover flag: hostname=${fliptHostname}`);
+    const fliptContext: Record<string, string> = { hostname: fliptHostname };
+    if (env.FLIPT_DEPLOYMENT_ID) fliptContext.deploymentId = env.FLIPT_DEPLOYMENT_ID;
+    log(`Flipt context for enhanced failover flag: hostname=${fliptHostname}, deploymentId=${env.FLIPT_DEPLOYMENT_ID ?? 'unset'}`);
 
     // Helper to check feature flag before triggering rediscovery
     const maybeRediscover = async (reason: string) => {
@@ -417,12 +418,15 @@ function getBaseClient(type: 'cache' | 'system') {
     // Don't await here - let connection happen in background
     // The client will queue commands until connected
     log(`Calling connect() for ${type} (cluster) client...`);
-    baseClient.connect().then(async () => {
-      log(`${type} cluster client connected`);
-      await setupEnhancedFailover();
-    }).catch((err) => {
-      log(`Redis connection failed (${type})`, err);
-    });
+    baseClient
+      .connect()
+      .then(async () => {
+        log(`${type} cluster client connected`);
+        await setupEnhancedFailover();
+      })
+      .catch((err) => {
+        log(`Redis connection failed (${type})`, err);
+      });
 
     return baseClient;
   }
@@ -431,11 +435,14 @@ function getBaseClient(type: 'cache' | 'system') {
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
   log(`Calling connect() for ${type} (single) client...`);
-  baseClient.connect().then(() => {
-    log(`${type} single client connected`);
-  }).catch((err) => {
-    log(`Redis connection failed (${type})`, err);
-  });
+  baseClient
+    .connect()
+    .then(() => {
+      log(`${type} single client connected`);
+    })
+    .catch((err) => {
+      log(`Redis connection failed (${type})`, err);
+    });
 
   return baseClient;
 }
@@ -617,15 +624,20 @@ if (!env.IS_BUILD) {
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
+    COUNT: 'download:count',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
+    COUNT: 'generation:count',
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
     EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    CLIENT: 'generation:client',
+    CLIENT_TEMP: 'generation:client-temp',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -640,6 +652,7 @@ export const REDIS_SYS_KEYS = {
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
+    SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -647,6 +660,7 @@ export const REDIS_SYS_KEYS = {
   QUEUES: {
     BUCKETS: 'queues:buckets',
     SEEN_IMAGES: 'queues:seen-images',
+    USER_CONTENT_REMOVAL: 'queues:user-content-removal',
   },
   RESEARCH: {
     RATINGS_TRACKS: 'research:ratings-tracks-2',
@@ -655,6 +669,12 @@ export const REDIS_SYS_KEYS = {
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
     HISTORY_DOWNLOADS: 'limits:history-downloads',
+    CHAT_MESSAGES: 'limits:chat-messages',
+  },
+  COUNTERS: {
+    EMAIL_VERIFICATIONS: 'counters:email-verifications',
+    HISTORY_DOWNLOADS: 'counters:history-downloads',
+    CHAT_MESSAGES: 'counters:chat-messages',
   },
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',
@@ -773,6 +793,7 @@ export const REDIS_KEYS = {
     RESOURCE_DATA: 'packed:generation:resource-data-3',
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
@@ -782,6 +803,7 @@ export const REDIS_KEYS = {
     TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     BLOCKLIST: 'system:blocklist',
+    PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
   },

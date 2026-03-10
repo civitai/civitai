@@ -44,6 +44,7 @@ type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   fetchNextPage: VoidFunction;
   /** using the data in the grid, determine the index to scroll to */
   scrollToIndex?: (data: TData[]) => number;
+  overscanBy?: number;
 };
 
 export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
@@ -59,6 +60,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   fetchNextPage,
   filters,
   autoFetch = true,
+  overscanBy = 10,
   ...masonicProps
 }: Props<T, TFilters>) {
   const colorScheme = useComputedColorScheme('dark');
@@ -118,7 +120,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
         height,
         containerRef,
         items: data,
-        overscanBy: 10,
+        overscanBy,
         // render: MasonryCard,
         ...masonicProps,
       })}

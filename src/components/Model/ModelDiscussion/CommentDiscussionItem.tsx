@@ -15,18 +15,17 @@ import type { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function CommentDiscussionItem({ data: comment }: Props) {
+export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
   const currentUser = useCurrentUser();
 
   const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
     { commentId: comment.id },
-    { initialData: comment.reactions }
+    { initialData: comment.reactions, staleTime: Infinity, refetchOnWindowFocus: false }
   );
   const { data: commentCount = 0 } = trpc.comment.getCommentsCount.useQuery(
     { id: comment.id },
-    { initialData: comment._count.comments }
+    { initialData: comment._count.comments, staleTime: Infinity, refetchOnWindowFocus: false }
   );
-  const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
 
   const queryUtils = trpc.useUtils();
 
@@ -82,7 +81,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
           subTextForce
           avatarSize="md"
           badge={
-            comment.user.id === model?.user.id ? (
+            modelUserId != null && comment.user.id === modelUserId ? (
               <Badge size="xs" color="violet">
                 OP
               </Badge>
@@ -91,7 +90,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
           withUsername
           linkToProfile
         />
-        <CommentDiscussionMenu comment={comment} hideLockOption />
+        <CommentDiscussionMenu comment={comment} hideLockOption modelUserId={modelUserId} />
       </Group>
 
       <ContentClamp maxHeight={100}>
@@ -136,4 +135,4 @@ export function CommentDiscussionItem({ data: comment }: Props) {
   );
 }
 
-type Props = { data: CommentGetAllItem };
+type Props = { data: CommentGetAllItem; modelUserId?: number };

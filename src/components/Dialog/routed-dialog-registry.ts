@@ -49,6 +49,10 @@ export const CommentThreadModal = dynamic(
 export const SupportModal = dynamic(() => import('~/components/Support/SupportModal'), {
   ssr: false,
 });
+export const GeneratedImageLightbox = dynamic(
+  () => import('~/components/ImageGeneration/GeneratedImageLightbox'),
+  { ssr: false }
+);
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -122,6 +126,12 @@ export const dialogs = createDialogDictionary({
     resolve: (query) => ({
       query,
       asPath: '/support',
+    }),
+  },
+  generatedImage: {
+    component: GeneratedImageLightbox,
+    resolve: (query, { imageId, workflowId }) => ({
+      query: { ...query, imageId, workflowId },
     }),
   },
 });

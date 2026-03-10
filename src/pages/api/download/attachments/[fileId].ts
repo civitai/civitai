@@ -106,6 +106,10 @@ export default PublicEndpoint(
     // }
 
     try {
+      // Use delivery worker directly — File table records are not synced to
+      // the storage resolver's file_locations table (which only tracks ModelFile).
+      // Using resolveDownloadUrl here would cause the storage resolver to match
+      // against a ModelFile with the same ID, serving the wrong file content.
       const { url } = await getDownloadUrl(file.url, file.name);
 
       const tracker = new Tracker(req, res);

@@ -538,6 +538,7 @@ export const addSimpleImagePostHandler = async ({
     return {
       post,
       permissions,
+      imageIds,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

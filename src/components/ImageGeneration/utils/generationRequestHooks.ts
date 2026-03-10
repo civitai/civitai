@@ -23,12 +23,10 @@ import type {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
-import type {
-  queryGeneratedImageWorkflows,
-  WorkflowStatusUpdate,
-  WorkflowStepFormatted,
-} from '~/server/services/orchestrator/common';
+import { BlobData, WorkflowData } from '~/shared/orchestrator/workflow-data';
+import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
+import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
+import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,
   IWorkflowsInfinite,
@@ -38,34 +36,29 @@ import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { queryClient, trpc } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 
 export type InfiniteTextToImageRequests = InfiniteData<
-  AsyncReturnType<typeof queryGeneratedImageWorkflows>
+  AsyncReturnType<typeof queryGeneratedImageWorkflows2>
 >;
-export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
 
-function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?: string[] }) {
-  return step.images.filter(({ id }) => {
-    const imageMeta = step.metadata?.images?.[id];
-    if (imageMeta?.hidden) return false;
-    if (tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite) return false;
-    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && imageMeta?.feedback !== 'liked')
-      return false;
-    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && imageMeta?.feedback !== 'disliked')
-      return false;
-    return true;
-  });
+/** Check whether a BlobData image passes the active marker-tag filter. */
+export function matchesMarkerTags(image: BlobData, tags?: string[]): boolean {
+  if (!tags?.length) return true;
+  const meta = image.imageMeta;
+  if (tags.includes(WORKFLOW_TAGS.FAVORITE) && !meta?.favorite) return false;
+  if (tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && meta?.feedback !== 'liked') return false;
+  if (tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && meta?.feedback !== 'disliked') return false;
+  return true;
 }
 
 export function useInvalidateWhatIf() {
   const queryUtils = trpc.useUtils();
   return function () {
-    queryUtils.orchestrator.getImageWhatIf.invalidate();
+    queryUtils.orchestrator.whatIfFromGraph.invalidate();
   };
 }
 
@@ -138,39 +131,18 @@ export function useGetTextToImageRequests(
               return false;
             return true;
           })
-          .map((workflow) => {
-            const steps = workflow.steps.map((step) => {
-              const images = imageFilter({ step, tags: markerTags }).map(
-                (image) =>
-                  new BlobData({
-                    data: image,
-                    step: step,
-                    allowMatureContent: workflow.allowMatureContent,
-                    domain,
-                    nsfwEnabled,
-                  })
-              );
-              return { ...step, images };
-            });
-            return { ...workflow, steps };
-          })
+          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled }))
       ) ?? [],
     [data, nsfwEnabled, domain, markerTags]
   );
 
-  const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(
-    () => steps.flatMap((step) => imageFilter({ step, tags: markerTags })),
-    [steps, markerTags]
-  );
-
-  return { data: flatData, steps, images, ...rest };
+  return { data: flatData, markerTags, ...rest };
 }
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
-  const { data, steps, ...rest } = useGetTextToImageRequests(input);
+  const { data, markerTags, ...rest } = useGetTextToImageRequests(input);
 
-  return { requests: data, steps, ...rest };
+  return { requests: data, markerTags, ...rest };
 }
 
 function updateTextToImageRequests({
@@ -204,36 +176,6 @@ function updateTextToImageRequests({
   );
 }
 
-export function useSubmitCreateImage() {
-  return trpc.orchestrator.generateImage.useMutation({
-    onSuccess: (data, input) => {
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(data);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
-          }
-        },
-      });
-      // updateFromEvents();
-    },
-    // onError: (error) => {
-    //   showErrorNotification({
-    //     title: 'Failed to generate',
-    //     error: new Error(error.message),
-    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-    //   });
-    // },
-  });
-}
-
 export function useUpdateWorkflow() {
   return trpc.orchestrator.updateWorkflow.useMutation({
     onSuccess: (response, { workflowId }) => {
@@ -242,7 +184,7 @@ export function useUpdateWorkflow() {
           for (const page of data.pages) {
             const index = page.items.findIndex((x) => x.id === workflowId);
             if (index > -1) {
-              page.items[index] = response;
+              page.items[index] = response as any;
               break;
             }
           }
@@ -252,8 +194,8 @@ export function useUpdateWorkflow() {
   });
 }
 
-export function useGenerate(args?: { onError?: (e: any) => void }) {
-  return trpc.orchestrator.generate.useMutation({
+export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
+  return trpc.orchestrator.generateFromGraph.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests({
         input: { ascending: false },
@@ -270,39 +212,9 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
           }
         },
       });
-      // updateFromEvents();
     },
     ...args,
   });
-}
-
-export function useGenerateWithCost(cost = 0) {
-  const { conditionalPerformTransaction } = useBuzzTransaction({
-    message: (requiredBalance) =>
-      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
-        requiredBalance
-      )}. Buy or earn more Buzz to perform this action.`,
-    performTransactionOnPurchase: true,
-    accountTypes: buzzSpendTypes,
-  });
-
-  const generate = useGenerate();
-
-  return useMemo(() => {
-    async function mutateAsync(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, async () => {
-        return await generate.mutateAsync(...args);
-      });
-    }
-
-    function mutate(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, () => {
-        generate.mutate(...args);
-      });
-    }
-
-    return { ...generate, mutateAsync, mutate };
-  }, [cost, generate]);
 }
 
 export function useDeleteTextToImageRequest() {
@@ -544,14 +456,10 @@ export function useTextToImageSignalUpdate() {
   });
 }
 
-async function fetchSignaledWorkflow(
+export async function fetchSignaledWorkflow(
   workflowId: string
 ): Promise<WorkflowStatusUpdate | undefined> {
-  const response = await fetch(`/api/generation/workflows/${workflowId}/status-update`);
-  if (response.ok) return await response.json();
-  else {
-    // TODO - handle errors
-  }
+  return await trpcVanilla.orchestrator.statusUpdate.query({ workflowId });
 }
 
 async function updateSignaledWorkflows() {

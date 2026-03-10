@@ -41,6 +41,9 @@ export const serverSchema = z.object({
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
     process.env.VERCEL ? z.string() : z.url()
   ),
+  // Optional cookie domain override for cross-subdomain session sharing (e.g., PR previews)
+  // When set, session cookies will use this domain (e.g., ".civitaic.com") instead of the hostname
+  NEXTAUTH_COOKIE_DOMAIN: z.string().optional(),
   CLICKHOUSE_HOST: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
@@ -95,6 +98,8 @@ export const serverSchema = z.object({
   IMAGE_SCANNER_NEW: zc.booleanString.default(false),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
+  STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
+  STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
@@ -162,6 +167,7 @@ export const serverSchema = z.object({
       })
     )
     .optional(),
+  IS_DATAPACKET: zc.booleanString.default(false),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.url().optional(),
@@ -211,6 +217,8 @@ export const serverSchema = z.object({
   // OpenAI
   OPENAI_API_KEY: z.string().optional(),
 
+  // OpenRouter (unified LLM API)
+  OPENROUTER_API_KEY: z.string().optional(),
   // Youtube related:
   YOUTUBE_APP_CLIENT_ID: z.string().optional(),
   YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
@@ -257,4 +265,16 @@ export const serverSchema = z.object({
 
   FLIPT_URL: z.string(),
   FLIPT_FETCHER_SECRET: z.string(),
+  FLIPT_DEPLOYMENT_ID: z.string().optional(),
+
+  // B2 Upload (gated by Flipt flag)
+  S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
+  S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
+  S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
+  S3_UPLOAD_B2_BUCKET: z.string().optional(),
+  S3_UPLOAD_B2_REGION: z.string().optional(),
+
+  // Storage resolver internal API (for registering B2 uploads)
+  STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
+  STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
 });

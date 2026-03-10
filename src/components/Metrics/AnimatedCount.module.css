@@ -1,0 +1,59 @@
+.wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.highlight {
+  animation: metricPulse 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes metricPulse {
+  0% {
+    color: inherit;
+    transform: scale(1) translateY(0);
+    text-shadow: none;
+  }
+  20% {
+    color: var(--mantine-color-yellow-4);
+    transform: scale(1.4) translateY(-2px);
+    text-shadow: 0 0 10px var(--mantine-color-yellow-5);
+  }
+  50% {
+    color: var(--mantine-color-yellow-5);
+    transform: scale(1.15) translateY(-1px);
+    text-shadow: 0 0 5px var(--mantine-color-yellow-7);
+  }
+  100% {
+    color: inherit;
+    transform: scale(1) translateY(0);
+    text-shadow: none;
+  }
+}
+
+.delta {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  pointer-events: none;
+  font-size: 0.7em;
+  font-weight: 700;
+  color: var(--mantine-color-yellow-4);
+  animation: deltaFloat 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  white-space: nowrap;
+}
+
+@keyframes deltaFloat {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  60% {
+    opacity: 0.8;
+    transform: translate(-50%, -14px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -20px);
+  }
+}

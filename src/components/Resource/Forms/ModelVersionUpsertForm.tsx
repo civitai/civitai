@@ -45,7 +45,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { getActiveBaseModels } from '~/shared/constants/base-model.constants';
+import { getActiveBaseModels } from '~/shared/constants/basemodel.constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -230,7 +230,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   // handle mismatched baseModels in training data
   useEffect(() => {
     if (!baseModel) return;
-    const value = baseModelToTraningDetailsBaseModelMap[baseModel];
+    const value =
+      baseModelToTraningDetailsBaseModelMap[
+        baseModel as keyof typeof baseModelToTraningDetailsBaseModelMap
+      ];
     if (value) {
       const { trainingDetails } = form.getValues();
       if (trainingDetails && value !== trainingDetails.baseModel) {
@@ -397,7 +400,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             maxLength={25}
           />
 
-          {features.generationOnlyModels && !isPrivateModel && (
+          {features.generationOnlyModels && (!isPrivateModel || currentUser?.isModerator) && (
             <>
               <InputSelect
                 name="usageControl"
@@ -430,7 +433,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   .filter(
                     // We don't want random people accessing this.
                     (x) =>
-                      x.value !== ModelUsageControl.InternalGeneration || x.value === usageControl
+                      x.value !== ModelUsageControl.InternalGeneration ||
+                      x.value === usageControl ||
+                      currentUser?.isModerator
                   )}
                 allowDeselect={false}
               />
@@ -765,6 +770,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               }))}
               allowDeselect={false}
               withAsterisk
+              searchable
             />
             {hasBaseModelType && (
               <InputSelect

@@ -27,6 +27,7 @@ class SignalClient {
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(5000),
     });
 
     if (!response.ok) {
@@ -57,6 +58,7 @@ class SignalClient {
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(5000),
     });
 
     if (!response.ok) {

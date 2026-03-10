@@ -67,6 +67,7 @@ export const supportedAvailabilityResources = [
   'Model',
   'Collection',
   'Bounty',
+  'ComicChapter',
 ] as const;
 
 export type SupportedAvailabilityResources = (typeof supportedAvailabilityResources)[number];

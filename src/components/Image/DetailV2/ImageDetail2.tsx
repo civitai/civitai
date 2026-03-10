@@ -65,6 +65,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -79,7 +80,7 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
@@ -184,7 +185,7 @@ export function ImageDetail2() {
         <Button
           {...sharedButtonProps}
           color="blue"
-          onClick={() => generationPanel.open({ type: image.type, id: image.id })}
+          onClick={() => generationGraphPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
           <Group gap={4} wrap="nowrap">
@@ -373,21 +374,12 @@ export function ImageDetail2() {
                                 }),
                               }}
                             >
-                              <Reactions
+                              <MetricSubscriptionProvider
+                                entityType="Image"
                                 entityId={image.id}
-                                entityType="image"
-                                reactions={image.reactions}
-                                metrics={{
-                                  likeCount: image.stats?.likeCountAllTime,
-                                  dislikeCount: image.stats?.dislikeCountAllTime,
-                                  heartCount: image.stats?.heartCountAllTime,
-                                  laughCount: image.stats?.laughCountAllTime,
-                                  cryCount: image.stats?.cryCountAllTime,
-                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                }}
-                                targetUserId={image.user.id}
-                                disableBuzzTip={image.poi}
-                              />
+                              >
+                                <ImageDetailReactions image={image} />
+                              </MetricSubscriptionProvider>
                             </ReactionSettingsProvider>
                           </div>
                           <CarouselIndicators {...carouselNavigation} />
@@ -566,5 +558,27 @@ export function ImageDetail2() {
         </BrowsingLevelProvider>
       </SensitiveShield>
     </>
+  );
+}
+
+function ImageDetailReactions({ image }: { image: ReturnType<typeof useImageDetailContext>['images'][number] }) {
+  const reactionMetrics = useLiveMetrics('Image', image.id, {
+    likeCount: image.stats?.likeCountAllTime ?? 0,
+    dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+    heartCount: image.stats?.heartCountAllTime ?? 0,
+    laughCount: image.stats?.laughCountAllTime ?? 0,
+    cryCount: image.stats?.cryCountAllTime ?? 0,
+    tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
+  });
+
+  return (
+    <Reactions
+      entityId={image.id}
+      entityType="image"
+      reactions={image.reactions}
+      metrics={reactionMetrics}
+      targetUserId={image.user.id}
+      disableBuzzTip={image.poi}
+    />
   );
 }

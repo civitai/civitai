@@ -20,6 +20,7 @@ interface ExtendedUser {
   subscriptionId?: string; // could be fetched - deprecated, kept for backward compatibility
   tier?: UserTier; // Highest tier across all subscriptions
   muted?: boolean;
+  mutedAt?: Date;
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting
   permissions?: string[];

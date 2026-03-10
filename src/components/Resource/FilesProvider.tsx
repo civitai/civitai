@@ -367,7 +367,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
           meta: { versionId, type, size, fp, format, quantType, componentType, uuid },
         },
-        async ({ meta, size, ...result }) => {
+        async ({ meta, size, backend, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {
             versionId: number;
             type: ModelFileType;
@@ -381,6 +381,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 modelVersionId: versionId,
                 type,
                 metadata,
+                ...(backend === 'b2' ? { backend, s3Path: result.key } : {}),
               });
               setItems((items) => items.filter((x) => x.uuid !== result.uuid));
               setFiles((state) => {
