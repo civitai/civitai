@@ -115,6 +115,7 @@ function createVideoInput(
     duration: 'duration' in data ? data.duration : undefined,
     seed: data.seed,
     images: data.images?.map((x) => x.url),
+    generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
     loras,
   }) as ComfyLtx23CreateVideoInput;
 }
@@ -144,6 +145,7 @@ function createFirstLastFrameInput(
     frameGuideStrength:
       'frameGuideStrength' in data ? (data.frameGuideStrength as number) : undefined,
     seed: data.seed,
+    generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
     loras,
   }) as ComfyLtx23FirstLastFrameToVideoInput;
 }
@@ -172,6 +174,7 @@ function createEditVideoInput(
       'cannyHighThreshold' in data ? (data.cannyHighThreshold as number) : undefined,
     guideStrength: 'guideStrength' in data ? (data.guideStrength as number) : undefined,
     seed: data.seed,
+    generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
     loras,
   }) as ComfyLtx23EditVideoInput;
 }
@@ -196,6 +199,7 @@ function createExtendVideoInput(
     sourceVideo: data.video?.url,
     numFrames: 'numFrames' in data ? (data.numFrames as number) : undefined,
     seed: data.seed,
+    generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
     loras,
   }) as ComfyLtx23ExtendVideoInput;
 }

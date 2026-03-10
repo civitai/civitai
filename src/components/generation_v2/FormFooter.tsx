@@ -209,12 +209,19 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   // Uses state (not a ref) so that setting it triggers a re-render and the effect re-evaluates.
   const [pendingSubmit, setPendingSubmit] = useState(false);
 
+  // Use a ref for onSubmit so the effect doesn't depend on its identity.
+  // handleSubmit is not memoized (it captures many closure vars), so without
+  // a ref the effect would re-fire on every parent render, which can trigger
+  // "Maximum update depth exceeded" during HMR cascades.
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+
   useEffect(() => {
     if (pendingSubmit && !isWhatIfLoading && !isSubmitting) {
       setPendingSubmit(false);
-      onSubmit?.();
+      onSubmitRef.current?.();
     }
-  }, [pendingSubmit, isWhatIfLoading, isSubmitting, onSubmit]);
+  }, [pendingSubmit, isWhatIfLoading, isSubmitting]);
 
   // Get values from graph for tip calculation
   const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };

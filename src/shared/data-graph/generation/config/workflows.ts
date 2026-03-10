@@ -635,9 +635,10 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit', 'vid2vid:extend'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
+  { workflows: ['vid2vid:edit', 'vid2vid:extend'] },
 ];
 
 /**

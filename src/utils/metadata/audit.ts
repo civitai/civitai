@@ -226,7 +226,7 @@ const ages = [
   { age: 7, matches: ['seven', 'sevn', 'sevem', 'seve', '7'] },
   { age: 6, matches: ['six', 'sicks', 'sixe', '6'] },
   { age: 5, matches: ['five', 'fiv', 'fife', 'fivve', '5'] },
-  { age: 4, matches: ['four', 'for', 'fore', 'foure', '4'] },
+  { age: 4, matches: ['four', 'fore', 'foure', '4'] },
   { age: 3, matches: ['three', 'thee', 'thre', 'thri', '3'] },
   { age: 2, matches: ['two', '2'] },
   { age: 1, matches: ['one', 'uno', '1'] },

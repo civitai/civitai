@@ -1122,12 +1122,18 @@ function getResourceRefsFromStep(
   }
 
   // Fall back to metadata.resources (ResourceData format from data-graph)
-  const metadataResources = metadata.resources as ResourceData[] | undefined;
-  const refs = (metadataResources ?? []).map((r) => ({
-    id: r.id,
-    strength: r.strength,
-    epochNumber: r.epochDetails?.epochNumber,
-  }));
+  // Enhancement steps store resources via resourcesToImageMetadataResources which uses
+  // { modelVersionId } instead of { id }, so check both fields.
+  const metadataResources = metadata.resources as
+    | Array<ResourceData & { modelVersionId?: number }>
+    | undefined;
+  const refs = (metadataResources ?? [])
+    .map((r) => ({
+      id: r.id ?? r.modelVersionId,
+      strength: r.strength,
+      epochNumber: r.epochDetails?.epochNumber,
+    }))
+    .filter((r) => r.id != null);
 
   // Legacy: also collect from source.resources (old format stored original gen in source)
   const source = metadata.source as { resources?: Array<Record<string, unknown>> } | undefined;

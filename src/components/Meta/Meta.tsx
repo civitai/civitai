@@ -13,6 +13,16 @@ import { create } from 'zustand';
 let nextMetaId = 0;
 const useMetaStack = create<{ stack: number[] }>(() => ({ stack: [] }));
 
+function pushMeta(id: number) {
+  useMetaStack.setState((state) =>
+    state.stack.includes(id) ? state : { stack: [...state.stack, id] }
+  );
+}
+
+function popMeta(id: number) {
+  useMetaStack.setState((state) => ({ stack: state.stack.filter((x) => x !== id) }));
+}
+
 function useMetaLevel() {
   const idRef = useRef<number>();
   if (idRef.current === undefined) idRef.current = nextMetaId++;
@@ -20,13 +30,15 @@ function useMetaLevel() {
   const id = idRef.current;
 
   useEffect(() => {
-    useMetaStack.setState((state) => ({ stack: [...state.stack, id] }));
-    return () => {
-      useMetaStack.setState((state) => ({ stack: state.stack.filter((x) => x !== id) }));
-    };
+    pushMeta(id);
+    return () => popMeta(id);
   }, [id]);
 
-  const isTop = useMetaStack((state) => state.stack[state.stack.length - 1] === id);
+  // During SSR, effects don't run so the stack is empty. Always render on the server
+  // since dialogs (the only source of stacked Meta) don't exist during SSR.
+  const isTop = useMetaStack(
+    (state) => state.stack.length === 0 || state.stack[state.stack.length - 1] === id
+  );
   return isTop;
 }
 

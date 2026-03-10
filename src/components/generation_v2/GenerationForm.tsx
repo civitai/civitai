@@ -27,9 +27,7 @@ import {
   Menu,
   Paper,
   Radio,
-  Stack,
   Switch,
-  Tabs,
   Text,
   Tooltip,
   UnstyledButton,
@@ -331,8 +329,7 @@ export function GenerationForm() {
                     {modes.length > 0 && (
                       <ButtonGroupInput
                         value={
-                          workflowConfigByKey.get(value as string)?.variantOf ??
-                          (value as string)
+                          workflowConfigByKey.get(value as string)?.variantOf ?? (value as string)
                         }
                         onChange={(v) =>
                           graph.set({ workflow: v } as Parameters<typeof graph.set>[0])

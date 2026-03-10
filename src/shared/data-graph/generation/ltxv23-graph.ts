@@ -328,6 +328,13 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
     ['workflow']
   )
 
+  // Generate audio toggle
+  .node('generateAudio', {
+    input: z.boolean().optional(),
+    output: z.boolean(),
+    defaultValue: false,
+  })
+
   // Resources node (LoRAs)
   .node(
     'resources',
