@@ -173,6 +173,19 @@ export function PanelCard({
                   {errorMessage}
                 </Text>
               )}
+              <Text size="xs" c="dimmed" ta="center" mt={4}>
+                Buzz has been refunded
+              </Text>
+              <button
+                className="mt-2 px-3 py-1 rounded text-xs bg-dark-6 hover:bg-dark-5 text-gray-300 flex items-center gap-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRegenerate();
+                }}
+              >
+                <IconRefreshDot size={12} />
+                Regenerate
+              </button>
             </div>
           ) : (
             <div className={styles.panelEmpty}>

@@ -1,7 +1,8 @@
-import { ActionIcon } from '@mantine/core';
+import { ActionIcon, Badge } from '@mantine/core';
 import { IconAlertTriangle, IconTrash, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
+import { refTypeBadge } from '~/components/Comics/comic-project-constants';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
@@ -13,7 +14,7 @@ export function ReferenceSidebarItem({
   getStatusDotClass,
   getStatusLabel,
 }: {
-  character: { id: number; name: string; status: string; images?: any[] };
+  character: { id: number; name: string; status: string; type?: string; images?: any[] };
   projectId: number;
   referenceImageMap: Map<number, { url: string }>;
   onDelete: (id: number, name: string) => void;
@@ -55,13 +56,20 @@ export function ReferenceSidebarItem({
       </Link>
 
       <div className={styles.characterInfo}>
-        <Link
-          href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
-          className={styles.characterName}
-          onClick={(e: React.MouseEvent) => e.stopPropagation()}
-        >
-          {ref.name}
-        </Link>
+        <div className="flex items-center gap-1">
+          <Link
+            href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
+            className={styles.characterName}
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            {ref.name}
+          </Link>
+          {ref.type && ref.type !== 'Character' && refTypeBadge[ref.type] && (
+            <Badge size="xs" variant="light" color={refTypeBadge[ref.type].color}>
+              {refTypeBadge[ref.type].label}
+            </Badge>
+          )}
+        </div>
         <p className={styles.characterStatus}>
           <span className={clsx(styles.statusDot, getStatusDotClass(ref.status, hasImages))} />
           {getStatusLabel(ref.status, hasImages, isFailed)}

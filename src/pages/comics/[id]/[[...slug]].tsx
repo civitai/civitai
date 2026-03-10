@@ -444,17 +444,38 @@ function ComicOverview({ project }: { project: Project }) {
           </div>
 
           {/* CTA */}
-          {project.chapters.length > 0 && (
-            <Link
-              href={`/comics/${project.id}/${projectSlug}/${
-                (project.chapters.findIndex((ch) => ch.panels.length > 0) ?? 0) + 1
-              }/${slugit(project.chapters.find((ch) => ch.panels.length > 0)?.name ?? 'chapter')}`}
-              className={styles.ctaBtn}
-            >
-              <IconBook size={20} />
-              Start Reading
-            </Link>
-          )}
+          {(() => {
+            const hasPublishedChapters = project.chapters.some(
+              (ch) => ch.status === ComicChapterStatus.Published && ch.panels.length > 0
+            );
+            const hasAnyPanels = project.chapters.some((ch) => ch.panels.length > 0);
+            if (hasPublishedChapters) {
+              const firstReadable = project.chapters.find((ch) => ch.panels.length > 0);
+              return (
+                <Link
+                  href={`/comics/${project.id}/${projectSlug}/${
+                    (project.chapters.indexOf(firstReadable!) ?? 0) + 1
+                  }/${slugit(firstReadable?.name ?? 'chapter')}`}
+                  className={styles.ctaBtn}
+                >
+                  <IconBook size={20} />
+                  Start Reading
+                </Link>
+              );
+            }
+            if (isOwner && hasAnyPanels) {
+              return (
+                <Link
+                  href={`/comics/project/${project.id}/read`}
+                  className={styles.ctaBtn}
+                >
+                  <IconBook size={20} />
+                  Preview
+                </Link>
+              );
+            }
+            return null;
+          })()}
 
           {/* Chapter list */}
           <div className={styles.chapterSection}>

@@ -1,6 +1,7 @@
 import type { ActionIconProps, MenuItemProps, MenuProps } from '@mantine/core';
 import { Menu } from '@mantine/core';
-import { IconBell, IconBellOff } from '@tabler/icons-react';
+import { IconBell, IconBellOff, IconPencil } from '@tabler/icons-react';
+import Link from 'next/link';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
@@ -36,6 +37,17 @@ export function ComicCardContextMenu({ comic, buttonProps, ...menuProps }: Props
   const isFollowing = engagement === ComicEngagementType.Notify;
 
   const menuItems: React.ReactElement<MenuItemProps>[] = [
+    isOwner ? (
+      <Menu.Item
+        key="edit"
+        leftSection={<IconPencil size={14} stroke={1.5} />}
+        component={Link}
+        href={`/comics/project/${comic.id}`}
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      >
+        Edit
+      </Menu.Item>
+    ) : null,
     currentUser ? (
       <Menu.Item
         key="follow"

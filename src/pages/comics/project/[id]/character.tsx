@@ -1,26 +1,35 @@
 import {
   ActionIcon,
   Alert,
+  Badge,
   Button,
   Card,
   Container,
   Group,
   Image,
+  Loader,
   Progress,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
   Title,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowLeft,
+  IconGripVertical,
   IconPhoto,
   IconTrash,
   IconUpload,
   IconX,
 } from '@tabler/icons-react';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -47,12 +56,34 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+function SortableRefImage({ id, children }: { id: number; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        position: 'relative',
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
 function ReferenceUpload() {
   const router = useRouter();
   const { id } = router.query;
   const projectId = Number(id);
 
   const [referenceName, setReferenceName] = useState('');
+  const [referenceType, setReferenceType] = useState<string>('Character');
 
   // Upload flow state
   const [images, setImages] = useState<
@@ -129,6 +160,7 @@ function ReferenceUpload() {
       // 2. Create reference
       const reference = await createReferenceMutation.mutateAsync({
         name: referenceName.trim(),
+        type: referenceType as any,
       });
 
       setUploadProgress(90);
@@ -167,6 +199,41 @@ function ReferenceUpload() {
       refetchProject();
     },
   });
+
+  const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
+  const deleteRefImageMutation = trpc.comics.deleteReferenceImage.useMutation({
+    onSuccess: () => {
+      setDeletingImageId(null);
+      refetchProject();
+    },
+    onError: () => setDeletingImageId(null),
+  });
+
+  const reorderRefImagesMutation = trpc.comics.reorderReferenceImages.useMutation({
+    onSuccess: () => refetchProject(),
+  });
+
+  const refImageSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  const handleRefImageDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !existingReference) return;
+    const refImages = existingReference.images ?? [];
+    const oldIndex = refImages.findIndex((ri) => ri.image.id === active.id);
+    const newIndex = refImages.findIndex((ri) => ri.image.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrder = arrayMove(
+      refImages.map((ri) => ri.image.id),
+      oldIndex,
+      newIndex
+    );
+    reorderRefImagesMutation.mutate({
+      referenceId: existingReference.id,
+      imageIds: newOrder,
+    });
+  };
 
   const handleRefImageDrop = async (files: File[]) => {
     for (const file of files) {
@@ -272,9 +339,21 @@ function ReferenceUpload() {
                 </div>
 
                 <div className="text-center">
-                  <Text fw={500} size="lg">
-                    {existingReference.name}
-                  </Text>
+                  <Group justify="center" gap="xs">
+                    <Text fw={500} size="lg">
+                      {existingReference.name}
+                    </Text>
+                    {(existingReference as any).type && (
+                      <Badge size="sm" variant="light" color={
+                        (existingReference as any).type === 'Location' ? 'teal'
+                        : (existingReference as any).type === 'Style' ? 'orange'
+                        : (existingReference as any).type === 'Item' ? 'grape'
+                        : 'blue'
+                      }>
+                        {(existingReference as any).type}
+                      </Badge>
+                    )}
+                  </Group>
                   <Text c={isFailed ? 'red' : 'dimmed'} size="sm">
                     {isFailed
                       ? 'Something went wrong'
@@ -306,33 +385,94 @@ function ReferenceUpload() {
                     <Text fw={500} size="sm" ta="center">
                       Reference Images
                     </Text>
-                    <Group justify="center" gap="md">
-                      {refImages.map((ri, i) => (
-                        <div
-                          key={i}
-                          className="rounded-lg overflow-hidden"
-                          style={{
-                            width: 120,
-                            height: 160,
-                            background: 'var(--mantine-color-dark-7)',
-                          }}
-                        >
-                          <EdgeMedia2
-                            src={ri.image.url}
-                            type="image"
-                            name={`ref ${i + 1}`}
-                            alt={`ref ${i + 1}`}
-                            width={120}
-                            style={{
-                              width: 120,
-                              height: 160,
-                              objectFit: 'cover',
-                              display: 'block',
-                            }}
-                          />
-                        </div>
-                      ))}
-                    </Group>
+                    <DndContext
+                      sensors={refImageSensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleRefImageDragEnd}
+                    >
+                      <SortableContext items={refImages.map((ri) => ri.image.id)}>
+                        <Group justify="center" gap="md">
+                          {refImages.map((ri, i) => (
+                            <SortableRefImage key={ri.image.id} id={ri.image.id}>
+                              <div
+                                className="rounded-lg overflow-hidden"
+                                style={{
+                                  width: 120,
+                                  height: 160,
+                                  background: 'var(--mantine-color-dark-7)',
+                                  position: 'relative',
+                                }}
+                              >
+                                <EdgeMedia2
+                                  src={ri.image.url}
+                                  type="image"
+                                  name={`ref ${i + 1}`}
+                                  alt={`ref ${i + 1}`}
+                                  width={120}
+                                  style={{
+                                    width: 120,
+                                    height: 160,
+                                    objectFit: 'cover',
+                                    display: 'block',
+                                  }}
+                                />
+                                {deletingImageId === ri.image.id && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      inset: 0,
+                                      background: 'rgba(0,0,0,0.6)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: 'inherit',
+                                    }}
+                                  >
+                                    <Loader size="sm" color="white" />
+                                  </div>
+                                )}
+                                <ActionIcon
+                                  size="xs"
+                                  color="red"
+                                  variant="filled"
+                                  style={{ position: 'absolute', top: 4, right: 4 }}
+                                  disabled={deletingImageId != null}
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    openConfirmModal({
+                                      title: 'Delete Reference Image',
+                                      children: 'Are you sure you want to delete this reference image?',
+                                      labels: { confirm: 'Delete', cancel: 'Cancel' },
+                                      confirmProps: { color: 'red' },
+                                      onConfirm: () => {
+                                        setDeletingImageId(ri.image.id);
+                                        deleteRefImageMutation.mutate({
+                                          referenceId: existingReference!.id,
+                                          imageId: ri.image.id,
+                                        });
+                                      },
+                                    });
+                                  }}
+                                >
+                                  <IconX size={10} />
+                                </ActionIcon>
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: 4,
+                                    left: 4,
+                                    cursor: 'grab',
+                                    opacity: 0.7,
+                                  }}
+                                >
+                                  <IconGripVertical size={14} color="white" />
+                                </div>
+                              </div>
+                            </SortableRefImage>
+                          ))}
+                        </Group>
+                      </SortableContext>
+                    </DndContext>
                   </Stack>
                 )}
 
@@ -541,6 +681,24 @@ function ReferenceUpload() {
                 onChange={(e) => setReferenceName(e.target.value)}
                 disabled={isUploading}
               />
+
+              <div>
+                <Text size="sm" fw={500} mb={4}>
+                  Reference type
+                </Text>
+                <SegmentedControl
+                  value={referenceType}
+                  onChange={setReferenceType}
+                  data={[
+                    { value: 'Character', label: 'Character' },
+                    { value: 'Location', label: 'Location' },
+                    { value: 'Style', label: 'Style' },
+                    { value: 'Item', label: 'Item' },
+                  ]}
+                  disabled={isUploading}
+                  fullWidth
+                />
+              </div>
 
               {isUploading && (
                 <Stack gap="xs">

@@ -192,7 +192,7 @@ export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
 
 export type ComicChapterStatus = "Draft" | "Published";
 
-export type ComicReferenceType = "Character" | "Location" | "Item";
+export type ComicReferenceType = "Character" | "Location" | "Item" | "Style";
 
 export type ComicEngagementType = "None" | "Notify" | "Hide";
 

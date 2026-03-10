@@ -5,85 +5,58 @@ import {
   Container,
   Group,
   Loader,
-  Modal,
-  NativeSelect,
-  NumberInput,
-  Paper,
-  ScrollArea,
-  SegmentedControl,
-  Select,
   Stack,
-  Switch,
   Text,
-  Textarea,
-  TextInput,
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
-  IconAlertTriangle,
   IconArrowLeft,
   IconBook,
   IconEyeOff,
   IconGripVertical,
   IconLock,
-  IconPencil,
   IconPhoto,
-  IconPhotoUp,
   IconPlus,
-  IconRefreshDot,
   IconSettings,
   IconSparkles,
-  IconTrash,
-  IconUpload,
   IconUser,
-  IconWand,
   IconWorld,
-  IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { slugit } from '~/utils/string-helpers';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
-import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
-import { MentionTextarea } from '~/components/Comics/MentionTextarea';
+import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
+import {
+  COMIC_MODEL_MAX_IMAGES,
+  COMIC_MODEL_SIZES,
+  type BulkPanelItem,
+} from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
+import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
+import { PanelModal } from '~/components/Comics/PanelModal';
+import { ProjectSettingsModal } from '~/components/Comics/ProjectSettingsModal';
+import { PublishModal } from '~/components/Comics/PublishModal';
 import { ReferenceSidebarItem } from '~/components/Comics/ReferenceSidebarItem';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { SmartCreateModal } from '~/components/Comics/SmartCreateModal';
+import { SortableChapter } from '~/components/Comics/SortableChapter';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getImageDimensions } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
-import { formatGenreLabel } from '~/utils/comic-helpers';
-import { fetchAndUploadGeneratorImage, openGeneratorImagePicker } from '~/utils/comic-image-picker';
-import { ComicChapterStatus, ComicGenre } from '~/shared/utils/prisma/enums';
+import { ComicChapterStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
-
-const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
-  ssr: false,
-});
-
-const genreOptions = Object.entries(ComicGenre).map(([key, value]) => ({
-  value,
-  label: formatGenreLabel(key),
-}));
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -100,313 +73,66 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: number }[]> = {
-  NanoBanana: [
-    { label: '16:9', width: 2560, height: 1440 },
-    { label: '4:3', width: 2304, height: 1728 },
-    { label: '1:1', width: 2048, height: 2048 },
-    { label: '3:4', width: 1728, height: 2304 },
-    { label: '9:16', width: 1440, height: 2560 },
-  ],
-  Seedream: [
-    { label: '16:9', width: 2560, height: 1440 },
-    { label: '4:3', width: 2304, height: 1728 },
-    { label: '1:1', width: 2048, height: 2048 },
-    { label: '3:4', width: 1728, height: 2304 },
-    { label: '9:16', width: 1440, height: 2560 },
-  ],
-  OpenAI: [
-    { label: '1:1', width: 1024, height: 1024 },
-    { label: '3:2', width: 1536, height: 1024 },
-    { label: '2:3', width: 1024, height: 1536 },
-  ],
-  Qwen: [
-    { label: '16:9', width: 1664, height: 928 },
-    { label: '4:3', width: 1472, height: 1104 },
-    { label: '1:1', width: 1328, height: 1328 },
-    { label: '3:4', width: 1104, height: 1472 },
-    { label: '9:16', width: 928, height: 1664 },
-  ],
-};
-
-const COMIC_MODEL_OPTIONS = [
-  { value: 'NanoBanana', label: 'Nano Banana Pro' },
-  { value: 'Seedream', label: 'Seedream v4.5' },
-  { value: 'OpenAI', label: 'OpenAI GPT-Image' },
-  { value: 'Qwen', label: 'Qwen' },
-];
-
-function AspectRatioSelector({
-  value,
-  onChange,
-  aspectRatios,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  aspectRatios: { label: string; width: number; height: number }[];
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Text size="sm" fw={500}>
-        Aspect Ratio
-      </Text>
-      <SegmentedControl
-        value={value}
-        onChange={onChange}
-        data={aspectRatios.map(({ label, width, height }) => ({
-          label: (
-            <div className="flex flex-col items-center gap-1">
-              <Paper
-                withBorder
-                style={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
-              />
-              <Text size="xs">{label}</Text>
-            </div>
-          ),
-          value: label,
-        }))}
-      />
-    </div>
-  );
-}
-
-function SortableBulkItem({
-  item,
-  index,
-  onUpdatePrompt,
-  onUpdateAspectRatio,
-  onRemove,
-  aspectRatioLabels,
-}: {
-  item: { id: string; sourceImage?: { preview: string }; prompt: string; aspectRatio: string };
-  index: number;
-  onUpdatePrompt: (id: string, prompt: string) => void;
-  onUpdateAspectRatio: (id: string, aspectRatio: string) => void;
-  onRemove: (id: string) => void;
-  aspectRatioLabels: string[];
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: item.id,
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      className="flex items-start gap-2 rounded-md p-2"
-      style={{
-        background: 'var(--mantine-color-dark-6)',
-        border: '1px solid var(--mantine-color-dark-4)',
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-      }}
-    >
-      {/* Drag handle */}
-      <div
-        {...attributes}
-        {...listeners}
-        className="flex-shrink-0 flex items-center cursor-grab"
-        style={{ marginTop: 18, touchAction: 'none', color: '#909296' }}
-      >
-        <IconGripVertical size={16} />
-      </div>
-
-      {/* Thumbnail or icon */}
-      <div
-        className="flex-shrink-0 flex items-center justify-center overflow-hidden rounded"
-        style={{
-          width: 56,
-          height: 56,
-          background: 'var(--mantine-color-dark-5)',
-        }}
-      >
-        {item.sourceImage ? (
-          <img
-            src={item.sourceImage.preview}
-            alt={`Item ${index + 1}`}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-        ) : (
-          <IconSparkles size={20} style={{ color: '#fab005' }} />
-        )}
-      </div>
-
-      {/* Prompt input */}
-      <div className="flex-1 min-w-0">
-        <Text size="xs" c="dimmed" mb={2}>
-          {item.sourceImage
-            ? item.prompt.trim()
-              ? 'Enhance (costs buzz)'
-              : 'Upload only (free)'
-            : 'Text-to-image (costs buzz)'}
-        </Text>
-        <div className="flex gap-2 items-end">
-          <TextInput
-            size="xs"
-            className="flex-1"
-            placeholder={
-              item.sourceImage ? 'Optional prompt for enhancement...' : 'Describe the scene...'
-            }
-            value={item.prompt}
-            onChange={(e) => onUpdatePrompt(item.id, e.target.value)}
-          />
-          <NativeSelect
-            size="xs"
-            value={item.aspectRatio}
-            onChange={(e) => onUpdateAspectRatio(item.id, e.target.value)}
-            data={aspectRatioLabels}
-            style={{ width: 72, flexShrink: 0 }}
-          />
-        </div>
-      </div>
-
-      {/* Remove button */}
-      <ActionIcon
-        variant="subtle"
-        color="gray"
-        size="sm"
-        onClick={() => onRemove(item.id)}
-        style={{ flexShrink: 0, marginTop: 2 }}
-      >
-        <IconX size={14} />
-      </ActionIcon>
-    </div>
-  );
-}
-
 function ProjectWorkspace() {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { id } = router.query;
   const projectId = Number(id);
 
+  // ── Modal open/close ──
   const [panelModalOpened, { open: openPanelModal, close: closePanelModal }] = useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const [publishModalOpened, { open: openPublishModal, close: closePublishModal }] =
     useDisclosure(false);
-  const [publishEaEnabled, setPublishEaEnabled] = useState(false);
-  const [publishEaBuzzPrice, setPublishEaBuzzPrice] = useState<number | string>(100);
-  const [publishEaTimeframe, setPublishEaTimeframe] = useState<number | string>(7);
+  const [chapterSettingsOpened, { open: openChapterSettings, close: closeChapterSettings }] =
+    useDisclosure(false);
+  const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
+
+  // ── Core shared state ──
   const [prompt, setPrompt] = useState('');
   const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [useContext, setUseContext] = useState(true);
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
-  const [generationModel, setGenerationModel] = useState<'NanoBanana' | 'Seedream' | 'OpenAI' | 'Qwen' | null>(null);
+  const [generationModel, setGenerationModel] = useState<
+    'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | null
+  >(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
-
-  // Panel mode: Generate (prompt from scratch) vs Enhance (start from image) vs Bulk vs Import
-  const [panelMode, setPanelMode] = useState<'generate' | 'enhance' | 'bulk' | 'import'>(
-    'generate'
-  );
-  const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
-    url: string;
-    previewUrl: string;
-    width: number;
-    height: number;
-  } | null>(null);
-  const [enhanceUploading, setEnhanceUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const {
-    uploadToCF: uploadEnhanceToCF,
-    files: enhanceUploadFiles,
-    resetFiles: resetEnhanceFiles,
-  } = useCFImageUpload();
-
-  // Bulk add state
-  type BulkPanelItem = {
-    id: string;
-    sourceImage?: { url: string; cfId: string; width: number; height: number; preview: string };
-    prompt: string;
-    aspectRatio: string;
-  };
-  const [bulkItems, setBulkItems] = useState<BulkPanelItem[]>([]);
-  const [bulkEnhance, setBulkEnhance] = useState(true);
-  const [bulkUploading, setBulkUploading] = useState(false);
-  const { uploadToCF: uploadBulkToCF, resetFiles: resetBulkFiles } = useCFImageUpload();
-
-  // Import tab state
-  const [importUploading, setImportUploading] = useState(false);
-  const [importSelected, setImportSelected] = useState<
-    { url: string; cfId: string; width: number; height: number; preview: string }[]
-  >([]);
-  const { uploadToCF: uploadImportToCF } = useCFImageUpload();
-
-  // Chapter settings modal state
-  const [chapterSettingsOpened, { open: openChapterSettings, close: closeChapterSettings }] =
-    useDisclosure(false);
-  const [chapterSettingsPosition, setChapterSettingsPosition] = useState<number | null>(null);
-  const [chapterSettingsName, setChapterSettingsName] = useState('');
-  const [chapterSettingsEaEnabled, setChapterSettingsEaEnabled] = useState(false);
-  const [chapterSettingsEaBuzzPrice, setChapterSettingsEaBuzzPrice] = useState<number | string>(100);
-  const [chapterSettingsEaTimeframe, setChapterSettingsEaTimeframe] = useState<number | string>(7);
-
-  // Settings modal state
-  const [editName, setEditName] = useState('');
-  const [editDescription, setEditDescription] = useState('');
-  const [editCoverUrl, setEditCoverUrl] = useState<string | null>(null);
-  const [editCoverImageId, setEditCoverImageId] = useState<number | null>(null);
-  const [editGenre, setEditGenre] = useState<string | null>(null);
-  const [editBaseModel, setEditBaseModel] = useState<string | null>(null);
-  const [editHeroUrl, setEditHeroUrl] = useState<string | null>(null);
-  const [editHeroImageId, setEditHeroImageId] = useState<number | null>(null);
-  const [pickingCover, setPickingCover] = useState(false);
-  const [pickingHero, setPickingHero] = useState(false);
-  const [editHeroPosition, setEditHeroPosition] = useState(50);
-  const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
-  const {
-    uploadToCF: uploadHeroToCF,
-    files: heroUploadFiles,
-    resetFiles: resetHeroFiles,
-  } = useCFImageUpload();
-
-  // Panel detail drawer state
-  const [detailPanelId, setDetailPanelId] = useState<number | null>(null);
-  // Lock body scroll when drawer is open
-  useEffect(() => {
-    if (detailPanelId != null) {
-      const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
-      document.body.style.overflow = 'hidden';
-      document.body.style.paddingRight = `${scrollBarWidth}px`;
-      return () => {
-        document.body.style.overflow = '';
-        document.body.style.paddingRight = '';
-      };
-    }
-  }, [detailPanelId]);
-  // Insert-at-position state for adding panels between existing ones
   const [insertAtPosition, setInsertAtPosition] = useState<number | null>(null);
-
-  // Smart Create modal state
-  const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
-  const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
-  const [smartChapterName, setSmartChapterName] = useState('New Chapter');
-  const [smartStory, setSmartStory] = useState('');
-  const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
-  const [smartEnhance, setSmartEnhance] = useState(true);
-  const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const [detailPanelId, setDetailPanelId] = useState<number | null>(null);
+  const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
+  const [publishEaInitial, setPublishEaInitial] = useState(false);
+  const [chapterSettingsTarget, setChapterSettingsTarget] = useState<{
+    position: number;
+    name: string;
+    status: string;
+    earlyAccessConfig: { buzzPrice: number; timeframe: number } | null;
+  } | null>(null);
 
   const panelSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
+  const chapterSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
 
+  // ── tRPC queries ──
   const {
     data: project,
     isLoading,
     refetch,
   } = trpc.comics.getProject.useQuery({ id: projectId }, { enabled: projectId > 0 });
 
-  // Resolve active model and aspect ratios — generationModel overrides project default
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana';
-  const activeAspectRatios =
-    COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
+  const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
 
-  // Dynamic cost estimate from orchestrator
   const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(
     { baseModel: effectiveModel },
     { staleTime: 5 * 60 * 1000 }
   );
-  const panelCost = costEstimate?.cost ?? 25; // fallback to 25 if unavailable
+  const panelCost = costEstimate?.cost ?? 25;
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
@@ -419,17 +145,23 @@ function ProjectWorkspace() {
   });
   const planCost = planCostEstimate?.cost ?? 0;
 
-  // Set active chapter to first chapter on load
+  // ── Active chapter ──
   useEffect(() => {
     if (project?.chapters?.length && activeChapterPosition == null) {
       setActiveChapterPosition(project.chapters[0].position);
     }
   }, [project?.chapters, activeChapterPosition]);
 
-  // All user references (global — not project-specific)
+  const activeChapter = useMemo(
+    () =>
+      project?.chapters?.find((ch) => ch.position === activeChapterPosition) ??
+      project?.chapters?.[0],
+    [project?.chapters, activeChapterPosition]
+  );
+
+  // ── References ──
   const allReferences = useMemo(() => project?.references ?? [], [project?.references]);
 
-  // Build reference image map
   const referenceImageMap = useMemo(() => {
     const map = new Map<number, { url: string }>();
     for (const c of allReferences) {
@@ -441,6 +173,134 @@ function ProjectWorkspace() {
     return map;
   }, [allReferences]);
 
+  const referenceNameMap = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const c of allReferences) {
+      map.set(c.id, c.name);
+    }
+    return map;
+  }, [allReferences]);
+
+  const activeReferences = useMemo(
+    () => allReferences.filter((c) => c.status === 'Ready'),
+    [allReferences]
+  );
+
+  const totalRefImageCount = useMemo(
+    () => activeReferences.reduce((sum, c) => sum + ((c as any).images?.length ?? 0), 0),
+    [activeReferences]
+  );
+
+  const maxReferenceImages = COMIC_MODEL_MAX_IMAGES[effectiveModel] ?? 7;
+
+  const mentionedReferences = useMemo(() => {
+    if (!prompt.trim()) return [];
+    const sorted = [...activeReferences].sort((a, b) => b.name.length - a.name.length);
+    const mentioned = new Set<number>();
+    for (const ref of sorted) {
+      const escaped = ref.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`@${escaped}(?=$|[\\s.,!?;:'")])`, 'gi');
+      if (pattern.test(prompt)) {
+        mentioned.add(ref.id);
+      }
+    }
+    return activeReferences.filter((r) => mentioned.has(r.id));
+  }, [prompt, activeReferences]);
+
+  const mentionedRefImageCount = useMemo(
+    () => mentionedReferences.reduce((sum, c) => sum + ((c as any).images?.length ?? 0), 0),
+    [mentionedReferences]
+  );
+
+  const mentionedIdKey = mentionedReferences.map((r) => r.id).join(',');
+  useEffect(() => {
+    setSelectedImageIds(null);
+  }, [mentionedIdKey]);
+
+  const reservedSlots = useMemo(() => (includePreviousImage ? 1 : 0), [includePreviousImage]);
+  const refImageBudget = maxReferenceImages - reservedSlots;
+
+  const needsImageSelection =
+    mentionedReferences.length > 0 && mentionedRefImageCount > refImageBudget;
+
+  const mentionRefs = useMemo(
+    () => activeReferences.map((c) => ({ id: c.id, name: c.name })),
+    [activeReferences]
+  );
+
+  // ── Polling ──
+  const generatingPanelIds = useMemo(
+    () => (activeChapter?.panels ?? []).filter((p) => p.status === 'Generating').map((p) => p.id),
+    [activeChapter?.panels]
+  );
+
+  const handledPanelIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const current = new Set(generatingPanelIds);
+    for (const panelId of handledPanelIdsRef.current) {
+      if (!current.has(panelId)) handledPanelIdsRef.current.delete(panelId);
+    }
+  }, [generatingPanelIds]);
+
+  const utils = trpc.useUtils();
+
+  useEffect(() => {
+    if (generatingPanelIds.length === 0) return;
+    const interval = setInterval(async () => {
+      const toPoll = generatingPanelIds.filter((pid) => !handledPanelIdsRef.current.has(pid));
+      if (toPoll.length === 0) return;
+      try {
+        const results = await Promise.all(
+          toPoll.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
+        );
+        let hasTerminal = false;
+        const failedCount = results.filter((r) => r.status === 'Failed').length;
+        for (let i = 0; i < results.length; i++) {
+          const status = results[i].status;
+          if (status === 'Ready' || status === 'Failed') {
+            handledPanelIdsRef.current.add(toPoll[i]);
+            hasTerminal = true;
+          }
+        }
+        if (failedCount > 0) {
+          showErrorNotification({
+            title: 'Panel generation failed',
+            error: new Error('Buzz has been refunded automatically.'),
+          });
+        }
+        if (hasTerminal) refetch();
+      } catch {
+        /* ignore */
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generatingPanelIds.join(','), utils, refetch]);
+
+  const processingReferenceIds = useMemo(
+    () => allReferences.filter((c) => c.status === 'Pending').map((c) => c.id),
+    [allReferences]
+  );
+
+  useEffect(() => {
+    if (processingReferenceIds.length === 0) return;
+    const interval = setInterval(async () => {
+      try {
+        const results = await Promise.all(
+          processingReferenceIds.map((cid) =>
+            utils.comics.pollReferenceStatus.fetch({ referenceId: cid })
+          )
+        );
+        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
+      } catch {
+        /* ignore */
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processingReferenceIds.join(','), utils, refetch]);
+
+  // ── Mutations ──
   const handleMutationError = (error: any) => {
     showErrorNotification({ error, title: 'Something went wrong' });
   };
@@ -451,8 +311,6 @@ function ProjectWorkspace() {
       setPrompt('');
       setRegeneratingPanelId(null);
       setInsertAtPosition(null);
-      setEnhanceSourceImage(null);
-      setPanelMode('generate');
       refetch();
     },
     onError: handleMutationError,
@@ -462,10 +320,7 @@ function ProjectWorkspace() {
     onSuccess: () => {
       closePanelModal();
       setPrompt('');
-      setEnhanceSourceImage(null);
       setInsertAtPosition(null);
-      setPanelMode('generate');
-      resetEnhanceFiles();
       refetch();
     },
     onError: handleMutationError,
@@ -520,6 +375,14 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const deleteProjectMutation = trpc.comics.deleteProject.useMutation({
+    onSuccess: () => {
+      const username = currentUser?.username;
+      router.push(username ? `/user/${username}/comics` : '/comics');
+    },
+    onError: handleMutationError,
+  });
+
   const publishChapterMutation = trpc.comics.publishChapter.useMutation({
     onSuccess: () => refetch(),
     onError: handleMutationError,
@@ -531,10 +394,6 @@ function ProjectWorkspace() {
   });
 
   const planPanelsMutation = trpc.comics.planChapterPanels.useMutation({
-    onSuccess: (data) => {
-      setSmartPanels(data.panels);
-      setSmartStep('review');
-    },
     onError: handleMutationError,
   });
 
@@ -542,7 +401,6 @@ function ProjectWorkspace() {
     onSuccess: (data) => {
       closeSmartModal();
       setActiveChapterPosition(data.position);
-      resetSmartState();
       refetch();
     },
     onError: handleMutationError,
@@ -551,189 +409,47 @@ function ProjectWorkspace() {
   const bulkCreateMutation = trpc.comics.bulkCreatePanels.useMutation({
     onSuccess: () => {
       closePanelModal();
-      setBulkItems([]);
-      resetBulkFiles();
-      setImportSelected([]);
       setInsertAtPosition(null);
-      setPanelMode('generate');
       refetch();
     },
     onError: handleMutationError,
   });
 
-  const utils = trpc.useUtils();
+  const reorderChaptersMutation = trpc.comics.reorderChapters.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
 
-  // Get active chapter's panels
-  const activeChapter = useMemo(
-    () =>
-      project?.chapters?.find((ch) => ch.position === activeChapterPosition) ??
-      project?.chapters?.[0],
-    [project?.chapters, activeChapterPosition]
-  );
-
-  // Poll for panels actively generating
-  const generatingPanelIds = useMemo(
-    () => (activeChapter?.panels ?? []).filter((p) => p.status === 'Generating').map((p) => p.id),
-    [activeChapter?.panels]
-  );
-
-  useEffect(() => {
-    if (generatingPanelIds.length === 0) return;
-    const interval = setInterval(async () => {
-      try {
-        const results = await Promise.all(
-          generatingPanelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
-        );
-        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
-      } catch {
-        /* ignore */
-      }
-    }, 1500);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generatingPanelIds.join(','), utils, refetch]);
-
-  // Poll for references in Pending state (waiting for images)
-  const processingReferenceIds = useMemo(
-    () => allReferences.filter((c) => c.status === 'Pending').map((c) => c.id),
-    [allReferences]
-  );
-
-  useEffect(() => {
-    if (processingReferenceIds.length === 0) return;
-    const interval = setInterval(async () => {
-      try {
-        const results = await Promise.all(
-          processingReferenceIds.map((cid) =>
-            utils.comics.pollReferenceStatus.fetch({ referenceId: cid })
-          )
-        );
-        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
-      } catch {
-        /* ignore */
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [processingReferenceIds.join(','), utils, refetch]);
-
-  // Open chapter settings modal
-  const handleOpenChapterSettings = (chapter: NonNullable<typeof project>['chapters'][number]) => {
-    const eaConfig = chapter.earlyAccessConfig as {
-      buzzPrice: number;
-      timeframe: number;
-    } | null;
-    setChapterSettingsPosition(chapter.position);
-    setChapterSettingsName(chapter.name);
-    setChapterSettingsEaEnabled(eaConfig != null);
-    setChapterSettingsEaBuzzPrice(eaConfig?.buzzPrice ?? 100);
-    setChapterSettingsEaTimeframe(eaConfig?.timeframe ?? 7);
-    openChapterSettings();
-  };
-
-  // Build reference name map for panel cards
-  const referenceNameMap = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const c of allReferences) {
-      map.set(c.id, c.name);
+  // ── Handlers ──
+  const handleModelChange = (value: string | null) => {
+    setGenerationModel(value as typeof generationModel);
+    const newSizes =
+      COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana'] ??
+      COMIC_MODEL_SIZES.NanoBanana;
+    const defaultLabel =
+      newSizes.find((s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3')
+        ?.label ?? newSizes[0].label;
+    if (!newSizes.some((s) => s.label === aspectRatio)) {
+      setAspectRatio(defaultLabel);
     }
-    return map;
-  }, [allReferences]);
-
-  const activeReferences = useMemo(
-    () => allReferences.filter((c) => c.status === 'Ready'),
-    [allReferences]
-  );
-
-  const anyRefHasImages = useMemo(
-    () => activeReferences.some((c) => ((c as any).images?.length ?? 0) > 0),
-    [activeReferences]
-  );
-
-  // References for MentionTextarea autocomplete
-  const mentionRefs = useMemo(
-    () => activeReferences.map((c) => ({ id: c.id, name: c.name })),
-    [activeReferences]
-  );
-
-  if (isLoading || !project) {
-    return (
-      <Container size="xl" py="xl">
-        <Stack align="center" gap="md" py={60}>
-          <Loader color="yellow" />
-          <Text c="dimmed">Loading project...</Text>
-        </Stack>
-      </Container>
-    );
-  }
-
-  const hasReadyPanelsWithImages = project.chapters.some((ch) =>
-    ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
-  );
-
-  const totalPanelCount = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
-
-  // Find panel for detail drawer
-  const detailPanel = detailPanelId
-    ? project.chapters.flatMap((ch) => ch.panels).find((p) => p.id === detailPanelId)
-    : null;
-  const detailPanelIndex =
-    detailPanel && activeChapter
-      ? activeChapter.panels.findIndex((p) => p.id === detailPanel.id)
-      : -1;
-
-  const handlePanelDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id || !activeChapter) return;
-    const panels = activeChapter.panels;
-    const oldIndex = panels.findIndex((p) => p.id === active.id);
-    const newIndex = panels.findIndex((p) => p.id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-    const reordered = arrayMove(panels, oldIndex, newIndex);
-    reorderPanelsMutation.mutate({
-      projectId,
-      chapterPosition: activeChapter.position,
-      panelIds: reordered.map((p) => p.id),
-    });
   };
 
   const handlePanelModalClose = () => {
     closePanelModal();
     setRegeneratingPanelId(null);
     setInsertAtPosition(null);
-    setEnhanceSourceImage(null);
-    setEnhanceUploading(false);
-    setPanelMode('generate');
     setPrompt('');
     setUseContext(true);
     setIncludePreviousImage(false);
     setAspectRatio('3:4');
     setGenerationModel(null);
-    resetEnhanceFiles();
-    setBulkItems([]);
-    setBulkEnhance(true);
-    resetBulkFiles();
-    setImportSelected([]);
-  };
-
-  const handleModelChange = (value: string | null) => {
-    setGenerationModel(value as typeof generationModel);
-    // Reset aspect ratios if current values aren't available in the new model's sizes
-    const newSizes = COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana'] ?? COMIC_MODEL_SIZES.NanoBanana;
-    const defaultLabel = newSizes.find((s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3')?.label ?? newSizes[0].label;
-    if (!newSizes.some((s) => s.label === aspectRatio)) {
-      setAspectRatio(defaultLabel);
-    }
-    if (!newSizes.some((s) => s.label === smartAspectRatio)) {
-      setSmartAspectRatio(defaultLabel);
-    }
+    setSelectedImageIds(null);
   };
 
   const handleGeneratePanel = async () => {
     if (!prompt.trim() || !activeChapter || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      // When regenerating, preserve the old panel's position
       let targetPosition = insertAtPosition;
       if (regeneratingPanelId && targetPosition == null) {
         const oldPanel = activeChapter.panels.find((p) => p.id === regeneratingPanelId);
@@ -752,17 +468,22 @@ function ProjectWorkspace() {
         aspectRatio,
         baseModel: generationModel,
         ...(targetPosition != null ? { position: targetPosition } : {}),
+        ...(selectedImageIds ? { selectedImageIds } : {}),
       });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleEnhancePanel = async () => {
-    if (!activeChapter || !enhanceSourceImage || isSubmitting) return;
+  const handleEnhancePanel = async (sourceImage: {
+    url: string;
+    previewUrl: string;
+    width: number;
+    height: number;
+  }) => {
+    if (!activeChapter || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      // When regenerating, preserve the old panel's position
       let targetPosition = insertAtPosition;
       if (regeneratingPanelId && targetPosition == null) {
         const oldPanel = activeChapter.panels.find((p) => p.id === regeneratingPanelId);
@@ -774,9 +495,9 @@ function ProjectWorkspace() {
       enhancePanelMutation.mutate({
         projectId,
         chapterPosition: activeChapter.position,
-        sourceImageUrl: enhanceSourceImage.url,
-        sourceImageWidth: enhanceSourceImage.width,
-        sourceImageHeight: enhanceSourceImage.height,
+        sourceImageUrl: sourceImage.url,
+        sourceImageWidth: sourceImage.width,
+        sourceImageHeight: sourceImage.height,
         prompt: prompt.trim() || undefined,
         enhance: enhancePrompt,
         useContext,
@@ -784,348 +505,126 @@ function ProjectWorkspace() {
         aspectRatio,
         baseModel: generationModel,
         ...(targetPosition != null ? { position: targetPosition } : {}),
+        ...(selectedImageIds ? { selectedImageIds } : {}),
       });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleEnhanceImageDrop = async (files: File[]) => {
-    if (files.length === 0) return;
-    const file = files[0];
-    setEnhanceUploading(true);
-    try {
-      // Get image dimensions
-      const img = new Image();
-      const objectUrl = URL.createObjectURL(file);
-      const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-        img.onload = () => {
-          resolve({ width: img.naturalWidth, height: img.naturalHeight });
-          URL.revokeObjectURL(objectUrl);
-        };
-        img.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
-          reject(new Error('Failed to load image'));
-        };
-        img.src = objectUrl;
-      }).catch(() => ({ width: 512, height: 512 })); // fallback dimensions on error
-
-      const result = await uploadEnhanceToCF(file);
-      setEnhanceSourceImage({
-        url: result.id,
-        previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
-        width: dims.width,
-        height: dims.height,
-      });
-    } finally {
-      setEnhanceUploading(false);
-    }
-  };
-
-  const handleOpenImageSelector = () => {
-    dialogStore.trigger({
-      component: ImageSelectModal,
-      props: {
-        title: 'Select from Generator',
-        selectSource: 'generation' as const,
-        videoAllowed: false,
-        importedUrls: [],
-        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
-          if (selected.length === 0) return;
-          const img = selected[0];
-          const width = (img.meta?.width as number) ?? 512;
-          const height = (img.meta?.height as number) ?? 512;
-
-          setEnhanceUploading(true);
-          try {
-            const cfId = await fetchAndUploadGeneratorImage(
-              img.url,
-              'enhance',
-              uploadEnhanceToCF
-            );
-            setEnhanceSourceImage({
-              url: cfId,
-              previewUrl: getEdgeUrl(cfId, { width: 400 }) ?? cfId,
-              width,
-              height,
-            });
-          } catch (err) {
-            console.error('Failed to upload generator image:', err);
-            setEnhanceSourceImage({
-              url: img.url,
-              previewUrl: img.url,
-              width,
-              height,
-            });
-          } finally {
-            setEnhanceUploading(false);
-          }
-        },
-      },
-    });
-  };
-
-  const handleBulkImageDrop = async (files: File[]) => {
-    if (files.length === 0) return;
-    setBulkUploading(true);
-    try {
-      const newItems: BulkPanelItem[] = [];
-      for (const file of files) {
-        // Get image dimensions
-        const img = new window.Image();
-        const objectUrl = URL.createObjectURL(file);
-        const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-          img.onload = () => {
-            resolve({ width: img.naturalWidth, height: img.naturalHeight });
-            URL.revokeObjectURL(objectUrl);
-          };
-          img.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            reject(new Error('Failed to load image'));
-          };
-          img.src = objectUrl;
-        }).catch(() => ({ width: 512, height: 512 }));
-
-        const result = await uploadBulkToCF(file);
-        newItems.push({
-          id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          sourceImage: {
-            url: result.id,
-            cfId: result.id,
-            width: dims.width,
-            height: dims.height,
-            preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
-          },
-          prompt: '',
-          aspectRatio: '3:4',
-        });
-      }
-      setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
-    } finally {
-      setBulkUploading(false);
-    }
-  };
-
-  const handleBulkAddPrompt = () => {
-    setBulkItems((prev) =>
-      [
-        ...prev,
-        {
-          id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          prompt: '',
-          aspectRatio: '3:4',
-        },
-      ].slice(0, 20)
-    );
-  };
-
-  const handleBulkFromGenerator = () => {
-    dialogStore.trigger({
-      component: ImageSelectModal,
-      props: {
-        title: 'Select from Generator',
-        selectSource: 'generation' as const,
-        videoAllowed: false,
-        importedUrls: [],
-        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
-          if (selected.length === 0) return;
-          setBulkUploading(true);
-          try {
-            const newItems: BulkPanelItem[] = [];
-            for (const img of selected) {
-              const width = (img.meta?.width as number) ?? 512;
-              const height = (img.meta?.height as number) ?? 512;
-              let cfId: string;
-              try {
-                cfId = await fetchAndUploadGeneratorImage(img.url, 'bulk_gen', uploadBulkToCF);
-              } catch (err) {
-                console.error('Failed to upload generator image:', err);
-                cfId = img.url; // Fallback: use URL directly (may expire)
-              }
-              newItems.push({
-                id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                sourceImage: {
-                  url: cfId,
-                  cfId,
-                  width,
-                  height,
-                  preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
-                },
-                prompt: '',
-                aspectRatio: '3:4',
-              });
-            }
-            setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
-          } finally {
-            setBulkUploading(false);
-          }
-        },
-      },
-    });
-  };
-
-  // ── Import tab: select from generator and create panels directly ──
-  const handleImportSelect = () => {
-    dialogStore.trigger({
-      component: ImageSelectModal,
-      props: {
-        title: 'Import Images as Panels',
-        selectSource: 'generation' as const,
-        videoAllowed: false,
-        importedUrls: importSelected.map((s) => s.url),
-        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
-          if (selected.length === 0) return;
-          setImportUploading(true);
-          try {
-            const newItems: typeof importSelected = [];
-            for (const img of selected) {
-              const width = (img.meta?.width as number) ?? 512;
-              const height = (img.meta?.height as number) ?? 512;
-              try {
-                const cfId = await fetchAndUploadGeneratorImage(
-                  img.url,
-                  'import',
-                  uploadImportToCF
-                );
-                newItems.push({
-                  url: cfId,
-                  cfId,
-                  width,
-                  height,
-                  preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
-                });
-              } catch (err) {
-                console.error('Failed to upload import image:', err);
-              }
-            }
-            setImportSelected((prev) => [...prev, ...newItems]);
-          } finally {
-            setImportUploading(false);
-          }
-        },
-      },
-    });
-  };
-
-  const handleImportRemove = (idx: number) => {
-    setImportSelected((prev) => prev.filter((_, i) => i !== idx));
-  };
-
-  const handleImportSubmit = () => {
-    if (!activeChapter || importSelected.length === 0 || isSubmitting) return;
+  const handleBulkCreate = (items: BulkPanelItem[], enhance: boolean) => {
+    if (!activeChapter || items.length === 0 || isSubmitting) return;
     setIsSubmitting(true);
-    try {
-      bulkCreateMutation.mutate(
-        {
-          projectId,
-          chapterPosition: activeChapter.position,
-          baseModel: generationModel,
-          panels: importSelected.map((img) => ({
-            sourceImageUrl: img.url,
-            sourceImageWidth: img.width,
-            sourceImageHeight: img.height,
-            aspectRatio: '3:4',
-          })),
-        },
-        {
-          onSettled: () => {
-            setIsSubmitting(false);
-            setImportSelected([]);
-          },
-        }
-      );
-    } catch {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleBulkRemoveItem = (itemId: string) => {
-    setBulkItems((prev) => prev.filter((item) => item.id !== itemId));
-  };
-
-  const handleBulkUpdatePrompt = (itemId: string, newPrompt: string) => {
-    setBulkItems((prev) =>
-      prev.map((item) => (item.id === itemId ? { ...item, prompt: newPrompt } : item))
-    );
-  };
-
-  const handleBulkUpdateAspectRatio = (itemId: string, newAspectRatio: string) => {
-    setBulkItems((prev) =>
-      prev.map((item) => (item.id === itemId ? { ...item, aspectRatio: newAspectRatio } : item))
-    );
-  };
-
-  const handleBulkDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    setBulkItems((prev) => {
-      const oldIndex = prev.findIndex((item) => item.id === active.id);
-      const newIndex = prev.findIndex((item) => item.id === over.id);
-      if (oldIndex === -1 || newIndex === -1) return prev;
-      return arrayMove(prev, oldIndex, newIndex);
-    });
-  };
-
-  const handleBulkSubmit = async () => {
-    if (!activeChapter || bulkItems.length === 0 || isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      bulkCreateMutation.mutate({
+    bulkCreateMutation.mutate(
+      {
         projectId,
         chapterPosition: activeChapter.position,
         baseModel: generationModel,
-        panels: bulkItems.map((item) => ({
+        panels: items.map((item) => ({
           prompt: item.prompt?.trim() || undefined,
-          enhance: bulkEnhance,
+          enhance,
           sourceImageUrl: item.sourceImage?.url,
           sourceImageWidth: item.sourceImage?.width,
           sourceImageHeight: item.sourceImage?.height,
           aspectRatio: item.aspectRatio,
         })),
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+      },
+      { onSettled: () => setIsSubmitting(false) }
+    );
   };
 
-  const bulkGenerationCount = bulkItems.filter((item) => item.prompt.trim() !== '').length;
-  const bulkTotalCost = bulkGenerationCount * (panelCost + (bulkEnhance ? enhanceCost : 0));
+  const handleImportSubmit = (
+    items: { url: string; cfId: string; width: number; height: number; preview: string }[]
+  ) => {
+    if (!activeChapter || items.length === 0 || isSubmitting) return;
+    setIsSubmitting(true);
+    bulkCreateMutation.mutate(
+      {
+        projectId,
+        chapterPosition: activeChapter.position,
+        baseModel: generationModel,
+        panels: items.map((img) => ({
+          sourceImageUrl: img.url,
+          sourceImageWidth: img.width,
+          sourceImageHeight: img.height,
+          aspectRatio: '3:4',
+        })),
+      },
+      { onSettled: () => setIsSubmitting(false) }
+    );
+  };
 
-  const handleSaveChapterSettings = () => {
-    if (chapterSettingsPosition == null || !chapterSettingsName.trim()) return;
+  const handlePanelDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !activeChapter) return;
+    const panels = activeChapter.panels;
+    const oldIndex = panels.findIndex((p) => p.id === active.id);
+    const newIndex = panels.findIndex((p) => p.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(panels, oldIndex, newIndex);
+    reorderPanelsMutation.mutate({
+      projectId,
+      chapterPosition: activeChapter.position,
+      panelIds: reordered.map((p) => p.id),
+    });
+  };
 
-    const chapter = project.chapters.find((ch) => ch.position === chapterSettingsPosition);
+  const handleChapterDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !project) return;
+    const chapters = project.chapters;
+    const oldIndex = chapters.findIndex((ch) => ch.position === active.id);
+    const newIndex = chapters.findIndex((ch) => ch.position === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrder = arrayMove(
+      chapters.map((ch) => ch.position),
+      oldIndex,
+      newIndex
+    );
+    reorderChaptersMutation.mutate({ projectId, order: newOrder });
+  };
+
+  const handleOpenChapterSettings = (chapter: NonNullable<typeof project>['chapters'][number]) => {
+    const eaConfig = chapter.earlyAccessConfig as {
+      buzzPrice: number;
+      timeframe: number;
+    } | null;
+    setChapterSettingsTarget({
+      position: chapter.position,
+      name: chapter.name,
+      status: chapter.status,
+      earlyAccessConfig: eaConfig,
+    });
+    openChapterSettings();
+  };
+
+  const handleSaveChapterSettings = (data: {
+    position: number;
+    name: string;
+    eaConfig: { buzzPrice: number; timeframe: number } | null;
+  }) => {
+    if (!project) return;
+    const chapter = project.chapters.find((ch) => ch.position === data.position);
     if (!chapter) return;
 
-    // Save name if changed
-    if (chapterSettingsName.trim() !== chapter.name) {
+    if (data.name !== chapter.name) {
       updateChapterMutation.mutate({
         projectId,
-        chapterPosition: chapterSettingsPosition,
-        name: chapterSettingsName.trim(),
+        chapterPosition: data.position,
+        name: data.name,
       });
     }
 
-    // Save EA config if chapter is published
     if (chapter.status === ComicChapterStatus.Published) {
-      const newEaConfig = chapterSettingsEaEnabled
-        ? {
-            buzzPrice: Number(chapterSettingsEaBuzzPrice),
-            timeframe: Number(chapterSettingsEaTimeframe),
-          }
-        : null;
       const currentEaConfig = chapter.earlyAccessConfig as {
         buzzPrice: number;
         timeframe: number;
       } | null;
-
-      const configChanged =
-        JSON.stringify(newEaConfig) !== JSON.stringify(currentEaConfig);
-      if (configChanged) {
+      if (JSON.stringify(data.eaConfig) !== JSON.stringify(currentEaConfig)) {
         updateChapterEaMutation.mutate({
           projectId,
-          chapterPosition: chapterSettingsPosition,
-          earlyAccessConfig: newEaConfig,
+          chapterPosition: data.position,
+          earlyAccessConfig: data.eaConfig,
         });
       }
     }
@@ -1134,7 +633,7 @@ function ProjectWorkspace() {
   };
 
   const handleDeleteChapter = (chapterPosition: number, chapterName: string) => {
-    if (project.chapters.length <= 1) return;
+    if (!project || project.chapters.length <= 1) return;
     openConfirmModal({
       title: 'Delete Chapter',
       children: (
@@ -1171,24 +670,21 @@ function ProjectWorkspace() {
         },
       });
     } else {
-      // Open publish modal with EA options
       setActiveChapterPosition(chapterPosition);
-      setPublishEaEnabled(false);
-      setPublishEaBuzzPrice(100);
-      setPublishEaTimeframe(7);
+      setPublishEaInitial(false);
       openPublishModal();
     }
   };
 
-  const handleConfirmPublish = () => {
+  const handleConfirmPublish = (
+    eaConfig: { buzzPrice: number; timeframe: number } | null
+  ) => {
     if (activeChapterPosition == null) return;
     publishChapterMutation.mutate(
       {
         projectId,
         chapterPosition: activeChapterPosition,
-        earlyAccessConfig: publishEaEnabled
-          ? { buzzPrice: Number(publishEaBuzzPrice), timeframe: Number(publishEaTimeframe) }
-          : null,
+        earlyAccessConfig: eaConfig,
       },
       { onSuccess: () => closePublishModal() }
     );
@@ -1211,128 +707,30 @@ function ProjectWorkspace() {
     });
   };
 
-  const handleOpenSettings = () => {
-    setEditName(project.name);
-    setEditDescription(project.description ?? '');
-    setEditGenre((project as any).genre ?? null);
-    setEditBaseModel(project.baseModel ?? null);
-    setEditCoverUrl(project.coverImage?.url ?? null);
-    setEditCoverImageId(project.coverImage?.id ?? null);
-    setEditHeroUrl((project as any).heroImage?.url ?? null);
-    setEditHeroImageId((project as any).heroImage?.id ?? null);
-    setEditHeroPosition((project as any).heroImagePosition ?? 50);
-    resetCoverFiles();
-    resetHeroFiles();
-    openSettings();
+  const handleRegenerate = (panel: {
+    id: number;
+    prompt: string;
+    metadata: Record<string, any> | null;
+  }) => {
+    const meta = panel.metadata;
+    setRegeneratingPanelId(panel.id);
+    setPrompt(panel.prompt);
+    setEnhancePrompt(meta?.enhanceEnabled ?? true);
+    setUseContext(meta?.useContext ?? true);
+    setIncludePreviousImage(meta?.includePreviousImage ?? false);
+    setSelectedImageIds(meta?.selectedImageIds ?? null);
+    openPanelModal();
   };
 
-  const handleSaveSettings = () => {
-    updateProjectMutation.mutate({
-      id: projectId,
-      name: editName.trim() || undefined,
-      description: editDescription.trim() || null,
-      genre:
-        editGenre !== ((project as any).genre ?? null)
-          ? (editGenre as ComicGenre) ?? null
-          : undefined,
-      baseModel:
-        editBaseModel !== (project.baseModel ?? null)
-          ? (editBaseModel as any) ?? null
-          : undefined,
-      // Pass URL for new uploads (backend creates Image record), or null to clear
-      coverUrl: editCoverUrl !== (project.coverImage?.url ?? null) ? editCoverUrl : undefined,
-      heroUrl: editHeroUrl !== ((project as any).heroImage?.url ?? null) ? editHeroUrl : undefined,
-      heroImagePosition:
-        editHeroPosition !== ((project as any).heroImagePosition ?? 50)
-          ? editHeroPosition
-          : undefined,
-    });
+  const handleDrawerRegenerate = (panel: any) => {
+    setDetailPanelId(null);
+    handleRegenerate(panel);
   };
 
-  const handleCoverDrop = async (files: File[]) => {
-    if (files.length === 0) return;
-    const file = files[0];
-    const url = URL.createObjectURL(file);
-    const { width, height } = await getImageDimensions(url);
-    dialogStore.trigger({
-      id: 'comic-cover-crop',
-      component: ImageCropModal,
-      props: {
-        images: [{ url, width, height }],
-        aspectRatios: ['3:4'] as `${number}:${number}`[],
-        onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
-          const blob = output[0]?.cropped;
-          const uploadFile = blob
-            ? new File([blob], 'cover.jpg', { type: blob.type })
-            : file;
-          const result = await uploadToCF(uploadFile);
-          setEditCoverUrl(result.id);
-          setEditCoverImageId(null);
-          URL.revokeObjectURL(url);
-        },
-        onCancel: () => URL.revokeObjectURL(url),
-      },
-    });
-  };
-
-  const handleHeroDrop = async (files: File[]) => {
-    if (files.length === 0) return;
-    const result = await uploadHeroToCF(files[0]);
-    setEditHeroUrl(result.id);
-    setEditHeroImageId(null); // New upload — backend will create Image record
-  };
-
-  const handlePickCoverFromGenerator = () =>
-    openGeneratorImagePicker({
-      title: 'Pick Cover from Generator',
-      fileNameBase: 'cover',
-      uploadFn: uploadToCF,
-      onSuccess: (id) => {
-        setEditCoverUrl(id);
-        setEditCoverImageId(null);
-      },
-      onLoadingChange: setPickingCover,
-      ImageSelectModal,
-    });
-
-  const handlePickHeroFromGenerator = () =>
-    openGeneratorImagePicker({
-      title: 'Pick Hero from Generator',
-      fileNameBase: 'hero',
-      uploadFn: uploadHeroToCF,
-      onSuccess: (id) => {
-        setEditHeroUrl(id);
-        setEditHeroImageId(null);
-      },
-      onLoadingChange: setPickingHero,
-      ImageSelectModal,
-    });
-
-  const resetSmartState = () => {
-    setSmartStep('input');
-    setSmartChapterName('New Chapter');
-    setSmartStory('');
-    setSmartPanels([]);
-    setSmartEnhance(true);
-    setSmartAspectRatio('3:4');
-  };
-
-  const handlePlanPanels = () => {
-    if (!smartStory.trim()) return;
-    planPanelsMutation.mutate({ projectId, storyDescription: smartStory.trim() });
-  };
-
-  const handleSmartCreate = () => {
-    if (smartPanels.length === 0) return;
-    smartCreateMutation.mutate({
-      projectId,
-      chapterName: smartChapterName.trim() || 'New Chapter',
-      storyDescription: smartStory.trim(),
-      panels: smartPanels.filter((p) => p.prompt.trim()),
-      enhance: smartEnhance,
-      aspectRatio: smartAspectRatio,
-      baseModel: generationModel,
-    });
+  const handleDrawerInsertAfter = (index: number) => {
+    setDetailPanelId(null);
+    setInsertAtPosition(index + 1);
+    openPanelModal();
   };
 
   const getStatusDotClass = (status: string, hasRefs: boolean) => {
@@ -1348,6 +746,33 @@ function ProjectWorkspace() {
     return status;
   };
 
+  // ── Loading state ──
+  if (isLoading || !project) {
+    return (
+      <Container size="xl" py="xl">
+        <Stack align="center" gap="md" py={60}>
+          <Loader color="yellow" />
+          <Text c="dimmed">Loading project...</Text>
+        </Stack>
+      </Container>
+    );
+  }
+
+  const hasReadyPanelsWithImages = project.chapters.some((ch) =>
+    ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
+  );
+
+  const totalPanelCount = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
+
+  // Detail drawer data
+  const detailPanel = detailPanelId
+    ? project.chapters.flatMap((ch) => ch.panels).find((p) => p.id === detailPanelId)
+    : null;
+  const detailPanelIndex =
+    detailPanel && activeChapter
+      ? activeChapter.panels.findIndex((p) => p.id === detailPanel.id)
+      : -1;
+
   return (
     <>
       <Meta title={`${project.name} - Civitai Comics`} />
@@ -1356,7 +781,7 @@ function ProjectWorkspace() {
         <Stack gap="xl">
           {/* ── Header card ─────────────────────────── */}
           <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
-            <div className={styles.headerImage} onClick={handleOpenSettings}>
+            <div className={styles.headerImage} onClick={() => openSettings()}>
               {project.coverImage?.url ? (
                 <img src={getEdgeUrl(project.coverImage.url, { width: 160 })} alt={project.name} />
               ) : (
@@ -1366,7 +791,17 @@ function ProjectWorkspace() {
 
             <div className={styles.headerContent}>
               <Group gap="xs" mb={4}>
-                <ActionIcon variant="subtle" size="sm" component={Link} href="/comics" c="dimmed">
+                <ActionIcon
+                  variant="subtle"
+                  size="sm"
+                  component={Link}
+                  href={
+                    currentUser?.username
+                      ? `/user/${currentUser.username}/comics`
+                      : '/comics'
+                  }
+                  c="dimmed"
+                >
                   <IconArrowLeft size={16} />
                 </ActionIcon>
                 <Title order={3} style={{ fontWeight: 700 }} lineClamp={1}>
@@ -1383,7 +818,8 @@ function ProjectWorkspace() {
               <div className="flex gap-3 items-center">
                 <span className={styles.statPill}>
                   <span className={styles.statDot} />
-                  {project.chapters.length} {project.chapters.length === 1 ? 'chapter' : 'chapters'}
+                  {project.chapters.length}{' '}
+                  {project.chapters.length === 1 ? 'chapter' : 'chapters'}
                 </span>
                 <span className={styles.statPill}>
                   <span className={styles.statDot} />
@@ -1401,7 +837,7 @@ function ProjectWorkspace() {
             </div>
 
             <div className={styles.headerActions}>
-              <ActionIcon variant="subtle" size="lg" onClick={handleOpenSettings} c="dimmed">
+              <ActionIcon variant="subtle" size="lg" onClick={() => openSettings()} c="dimmed">
                 <IconSettings size={20} />
               </ActionIcon>
               <button
@@ -1421,6 +857,15 @@ function ProjectWorkspace() {
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
                 <span>References</span>
+                {totalRefImageCount > maxReferenceImages && (
+                  <Tooltip
+                    label={`${totalRefImageCount} images across refs — only the first ${maxReferenceImages} will be used for generation`}
+                  >
+                    <Badge size="xs" color="yellow" variant="light">
+                      {totalRefImageCount}/{maxReferenceImages}
+                    </Badge>
+                  </Tooltip>
+                )}
                 <ActionIcon
                   variant="subtle"
                   size="sm"
@@ -1471,100 +916,130 @@ function ProjectWorkspace() {
               </div>
 
               <div className={styles.chapterSidebar}>
-                {project.chapters.map((chapter, idx) => {
-                  const isActive =
-                    (activeChapterPosition ?? project.chapters[0]?.position) === chapter.position;
-                  const panelCount = chapter.panels.length;
-                  const eaConfig = chapter.earlyAccessConfig as {
-                    buzzPrice: number;
-                    timeframe: number;
-                  } | null;
-                  const isPaywalled =
-                    chapter.status === ComicChapterStatus.Published &&
-                    eaConfig != null &&
-                    chapter.earlyAccessEndsAt != null &&
-                    new Date(chapter.earlyAccessEndsAt) > new Date();
-                  const isDeleting =
-                    deleteChapterMutation.isLoading &&
-                    deleteChapterMutation.variables?.chapterPosition === chapter.position;
-                  const isUpdating =
-                    (updateChapterMutation.isLoading &&
-                      updateChapterMutation.variables?.chapterPosition === chapter.position) ||
-                    (updateChapterEaMutation.isLoading &&
-                      updateChapterEaMutation.variables?.chapterPosition === chapter.position);
-                  const isBusy = isDeleting || isUpdating;
+                <DndContext
+                  sensors={chapterSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleChapterDragEnd}
+                >
+                  <SortableContext items={project.chapters.map((ch) => ch.position)}>
+                    {project.chapters.map((chapter) => {
+                      const isActive =
+                        (activeChapterPosition ?? project.chapters[0]?.position) ===
+                        chapter.position;
+                      const panelCount = chapter.panels.length;
+                      const eaConfig = chapter.earlyAccessConfig as {
+                        buzzPrice: number;
+                        timeframe: number;
+                      } | null;
+                      const isPaywalled =
+                        chapter.status === ComicChapterStatus.Published &&
+                        eaConfig != null &&
+                        chapter.earlyAccessEndsAt != null &&
+                        new Date(chapter.earlyAccessEndsAt) > new Date();
+                      const isDeleting =
+                        deleteChapterMutation.isLoading &&
+                        deleteChapterMutation.variables?.chapterPosition === chapter.position;
+                      const isUpdating =
+                        (updateChapterMutation.isLoading &&
+                          updateChapterMutation.variables?.chapterPosition === chapter.position) ||
+                        (updateChapterEaMutation.isLoading &&
+                          updateChapterEaMutation.variables?.chapterPosition === chapter.position);
+                      const isBusy = isDeleting || isUpdating;
 
-                  return (
-                    <div
-                      key={`${chapter.projectId}-${chapter.position}`}
-                      className={clsx(styles.chapterItem, isActive && styles.chapterItemActive)}
-                      style={isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
-                      onClick={() => setActiveChapterPosition(chapter.position)}
-                    >
-                      <span className={styles.chapterItemNumber}>
-                        {isBusy ? <Loader size={12} /> : idx + 1}
-                      </span>
-                      <div className={styles.chapterItemInfo}>
-                        <p className={styles.chapterItemName}>
-                          {chapter.name}
-                          {isPaywalled && (
-                            <IconLock
-                              size={11}
-                              className="inline-block ml-1 opacity-60"
-                              style={{ verticalAlign: 'middle', color: 'var(--mantine-color-yellow-5)' }}
-                            />
-                          )}
-                        </p>
-                        <div className={styles.chapterItemCount} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <Tooltip
-                            label={
-                              chapter.status === ComicChapterStatus.Published
-                                ? isPaywalled
-                                  ? `Paywalled · ${eaConfig!.buzzPrice} Buzz`
-                                  : 'Published'
-                                : 'Draft'
-                            }
-                            withArrow
-                            position="right"
-                          >
-                            <span
-                              className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{
-                                background: isPaywalled
-                                  ? 'var(--mantine-color-yellow-5)'
-                                  : chapter.status === ComicChapterStatus.Published
-                                  ? 'var(--mantine-color-green-5)'
-                                  : 'var(--mantine-color-gray-5)',
-                              }}
-                            />
-                          </Tooltip>
-                          <span>{panelCount} {panelCount === 1 ? 'panel' : 'panels'}</span>
-                          {(() => {
-                            const nsfw = getNsfwLabel(chapter.nsfwLevel);
-                            return nsfw ? (
-                              <Badge size="xs" color={nsfw.color} variant="filled" ml={2}>
-                                {nsfw.label}
-                              </Badge>
-                            ) : null;
-                          })()}
-                        </div>
-                      </div>
-                      <span className={styles.chapterItemActions}>
-                        <ActionIcon
-                          variant="transparent"
-                          size="xs"
-                          c="dimmed"
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            handleOpenChapterSettings(chapter);
-                          }}
+                      return (
+                        <SortableChapter
+                          key={`${chapter.projectId}-${chapter.position}`}
+                          id={chapter.position}
                         >
-                          <IconSettings size={12} />
-                        </ActionIcon>
-                      </span>
-                    </div>
-                  );
-                })}
+                          <div
+                            className={clsx(
+                              styles.chapterItem,
+                              isActive && styles.chapterItemActive
+                            )}
+                            style={
+                              isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined
+                            }
+                            onClick={() => setActiveChapterPosition(chapter.position)}
+                          >
+                            <span className={styles.chapterItemNumber}>
+                              {isBusy ? (
+                                <Loader size={12} />
+                              ) : (
+                                <IconGripVertical size={12} />
+                              )}
+                            </span>
+                            <div className={styles.chapterItemInfo}>
+                              <p className={styles.chapterItemName}>
+                                {chapter.name}
+                                {isPaywalled && (
+                                  <IconLock
+                                    size={11}
+                                    className="inline-block ml-1 opacity-60"
+                                    style={{
+                                      verticalAlign: 'middle',
+                                      color: 'var(--mantine-color-yellow-5)',
+                                    }}
+                                  />
+                                )}
+                              </p>
+                              <div
+                                className={styles.chapterItemCount}
+                                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                <Tooltip
+                                  label={
+                                    chapter.status === ComicChapterStatus.Published
+                                      ? isPaywalled
+                                        ? `Paywalled · ${eaConfig!.buzzPrice} Buzz`
+                                        : 'Published'
+                                      : 'Draft'
+                                  }
+                                  withArrow
+                                  position="right"
+                                >
+                                  <span
+                                    className="inline-block w-1.5 h-1.5 rounded-full"
+                                    style={{
+                                      background: isPaywalled
+                                        ? 'var(--mantine-color-yellow-5)'
+                                        : chapter.status === ComicChapterStatus.Published
+                                        ? 'var(--mantine-color-green-5)'
+                                        : 'var(--mantine-color-gray-5)',
+                                    }}
+                                  />
+                                </Tooltip>
+                                <span>
+                                  {panelCount} {panelCount === 1 ? 'panel' : 'panels'}
+                                </span>
+                                {(() => {
+                                  const nsfw = getNsfwLabel(chapter.nsfwLevel);
+                                  return nsfw ? (
+                                    <Badge size="xs" color={nsfw.color} variant="filled" ml={2}>
+                                      {nsfw.label}
+                                    </Badge>
+                                  ) : null;
+                                })()}
+                              </div>
+                            </div>
+                            <span className={styles.chapterItemActions}>
+                              <ActionIcon
+                                variant="transparent"
+                                size="xs"
+                                c="dimmed"
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  handleOpenChapterSettings(chapter);
+                                }}
+                              >
+                                <IconSettings size={12} />
+                              </ActionIcon>
+                            </span>
+                          </div>
+                        </SortableChapter>
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
 
                 <button
                   className={styles.chapterAddBtn}
@@ -1583,10 +1058,7 @@ function ProjectWorkspace() {
                   <button
                     className={styles.gradientBtn}
                     style={{ padding: '8px 12px', fontSize: 13, width: '100%' }}
-                    onClick={() => {
-                      resetSmartState();
-                      openSmartModal();
-                    }}
+                    onClick={openSmartModal}
                   >
                     <IconSparkles size={14} />
                     Smart Create
@@ -1598,96 +1070,89 @@ function ProjectWorkspace() {
             {/* ── Main: Panels ───────────────────── */}
             <div>
               {/* Active chapter title + publish toggle */}
-              {activeChapter && (() => {
-                const activeEaConfig = activeChapter.earlyAccessConfig as {
-                  buzzPrice: number;
-                  timeframe: number;
-                } | null;
-                const isActivePaywalled =
-                  activeChapter.status === ComicChapterStatus.Published &&
-                  activeEaConfig != null &&
-                  activeChapter.earlyAccessEndsAt != null &&
-                  new Date(activeChapter.earlyAccessEndsAt) > new Date();
-                const isPublishing =
-                  (publishChapterMutation.isLoading &&
-                    publishChapterMutation.variables?.chapterPosition ===
-                      activeChapter.position) ||
-                  (unpublishChapterMutation.isLoading &&
-                    unpublishChapterMutation.variables?.chapterPosition ===
-                      activeChapter.position);
-                const isDraft = activeChapter.status !== ComicChapterStatus.Published;
+              {activeChapter &&
+                (() => {
+                  const activeEaConfig = activeChapter.earlyAccessConfig as {
+                    buzzPrice: number;
+                    timeframe: number;
+                  } | null;
+                  const isActivePaywalled =
+                    activeChapter.status === ComicChapterStatus.Published &&
+                    activeEaConfig != null &&
+                    activeChapter.earlyAccessEndsAt != null &&
+                    new Date(activeChapter.earlyAccessEndsAt) > new Date();
+                  const isPublishing =
+                    (publishChapterMutation.isLoading &&
+                      publishChapterMutation.variables?.chapterPosition ===
+                        activeChapter.position) ||
+                    (unpublishChapterMutation.isLoading &&
+                      unpublishChapterMutation.variables?.chapterPosition ===
+                        activeChapter.position);
+                  const isDraft = activeChapter.status !== ComicChapterStatus.Published;
 
-                return (
-                  <Group justify="space-between" align="center" mb="md">
-                    <Group gap="sm">
-                      <Title order={4} style={{ fontWeight: 700 }}>
-                        {activeChapter.name}
-                      </Title>
-                      <Badge
-                        size="sm"
-                        variant="light"
-                        color={
-                          isActivePaywalled ? 'yellow' : isDraft ? 'gray' : 'green'
-                        }
-                        leftSection={isActivePaywalled ? <IconLock size={10} /> : undefined}
-                      >
-                        {isActivePaywalled
-                          ? `Paywalled · ${activeEaConfig!.buzzPrice} Buzz`
-                          : isDraft
-                          ? 'Draft'
-                          : 'Published'}
-                      </Badge>
-                    </Group>
-                    <Group gap="xs">
-                      {isDraft && (
-                        <Tooltip label="Publish with a Buzz paywall">
+                  return (
+                    <Group justify="space-between" align="center" mb="md">
+                      <Group gap="sm">
+                        <Title order={4} style={{ fontWeight: 700 }}>
+                          {activeChapter.name}
+                        </Title>
+                        <Badge
+                          size="sm"
+                          variant="light"
+                          color={isActivePaywalled ? 'yellow' : isDraft ? 'gray' : 'green'}
+                          leftSection={isActivePaywalled ? <IconLock size={10} /> : undefined}
+                        >
+                          {isActivePaywalled
+                            ? `Paywalled · ${activeEaConfig!.buzzPrice} Buzz`
+                            : isDraft
+                            ? 'Draft'
+                            : 'Published'}
+                        </Badge>
+                      </Group>
+                      <Group gap="xs">
+                        {isDraft && (
+                          <Tooltip label="Publish with a Buzz paywall">
+                            <Button
+                              size="xs"
+                              variant="light"
+                              color="yellow"
+                              leftSection={<IconLock size={14} />}
+                              disabled={activeChapter.panels.length === 0}
+                              loading={isPublishing}
+                              onClick={() => {
+                                setActiveChapterPosition(activeChapter.position);
+                                setPublishEaInitial(true);
+                                openPublishModal();
+                              }}
+                            >
+                              Paywall
+                            </Button>
+                          </Tooltip>
+                        )}
+                        <Tooltip
+                          label="Add panels before publishing"
+                          disabled={!isDraft || activeChapter.panels.length > 0}
+                        >
                           <Button
                             size="xs"
-                            variant="light"
-                            color="yellow"
-                            leftSection={<IconLock size={14} />}
-                            disabled={activeChapter.panels.length === 0}
+                            variant={isDraft ? 'filled' : 'light'}
+                            color={isDraft ? 'green' : 'yellow'}
+                            leftSection={
+                              isDraft ? <IconWorld size={14} /> : <IconEyeOff size={14} />
+                            }
+                            disabled={isDraft && activeChapter.panels.length === 0}
                             loading={isPublishing}
-                            onClick={() => {
-                              setActiveChapterPosition(activeChapter.position);
-                              setPublishEaEnabled(true);
-                              setPublishEaBuzzPrice(100);
-                              setPublishEaTimeframe(7);
-                              openPublishModal();
-                            }}
+                            onClick={() =>
+                              handleTogglePublish(activeChapter.position, activeChapter.status)
+                            }
                           >
-                            Paywall
+                            {isDraft ? 'Publish' : 'Unpublish'}
                           </Button>
                         </Tooltip>
-                      )}
-                      <Tooltip
-                        label="Add panels before publishing"
-                        disabled={!isDraft || activeChapter.panels.length > 0}
-                      >
-                        <Button
-                          size="xs"
-                          variant={isDraft ? 'filled' : 'light'}
-                          color={isDraft ? 'green' : 'yellow'}
-                          leftSection={
-                            isDraft ? (
-                              <IconWorld size={14} />
-                            ) : (
-                              <IconEyeOff size={14} />
-                            )
-                          }
-                          disabled={isDraft && activeChapter.panels.length === 0}
-                          loading={isPublishing}
-                          onClick={() =>
-                            handleTogglePublish(activeChapter.position, activeChapter.status)
-                          }
-                        >
-                          {isDraft ? 'Publish' : 'Unpublish'}
-                        </Button>
-                      </Tooltip>
+                      </Group>
                     </Group>
-                  </Group>
-                );
-              })()}
+                  );
+                })()}
 
               {activeChapter && activeChapter.panels.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
@@ -1727,28 +1192,7 @@ function ProjectWorkspace() {
                               .filter(Boolean) as string[]
                           }
                           onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
-                          onRegenerate={() => {
-                            const meta = panel.metadata as Record<string, any> | null;
-                            setRegeneratingPanelId(panel.id);
-                            setPrompt(panel.prompt);
-                            setEnhancePrompt(meta?.enhanceEnabled ?? true);
-                            setUseContext(meta?.useContext ?? true);
-                            setIncludePreviousImage(meta?.includePreviousImage ?? false);
-                            if (meta?.sourceImageUrl) {
-                              setPanelMode('enhance');
-                              setEnhanceSourceImage({
-                                url: meta.sourceImageUrl,
-                                previewUrl:
-                                  getEdgeUrl(meta.sourceImageUrl, { width: 400 }) ??
-                                  meta.sourceImageUrl,
-                                width: meta.sourceImageWidth ?? 512,
-                                height: meta.sourceImageHeight ?? 512,
-                              });
-                            } else {
-                              setPanelMode('generate');
-                            }
-                            openPanelModal();
-                          }}
+                          onRegenerate={() => handleRegenerate(panel as any)}
                           onInsertAfter={() => {
                             setInsertAtPosition(index + 1);
                             openPanelModal();
@@ -1786,1240 +1230,121 @@ function ProjectWorkspace() {
         <IconBook size={18} />
       </ActionIcon>
 
-      {/* ── Panel Detail Drawer (portaled to body to escape will-change: transform ancestor) ── */}
-      {typeof document !== 'undefined' &&
-        createPortal(
-          <>
-            <div
-              className={clsx(styles.drawerBackdrop, detailPanel && styles.active)}
-              onClick={() => setDetailPanelId(null)}
-              onTouchMove={(e) => e.preventDefault()}
-            />
-            <div className={clsx(styles.drawer, detailPanel && styles.active)}>
-              {detailPanel && (
-                <>
-                  <div className={styles.drawerHeader}>
-                    <Title order={4} style={{ fontWeight: 700 }}>
-                      Panel #{detailPanelIndex >= 0 ? detailPanelIndex + 1 : '?'}
-                    </Title>
-                    <ActionIcon variant="subtle" c="dimmed" onClick={() => setDetailPanelId(null)}>
-                      <IconX size={20} />
-                    </ActionIcon>
-                  </div>
+      {/* ── Extracted components ──────────────────── */}
+      <PanelDetailDrawer
+        detailPanelId={detailPanelId}
+        setDetailPanelId={setDetailPanelId}
+        detailPanel={detailPanel as any}
+        detailPanelIndex={detailPanelIndex}
+        referenceNameMap={referenceNameMap}
+        onRegenerate={handleDrawerRegenerate}
+        onInsertAfter={handleDrawerInsertAfter}
+        onDelete={(panelId) => deletePanelMutation.mutate({ panelId })}
+      />
 
-                  <div className={styles.drawerContent}>
-                    {/* Image */}
-                    <div className={styles.drawerImageContainer}>
-                      {detailPanel.imageUrl ? (
-                        <img src={getEdgeUrl(detailPanel.imageUrl, { width: 800 })} alt="Panel" />
-                      ) : (
-                        <div
-                          className="w-full flex items-center justify-center"
-                          style={{ background: '#2C2E33', aspectRatio: '3/4' }}
-                        >
-                          {detailPanel.status === 'Generating' ||
-                          detailPanel.status === 'Pending' ? (
-                            <div className={styles.spinner} />
-                          ) : (
-                            <IconAlertTriangle size={32} style={{ color: '#fa5252' }} />
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Status + Reference row */}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className={styles.detailStatusBadge}>
-                        <span
-                          className={clsx(styles.detailStatusDot, {
-                            [styles.ready]: detailPanel.status === 'Ready',
-                            [styles.generating]:
-                              detailPanel.status === 'Generating' ||
-                              detailPanel.status === 'Pending',
-                            [styles.failed]: detailPanel.status === 'Failed',
-                          })}
-                        />
-                        {detailPanel.status === 'Pending' ? 'Queued' : detailPanel.status}
-                      </div>
-                      {(detailPanel.references ?? []).map((r: { referenceId: number }) => {
-                        const name = referenceNameMap.get(r.referenceId);
-                        return name ? (
-                          <span key={r.referenceId} className={styles.detailCharacterPill}>
-                            <IconUser size={14} />
-                            {name}
-                          </span>
-                        ) : null;
-                      })}
-                      <div className="flex-1" />
-                      <Text size="xs" c="dimmed">
-                        {new Date(detailPanel.createdAt).toLocaleDateString()}
-                      </Text>
-                    </div>
-
-                    {/* Original prompt */}
-                    <div>
-                      <div className={styles.detailSectionTitle}>Original Prompt</div>
-                      <div className={styles.promptBox}>{detailPanel.prompt}</div>
-                    </div>
-
-                    {/* Enhanced prompt */}
-                    {detailPanel.enhancedPrompt && (
-                      <div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={styles.detailSectionTitle} style={{ marginBottom: 0 }}>
-                            Enhanced Prompt
-                          </span>
-                          <span className={styles.enhancedBadge}>
-                            <IconSparkles size={12} />
-                            Enhanced
-                          </span>
-                        </div>
-                        <div className={clsx(styles.promptBox, styles.promptBoxEnhanced)}>
-                          {detailPanel.enhancedPrompt}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Error */}
-                    {detailPanel.errorMessage && (
-                      <div>
-                        <div className={styles.detailSectionTitle}>Error</div>
-                        <div
-                          className={styles.promptBox}
-                          style={{ borderColor: '#fa5252', color: '#fa5252' }}
-                        >
-                          {detailPanel.errorMessage}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Source Image (for enhanced panels) */}
-                    {(detailPanel.metadata as Record<string, any> | null)?.sourceImageUrl && (
-                      <div>
-                        <div className={styles.detailSectionTitle}>Source Image</div>
-                        <div className={styles.enhanceImagePreview}>
-                          <img
-                            src={
-                              getEdgeUrl(
-                                (detailPanel.metadata as Record<string, any>).sourceImageUrl,
-                                {
-                                  width: 400,
-                                }
-                              ) ?? (detailPanel.metadata as Record<string, any>).sourceImageUrl
-                            }
-                            alt="Source"
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Generation settings */}
-                    {(() => {
-                      const meta = detailPanel.metadata as Record<string, any> | null;
-                      if (!meta) return null;
-                      return (
-                        <div>
-                          <div className={styles.detailSectionTitle}>Settings</div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={styles.detailCharacterPill}>
-                              {meta.enhanceEnabled !== false
-                                ? 'Prompt enhanced'
-                                : 'Prompt not enhanced'}
-                            </span>
-                            {meta.enhanceEnabled !== false && (
-                              <span className={styles.detailCharacterPill}>
-                                {meta.useContext !== false
-                                  ? 'Previous context used'
-                                  : 'No previous context'}
-                              </span>
-                            )}
-                            {meta.includePreviousImage && (
-                              <span className={styles.detailCharacterPill}>
-                                Previous image referenced
-                              </span>
-                            )}
-                            {meta.sourceImageUrl && (
-                              <span className={styles.detailCharacterPill}>
-                                Enhanced from image
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Actions */}
-                    <div className={styles.detailActions}>
-                      {(detailPanel.status === 'Ready' || detailPanel.status === 'Failed') && (
-                        <button
-                          className={styles.gradientBtn}
-                          onClick={() => {
-                            const meta = detailPanel.metadata as Record<string, any> | null;
-                            setDetailPanelId(null);
-                            setRegeneratingPanelId(detailPanel.id);
-                            setPrompt(detailPanel.prompt);
-                            setEnhancePrompt(meta?.enhanceEnabled ?? true);
-                            setUseContext(meta?.useContext ?? true);
-                            setIncludePreviousImage(meta?.includePreviousImage ?? false);
-                            if (meta?.sourceImageUrl) {
-                              setPanelMode('enhance');
-                              setEnhanceSourceImage({
-                                url: meta.sourceImageUrl,
-                                previewUrl:
-                                  getEdgeUrl(meta.sourceImageUrl, { width: 400 }) ??
-                                  meta.sourceImageUrl,
-                                width: meta.sourceImageWidth ?? 512,
-                                height: meta.sourceImageHeight ?? 512,
-                              });
-                            } else {
-                              setPanelMode('generate');
-                            }
-                            openPanelModal();
-                          }}
-                        >
-                          <IconRefreshDot size={16} />
-                          Regenerate
-                        </button>
-                      )}
-                      {detailPanelIndex >= 0 && (
-                        <button
-                          className={styles.subtleBtn}
-                          onClick={() => {
-                            setDetailPanelId(null);
-                            setInsertAtPosition(detailPanelIndex + 1);
-                            openPanelModal();
-                          }}
-                        >
-                          <IconPlus size={14} />
-                          Insert after
-                        </button>
-                      )}
-                      <button
-                        className={styles.dangerBtn}
-                        onClick={() => {
-                          openConfirmModal({
-                            title: 'Delete Panel',
-                            children: (
-                              <Text size="sm">Are you sure you want to delete this panel?</Text>
-                            ),
-                            labels: { confirm: 'Delete', cancel: 'Cancel' },
-                            confirmProps: { color: 'red' },
-                            onConfirm: () =>
-                              deletePanelMutation.mutate({ panelId: detailPanel.id }),
-                          });
-                        }}
-                      >
-                        <IconTrash size={14} />
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </>,
-          document.body
-        )}
-
-      {/* ── Generate / Enhance Panel Modal ─────────────────── */}
-      <Modal
+      <PanelModal
         opened={panelModalOpened}
         onClose={handlePanelModalClose}
-        title={
-          regeneratingPanelId
-            ? 'Regenerate Panel'
-            : insertAtPosition != null
-            ? 'Insert Panel'
-            : 'Create Panel'
-        }
-        size="lg"
-      >
-        {/* Tab bar */}
-        {!regeneratingPanelId && (
-          <div className={styles.panelModeTabs}>
-            <button
-              className={clsx(
-                styles.panelModeTab,
-                panelMode === 'generate' && styles.panelModeTabActive
-              )}
-              onClick={() => setPanelMode('generate')}
-            >
-              <IconSparkles
-                size={14}
-                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
-              />
-              Generate
-            </button>
-            <button
-              className={clsx(
-                styles.panelModeTab,
-                panelMode === 'enhance' && styles.panelModeTabActive
-              )}
-              onClick={() => setPanelMode('enhance')}
-            >
-              <IconWand
-                size={14}
-                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
-              />
-              Enhance
-            </button>
-            <button
-              className={clsx(
-                styles.panelModeTab,
-                panelMode === 'bulk' && styles.panelModeTabActive
-              )}
-              onClick={() => setPanelMode('bulk')}
-            >
-              <IconUpload
-                size={14}
-                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
-              />
-              Bulk Add
-            </button>
-            <button
-              className={clsx(
-                styles.panelModeTab,
-                panelMode === 'import' && styles.panelModeTabActive
-              )}
-              onClick={() => setPanelMode('import')}
-            >
-              <IconPhoto
-                size={14}
-                style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }}
-              />
-              Import
-            </button>
-          </div>
-        )}
+        prompt={prompt}
+        setPrompt={setPrompt}
+        enhancePrompt={enhancePrompt}
+        setEnhancePrompt={setEnhancePrompt}
+        useContext={useContext}
+        setUseContext={setUseContext}
+        includePreviousImage={includePreviousImage}
+        setIncludePreviousImage={setIncludePreviousImage}
+        aspectRatio={aspectRatio}
+        setAspectRatio={setAspectRatio}
+        selectedImageIds={selectedImageIds}
+        setSelectedImageIds={setSelectedImageIds}
+        effectiveModel={effectiveModel}
+        onModelChange={handleModelChange}
+        activeAspectRatios={activeAspectRatios}
+        mentionRefs={mentionRefs}
+        mentionedReferences={mentionedReferences}
+        needsImageSelection={needsImageSelection}
+        refImageBudget={refImageBudget}
+        regeneratingPanelId={regeneratingPanelId}
+        insertAtPosition={insertAtPosition}
+        activeChapterPanelCount={activeChapter?.panels.length ?? 0}
+        panelCost={panelCost}
+        enhanceCost={enhanceCost}
+        isSubmitting={isSubmitting}
+        onGeneratePanel={handleGeneratePanel}
+        onEnhancePanel={handleEnhancePanel}
+        onBulkCreate={handleBulkCreate}
+        onImportSubmit={handleImportSubmit}
+        isCreatePending={createPanelMutation.isPending}
+        isEnhancePending={enhancePanelMutation.isPending}
+        isBulkPending={bulkCreateMutation.isPending}
+      />
 
-        <Text size="xs" c="dimmed">
-          Generated panels use NanoBanana and are SFW only. Uploaded or imported images can be NSFW
-          but will be scanned.
-        </Text>
-
-        {panelMode === 'generate' ? (
-          <Stack gap="md">
-            <MentionTextarea
-              label="Describe the scene"
-              value={prompt}
-              onChange={setPrompt}
-              references={mentionRefs}
-              placeholder="Describe the scene... Use @Name to include references (e.g., @Maya on a rooftop)"
-              rows={4}
-            />
-
-            <Switch
-              label="Enhance prompt"
-              description="Use AI to add detail and composition to your prompt"
-              checked={enhancePrompt}
-              onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
-              color="yellow"
-            />
-            {activeChapter && activeChapter.panels.length > 0 && insertAtPosition !== 0 && (
-              <>
-                {enhancePrompt && (
-                  <Switch
-                    label="Use previous panel context"
-                    description="Pass the previous panel's prompt to the AI for visual continuity"
-                    checked={useContext}
-                    onChange={(e) => setUseContext(e.currentTarget.checked)}
-                    ml="md"
-                  />
-                )}
-                <Switch
-                  label="Reference previous panel image"
-                  description="Include the previous panel's image as a reference for generation"
-                  checked={includePreviousImage}
-                  onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
-                />
-              </>
-            )}
-
-            <Select
-              label="Generation Model"
-              data={COMIC_MODEL_OPTIONS}
-              value={effectiveModel}
-              onChange={handleModelChange}
-              size="sm"
-            />
-            <AspectRatioSelector value={aspectRatio} onChange={setAspectRatio} aspectRatios={activeAspectRatios} />
-
-            <Group justify="flex-end">
-              <Button variant="default" onClick={handlePanelModalClose}>
-                Cancel
-              </Button>
-              <BuzzTransactionButton
-                buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
-                label={insertAtPosition != null ? 'Insert' : 'Generate'}
-                loading={isSubmitting || createPanelMutation.isPending}
-                disabled={!prompt.trim()}
-                onPerformTransaction={handleGeneratePanel}
-                showPurchaseModal
-              />
-            </Group>
-          </Stack>
-        ) : panelMode === 'enhance' ? (
-          <Stack gap="md">
-            {/* Source image selection */}
-            {!enhanceSourceImage ? (
-              <div>
-                <Text size="sm" fw={500} mb={8}>
-                  Source Image
-                </Text>
-                {enhanceUploading ? (
-                  <div
-                    className="flex flex-col items-center justify-center gap-2"
-                    style={{
-                      background: '#2C2E33',
-                      borderRadius: 8,
-                      padding: 24,
-                    }}
-                  >
-                    <Loader size="sm" />
-                    <Text size="xs" c="dimmed">
-                      Uploading image...
-                    </Text>
-                  </div>
-                ) : (
-                  <div className={styles.enhanceSourceOptions}>
-                    <Dropzone onDrop={handleEnhanceImageDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
-                      <Stack align="center" gap={4} py="sm" style={{ pointerEvents: 'none' }}>
-                        <Dropzone.Accept>
-                          <IconUpload size={24} className="text-blue-500" />
-                        </Dropzone.Accept>
-                        <Dropzone.Reject>
-                          <IconX size={24} className="text-red-500" />
-                        </Dropzone.Reject>
-                        <Dropzone.Idle>
-                          <IconPhotoUp size={24} style={{ color: '#909296' }} />
-                        </Dropzone.Idle>
-                        <Text size="xs" c="dimmed" ta="center">
-                          Upload Image
-                        </Text>
-                      </Stack>
-                    </Dropzone>
-                    <button
-                      className={styles.subtleBtn}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        padding: 16,
-                        height: 'auto',
-                      }}
-                      onClick={handleOpenImageSelector}
-                    >
-                      <IconWand size={24} style={{ marginBottom: 4 }} />
-                      <Text size="xs">From Generator</Text>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div>
-                <Text size="sm" fw={500} mb={8}>
-                  Source Image
-                </Text>
-                <div className={styles.enhanceImagePreview}>
-                  <img
-                    src={
-                      enhanceSourceImage.previewUrl.startsWith('http')
-                        ? enhanceSourceImage.previewUrl
-                        : getEdgeUrl(enhanceSourceImage.previewUrl, { width: 400 }) ??
-                          enhanceSourceImage.previewUrl
-                    }
-                    alt="Source"
-                  />
-                  <ActionIcon
-                    className={styles.enhanceImageRemove}
-                    variant="filled"
-                    color="dark"
-                    size="sm"
-                    onClick={() => {
-                      setEnhanceSourceImage(null);
-                      resetEnhanceFiles();
-                    }}
-                  >
-                    <IconX size={14} />
-                  </ActionIcon>
-                </div>
-              </div>
-            )}
-
-            {/* Optional enhancement prompt */}
-            <MentionTextarea
-              label="Enhancement prompt (optional)"
-              value={prompt}
-              onChange={setPrompt}
-              references={mentionRefs}
-              placeholder="Optionally describe changes... Use @Name to include references"
-              rows={3}
-            />
-
-            {prompt.trim() && (
-              <>
-                <Switch
-                  label="Enhance prompt"
-                  description="Use AI to add detail and composition to your prompt"
-                  checked={enhancePrompt}
-                  onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
-                  color="yellow"
-                />
-                {activeChapter &&
-                  activeChapter.panels.length > 0 &&
-                  insertAtPosition !== 0 &&
-                  enhancePrompt && (
-                    <Switch
-                      label="Use previous panel context"
-                      description="Pass the previous panel's prompt to the AI for visual continuity"
-                      checked={useContext}
-                      onChange={(e) => setUseContext(e.currentTarget.checked)}
-                      ml="md"
-                    />
-                  )}
-                {activeChapter && activeChapter.panels.length > 0 && insertAtPosition !== 0 && (
-                  <Switch
-                    label="Reference previous panel image"
-                    description="Include the previous panel's image as a reference for generation"
-                    checked={includePreviousImage}
-                    onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
-                  />
-                )}
-                <Select
-                  label="Generation Model"
-                  data={COMIC_MODEL_OPTIONS}
-                  value={effectiveModel}
-                  onChange={handleModelChange}
-                  size="sm"
-                />
-                <AspectRatioSelector value={aspectRatio} onChange={setAspectRatio} aspectRatios={activeAspectRatios} />
-              </>
-            )}
-
-            <Group justify="flex-end">
-              <Button variant="default" onClick={handlePanelModalClose}>
-                Cancel
-              </Button>
-              {!prompt.trim() ? (
-                <Button
-                  onClick={handleEnhancePanel}
-                  loading={isSubmitting || enhancePanelMutation.isPending}
-                  disabled={!enhanceSourceImage}
-                >
-                  {regeneratingPanelId ? 'Regenerate' : 'Add Panel'}
-                </Button>
-              ) : (
-                <BuzzTransactionButton
-                  buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
-                  label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
-                  loading={isSubmitting || enhancePanelMutation.isPending}
-                  disabled={!enhanceSourceImage}
-                  onPerformTransaction={handleEnhancePanel}
-                  showPurchaseModal
-                />
-              )}
-            </Group>
-          </Stack>
-        ) : panelMode === 'bulk' ? (
-          /* ── Bulk Add tab ─── */
-          <Stack gap="md">
-            <Dropzone
-              onDrop={handleBulkImageDrop}
-              accept={IMAGE_MIME_TYPE}
-              maxFiles={20}
-              disabled={bulkUploading || bulkItems.length >= 20}
-            >
-              <Stack align="center" gap={4} py="sm" style={{ pointerEvents: 'none' }}>
-                <Dropzone.Accept>
-                  <IconUpload size={24} className="text-blue-500" />
-                </Dropzone.Accept>
-                <Dropzone.Reject>
-                  <IconX size={24} className="text-red-500" />
-                </Dropzone.Reject>
-                <Dropzone.Idle>
-                  <IconPhotoUp size={24} style={{ color: '#909296' }} />
-                </Dropzone.Idle>
-                <Text size="sm" fw={500}>
-                  {bulkUploading ? 'Uploading...' : 'Drop images here or click to upload'}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Up to {20 - bulkItems.length} images. Add prompts for generation/enhancement.
-                </Text>
-              </Stack>
-            </Dropzone>
-
-            <Group gap="xs">
-              <Button
-                variant="light"
-                leftSection={<IconPlus size={14} />}
-                onClick={handleBulkAddPrompt}
-                disabled={bulkItems.length >= 20}
-                size="xs"
-              >
-                Add text-to-image prompt
-              </Button>
-              <Button
-                variant="light"
-                leftSection={<IconWand size={14} />}
-                onClick={handleBulkFromGenerator}
-                disabled={bulkItems.length >= 20 || bulkUploading}
-                size="xs"
-              >
-                From Generator
-              </Button>
-            </Group>
-
-            <Select
-              label="Generation Model"
-              data={COMIC_MODEL_OPTIONS}
-              value={effectiveModel}
-              onChange={handleModelChange}
-              size="sm"
-            />
-            <Switch
-              label="Enhance prompts"
-              description="Use AI to add detail and composition to prompts"
-              checked={bulkEnhance}
-              onChange={(e) => setBulkEnhance(e.currentTarget.checked)}
-              color="yellow"
-            />
-
-            {bulkItems.length > 0 && (
-              <DndContext
-                sensors={panelSensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleBulkDragEnd}
-              >
-                <SortableContext items={bulkItems.map((item) => item.id)}>
-                  <ScrollArea.Autosize mah={320}>
-                    <Stack gap="xs">
-                      {bulkItems.map((item, idx) => (
-                        <SortableBulkItem
-                          key={item.id}
-                          item={item}
-                          index={idx}
-                          onUpdatePrompt={handleBulkUpdatePrompt}
-                          onUpdateAspectRatio={handleBulkUpdateAspectRatio}
-                          onRemove={handleBulkRemoveItem}
-                          aspectRatioLabels={activeAspectRatios.map((r) => r.label)}
-                        />
-                      ))}
-                    </Stack>
-                  </ScrollArea.Autosize>
-                </SortableContext>
-              </DndContext>
-            )}
-
-            {bulkItems.length > 0 && (
-              <Text size="xs" c="dimmed">
-                {bulkItems.length} item{bulkItems.length !== 1 ? 's' : ''} queued
-                {bulkGenerationCount > 0 && (
-                  <span>
-                    {' '}
-                    &middot; {bulkGenerationCount} generation{bulkGenerationCount !== 1 ? 's' : ''}{' '}
-                    = {bulkTotalCost} Buzz
-                  </span>
-                )}
-                {bulkItems.length - bulkGenerationCount > 0 && (
-                  <span>
-                    {' '}
-                    &middot; {bulkItems.length - bulkGenerationCount} free upload
-                    {bulkItems.length - bulkGenerationCount !== 1 ? 's' : ''}
-                  </span>
-                )}
-              </Text>
-            )}
-
-            <Group justify="flex-end">
-              <Button variant="default" onClick={handlePanelModalClose}>
-                Cancel
-              </Button>
-              {bulkTotalCost > 0 ? (
-                <BuzzTransactionButton
-                  buzzAmount={bulkTotalCost}
-                  label={`Add ${bulkItems.length} Panel${bulkItems.length !== 1 ? 's' : ''}`}
-                  loading={isSubmitting || bulkCreateMutation.isPending}
-                  disabled={
-                    bulkItems.length === 0 ||
-                    bulkItems.some((item) => !item.sourceImage && !item.prompt.trim())
-                  }
-                  onPerformTransaction={handleBulkSubmit}
-                  showPurchaseModal
-                />
-              ) : (
-                <Button
-                  onClick={handleBulkSubmit}
-                  loading={isSubmitting || bulkCreateMutation.isPending}
-                  disabled={
-                    bulkItems.length === 0 ||
-                    bulkItems.some((item) => !item.sourceImage && !item.prompt.trim())
-                  }
-                >
-                  Add {bulkItems.length} Panel{bulkItems.length !== 1 ? 's' : ''}
-                </Button>
-              )}
-            </Group>
-          </Stack>
-        ) : (
-          /* ── Import tab ─── */
-          <Stack gap="md">
-            <Text size="sm" c="dimmed">
-              Select images from your generator history to import as panels.
-            </Text>
-
-            <Button
-              variant="light"
-              leftSection={<IconPhotoUp size={14} />}
-              onClick={handleImportSelect}
-              loading={importUploading}
-            >
-              {importUploading ? 'Uploading...' : 'Select Images'}
-            </Button>
-
-            {importSelected.length > 0 && (
-              <ScrollArea.Autosize mah={320}>
-                <div className="flex flex-wrap gap-2">
-                  {importSelected.map((img, idx) => (
-                    <div key={idx} className="relative group">
-                      <img
-                        src={img.preview}
-                        alt={`Import ${idx + 1}`}
-                        className="w-20 h-20 object-cover rounded"
-                      />
-                      <ActionIcon
-                        variant="filled"
-                        color="dark"
-                        size="xs"
-                        className="absolute top-0.5 right-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleImportRemove(idx)}
-                      >
-                        <IconX size={12} />
-                      </ActionIcon>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea.Autosize>
-            )}
-
-            {importSelected.length > 0 && (
-              <Text size="xs" c="dimmed">
-                {importSelected.length} image{importSelected.length !== 1 ? 's' : ''} ready to import
-              </Text>
-            )}
-
-            <Group justify="flex-end">
-              <Button variant="default" onClick={handlePanelModalClose}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleImportSubmit}
-                loading={isSubmitting || bulkCreateMutation.isPending}
-                disabled={importSelected.length === 0}
-              >
-                Import {importSelected.length} Panel{importSelected.length !== 1 ? 's' : ''}
-              </Button>
-            </Group>
-          </Stack>
-        )}
-      </Modal>
-
-      {/* ── Smart Create Modal ────────────────────── */}
-      <Modal
+      <SmartCreateModal
         opened={smartModalOpened}
-        onClose={() => {
-          closeSmartModal();
-          resetSmartState();
-        }}
-        title={
-          smartStep === 'input' ? 'Smart Create Chapter' : `Review Panels — ${smartChapterName}`
+        onClose={closeSmartModal}
+        references={mentionRefs}
+        planCost={planCost}
+        panelCost={panelCost}
+        enhanceCost={enhanceCost}
+        effectiveModel={effectiveModel}
+        activeAspectRatios={activeAspectRatios}
+        onModelChange={handleModelChange}
+        onPlanPanels={(story) =>
+          planPanelsMutation.mutate({ projectId, storyDescription: story })
         }
-        size="lg"
-      >
-        {smartStep === 'input' ? (
-          <Stack gap="md">
-            <TextInput
-              label="Chapter name"
-              value={smartChapterName}
-              onChange={(e) => setSmartChapterName(e.target.value)}
-            />
+        isPlanningPanels={planPanelsMutation.isPending}
+        planError={planPanelsMutation.isError ? (planPanelsMutation.error?.message ?? 'Failed to plan panels') : null}
+        plannedPanels={planPanelsMutation.data?.panels ?? null}
+        onCreateChapter={(data) =>
+          smartCreateMutation.mutate({
+            projectId,
+            chapterName: data.chapterName,
+            storyDescription: data.storyDescription,
+            panels: data.panels,
+            enhance: data.enhance,
+            aspectRatio: data.aspectRatio,
+            baseModel: generationModel,
+          })
+        }
+        isCreating={smartCreateMutation.isPending}
+        createError={smartCreateMutation.isError ? (smartCreateMutation.error?.message ?? 'Failed to create chapter') : null}
+      />
 
-            <MentionTextarea
-              label="Describe the story or scene"
-              value={smartStory}
-              onChange={setSmartStory}
-              references={mentionRefs}
-              placeholder="A warrior discovers an ancient temple... Use @Name to reference characters"
-              rows={6}
-            />
-
-            <Group justify="flex-end">
-              <Button
-                variant="default"
-                onClick={() => {
-                  closeSmartModal();
-                  resetSmartState();
-                }}
-              >
-                Cancel
-              </Button>
-              <BuzzTransactionButton
-                buzzAmount={planCost}
-                label={planPanelsMutation.isPending ? 'Planning...' : 'Plan Panels'}
-                loading={planPanelsMutation.isPending}
-                disabled={!smartStory.trim()}
-                onPerformTransaction={handlePlanPanels}
-                showPurchaseModal
-              />
-            </Group>
-
-            {planPanelsMutation.isError && (
-              <Text size="sm" c="red">
-                {planPanelsMutation.error?.message ?? 'Failed to plan panels'}
-              </Text>
-            )}
-          </Stack>
-        ) : (
-          <Stack gap="md">
-            <Text size="sm" c="dimmed">
-              {smartPanels.length} panels planned
-            </Text>
-
-            <ScrollArea.Autosize mah="50vh">
-              <Stack gap="sm">
-                {smartPanels.map((panel, index) => (
-                  <div key={index} className="flex gap-2 items-start">
-                    <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
-                      #{index + 1}
-                    </Text>
-                    <div className="flex-1">
-                      <MentionTextarea
-                        value={panel.prompt}
-                        onChange={(val) => {
-                          const updated = [...smartPanels];
-                          updated[index] = { prompt: val };
-                          setSmartPanels(updated);
-                        }}
-                        references={mentionRefs}
-                        placeholder="Panel prompt... Use @Name for references"
-                        rows={2}
-                      />
-                    </div>
-                    <ActionIcon
-                      variant="subtle"
-                      color="red"
-                      size="sm"
-                      mt={8}
-                      onClick={() => setSmartPanels(smartPanels.filter((_, i) => i !== index))}
-                      disabled={smartPanels.length <= 1}
-                    >
-                      <IconX size={14} />
-                    </ActionIcon>
-                  </div>
-                ))}
-              </Stack>
-            </ScrollArea.Autosize>
-
-            <Button
-              variant="subtle"
-              color="yellow"
-              size="xs"
-              leftSection={<IconPlus size={14} />}
-              onClick={() => setSmartPanels([...smartPanels, { prompt: '' }])}
-            >
-              Add Panel
-            </Button>
-
-            <Select
-              label="Generation Model"
-              data={COMIC_MODEL_OPTIONS}
-              value={effectiveModel}
-              onChange={handleModelChange}
-              size="sm"
-            />
-            <Switch
-              label="Enhance prompts"
-              description="Use AI to add detail and composition to each panel"
-              checked={smartEnhance}
-              onChange={(e) => setSmartEnhance(e.currentTarget.checked)}
-              color="yellow"
-            />
-
-            <AspectRatioSelector value={smartAspectRatio} onChange={setSmartAspectRatio} aspectRatios={activeAspectRatios} />
-
-            <Text size="sm" c="dimmed">
-              Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
-              {panelCost > 0 ? panelCost + (smartEnhance ? enhanceCost : 0) : '...'} ={' '}
-              {panelCost > 0
-                ? smartPanels.filter((p) => p.prompt.trim()).length *
-                  (panelCost + (smartEnhance ? enhanceCost : 0))
-                : 'Estimating...'}{' '}
-              Buzz
-            </Text>
-
-            <Group justify="space-between">
-              <Button
-                variant="default"
-                leftSection={<IconArrowLeft size={14} />}
-                onClick={() => setSmartStep('input')}
-              >
-                Back
-              </Button>
-              <BuzzTransactionButton
-                buzzAmount={
-                  smartPanels.filter((p) => p.prompt.trim()).length *
-                  (panelCost + (smartEnhance ? enhanceCost : 0))
-                }
-                label={smartCreateMutation.isPending ? 'Creating...' : 'Create Chapter'}
-                loading={smartCreateMutation.isPending}
-                disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0}
-                onPerformTransaction={handleSmartCreate}
-                showPurchaseModal
-              />
-            </Group>
-
-            {smartCreateMutation.isError && (
-              <Text size="sm" c="red">
-                {smartCreateMutation.error?.message ?? 'Failed to create chapter'}
-              </Text>
-            )}
-          </Stack>
-        )}
-      </Modal>
-
-      {/* ── Chapter Settings Modal ── */}
-      <Modal
+      <ChapterSettingsModal
         opened={chapterSettingsOpened}
         onClose={closeChapterSettings}
-        title="Chapter Settings"
-        size="sm"
-      >
-        {chapterSettingsPosition != null && (() => {
-          const settingsChapter = project.chapters.find(
-            (ch) => ch.position === chapterSettingsPosition
-          );
-          if (!settingsChapter) return null;
-          const isPublished = settingsChapter.status === ComicChapterStatus.Published;
-          const currentEaConfig = settingsChapter.earlyAccessConfig as {
-            buzzPrice: number;
-            timeframe: number;
-          } | null;
+        chapter={chapterSettingsTarget}
+        canDelete={project.chapters.length > 1}
+        onSave={handleSaveChapterSettings}
+        onDelete={handleDeleteChapter}
+        isSaving={updateChapterMutation.isLoading || updateChapterEaMutation.isLoading}
+        isDeleting={deleteChapterMutation.isLoading}
+      />
 
-          return (
-            <Stack gap="md">
-              <TextInput
-                label="Chapter Name"
-                value={chapterSettingsName}
-                onChange={(e) => setChapterSettingsName(e.currentTarget.value)}
-              />
-
-              {isPublished && (
-                <>
-                  <Switch
-                    label="Early Access Paywall"
-                    description="Require Buzz payment to read this chapter"
-                    checked={chapterSettingsEaEnabled}
-                    onChange={(e) => setChapterSettingsEaEnabled(e.currentTarget.checked)}
-                  />
-
-                  {chapterSettingsEaEnabled && (
-                    <>
-                      <NumberInput
-                        label="Buzz Price"
-                        description={
-                          currentEaConfig
-                            ? `Current: ${currentEaConfig.buzzPrice} Buzz (can only reduce)`
-                            : 'Amount of Buzz readers must pay'
-                        }
-                        value={chapterSettingsEaBuzzPrice}
-                        onChange={(val) => setChapterSettingsEaBuzzPrice(val)}
-                        min={1}
-                        max={currentEaConfig?.buzzPrice}
-                        leftSection={<IconLock size={16} />}
-                      />
-                      <NumberInput
-                        label="Early Access Period (days)"
-                        description={
-                          currentEaConfig
-                            ? `Current: ${currentEaConfig.timeframe} days (can only reduce)`
-                            : 'After this many days the chapter becomes free'
-                        }
-                        value={chapterSettingsEaTimeframe}
-                        onChange={(val) => setChapterSettingsEaTimeframe(val)}
-                        min={1}
-                        max={currentEaConfig?.timeframe ?? 365}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-
-              <Group justify="space-between">
-                {project.chapters.length > 1 ? (
-                  <Button
-                    variant="subtle"
-                    color="red"
-                    size="xs"
-                    leftSection={<IconTrash size={14} />}
-                    loading={deleteChapterMutation.isLoading}
-                    onClick={() => {
-                      closeChapterSettings();
-                      handleDeleteChapter(settingsChapter.position, settingsChapter.name);
-                    }}
-                  >
-                    Delete
-                  </Button>
-                ) : (
-                  <div />
-                )}
-                <Group gap="xs">
-                  <Button variant="default" onClick={closeChapterSettings}>
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleSaveChapterSettings}
-                    loading={updateChapterMutation.isLoading || updateChapterEaMutation.isLoading}
-                    disabled={!chapterSettingsName.trim()}
-                  >
-                    Save
-                  </Button>
-                </Group>
-              </Group>
-            </Stack>
-          );
-        })()}
-      </Modal>
-
-      {/* ── Publish Modal ── */}
-      <Modal
+      <PublishModal
         opened={publishModalOpened}
         onClose={closePublishModal}
-        title="Publish Chapter"
-        size="sm"
-      >
-        <Stack gap="md">
-          <Text size="sm">
-            Publishing will make this chapter visible to all readers.
-          </Text>
+        onPublish={handleConfirmPublish}
+        isLoading={publishChapterMutation.isLoading}
+        initialEaEnabled={publishEaInitial}
+      />
 
-          <Switch
-            label="Enable Early Access Paywall"
-            description="Require Buzz payment to read this chapter during the early access period"
-            checked={publishEaEnabled}
-            onChange={(e) => setPublishEaEnabled(e.currentTarget.checked)}
-          />
-
-          {publishEaEnabled && (
-            <>
-              <NumberInput
-                label="Buzz Price"
-                description="Amount of Buzz readers must pay to unlock this chapter"
-                value={publishEaBuzzPrice}
-                onChange={(val) => setPublishEaBuzzPrice(val)}
-                min={1}
-                leftSection={<IconLock size={16} />}
-              />
-              <NumberInput
-                label="Early Access Period (days)"
-                description="After this many days the chapter becomes free for everyone"
-                value={publishEaTimeframe}
-                onChange={(val) => setPublishEaTimeframe(val)}
-                min={1}
-                max={365}
-              />
-            </>
-          )}
-
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closePublishModal}>
-              Cancel
-            </Button>
-            <Button
-              color="green"
-              loading={publishChapterMutation.isLoading}
-              disabled={
-                publishEaEnabled &&
-                (Number(publishEaBuzzPrice) < 1 || Number(publishEaTimeframe) < 1)
-              }
-              onClick={handleConfirmPublish}
-            >
-              Publish
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-
-      <Modal opened={settingsOpened} onClose={closeSettings} title="Project Settings" size="md">
-        <Stack gap="md">
-          <TextInput
-            label="Project name"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-          />
-          <Textarea
-            label="Description"
-            placeholder="A brief description of your comic project..."
-            maxLength={5000}
-            rows={3}
-            value={editDescription}
-            onChange={(e) => setEditDescription(e.target.value)}
-          />
-          <Select
-            label="Genre"
-            placeholder="Select a genre"
-            data={genreOptions}
-            value={editGenre}
-            onChange={setEditGenre}
-            clearable
-          />
-          <Select
-            label="Generation Model"
-            description="Choose the AI model for panel generation"
-            data={[
-              { value: 'NanoBanana', label: 'Nano Banana Pro (Default)' },
-              { value: 'Seedream', label: 'Seedream v4.5' },
-              { value: 'OpenAI', label: 'OpenAI GPT-Image' },
-              { value: 'Qwen', label: 'Qwen' },
-            ]}
-            value={editBaseModel}
-            onChange={setEditBaseModel}
-            clearable
-          />
-
-          <div>
-            <Text size="sm" fw={500} mb={4}>
-              Cover Image
-            </Text>
-            <Text size="xs" c="dimmed" mb={8}>
-              Portrait image shown in cards and chapter lists (3:4 ratio recommended)
-            </Text>
-            {editCoverUrl ? (
-              <div className="relative inline-block">
-                <div
-                  className="rounded-lg overflow-hidden"
-                  style={{ width: 120, height: 160, background: '#2C2E33' }}
-                >
-                  <img
-                    src={getEdgeUrl(editCoverUrl, { width: 240 })}
-                    alt="Cover"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <ActionIcon
-                  variant="filled"
-                  color="dark"
-                  size="xs"
-                  className="absolute -top-2 -right-2"
-                  onClick={() => {
-                    setEditCoverUrl(null);
-                    setEditCoverImageId(null);
-                  }}
-                >
-                  <IconX size={12} />
-                </ActionIcon>
-              </div>
-            ) : (
-              <Stack gap={4}>
-                <Dropzone onDrop={handleCoverDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
-                  <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
-                    <Dropzone.Accept>
-                      <IconUpload size={24} className="text-blue-500" />
-                    </Dropzone.Accept>
-                    <Dropzone.Reject>
-                      <IconX size={24} className="text-red-500" />
-                    </Dropzone.Reject>
-                    <Dropzone.Idle>
-                      <IconPhoto size={24} style={{ color: '#909296' }} />
-                    </Dropzone.Idle>
-                    <Text size="sm" c="dimmed">
-                      Drop a cover image or click to browse
-                    </Text>
-                  </Group>
-                </Dropzone>
-                <Button
-                  variant="subtle"
-                  size="compact-xs"
-                  leftSection={<IconPhotoUp size={14} />}
-                  onClick={handlePickCoverFromGenerator}
-                  loading={pickingCover}
-                >
-                  Pick from generator
-                </Button>
-              </Stack>
-            )}
-            {coverUploadFiles.some((f) => f.status === 'uploading') && (
-              <Text size="xs" c="dimmed" mt={4}>
-                Uploading...
-              </Text>
-            )}
-          </div>
-
-          <div>
-            <Text size="sm" fw={500} mb={4}>
-              Hero Image
-            </Text>
-            <Text size="xs" c="dimmed" mb={8}>
-              Wide banner shown on the comic overview page (16:9 or wider recommended)
-            </Text>
-            {editHeroUrl ? (
-              <HeroPositionPicker
-                url={editHeroUrl}
-                position={editHeroPosition}
-                onPositionChange={setEditHeroPosition}
-                onRemove={() => {
-                  setEditHeroUrl(null);
-                  setEditHeroImageId(null);
-                  setEditHeroPosition(50);
-                }}
-              />
-            ) : (
-              <Stack gap={4}>
-                <Dropzone onDrop={handleHeroDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
-                  <Group justify="center" gap="xl" mih={80} style={{ pointerEvents: 'none' }}>
-                    <Dropzone.Accept>
-                      <IconUpload size={24} className="text-blue-500" />
-                    </Dropzone.Accept>
-                    <Dropzone.Reject>
-                      <IconX size={24} className="text-red-500" />
-                    </Dropzone.Reject>
-                    <Dropzone.Idle>
-                      <IconPhoto size={24} style={{ color: '#909296' }} />
-                    </Dropzone.Idle>
-                    <Text size="sm" c="dimmed">
-                      Drop a hero banner or click to browse
-                    </Text>
-                  </Group>
-                </Dropzone>
-                <Button
-                  variant="subtle"
-                  size="compact-xs"
-                  leftSection={<IconPhotoUp size={14} />}
-                  onClick={handlePickHeroFromGenerator}
-                  loading={pickingHero}
-                >
-                  Pick from generator
-                </Button>
-              </Stack>
-            )}
-            {heroUploadFiles.some((f) => f.status === 'uploading') && (
-              <Text size="xs" c="dimmed" mt={4}>
-                Uploading...
-              </Text>
-            )}
-          </div>
-
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closeSettings}>
-              Cancel
-            </Button>
-            <button
-              className={styles.gradientBtn}
-              onClick={handleSaveSettings}
-              disabled={!editName.trim()}
-            >
-              Save
-            </button>
-          </Group>
-        </Stack>
-      </Modal>
+      <ProjectSettingsModal
+        opened={settingsOpened}
+        onClose={closeSettings}
+        project={{
+          name: project.name,
+          description: project.description,
+          genre: (project as any).genre,
+          baseModel: project.baseModel,
+          coverImage: project.coverImage,
+          heroImage: (project as any).heroImage,
+          heroImagePosition: (project as any).heroImagePosition,
+        }}
+        onSave={(data) => updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })}
+        onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}
+        isSaving={updateProjectMutation.isLoading}
+      />
     </>
   );
 }
