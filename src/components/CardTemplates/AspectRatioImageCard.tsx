@@ -131,6 +131,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                             name={image.name ?? image.id.toString()}
                             alt={image.name ?? undefined}
                             type={image.type}
+                            imageId={image.id}
                             thumbnailUrl={image.thumbnailUrl}
                             placeholder="empty"
                             className={clsx(styles.image, styles.blurred, {
@@ -148,6 +149,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
                           type={image.type}
+                          imageId={image.id}
                           thumbnailUrl={image.thumbnailUrl}
                           placeholder="empty"
                           className={clsx(styles.image, {

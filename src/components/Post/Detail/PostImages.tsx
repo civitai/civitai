@@ -155,6 +155,7 @@ export function PostImages({
                           name={image.name}
                           alt={image.name ?? undefined}
                           type={image.type}
+                          imageId={image.id}
                           width={width < maxWidth ? width : maxWidth}
                           original={image.type === 'video'}
                           anim={safe}

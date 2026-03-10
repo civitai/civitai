@@ -393,6 +393,7 @@ export function ImageDetailCarousel({
                       name={image.name ?? image.id.toString()}
                       alt={image.name ?? undefined}
                       type={image.type}
+                      imageId={image.id}
                       style={{ maxHeight: '100%', maxWidth: '100%' }}
                       anim
                     />

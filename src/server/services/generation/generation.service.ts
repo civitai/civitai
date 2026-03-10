@@ -56,6 +56,7 @@ import {
   getBaseModelsByGroup,
 } from '~/shared/constants/base-model.constants';
 import {
+  getEcosystem,
   hasGenerationSupport,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
@@ -257,7 +258,12 @@ export const getGenerationData = async ({
   switch (query.type) {
     case 'image':
     case 'video':
-      return await getMediaGenerationData({ id: query.id, user, generation: query.generation });
+      return await getMediaGenerationData({
+        id: query.id,
+        user,
+        generation: query.generation,
+        withPreview: query.withPreview,
+      });
     case 'modelVersion':
       return await getModelVersionGenerationData({
         versionIds: [{ id: query.id, epoch: query.epoch }],
@@ -281,10 +287,12 @@ async function getMediaGenerationData({
   id,
   user,
   generation,
+  withPreview = false,
 }: {
   id: number;
   user?: SessionUser;
   generation: boolean;
+  withPreview?: boolean;
 }): Promise<GenerationData> {
   const media = await dbRead.image.findUnique({
     where: { id },
@@ -311,7 +319,7 @@ async function getMediaGenerationData({
   };
 
   // const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
-  const initialMeta = media.meta as ImageMetaProps;
+  const initialMeta = (media.meta ?? {}) as ImageMetaProps;
   const imageResources = getMetaResources(initialMeta);
 
   await dbRead.imageResourceNew
@@ -330,14 +338,15 @@ async function getMediaGenerationData({
       }
     });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const allResources = await getResourceData(versionIds, user, generation).then((data) =>
-    data.map((item) => {
-      const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
-      return {
-        ...item,
-        strength: imageResource?.strength ?? item.strength,
-      };
-    })
+  const allResources = await getResourceData(versionIds, user, generation, withPreview).then(
+    (data) =>
+      data.map((item) => {
+        const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
+        return {
+          ...item,
+          strength: imageResource?.strength ?? item.strength,
+        };
+      })
   );
   const baseModel = getBaseModelFromResources(
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
@@ -346,10 +355,20 @@ async function getMediaGenerationData({
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
   const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
-  const resources = !normalized.ecosystem
+
+  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
+  let ecosystem = normalized.ecosystem;
+  if (!ecosystem || ecosystem === 'Other') {
+    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
+    if (checkpoint) {
+      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
+    }
+  }
+
+  const resources = !ecosystem
     ? allResources
     : allResources.filter(
-        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
+        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
       );
 
   // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)

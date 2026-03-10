@@ -50,6 +50,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
+import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -395,7 +396,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
           px={4}
           onClick={() => {
             generationGraphStore.setData({
-              params: { ecosystem: resource.baseModel },
+              params: { ecosystem: getEcosystem(resource.baseModel)?.key },
               resources: [resource],
               runType: 'run',
             });

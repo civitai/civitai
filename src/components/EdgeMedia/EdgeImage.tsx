@@ -9,10 +9,12 @@ export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
   src: string;
   fadeIn?: boolean;
   options: Omit<EdgeUrlProps, 'src'>;
+  /** Database image ID — included in drag data so drop targets can look up metadata server-side */
+  imageId?: number;
 };
 
 export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
-  ({ className, fadeIn, src, options, style, onLoad, onError, ...props }, forwardedRef) => {
+  ({ className, fadeIn, src, options, style, onLoad, onError, imageId, ...props }, forwardedRef) => {
     // const ref = useRef<HTMLImageElement>(null);
     // TODO - determine how we can animate cosmetics
     const { anim, ...rest } = options ?? {};
@@ -42,7 +44,13 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
         onError={handleError}
         src={url}
         style={{ maxWidth: options?.width ? options.width : undefined, ...style }}
-        onDragStart={(e) => e.dataTransfer.setData('text/uri-list', url)}
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/uri-list', url);
+          if (imageId) {
+            e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
+            e.dataTransfer.setData('application/x-civitai-media-type', 'image');
+          }
+        }}
         {...props}
       />
     );

@@ -44,6 +44,8 @@ type VideoProps = Omit<
   threshold?: number;
   disableWebm?: boolean;
   disablePoster?: boolean;
+  /** Database image ID — included in drag data so drop targets can look up metadata server-side */
+  imageId?: number;
 };
 
 export type EdgeVideoRef = {
@@ -73,6 +75,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       thumbnailUrl,
       disableWebm,
       disablePoster,
+      imageId,
       onLoad,
       onError,
       onLoadedData,
@@ -254,6 +257,16 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       <div
         ref={containerRef}
         {...wrapperProps}
+        draggable={!!imageId}
+        onDragStart={
+          imageId
+            ? (e) => {
+                e.dataTransfer.setData('text/uri-list', videoUrl);
+                e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
+                e.dataTransfer.setData('application/x-civitai-media-type', 'video');
+              }
+            : undefined
+        }
         className={clsx(
           styles.iosScroll,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',

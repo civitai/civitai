@@ -290,6 +290,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
                   type={image.type}
+                  imageId={image.id}
                   width={450}
                   placeholder="empty"
                   wrapperProps={{ style: { zIndex: 1 } }}
@@ -380,6 +381,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                             name={image.name ?? image.id.toString()}
                             alt={image.name ?? undefined}
                             type={image.type}
+                            imageId={image.id}
                             width={450}
                             placeholder="empty"
                             wrapperProps={{ style: { zIndex: 1 } }}
