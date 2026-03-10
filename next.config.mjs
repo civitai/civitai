@@ -62,7 +62,10 @@ export default defineNextConfig(
     //   return config;
     // },
     webpack: (config) => {
-      config.ignoreWarnings = [{ module: /require-in-the-middle/ }];
+      config.ignoreWarnings = [
+        { module: /require-in-the-middle/ },
+        { module: /@opentelemetry\/instrumentation/ },
+      ];
       return config;
     },
     reactStrictMode: true,
