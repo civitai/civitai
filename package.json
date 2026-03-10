@@ -13,7 +13,7 @@
     "dev:daemon": "node .claude/skills/dev-server/console.mjs",
     "prod": "cross-env NODE_ENV=production next dev",
     "boost": "next-boost",
-    "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
+    "release:base": "git checkout release && git pull --rebase && git rebase main && git push --force-with-lease && git checkout main",
     "release:major": "git pull && npm version major && git push --follow-tags && pnpm run release:base",
     "release:minor": "git pull && npm version minor && git push --follow-tags && pnpm run release:base",
     "release:patch": "git pull && npm version patch && git push --follow-tags && pnpm run release:base",
