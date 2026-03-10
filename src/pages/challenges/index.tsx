@@ -139,17 +139,27 @@ function ChallengesPage() {
                 </Text>
               </div>
             </Group>
-            {/* Future: Create challenge button for users */}
-            {currentUser?.isModerator && (
+            <Group gap="sm">
               <Button
                 component={Link}
-                href="/moderator/challenges"
-                leftSection={<IconSettings size={16} />}
+                href="/challenges/winners"
+                leftSection={<IconTrophy size={16} />}
                 variant="light"
+                color="yellow"
               >
-                Manage
+                Previous Winners
               </Button>
-            )}
+              {currentUser?.isModerator && (
+                <Button
+                  component={Link}
+                  href="/moderator/challenges"
+                  leftSection={<IconSettings size={16} />}
+                  variant="light"
+                >
+                  Manage
+                </Button>
+              )}
+            </Group>
           </Group>
 
           {/* Featured Challenge Events */}

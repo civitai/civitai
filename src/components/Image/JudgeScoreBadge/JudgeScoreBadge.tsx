@@ -37,10 +37,12 @@ export function JudgeScoreBadge({
   score,
   imageId,
   judgeInfo,
+  size = 'sm',
 }: {
   score: JudgeScore;
   imageId?: number;
   judgeInfo?: JudgeInfo;
+  size?: 'xs' | 'sm';
 }) {
   const [opened, setOpened] = useState(false);
   const weighted = calculateWeightedScore(score) ?? 0;
@@ -48,6 +50,7 @@ export function JudgeScoreBadge({
 
   const hasJudge = !!imageId && !!judgeInfo;
   const vibrant = judgeInfo?.userId === CIVCHAN_USER_ID;
+  const isXs = size === 'xs';
 
   const { data: judgeComment, isLoading: commentLoading } = trpc.challenge.getJudgeComment.useQuery(
     { imageId: imageId!, judgeUserId: judgeInfo?.userId ?? 0 },
@@ -60,15 +63,21 @@ export function JudgeScoreBadge({
         <Badge
           color={getScoreColor(weighted, vibrant)}
           radius="xl"
-          h={26}
+          h={isXs ? 20 : 26}
           variant="filled"
           onClick={(e: MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
             setOpened((o) => !o);
           }}
-          style={{ cursor: 'pointer', flexShrink: 0, boxShadow: '1px 2px 3px -1px #25262B33' }}
-          leftSection={<IconStarFilled size={12} />}
+          style={{
+            cursor: 'pointer',
+            flexShrink: 0,
+            boxShadow: '1px 2px 3px -1px #25262B33',
+            fontSize: isXs ? 10 : undefined,
+            paddingInline: isXs ? 6 : undefined,
+          }}
+          leftSection={<IconStarFilled size={isXs ? 9 : 12} />}
         >
           {weightedRounded.toFixed(1)}
         </Badge>

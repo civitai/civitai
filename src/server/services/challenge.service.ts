@@ -19,6 +19,9 @@ import {
   type ChallengeDetail,
   type ChallengeEventListItem,
   type ChallengeListItem,
+  type ChallengeWithWinnersListItem,
+  type ChallengeWinnerSummary,
+  type GetCompletedChallengesWithWinnersInput,
   type GetInfiniteChallengesInput,
   type GetModeratorChallengesInput,
   type GetChallengeEventsInput,
@@ -32,6 +35,7 @@ import {
   type PlaygroundReviewImageInput,
   type PlaygroundPickWinnersInput,
   type UserChallengeEntriesResult,
+  type WinnerCooldownStatus,
 } from '~/server/schema/challenge.schema';
 import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
@@ -56,6 +60,7 @@ import {
   refreshDefaultJudgeCache,
   type JudgingConfig,
   type ChallengePrompts,
+  parseJudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
@@ -2195,4 +2200,338 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
   });
 
   return result;
+}
+
+// ─── Previous Winners Page ───────────────────────────────────────────────────
+
+export async function getCompletedChallengesWithWinners(
+  input: GetCompletedChallengesWithWinnersInput
+) {
+  const { cursor, limit, eventId, browsingLevel, query } = input;
+
+  // Phase 1: Query completed challenges with cursor pagination
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`c."visibleAt" <= now()`,
+    Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
+    Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
+  ];
+
+  if (eventId) {
+    conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
+  }
+
+  if (browsingLevel) {
+    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+  }
+
+  if (query) {
+    const searchPattern = `%${String(query)}%`;
+    conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
+  }
+
+  // Cursor-based pagination: "endsAt:id"
+  if (cursor) {
+    const lastColon = cursor.lastIndexOf(':');
+    if (lastColon !== -1) {
+      const endsAtStr = cursor.slice(0, lastColon);
+      const idStr = cursor.slice(lastColon + 1);
+      const id = parseInt(idStr, 10);
+      const endsAt = new Date(endsAtStr);
+      if (!isNaN(id) && !isNaN(endsAt.getTime())) {
+        conditions.push(
+          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id < ${id}))`
+        );
+      }
+    }
+  }
+
+  const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+
+  const items = await dbRead.$queryRaw<
+    Array<{
+      id: number;
+      title: string;
+      theme: string | null;
+      invitation: string | null;
+      coverImageId: number | null;
+      startsAt: Date;
+      endsAt: Date;
+      status: ChallengeStatus;
+      source: ChallengeSource;
+      prizePool: number;
+      entryCount: bigint;
+      commentCount: bigint;
+      nsfwLevel: number;
+      allowedNsfwLevel: number;
+      modelVersionIds: number[] | null;
+      collectionId: number | null;
+      createdById: number;
+      creatorUsername: string | null;
+      creatorImage: string | null;
+      creatorDeletedAt: Date | null;
+      judgeUserId: number | null;
+      judgeUsername: string | null;
+      judgeImage: string | null;
+      judgeDeletedAt: Date | null;
+      metadata: Record<string, unknown> | null;
+    }>
+  >`
+    SELECT
+      c.id,
+      c.title,
+      c.theme,
+      c.invitation,
+      c."coverImageId",
+      c."startsAt",
+      c."endsAt",
+      c.status,
+      c.source,
+      c."prizePool",
+      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
+      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      c."nsfwLevel",
+      c."allowedNsfwLevel",
+      c."modelVersionIds",
+      c."collectionId",
+      c."createdById",
+      u.username as "creatorUsername",
+      u.image as "creatorImage",
+      u."deletedAt" as "creatorDeletedAt",
+      cj."userId" as "judgeUserId",
+      ju.username as "judgeUsername",
+      ju.image as "judgeImage",
+      ju."deletedAt" as "judgeDeletedAt",
+      c.metadata
+    FROM "Challenge" c
+    JOIN "User" u ON u.id = c."createdById"
+    LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
+    LEFT JOIN "User" ju ON ju.id = cj."userId"
+    ${whereClause}
+    ORDER BY c."endsAt" DESC, c.id DESC
+    LIMIT ${limit + 1}
+  `;
+
+  // Check for more results
+  let nextCursor: string | undefined;
+  if (items.length > limit) {
+    const nextItem = items.pop();
+    if (nextItem) {
+      nextCursor = `${nextItem.endsAt.toISOString()}:${nextItem.id}`;
+    }
+  }
+
+  if (items.length === 0) {
+    return { items: [] as ChallengeWithWinnersListItem[], nextCursor };
+  }
+
+  // Phase 2: Batch-fetch all winners for returned challenge IDs
+  const challengeIds = items.map((i) => i.id);
+  const winnerRows = await dbRead.$queryRaw<
+    Array<{
+      challengeId: number;
+      place: number;
+      userId: number;
+      username: string;
+      imageId: number;
+      imageUrl: string;
+      imageNsfwLevel: number;
+      imageHash: string | null;
+      buzzAwarded: number;
+      reason: string | null;
+      collectionItemNote: string | null;
+    }>
+  >`
+    SELECT
+      cw."challengeId",
+      cw.place,
+      cw."userId",
+      u.username,
+      cw."imageId",
+      i.url as "imageUrl",
+      i."nsfwLevel" as "imageNsfwLevel",
+      i.hash as "imageHash",
+      cw."buzzAwarded",
+      cw.reason,
+      ci.note as "collectionItemNote"
+    FROM "ChallengeWinner" cw
+    JOIN "User" u ON u.id = cw."userId"
+    JOIN "Image" i ON i.id = cw."imageId"
+    JOIN "Challenge" c ON c.id = cw."challengeId"
+    LEFT JOIN "CollectionItem" ci ON ci."collectionId" = c."collectionId"
+      AND ci."imageId" = cw."imageId"
+    WHERE cw."challengeId" IN (${Prisma.join(challengeIds)})
+    ORDER BY cw.place ASC
+  `;
+
+  // Batch enrich: profile pictures + cosmetics for both display users (creators/judges) and winners
+  const winnerUserIds = [...new Set(winnerRows.map((w) => w.userId))];
+  const displayUserIds = [...new Set(items.map((item) => item.judgeUserId ?? item.createdById))];
+  const allUserIds = [...new Set([...displayUserIds, ...winnerUserIds])];
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers(allUserIds),
+    getCosmeticsForUsers(allUserIds),
+  ]);
+
+  // Group winners by challengeId
+  const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
+  for (const w of winnerRows) {
+    const list = winnersByChallengeId.get(w.challengeId) ?? [];
+    list.push({
+      place: w.place,
+      userId: w.userId,
+      username: w.username,
+      imageId: w.imageId,
+      imageUrl: w.imageUrl,
+      imageNsfwLevel: w.imageNsfwLevel,
+      imageHash: w.imageHash,
+      buzzAwarded: w.buzzAwarded,
+      reason: w.reason,
+      judgeScore: parseJudgeScore(w.collectionItemNote),
+      profilePicture: profilePictures[w.userId] ?? null,
+      cosmetics: cosmetics[w.userId] ?? null,
+    });
+    winnersByChallengeId.set(w.challengeId, list);
+  }
+
+  // Fetch cover images
+  const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
+  const coverImages =
+    coverImageIds.length > 0
+      ? await dbRead.image.findMany({
+          where: { id: { in: coverImageIds } },
+          select: imageSelect,
+        })
+      : [];
+
+  // Transform results
+  const coverImageMap = new Map(coverImages.map((img) => [img.id, img]));
+  const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
+    const coverImage = item.coverImageId ? coverImageMap.get(item.coverImageId) ?? null : null;
+    const metadata = parseChallengeMetadata(item.metadata);
+
+    return {
+      id: item.id,
+      title: item.title,
+      theme: item.theme,
+      invitation: item.invitation,
+      startsAt: item.startsAt,
+      endsAt: item.endsAt,
+      status: item.status,
+      source: item.source,
+      prizePool: item.prizePool,
+      nsfwLevel: item.nsfwLevel,
+      allowedNsfwLevel: item.allowedNsfwLevel,
+      collectionId: item.collectionId,
+      entryCount: Number(item.entryCount),
+      commentCount: Number(item.commentCount),
+      coverImage: coverImage
+        ? {
+            id: coverImage.id,
+            url: coverImage.url,
+            nsfwLevel: coverImage.nsfwLevel,
+            hash: coverImage.hash,
+            width: coverImage.width,
+            height: coverImage.height,
+            type: coverImage.type,
+          }
+        : null,
+      modelVersionIds: item.modelVersionIds ?? [],
+      createdBy: {
+        id: item.judgeUserId ?? item.createdById,
+        username: item.judgeUsername ?? item.creatorUsername,
+        image: item.judgeImage ?? item.creatorImage,
+        profilePicture: profilePictures[item.judgeUserId ?? item.createdById] ?? null,
+        cosmetics: cosmetics[item.judgeUserId ?? item.createdById] ?? null,
+        deletedAt: item.judgeDeletedAt ?? item.creatorDeletedAt,
+      },
+      winners: winnersByChallengeId.get(item.id) ?? [],
+      completionSummary: metadata.completionSummary ?? null,
+    };
+  });
+
+  return { items: challenges, nextCursor };
+}
+
+// ─── Winner Cooldown Status ──────────────────────────────────────────────────
+
+export async function getWinnerCooldownStatus(
+  challengeId: number,
+  userId: number
+): Promise<WinnerCooldownStatus> {
+  // 1. Look up challenge's eventId
+  const [challenge] = await dbRead.$queryRaw<[{ eventId: number | null }] | []>`
+    SELECT "eventId" FROM "Challenge" WHERE id = ${challengeId}
+  `;
+
+  if (!challenge) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+
+  // 2. Resolve event context
+  const eventContext = await resolveEventContext(challenge.eventId);
+
+  // 3. Get global config for default cooldown
+  const config = await getChallengeConfig();
+
+  // 4. Determine effective cooldown
+  if (eventContext.winnerCooldownDays === 0) {
+    // Event explicitly disables cooldown
+    return {
+      onCooldown: false,
+      cooldownEndsAt: null,
+      lastWinDate: null,
+      lastWinChallengeId: null,
+      cooldownDays: 0,
+    };
+  }
+
+  const cooldownInterval =
+    eventContext.winnerCooldownDays != null
+      ? `${eventContext.winnerCooldownDays} day`
+      : config.winnerCooldown;
+
+  // Parse interval to days for the response
+  const cooldownDays =
+    eventContext.winnerCooldownDays != null
+      ? eventContext.winnerCooldownDays
+      : parseInt(config.winnerCooldown, 10) || 7;
+
+  // 5. Query user's most recent win within scope
+  const eventCondition =
+    challenge.eventId != null
+      ? Prisma.sql`AND ch."eventId" = ${challenge.eventId}`
+      : Prisma.sql`AND ch."eventId" IS NULL`;
+
+  const [lastWin] = await dbRead.$queryRaw<[{ createdAt: Date; challengeId: number }] | []>`
+    SELECT cw."createdAt", cw."challengeId"
+    FROM "ChallengeWinner" cw
+    JOIN "Challenge" ch ON ch.id = cw."challengeId"
+    WHERE cw."userId" = ${userId}
+      AND ch.status = 'Completed'
+      AND cw."createdAt" > now() - ${cooldownInterval}::interval
+      ${eventCondition}
+    ORDER BY cw."createdAt" DESC
+    LIMIT 1
+  `;
+
+  if (!lastWin) {
+    return {
+      onCooldown: false,
+      cooldownEndsAt: null,
+      lastWinDate: null,
+      lastWinChallengeId: null,
+      cooldownDays,
+    };
+  }
+
+  // 6. Calculate cooldown end
+  const cooldownEndsAt = new Date(lastWin.createdAt.getTime() + cooldownDays * 24 * 60 * 60 * 1000);
+
+  return {
+    onCooldown: cooldownEndsAt > new Date(),
+    cooldownEndsAt,
+    lastWinDate: lastWin.createdAt,
+    lastWinChallengeId: lastWin.challengeId,
+    cooldownDays,
+  };
 }
