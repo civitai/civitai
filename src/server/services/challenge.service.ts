@@ -17,6 +17,7 @@ import {
   ChallengeSort,
   parseChallengeMetadata,
   type ChallengeDetail,
+  type ChallengeDetailForEdit,
   type ChallengeEventListItem,
   type ChallengeListItem,
   type ChallengeWithWinnersListItem,
@@ -498,27 +499,14 @@ export async function getInfiniteChallenges(
   };
 }
 
-export async function getChallengeDetail(
-  id: number,
-  bypassVisibility = false
-): Promise<ChallengeDetail | null> {
-  const challenge = await getChallengeById(id);
-  if (!challenge) return null;
-
-  const eventId = challenge.eventId;
-
-  // Visibility check: only show challenges that are visible to the public
-  // unless bypassVisibility is true (for moderators)
-  if (!bypassVisibility) {
-    const now = new Date();
-    if (challenge.visibleAt > now) {
-      return null; // Not yet visible
-    }
-    // Hide cancelled challenges from public
-    if (challenge.status === ChallengeStatus.Cancelled) {
-      return null;
-    }
-  }
+/**
+ * Shared helper that fetches and assembles all challenge detail data.
+ * Used by both the public getChallengeDetail and moderator getChallengeForEdit.
+ */
+async function buildChallengeDetail(
+  challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>
+) {
+  const id = challenge.id;
 
   // Get entry count from the challenge's collection (only accepted entries)
   let entryCount = 0;
@@ -531,13 +519,6 @@ export async function getChallengeDetail(
     `;
     entryCount = Number(countResult.count);
   }
-
-  // Get comment count from the challenge's thread
-  const commentThread = await dbRead.thread.findUnique({
-    where: { challengeId: id },
-    select: { commentCount: true },
-  });
-  const commentCount = commentThread?.commentCount ?? 0;
 
   // Get creator info with profile picture and cosmetics
   const [creator] = await dbRead.$queryRaw<
@@ -702,14 +683,12 @@ export async function getChallengeDetail(
     visibleAt: challenge.visibleAt,
     status: challenge.status,
     source: challenge.source,
-    eventId,
+    eventId: challenge.eventId,
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
     modelVersionIds: challenge.modelVersionIds,
     models,
     collectionId: challenge.collectionId,
-    judgingPrompt: challenge.judgingPrompt,
-    reviewPercentage: challenge.reviewPercentage,
     maxEntriesPerUser: challenge.maxEntriesPerUser,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
@@ -721,11 +700,9 @@ export async function getChallengeDetail(
     poolTrigger: challenge.poolTrigger,
     maxPrizePool: challenge.maxPrizePool,
     prizeDistribution: challenge.prizeDistribution,
-    operationBudget: challenge.operationBudget,
     reviewCostType: challenge.reviewCostType,
     reviewCost: challenge.reviewCost,
     entryCount,
-    commentCount,
     createdBy: {
       ...displayUser,
       profilePicture: displayProfilePics[displayUserId] ?? null,
@@ -733,10 +710,46 @@ export async function getChallengeDetail(
     },
     judge,
     winners,
-    themeElements,
     completionSummary,
     judgedTagId: challengeConfig.judgedTagId ?? null,
+    // Internal fields used only by getChallengeForEdit
+    _internal: {
+      judgingPrompt: challenge.judgingPrompt,
+      reviewPercentage: challenge.reviewPercentage,
+      operationBudget: challenge.operationBudget,
+      themeElements,
+    },
   };
+}
+
+/**
+ * Public challenge detail — strips sensitive fields that could give users
+ * an unfair advantage (judging prompt, theme elements, etc.).
+ */
+export async function getChallengeDetail(id: number): Promise<ChallengeDetail | null> {
+  const challenge = await getChallengeById(id);
+  if (!challenge) return null;
+
+  // Visibility check: only show challenges that are visible to the public
+  const now = new Date();
+  if (challenge.visibleAt > now) return null;
+  if (challenge.status === ChallengeStatus.Cancelled) return null;
+
+  const { _internal, ...detail } = await buildChallengeDetail(challenge);
+  return detail;
+}
+
+/**
+ * Moderator-only challenge detail — returns all fields including sensitive
+ * ones needed for the edit form (judging prompt, theme elements, etc.).
+ * Bypasses visibility checks.
+ */
+export async function getChallengeForEdit(id: number): Promise<ChallengeDetailForEdit | null> {
+  const challenge = await getChallengeById(id);
+  if (!challenge) return null;
+
+  const { _internal, ...detail } = await buildChallengeDetail(challenge);
+  return { ...detail, ..._internal };
 }
 
 export async function getUpcomingThemes(count: number): Promise<UpcomingTheme[]> {

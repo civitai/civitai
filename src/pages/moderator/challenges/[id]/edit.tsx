@@ -13,7 +13,7 @@ export default function EditChallengePage() {
   const features = useFeatureFlags();
   const challengeId = Number(router.query.id);
 
-  const { data: challenge, isLoading } = trpc.challenge.getById.useQuery(
+  const { data: challenge, isLoading } = trpc.challenge.getForEdit.useQuery(
     { id: challengeId },
     { enabled: !!challengeId && !isNaN(challengeId) }
   );

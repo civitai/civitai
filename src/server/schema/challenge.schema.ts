@@ -146,8 +146,6 @@ export type ChallengeDetail = {
     } | null;
   }>;
   collectionId: number | null;
-  judgingPrompt: string | null;
-  reviewPercentage: number;
   maxEntriesPerUser: number;
   prizes: Prize[];
   entryPrize: Prize | null;
@@ -159,11 +157,9 @@ export type ChallengeDetail = {
   poolTrigger: PoolTrigger | null;
   maxPrizePool: number | null;
   prizeDistribution: number[] | null;
-  operationBudget: number;
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryCount: number;
-  commentCount: number;
   createdBy: {
     id: number;
     username: string | null;
@@ -187,9 +183,16 @@ export type ChallengeDetail = {
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
-  themeElements: string[] | null;
   completionSummary: ChallengeCompletionSummary | null;
   judgedTagId: number | null;
+};
+
+// Extended type with sensitive/internal fields for moderator edit form
+export type ChallengeDetailForEdit = ChallengeDetail & {
+  judgingPrompt: string | null;
+  reviewPercentage: number;
+  operationBudget: number;
+  themeElements: string[] | null;
 };
 
 export type ModeratorChallengeListItem = {

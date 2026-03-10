@@ -37,6 +37,7 @@ import {
   endChallengeAndPickWinners,
   getActiveEvents,
   getChallengeDetail,
+  getChallengeForEdit,
   getChallengeEvents,
   getChallengeWinners,
   getCompletedChallengesWithWinners,
@@ -69,11 +70,11 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id })),
 
-  // Get single challenge by ID (moderators bypass visibility filters)
+  // Get single challenge by ID (public — sensitive fields stripped)
   getById: publicProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.isModerator)),
+    .query(({ input }) => getChallengeDetail(input.id)),
 
   // Get upcoming challenge themes for preview widget
   getUpcomingThemes: publicProcedure
@@ -122,6 +123,12 @@ export const challengeRouter = router({
     .input(checkEntryEligibilitySchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input }) => checkImageEligibility(input.challengeId, input.imageIds)),
+
+  // Moderator: Get full challenge detail for editing (includes sensitive fields)
+  getForEdit: moderatorProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getChallengeForEdit(input.id)),
 
   // Moderator: Get all challenges (including drafts)
   getModeratorList: moderatorProcedure
