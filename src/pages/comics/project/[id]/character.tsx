@@ -7,6 +7,7 @@ import {
   Container,
   Group,
   Image,
+  Loader,
   Progress,
   SegmentedControl,
   Stack,
@@ -199,8 +200,13 @@ function ReferenceUpload() {
     },
   });
 
+  const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
   const deleteRefImageMutation = trpc.comics.deleteReferenceImage.useMutation({
-    onSuccess: () => refetchProject(),
+    onSuccess: () => {
+      setDeletingImageId(null);
+      refetchProject();
+    },
+    onError: () => setDeletingImageId(null),
   });
 
   const reorderRefImagesMutation = trpc.comics.reorderReferenceImages.useMutation({
@@ -410,11 +416,27 @@ function ReferenceUpload() {
                                     display: 'block',
                                   }}
                                 />
+                                {deletingImageId === ri.image.id && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      inset: 0,
+                                      background: 'rgba(0,0,0,0.6)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: 'inherit',
+                                    }}
+                                  >
+                                    <Loader size="sm" color="white" />
+                                  </div>
+                                )}
                                 <ActionIcon
                                   size="xs"
                                   color="red"
                                   variant="filled"
                                   style={{ position: 'absolute', top: 4, right: 4 }}
+                                  disabled={deletingImageId != null}
                                   onClick={(e: React.MouseEvent) => {
                                     e.stopPropagation();
                                     openConfirmModal({
@@ -422,11 +444,13 @@ function ReferenceUpload() {
                                       children: 'Are you sure you want to delete this reference image?',
                                       labels: { confirm: 'Delete', cancel: 'Cancel' },
                                       confirmProps: { color: 'red' },
-                                      onConfirm: () =>
+                                      onConfirm: () => {
+                                        setDeletingImageId(ri.image.id);
                                         deleteRefImageMutation.mutate({
                                           referenceId: existingReference!.id,
                                           imageId: ri.image.id,
-                                        }),
+                                        });
+                                      },
                                     });
                                   }}
                                 >

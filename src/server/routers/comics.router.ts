@@ -76,6 +76,7 @@ const COMIC_MODEL_CONFIG: Record<
     baseModel: string;
     versionId: number;
     img2imgVersionId?: number;
+    maxReferenceImages: number;
     sizes: { label: string; width: number; height: number }[];
   }
 > = {
@@ -83,24 +84,28 @@ const COMIC_MODEL_CONFIG: Record<
     engine: 'gemini',
     baseModel: 'NanoBanana',
     versionId: 2436219,
+    maxReferenceImages: 7,
     sizes: nanoBananaProSizes,
   },
   Flux2: {
     engine: 'flux2',
     baseModel: 'Flux.2 D',
     versionId: 2439067,
+    maxReferenceImages: 7,
     sizes: commonAspectRatios,
   },
   Seedream: {
     engine: 'seedream',
     baseModel: 'Seedream',
     versionId: 2470991,
+    maxReferenceImages: 7,
     sizes: seedreamSizes,
   },
   OpenAI: {
     engine: 'openai',
     baseModel: 'OpenAI',
     versionId: 2512167,
+    maxReferenceImages: 7,
     sizes: [
       { label: '1:1', width: 1024, height: 1024 },
       { label: '3:2', width: 1536, height: 1024 },
@@ -112,6 +117,7 @@ const COMIC_MODEL_CONFIG: Record<
     baseModel: 'Qwen',
     versionId: 2552908,
     img2imgVersionId: 2558804,
+    maxReferenceImages: 3,
     sizes: qwenSizes,
   },
 };
@@ -132,12 +138,10 @@ function getAspectRatioDimensions(
   return match ?? sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ?? sizes[0];
 }
 
-// Cap reference images to prevent Fal rejection (too many images → 400 error)
-const MAX_REFERENCE_IMAGES = 6;
-
+// Cap reference images to prevent API rejection (too many images)
 function capReferenceImages(
   images: { url: string; width: number; height: number }[],
-  max: number = MAX_REFERENCE_IMAGES
+  max: number
 ): { url: string; width: number; height: number }[] {
   if (images.length <= max) return images;
   return images.slice(0, max);
@@ -223,6 +227,7 @@ const createPanelSchema = z.object({
   projectId: z.number().int(),
   chapterPosition: z.number().int().min(0),
   referenceIds: z.array(z.number().int()).optional(),
+  selectedImageIds: z.array(z.number().int()).optional(),
   prompt: z.string().min(1).max(2000),
   enhance: z.boolean().default(true),
   useContext: z.boolean().default(true),
@@ -298,6 +303,8 @@ const smartCreateChapterSchema = z.object({
 const enhancePanelSchema = z.object({
   projectId: z.number().int(),
   chapterPosition: z.number().int().min(0),
+  referenceIds: z.array(z.number().int()).optional(),
+  selectedImageIds: z.array(z.number().int()).optional(),
   sourceImageUrl: z.string().min(1),
   sourceImageWidth: z.number().int().positive(),
   sourceImageHeight: z.number().int().positive(),
@@ -365,7 +372,7 @@ async function getReferenceImages(referenceId: number) {
       name: true,
       images: {
         orderBy: { position: 'asc' },
-        include: { image: { select: { url: true, width: true, height: true } } },
+        include: { image: { select: { id: true, url: true, width: true, height: true } } },
       },
     },
   });
@@ -375,6 +382,7 @@ async function getReferenceImages(referenceId: number) {
   return {
     referenceName: reference.name,
     refImages: reference.images.map((ri) => ({
+      imageId: ri.image.id,
       url: getEdgeUrl(ri.image.url, { original: true }),
       width: ri.image.width ?? 512,
       height: ri.image.height ?? 512,
@@ -504,7 +512,7 @@ async function createSinglePanel(args: {
         disablePoi: false,
         priority: 'low',
         sourceImage: null,
-        images: capReferenceImages(refImages),
+        images: capReferenceImages(refImages, modelConfig.maxReferenceImages),
       },
       resources: [{ id: modelConfig.versionId, strength: 1 }],
       tags: ['comics'],
@@ -1583,25 +1591,28 @@ export const comicsRouter = router({
       });
       const allReferenceNames = allUserRefs.map((r) => r.name);
 
-      // Resolve which references the user explicitly mentioned (for panel association)
+      // Always resolve @mentions from prompt for panel-reference tracking
       const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
-      let mentionedReferenceIds: number[];
+      const { mentionedIds } = resolveReferenceMentions({
+        prompt: input.prompt,
+        references: allUserRefs,
+      });
+      const mentionedReferenceIds = mentionedIds;
+
+      // Determine which references provide images for generation.
+      // Default to only the mentioned references (from the prompt), not all refs.
+      let generationReferenceIds: number[];
       if (input.referenceIds && input.referenceIds.length > 0) {
-        // Validate all provided IDs belong to the current user
         if (input.referenceIds.some((id) => !allowedRefIds.has(id))) {
           throw throwAuthorizationError();
         }
-        mentionedReferenceIds = input.referenceIds;
+        generationReferenceIds = input.referenceIds;
       } else {
-        const { mentionedIds } = resolveReferenceMentions({
-          prompt: input.prompt,
-          references: allUserRefs,
-        });
-        mentionedReferenceIds = mentionedIds;
+        generationReferenceIds =
+          mentionedReferenceIds.length > 0
+            ? mentionedReferenceIds
+            : allUserRefs.map((r) => r.id);
       }
-
-      // All references are used for generation images; only mentioned ones are tracked on the panel
-      const generationReferenceIds = allUserRefs.length > 0 ? allUserRefs.map((r) => r.id) : [];
 
       if (generationReferenceIds.length === 0) {
         throw throwBadRequestError('No references available for generation');
@@ -1650,15 +1661,26 @@ export const comicsRouter = router({
         nextPosition = (contextPanel?.position ?? -1) + 1;
       }
 
-      // Get reference images for generation — all user references
+      // Get reference images for generation
       let primaryReferenceName = '';
-      const combinedRefImages: { url: string; width: number; height: number }[] = [];
+      const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
 
       for (const refId of generationReferenceIds) {
         const { referenceName, refImages: imgs } = await getReferenceImages(refId);
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
-        combinedRefImages.push(...imgs);
+        allRefImages.push(...imgs);
       }
+
+      // Filter to user-selected images if specified
+      const selectedImageIdSet =
+        input.selectedImageIds && input.selectedImageIds.length > 0
+          ? new Set(input.selectedImageIds)
+          : null;
+      const combinedRefImages = (
+        selectedImageIdSet
+          ? allRefImages.filter((img) => selectedImageIdSet.has(img.imageId))
+          : allRefImages
+      ).map(({ url, width, height }) => ({ url, width, height }));
 
       if (combinedRefImages.length === 0) {
         throw throwBadRequestError('References have no reference images');
@@ -1695,7 +1717,7 @@ export const comicsRouter = router({
         allImages.push({ url: prevEdgeUrl, width: panelWidth, height: panelHeight });
       }
 
-      // Build metadata for debugging
+      // Build metadata for debugging and regeneration
       const metadata = {
         previousPanelId: effectiveContext?.id ?? null,
         previousPanelPrompt: effectiveContext
@@ -1703,6 +1725,7 @@ export const comicsRouter = router({
           : null,
         previousPanelImageUrl: contextPanel?.imageUrl ?? null,
         referenceImages: combinedRefImages,
+        selectedImageIds: input.selectedImageIds ?? null,
         useContext: input.useContext,
         includePreviousImage: input.includePreviousImage,
         enhanceEnabled: input.enhance,
@@ -1759,7 +1782,7 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: capReferenceImages(allImages),
+            images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
           },
           resources: [{ id: modelConfig.versionId, strength: 1 }],
           tags: ['comics'],
@@ -2050,14 +2073,16 @@ export const comicsRouter = router({
           path: { workflowId: panel.workflowId },
         });
 
-        // Extract image URL from first step output if present.
-        // Images can appear before the workflow status transitions to 'succeeded'
+        // Extract image URL from first step output
         const steps = workflow.steps ?? [];
         const firstStep = steps[0] as any;
         const imageUrl =
           firstStep?.output?.images?.[0]?.url ?? firstStep?.output?.blobs?.[0]?.url ?? null;
 
-        if (imageUrl) {
+        // Only download the image once the workflow has fully succeeded.
+        // The URL can appear in step output before the image is actually available,
+        // causing 404 errors if we try to fetch it too early.
+        if (workflow.status === 'succeeded' && imageUrl) {
           // Extract dimensions from panel metadata (set during creation)
           const genParams = (panel.metadata as any)?.generationParams;
           const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
@@ -2121,8 +2146,7 @@ export const comicsRouter = router({
           return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
         }
 
-        // No images yet — check terminal statuses
-        if (workflow.status === 'succeeded') {
+        if (workflow.status === 'succeeded' && !imageUrl) {
           console.warn(
             `Panel ${panel.id}: workflow succeeded but no image URL found in step output`,
             JSON.stringify(firstStep?.output ?? null)
@@ -2913,21 +2937,47 @@ export const comicsRouter = router({
       });
       const allReferenceNames = allUserRefs.map((r) => r.name);
 
-      // Resolve @mentions from prompt (for panel association only)
-      const { mentionedIds } = resolveReferenceMentions({
-        prompt: input.prompt,
-        references: allUserRefs,
-      });
+      // Resolve @mentions from prompt (for panel association and generation filtering)
+      const { mentionedIds } = input.prompt
+        ? resolveReferenceMentions({ prompt: input.prompt, references: allUserRefs })
+        : { mentionedIds: [] as number[] };
       const mentionedReferenceIds = mentionedIds;
 
-      // Gather reference images from all user refs
+      // Determine which references provide images for generation.
+      // Default to only the mentioned references (from the prompt), not all refs.
+      const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
+      let generationReferenceIds: number[];
+      if (input.referenceIds && input.referenceIds.length > 0) {
+        if (input.referenceIds.some((id) => !allowedRefIds.has(id))) {
+          throw throwAuthorizationError();
+        }
+        generationReferenceIds = input.referenceIds;
+      } else {
+        generationReferenceIds =
+          mentionedReferenceIds.length > 0
+            ? mentionedReferenceIds
+            : allUserRefs.map((r) => r.id);
+      }
+
+      // Gather reference images from selected refs
       let primaryReferenceName = '';
-      const combinedRefImages: { url: string; width: number; height: number }[] = [];
-      for (const refId of allUserRefs.map((r) => r.id)) {
+      const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
+      for (const refId of generationReferenceIds) {
         const { referenceName, refImages: imgs } = await getReferenceImages(refId);
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
-        combinedRefImages.push(...imgs);
+        allRefImages.push(...imgs);
       }
+
+      // Filter to user-selected images if specified
+      const selectedImageIdSet =
+        input.selectedImageIds && input.selectedImageIds.length > 0
+          ? new Set(input.selectedImageIds)
+          : null;
+      const combinedRefImages = (
+        selectedImageIdSet
+          ? allRefImages.filter((img) => selectedImageIdSet.has(img.imageId))
+          : allRefImages
+      ).map(({ url, width, height }) => ({ url, width, height }));
 
       // Build images array: source image first, then reference images, then optional previous panel image
       const sourceEdgeUrl = getEdgeUrl(input.sourceImageUrl, { original: true });
@@ -2963,6 +3013,7 @@ export const comicsRouter = router({
         sourceImageWidth: input.sourceImageWidth,
         sourceImageHeight: input.sourceImageHeight,
         referenceImages: combinedRefImages,
+        selectedImageIds: input.selectedImageIds ?? null,
         useContext: input.useContext,
         includePreviousImage: input.includePreviousImage,
         enhanceEnabled: input.enhance,
@@ -3016,7 +3067,7 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: capReferenceImages(allImages),
+            images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['comics'],
@@ -3304,7 +3355,7 @@ export const comicsRouter = router({
                 disablePoi: false,
                 priority: 'low',
                 sourceImage: null,
-                images: capReferenceImages(allImages),
+                images: capReferenceImages(allImages, bulkModelConfig.maxReferenceImages),
               },
               resources: [{ id: bulkVersionId, strength: 1 }],
               tags: ['comics'],
