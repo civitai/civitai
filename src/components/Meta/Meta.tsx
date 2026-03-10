@@ -1,8 +1,34 @@
+import { useEffect, useRef } from 'react';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import Head from 'next/head';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useAppContext } from '~/providers/AppProvider';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { create } from 'zustand';
+
+// Meta stacking context - only the topmost (latest mounted) Meta renders its tags.
+// When a dialog mounts its own Meta, it automatically suppresses the page's Meta.
+// When the dialog unmounts, the page's Meta becomes active again.
+let nextMetaId = 0;
+const useMetaStack = create<{ stack: number[] }>(() => ({ stack: [] }));
+
+function useMetaLevel() {
+  const idRef = useRef<number>();
+  if (idRef.current === undefined) idRef.current = nextMetaId++;
+
+  const id = idRef.current;
+
+  useEffect(() => {
+    useMetaStack.setState((state) => ({ stack: [...state.stack, id] }));
+    return () => {
+      useMetaStack.setState((state) => ({ stack: state.stack.filter((x) => x !== id) }));
+    };
+  }, [id]);
+
+  const isTop = useMetaStack((state) => state.stack[state.stack.length - 1] === id);
+  return isTop;
+}
 
 export function Meta<TImage extends { nsfwLevel: number; url: string; type?: MediaType }>({
   title,
@@ -28,8 +54,14 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   const _imageProps =
     _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
   const _imageUrl = _image ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps }) : imageUrl;
+  const { query } = useBrowserRouter();
+  const hasDialogParam = !!(query as Record<string, unknown>)?.dialog;
   const { canIndex } = useAppContext();
   const stringifiedKeywords = Array.isArray(keywords) ? keywords.join(', ') : keywords;
+
+  const isTop = useMetaLevel();
+
+  if (!isTop) return null;
 
   return (
     <Head>
@@ -58,9 +90,11 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
           <meta name="robots" content="max-image-preview:large" />
         </>
       )}
-      {(deIndex || !canIndex) && <meta name="robots" content="noindex,nofollow" />}
+      {(deIndex || !canIndex || hasDialogParam) && (
+        <meta name="robots" content="noindex,nofollow" />
+      )}
       {links.map((link, index) => (
-        <link key={link.href || index} {...link} />
+        <link key={link.rel ? `link-${link.rel}` : link.href || index} {...link} />
       ))}
       {schema && (
         <script

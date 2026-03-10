@@ -277,6 +277,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
                   name="resourceReview"
                   state={{ reviewId: review.id }}
                   style={{ display: 'flex' }}
+                  rel="nofollow"
                 >
                   <Badge
                     px={4}
@@ -294,6 +295,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
                   name="resourceReview"
                   state={{ reviewId: review.id }}
                   style={{ display: 'flex' }}
+                  rel="nofollow"
                 >
                   <Badge
                     px={4}
@@ -320,6 +322,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
               name="resourceReview"
               state={{ reviewId: review.id }}
               style={{ display: 'flex' }}
+              rel="nofollow"
             >
               {isThumbsUp ? (
                 <ThemeIcon color="success.5" size="lg" radius="md" variant="light">

@@ -41,6 +41,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   style,
   onClick,
   variant = 'text',
+  rel,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
@@ -50,6 +51,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   style?: React.CSSProperties;
   onClick?: () => void;
   variant?: AnchorProps['variant'];
+  rel?: string;
 }) {
   const router = useRouter();
   const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
@@ -68,6 +70,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
     return cloneElement(children as React.ReactElement, {
       href: asPath,
       onClick: handleClick,
+      rel,
       // className,
       // style,
     });
@@ -80,6 +83,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       className={className}
       style={style}
       variant={variant}
+      rel={rel}
     >
       {children}
     </Anchor>
