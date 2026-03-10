@@ -12,6 +12,7 @@ import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpression
 import {
   useContainerContext,
   useContainerProviderStore,
+  useContainerWidth,
 } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView as useInViewStandalone } from 'react-intersection-observer';
 import { env } from '~/env/client';
@@ -414,6 +415,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   const [id, setId] = useState(props.id);
   const [imgLoaded, setImgLoaded] = useState(false);
   const { nodeRef } = useContainerContext();
+  const containerWidth = useContainerWidth();
   const node = useScrollAreaRef();
   const { browsingLevel } = useAdunitRenderableContext();
   const fetchingRef = React.useRef(false);
@@ -432,16 +434,18 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   });
 
   const traceRef = useRef<string>();
+  const containerWidthRef = useRef(containerWidth ?? 0);
+  containerWidthRef.current = containerWidth ?? 0;
+
   const handleServe = useCallback(() => {
     const id = props.id ?? uuidv4();
     if (!props.id) setId(id);
     if (fetchingRef.current || document.visibilityState !== 'visible') return;
+    if (!containerWidthRef.current) return;
     fetchingRef.current = true;
     const type = adunitToCivitaiMap[props.adUnit];
     const searchParams = new URLSearchParams(
-      `placement=${id}&name=${type}&container=${
-        nodeRef.current?.clientWidth ?? 0
-      }&browsingLevel=${browsingLevel}`
+      `placement=${id}&name=${type}&container=${containerWidthRef.current}&browsingLevel=${browsingLevel}`
     );
     if (traceRef.current) searchParams.append('trace', traceRef.current);
     fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
@@ -461,9 +465,10 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
 
   const interval = usePausableInterval(handleServe, 30 * 1000);
 
+  const hasContainerWidth = !!containerWidth;
   useEffect(() => {
     if (inView && !data) handleServe();
-  }, [inView, data, handleServe]);
+  }, [inView, data, handleServe, hasContainerWidth]);
 
   useEffect(() => {
     if (inView) interval.start();

@@ -602,7 +602,6 @@ export const ecosystems: EcosystemRecord[] = [
     key: 'LTXV23',
     name: 'ltxv23',
     displayName: 'LTX Video 2.3',
-    parentEcosystemId: ECO.LTXV2,
     familyId: 16,
     sortOrder: 207,
   },

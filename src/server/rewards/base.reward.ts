@@ -12,6 +12,7 @@ import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/servi
 import type { Fingerprint } from '~/server/utils/fingerprint';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({
@@ -142,27 +143,50 @@ export function createBuzzEvent<T>({
   const processOnDemand = async (key: BuzzEventKey) => {
     if (!isOnDemand) return false;
 
-    // Get daily cache for user
-    const typeCacheJson =
-      (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, `${key.toUserId}:${type}`)) ?? '{}';
-    const typeCache = JSON.parse(typeCacheJson);
+    const hashField = `${key.toUserId}:${type}`;
     const cacheKey = hashifyObject(key);
-
-    // Check if already awarded
-    const hasAlreadyAwarded = typeCache[cacheKey];
-    if (hasAlreadyAwarded) return false;
-
-    // Determine amount to award
-    const awarded = Object.keys(typeCache).length * awardAmount;
     const cap = buzzEvent.cap ?? Infinity;
-    const remaining = Math.max(cap - awarded, 0);
-    const toAward = Math.min(awardAmount, remaining);
 
-    // Update cache
-    typeCache[cacheKey] = Date.now().toString();
-    await redis.hSet(REDIS_KEYS.BUZZ_EVENTS, `${key.toUserId}:${type}`, JSON.stringify(typeCache));
+    const result = await withDistributedLock(
+      {
+        key: `buzz-reward:${hashField}`,
+        ttl: 5,
+        maxRetries: 3,
+        retryDelay: 50,
+      },
+      async () => {
+        // Get daily cache for user
+        const typeCacheJson = (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, hashField)) ?? '{}';
+        const typeCache = JSON.parse(typeCacheJson);
 
-    return toAward;
+        // Check if already awarded
+        if (typeCache[cacheKey]) return -1;
+
+        // Determine amount to award
+        const awarded = Object.keys(typeCache).length * awardAmount;
+        const remaining = Math.max(cap - awarded, 0);
+        const toAward = Math.min(awardAmount, remaining);
+
+        // Update cache
+        typeCache[cacheKey] = Date.now().toString();
+        await redis.hSet(REDIS_KEYS.BUZZ_EVENTS, hashField, JSON.stringify(typeCache));
+
+        return toAward;
+      }
+    );
+
+    if (result === null) {
+      log(
+        { type, toUserId: key.toUserId, forId: key.forId, byUserId: key.byUserId, awardAmount },
+        {
+          message: 'Failed to acquire lock for on-demand reward',
+          lockKey: `buzz-reward:${hashField}`,
+        }
+      );
+      return false;
+    }
+    if (result === -1) return false; // Already awarded
+    return result;
   };
 
   const apply = async (input: T, tracking?: { ip?: string; fingerprint?: Fingerprint }) => {

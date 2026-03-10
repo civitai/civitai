@@ -1,5 +1,5 @@
 import type { NsfwLevel } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -82,7 +82,7 @@ const HiddenTags = createUserCache({
   key: 'hidden-tags-4',
   callback: async ({ userId }) => {
     const tagEngagment = (
-      await dbWrite.tagEngagement.findMany({
+      await dbRead.tagEngagement.findMany({
         where: { userId, type: TagEngagementType.Hide },
         select: { tag: { select: { id: true, name: true } } },
       })
@@ -100,7 +100,7 @@ export const HiddenImages = createUserCache({
   key: 'hidden-images-3',
   callback: async ({ userId }) =>
     (
-      await dbWrite.imageEngagement.findMany({
+      await dbRead.imageEngagement.findMany({
         where: { userId, type: UserEngagementType.Hide },
         select: { imageId: true },
       })
@@ -119,7 +119,7 @@ const getVotedHideImages = async ({
 }) => {
   const allHidden = [...new Set([...hiddenTagIds, ...moderatedTagIds])];
   if (!allHidden.length) return [];
-  const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
+  const votedHideImages = await dbRead.tagsOnImageVote.findMany({
     where: { userId, tagId: { in: allHidden }, vote: { gt: 0 }, applied: false },
     select: { imageId: true, tagId: true },
   });
@@ -158,7 +158,7 @@ export const HiddenModels = createUserCache({
   key: 'hidden-models-3',
   callback: async ({ userId }) =>
     (
-      await dbWrite.modelEngagement.findMany({
+      await dbRead.modelEngagement.findMany({
         where: { userId, type: UserEngagementType.Hide },
         select: { modelId: true },
       })
@@ -168,7 +168,7 @@ export const HiddenModels = createUserCache({
 export const HiddenUsers = createUserCache({
   key: 'hidden-users-3',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number }[]>`
         SELECT
           ue."targetUserId" "id"
         FROM "UserEngagement" ue
@@ -179,7 +179,7 @@ export const HiddenUsers = createUserCache({
 export const BlockedUsers = createUserCache({
   key: 'blocked-users',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number }[]>`
         SELECT
           ue."targetUserId" "id"
         FROM "UserEngagement" ue
@@ -190,7 +190,7 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number }[]>`
         SELECT
           ue."userId" "id"
         FROM "UserEngagement" ue

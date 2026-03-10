@@ -1,9 +1,10 @@
 import type { RingProgressProps, TooltipProps } from '@mantine/core';
 import {
+  ActionIcon,
   Alert,
   Badge,
+  Button,
   Card,
-  Group,
   Loader,
   RingProgress,
   Text,
@@ -15,6 +16,7 @@ import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
   IconBan,
+  IconPlus,
   IconCheck,
   IconFlagQuestion,
   IconInfoHexagon,
@@ -24,7 +26,6 @@ import {
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
-import { Collection } from '~/components/Collection/Collection';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -219,6 +220,26 @@ export function QueueItem({
               {!!request.duration && currentUser?.isModerator && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
               )}
+              {workflowDefinition && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {workflowDefinition.label}
+                </Badge>
+              )}
+              {engine && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {`${engine}${version ? ` ${version}` : ''}`}
+                </Badge>
+              )}
             </div>
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton request={request} />
@@ -280,36 +301,13 @@ export function QueueItem({
 
             {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
-            <div className="-my-2 flex gap-2">
-              {workflowDefinition && (
-                <Badge
-                  radius="sm"
-                  color="violet"
-                  size="sm"
-                  classNames={{ label: 'overflow-hidden' }}
-                >
-                  {workflowDefinition.label}
-                </Badge>
-              )}
-              {engine && (
-                <Badge
-                  radius="sm"
-                  color="violet"
-                  size="sm"
-                  classNames={{ label: 'overflow-hidden' }}
-                >
-                  {`${engine}${version ? ` ${version}` : ''}`}
-                </Badge>
-              )}
-            </div>
-            <div className="5 flex flex-col gap-0">
-              {resources.length > 0 && (
-                <div className="flex items-center gap-1">
-                  <Text size="sm">Resources:</Text>
-                  <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
-                </div>
-              )}
-            </div>
+            {resources.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {resources.map((resource) => (
+                  <ResourceRow key={resource.id} resource={resource} />
+                ))}
+              </div>
+            )}
 
             {stepDisplay === 'inline' && failureReason && (
               <Alert color="red">{failureReason}</Alert>
@@ -365,51 +363,51 @@ export function QueueItem({
   );
 }
 
-const ResourceBadge = (props: GenerationResource) => {
+function ResourceRow({ resource }: { resource: GenerationResource }) {
   const { unstableResources } = useUnstableResources();
-
-  const { model, id, name, epochDetails } = props;
+  const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
-  const hasEpochDetails = !!epochDetails?.epochNumber;
 
-  const badge = (
-    <Group gap={4} wrap="nowrap">
-      <Badge
-        size="sm"
-        color={unstable ? 'yellow' : undefined}
-        style={{
-          maxWidth: 200,
-          cursor: 'pointer',
-          borderTopRightRadius: hasEpochDetails ? 0 : undefined,
-          borderBottomRightRadius: hasEpochDetails ? 0 : undefined,
-        }}
-        classNames={{ label: '!overflow-hidden' }}
+  return (
+    <Button.Group>
+      <Button
+        size="compact-sm"
+        variant="default"
         component={Link}
         href={`/models/${model.id}?modelVersionId=${id}`}
         onClick={() => generationGraphPanel.close()}
+        leftSection={
+          unstable ? (
+            <Tooltip label="Unstable resource">
+              <IconAlertTriangleFilled size={14} className="text-yellow-500" />
+            </Tooltip>
+          ) : undefined
+        }
+        color={unstable ? 'yellow' : undefined}
       >
         {model.name} - {name}
-      </Badge>
-      {epochDetails?.epochNumber && (
-        <Tooltip label={`Epoch: #${epochDetails?.epochNumber}`}>
-          <Badge
-            size="sm"
-            color={unstable ? 'yellow' : undefined}
-            style={{
-              borderTopLeftRadius: hasEpochDetails ? 0 : undefined,
-              borderBottomLeftRadius: hasEpochDetails ? 0 : undefined,
-            }}
-            classNames={{ label: '!overflow-hidden' }}
-          >
-            #{epochDetails?.epochNumber}
-          </Badge>
-        </Tooltip>
-      )}
-    </Group>
+        {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
+      </Button>
+      <ButtonTooltip {...tooltipProps} label="Generate with this resource">
+        <Button
+          size="compact-sm"
+          variant="default"
+          px={4}
+          onClick={() => {
+            generationGraphStore.setData({
+              params: { ecosystem: resource.baseModel },
+              resources: [resource],
+              runType: 'run',
+            });
+            generationGraphPanel.open();
+          }}
+        >
+          <IconPlus size={14} />
+        </Button>
+      </ButtonTooltip>
+    </Button.Group>
   );
-
-  return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
-};
+}
 
 /**
  * Renders the image grid for a single step or all steps (inline mode).
