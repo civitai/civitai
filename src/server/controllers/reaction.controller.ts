@@ -250,7 +250,10 @@ export const toggleReactionHandler = async ({
     }
 
     if (result === 'created') {
-      await Promise.all([
+      // Fire-and-forget: rewards and notifications should not block the response.
+      // These were previously awaited and caused 30s timeouts when downstream
+      // services (ClickHouse, Redis locks, notification DB) were slow.
+      Promise.all([
         encouragementReward
           .apply(
             {
@@ -273,9 +276,9 @@ export const toggleReactionHandler = async ({
             { ip: ctx.ip, fingerprint: ctx.fingerprint }
           )
           .catch(handleLogError),
-      ]);
+      ]).catch(handleLogError);
 
-      await createReactionNotification(input).catch();
+      createReactionNotification(input).catch(handleLogError);
     }
     return result;
   } catch (error) {
