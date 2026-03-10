@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-const version = '5.0.1462';
+const version = '5.0.1466';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {

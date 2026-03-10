@@ -373,7 +373,11 @@ function InnerProvider({
       } else if (data.runType === 'append') {
         // Append: merge incoming images with existing, dedup by URL, cap at max
         const snapshot = graph.getSnapshot() as Record<string, unknown>;
-        const existingImages = ((snapshot.images ?? []) as Array<{ url: string }>) || [];
+        // Only keep existing images if already on the same workflow; otherwise start fresh
+        const existingImages =
+          snapshot.workflow === data.params.workflow
+            ? (((snapshot.images ?? []) as Array<{ url: string }>) || [])
+            : [];
         const incomingImages =
           ((data.params.images ?? []) as Array<{ url: string; width: number; height: number }>) ||
           [];

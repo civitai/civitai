@@ -73,6 +73,7 @@ import type {
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -735,7 +736,7 @@ export async function updateWorkflow({
   ...props
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
   const workflow = await clientUpdateWorkflow(props);
-  const [formatted] = await formatGenerationResponse([workflow] as GeneratedImageWorkflow[], user);
+  const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
 }
 
