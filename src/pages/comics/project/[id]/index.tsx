@@ -186,11 +186,6 @@ function ProjectWorkspace() {
     [allReferences]
   );
 
-  const totalRefImageCount = useMemo(
-    () => activeReferences.reduce((sum, c) => sum + ((c as any).images?.length ?? 0), 0),
-    [activeReferences]
-  );
-
   const maxReferenceImages = COMIC_MODEL_MAX_IMAGES[effectiveModel] ?? 7;
 
   const mentionedReferences = useMemo(() => {
@@ -857,15 +852,6 @@ function ProjectWorkspace() {
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
                 <span>References</span>
-                {totalRefImageCount > maxReferenceImages && (
-                  <Tooltip
-                    label={`${totalRefImageCount} images across refs — only the first ${maxReferenceImages} will be used for generation`}
-                  >
-                    <Badge size="xs" color="yellow" variant="light">
-                      {totalRefImageCount}/{maxReferenceImages}
-                    </Badge>
-                  </Tooltip>
-                )}
                 <ActionIcon
                   variant="subtle"
                   size="sm"
