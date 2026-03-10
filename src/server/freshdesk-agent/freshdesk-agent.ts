@@ -1,6 +1,6 @@
 import type { FreshdeskWebhookPayload } from '~/server/http/freshdesk/freshdesk.schema';
 import { logToAxiom } from '~/server/logging/client';
-import { openrouter } from '~/server/services/ai/openrouter';
+import { AI_MODELS, openrouter } from '~/server/services/ai/openrouter';
 import { executeToolCall, getToolsForPhase } from './freshdesk-tools';
 import { buildUserMessage, getSystemPrompt } from './freshdesk-prompts';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
@@ -35,7 +35,7 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
     agentLog('USER MESSAGE', userMessage);
 
     const result = await openrouter.runAgentLoop({
-      model: 'STEP_FUN',
+      model: AI_MODELS.STEP_FUN,
       system: systemPrompt,
       userMessage,
       tools,
