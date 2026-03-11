@@ -345,6 +345,11 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const replacePanelImageMutation = trpc.comics.replacePanelImage.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
+
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
     onSuccess: () => {
       refetch();
@@ -813,8 +818,8 @@ function ProjectWorkspace() {
             try {
               const file = new File([blob], 'sketch-annotation.jpg', { type: 'image/jpeg' });
               const result = await uploadSketchToCF(file);
-              // Directly save the annotated image as the panel image
-              await updatePanelMutation.mutateAsync({
+              // Save with proper Image record creation and NSFW scanning
+              await replacePanelImageMutation.mutateAsync({
                 panelId: panel.id,
                 imageUrl: result.id,
               });
@@ -1258,6 +1263,7 @@ function ProjectWorkspace() {
                             component={Link}
                             href={`/comics/project/${projectId}/read`}
                             target="_blank"
+                            rel="noopener noreferrer"
                           >
                             Preview
                           </Button>

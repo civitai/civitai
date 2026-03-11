@@ -379,7 +379,7 @@ const updateReferenceSchema = z.object({
   name: z
     .string()
     .min(1)
-    .max(100)
+    .max(255)
     .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
 });
 
@@ -1852,6 +1852,38 @@ export const comicsRouter = router({
     return updated;
   }),
 
+  replacePanelImage: comicProtectedProcedure
+    .input(z.object({ panelId: z.number().int(), imageUrl: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const panel = await dbRead.comicPanel.findUnique({
+        where: { id: input.panelId },
+        include: { chapter: { include: { project: { select: { userId: true, id: true } } } } },
+      });
+      if (!panel || panel.chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      const image = await createImage({
+        url: input.imageUrl,
+        type: 'image',
+        userId: ctx.user.id,
+      });
+
+      const updated = await dbWrite.comicPanel.update({
+        where: { id: input.panelId },
+        data: { imageUrl: input.imageUrl, imageId: image.id },
+      });
+
+      // Trigger NSFW scanning and level recalculation
+      ingestImageById({ id: image.id }).catch((e) =>
+        console.error(`Failed to ingest sketch edit image ${image.id}:`, e)
+      );
+      updateComicChapterNsfwLevels([panel.chapter.project.id]).catch(() => {});
+      updateComicProjectNsfwLevels([panel.chapter.project.id]).catch(() => {});
+
+      return updated;
+    }),
+
   deletePanel: comicProtectedProcedure.input(deletePanelSchema).mutation(async ({ ctx, input }) => {
     // Verify ownership via chapter -> project
     const panel = await dbRead.comicPanel.findUnique({
@@ -2370,7 +2402,6 @@ export const comicsRouter = router({
       await updateComicProjectNsfwLevels([input.projectId]);
 
       const isScheduled = input.scheduledAt && input.scheduledAt > new Date();
-      const isFirstPublish = !chapter.publishedAt;
 
       const updated = await dbWrite.comicChapter.update({
         where: {
@@ -2378,7 +2409,7 @@ export const comicsRouter = router({
         },
         data: {
           status: isScheduled ? ComicChapterStatus.Scheduled : ComicChapterStatus.Published,
-          ...(isFirstPublish ? { publishedAt: isScheduled ? input.scheduledAt : new Date() } : {}),
+          publishedAt: isScheduled ? input.scheduledAt : new Date(),
           ...(input.earlyAccessConfig !== undefined
             ? { earlyAccessConfig: input.earlyAccessConfig ?? undefined }
             : {}),

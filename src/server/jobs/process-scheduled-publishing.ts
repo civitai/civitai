@@ -115,13 +115,21 @@ export const processScheduledPublishing = createJob(
         );
       }
 
+      // Batch-fetch all followers for affected projects in a single query
+      const allFollowers = await dbWrite.$queryRaw<{ projectId: number; userId: number }[]>`
+        SELECT "projectId", "userId" FROM "ComicEngagement"
+        WHERE "projectId" IN (${Prisma.join(projectIds)}) AND "type" = 'Notify'
+      `;
+      const followersByProject = new Map<number, number[]>();
+      for (const f of allFollowers) {
+        const list = followersByProject.get(f.projectId) ?? [];
+        list.push(f.userId);
+        followersByProject.set(f.projectId, list);
+      }
+
       // Send follower notifications
       for (const ch of scheduledComicChapters) {
-        const followers = await dbWrite.$queryRaw<{ userId: number }[]>`
-          SELECT "userId" FROM "ComicEngagement"
-          WHERE "projectId" = ${ch.projectId} AND "type" = 'Notify'
-        `;
-        const followerIds = followers.map((f) => f.userId);
+        const followerIds = followersByProject.get(ch.projectId) ?? [];
         if (followerIds.length > 0) {
           await createNotification({
             type: 'new-comic-chapter',

@@ -243,7 +243,7 @@ function ReferenceUpload() {
   const handleSaveRename = () => {
     if (!existingReference) return;
     const trimmed = editName.trim();
-    if (!trimmed || trimmed.length > 100 || trimmed.includes('@')) return;
+    if (!trimmed || trimmed.length > 255 || trimmed.includes('@')) return;
     if (trimmed === existingReference.name) {
       setIsEditingName(false);
       return;
@@ -410,8 +410,8 @@ function ReferenceUpload() {
                               ? 'Name cannot contain @ character'
                               : editName.trim().length === 0
                               ? 'Name is required'
-                              : editName.trim().length > 100
-                              ? 'Name must be 100 characters or less'
+                              : editName.trim().length > 255
+                              ? 'Name must be 255 characters or less'
                               : undefined
                           }
                           styles={{ input: { textAlign: 'center' } }}
