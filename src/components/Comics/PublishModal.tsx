@@ -79,6 +79,7 @@ export function PublishModal({
             onChange={setScheduledDate}
             minDate={new Date()}
             leftSection={<IconCalendar size={16} />}
+            popoverProps={{ withinPortal: true }}
           />
         )}
 
