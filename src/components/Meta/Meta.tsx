@@ -6,6 +6,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { create } from 'zustand';
+import { env } from '~/env/client';
 
 // Meta stacking context - only the topmost (latest mounted) Meta renders its tags.
 // When a dialog mounts its own Meta, it automatically suppresses the page's Meta.
@@ -42,25 +43,32 @@ function useMetaLevel() {
   return isTop;
 }
 
-export function Meta<TImage extends { nsfwLevel: number; url: string; type?: MediaType }>({
-  title,
-  description,
-  links = [],
-  schema,
-  deIndex,
-  images,
-  imageUrl,
-  keywords,
-}: {
+type MetaBaseProps<TImage> = {
   title?: string;
   description?: string;
-  links?: React.LinkHTMLAttributes<HTMLLinkElement>[];
   schema?: object;
-  deIndex?: boolean;
   images?: TImage | TImage[] | null;
   imageUrl?: string;
   keywords?: string | string[];
-}) {
+};
+
+type MetaProps<TImage> = MetaBaseProps<TImage> &
+  (
+    | { deIndex: boolean; canonical?: string; alternate?: string }
+    | { deIndex?: never; canonical: string; alternate?: string }
+  );
+
+export function Meta<TImage extends { nsfwLevel: number; url: string; type?: MediaType }>({
+  title,
+  description,
+  schema,
+  deIndex,
+  canonical,
+  alternate,
+  images,
+  imageUrl,
+  keywords,
+}: MetaProps<TImage>) {
   const _images = images ? ([] as TImage[]).concat(images) : undefined;
   const _image = _images?.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const _imageProps =
@@ -105,9 +113,8 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
       {(deIndex || !canIndex || hasDialogParam) && (
         <meta name="robots" content="noindex,nofollow" />
       )}
-      {links.map((link, index) => (
-        <link key={link.rel ? `link-${link.rel}` : link.href || index} {...link} />
-      ))}
+      {canonical && <link rel="canonical" href={`${env.NEXT_PUBLIC_BASE_URL}${canonical}`} />}
+      {alternate && <link rel="alternate" href={`${env.NEXT_PUBLIC_BASE_URL}${alternate}`} />}
       {schema && (
         <script
           type="application/ld+json"

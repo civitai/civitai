@@ -31,7 +31,7 @@ export default function Account() {
 
   return (
     <>
-      <Meta title="Manage your Account - Civitai" />
+      <Meta title="Manage your Account - Civitai" deIndex />
 
       <Container pb="md" size="xs">
         <Stack>

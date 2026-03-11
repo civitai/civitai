@@ -14,7 +14,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ToolBanner } from '~/components/Tool/ToolBanner';
 import { useQueryTools } from '~/components/Tool/tools.utils';
-import { env } from '~/env/client';
 import { ImageSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -64,7 +63,7 @@ function ToolFeedPage() {
         description={`See the latest art created with ${startCase(
           slug as string
         )} by the generative AI art community and delve into the inspirations and prompts behind their work`}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tools/${slug}`, rel: 'canonical' }]}
+        canonical={`/tools/${slug}`}
       />
       <ToolBanner slug={slug as string} />
       <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>

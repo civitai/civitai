@@ -19,6 +19,7 @@ export default function CivitaiVault() {
       <Meta
         title="Civitai Vault | Store your favorite models forever"
         description="Civitai Vault is a place to store your favorite models forever. Even if a model is removed from the site, you can still access it here."
+        canonical="/product/vault"
       />
       <Container size="md" mb="lg">
         <Stack gap={40}>

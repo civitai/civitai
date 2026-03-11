@@ -89,7 +89,7 @@ function ComicReader() {
 
   return (
     <>
-      <Meta title={`Read ${project.name} - Civitai Comics`} />
+      <Meta title={`Read ${project.name} - Civitai Comics`} deIndex={true} />
 
       <div
         ref={scrollRef}

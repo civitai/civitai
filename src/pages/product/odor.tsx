@@ -22,6 +22,7 @@ export default function CivitaiVault() {
       <Meta
         title="Civitai O.D.O.R | Next generation open-source text-to-scent model"
         description="Civitai O.D.O.R is the next generation open-source text-to-scent model. Get a whiff of creativity utilizing the most powerful sense the human body has: Smell."
+        canonical="/product/odor"
       />
       <Container size="md" mb="lg">
         <Stack gap={40}>

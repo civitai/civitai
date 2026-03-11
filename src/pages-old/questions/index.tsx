@@ -45,7 +45,7 @@ export default function QuestionsList() {
       <Meta
         title="Civitai Questions | Ask the Generative AI Community"
         description="Got questions about Stable Diffusion, fine-tuning, or prompting? Dive into our community forum and ask generative AI experts for guidance"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions`, rel: 'canonical' }]}
+        canonical="/questions"
       />
       <Container pb="xl">
         <Stack gap="md">

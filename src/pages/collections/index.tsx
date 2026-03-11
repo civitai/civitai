@@ -43,7 +43,7 @@ const CollectionsHome = () => {
 
   return (
     <CollectionsLayout>
-      <Meta title="Collections" description="Browse all collections" />
+      <Meta title="Collections" description="Browse all collections" canonical="/collections" />
 
       {isLoading || ownedCollection ? (
         <Center mt="lg">

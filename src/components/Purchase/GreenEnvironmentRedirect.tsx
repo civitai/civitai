@@ -99,7 +99,7 @@ export function GreenEnvironmentRedirect({
 
   return (
     <>
-      <Meta title={title} description="Redirecting you to the Green environment." />
+      <Meta title={title} description="Redirecting you to the Green environment." deIndex={true} />
       <Container size="sm" mb="lg">
         <Stack>
           <Title className={clsx('text-center')}>{heading}</Title>

@@ -554,11 +554,14 @@ export default function ModelDetailsV2({
 
   if (modelDeleted && !isOwner && !isModerator)
     return (
-      <Center p="xl">
-        <Alert>
-          <Text size="lg">This resource has been removed by its owner</Text>
-        </Alert>
-      </Center>
+      <>
+        <Meta title="This resource has been removed by its owner" deIndex />
+        <Center p="xl">
+          <Alert>
+            <Text size="lg">This resource has been removed by its owner</Text>
+          </Alert>
+        </Center>
+      </>
     );
 
   if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
@@ -651,20 +654,8 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`}
         description={truncate(removeTags(model.description ?? ''), { length: 150 })}
         images={versionImages}
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [
-                {
-                  href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
-                  rel: 'canonical',
-                },
-                {
-                  href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}`,
-                  rel: 'alternate',
-                },
-              ]
-            : undefined
-        }
+        canonical={`/models/${model.id}/${slugit(model.name)}`}
+        alternate={`/models/${model.id}`}
         schema={metaSchema}
         deIndex={
           model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable

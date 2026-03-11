@@ -14,7 +14,6 @@ import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   useCosmeticShopQueryParams,
@@ -76,7 +75,7 @@ export default function CosmeticShopMain() {
   });
   const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
-  const { data: userCosmetics, isLoading: loadingOwnedCosmetics } = useQueryUserCosmetics();
+  const { data: userCosmetics, isFetching: loadingOwnedCosmetics } = useQueryUserCosmetics();
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
@@ -100,11 +99,7 @@ export default function CosmeticShopMain() {
       <Meta
         title="Civitai Cosmetic Shop | Created with Love & AI"
         description="Civitai Cosmetic Shop is a place where you can find the best cosmetic products to really express youself."
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]
-            : undefined
-        }
+        canonical="/shop"
       />
       <Container size="xl" p="sm">
         <Stack gap="xl">

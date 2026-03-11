@@ -22,7 +22,6 @@ import {
 import { useRouter } from 'next/router';
 import React from 'react';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { RedeemCodeCard } from '~/components/RedeemCode';
@@ -175,11 +174,7 @@ export default function RedeemCodeImprovedPage() {
       <Meta
         title="Civitai | Redeem Buzz Code"
         description="Redeem your Buzz codes for rewards and exclusive perks on Civitai."
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/redeem-code`, rel: 'canonical' }]
-            : undefined
-        }
+        canonical="/redeem-code"
       />
 
       <div className={classes.wrapper}>
