@@ -109,7 +109,11 @@ import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/co
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getFileDisplayName, getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
+import {
+  getFileDisplayName,
+  getPrimaryFile,
+  groupFilesByVariant,
+} from '~/server/utils/model-helpers';
 import {
   Availability,
   CollectionType,
@@ -904,7 +908,8 @@ function ModelVersionDetailsContent({
                     </CivitaiLinkManageButton>
                   )}
                   {/* Hide download button for component-only models */}
-                  {hideDownload || isComponentOnlyModel ? null : displayCivitaiLink || canGenerate ? (
+                  {hideDownload || isComponentOnlyModel ? null : displayCivitaiLink ||
+                    canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
                         data-tour="model:download"
@@ -1045,9 +1050,7 @@ function ModelVersionDetailsContent({
                   size="sm"
                   mt="xs"
                 >
-                  <Text size="sm">
-                    This is a modular model - download components below
-                  </Text>
+                  <Text size="sm">This is a modular model - download components below</Text>
                 </AlertWithIcon>
               )}
               {/* Regular model file details - hide for component-only models */}
@@ -1398,7 +1401,11 @@ function ModelVersionDetailsContent({
                       ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
                       : 'Files'}
                     {isOwnerOrMod && (
-                      <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
+                      <RoutedDialogLink
+                        name="filesEdit"
+                        state={{ modelVersionId: version.id }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <Text c="blue.4" size="sm">
                           Manage Files
                         </Text>

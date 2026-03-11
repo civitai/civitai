@@ -1,6 +1,5 @@
 import {
   Button,
-  CloseButton,
   Group,
   Loader,
   Modal,
@@ -206,16 +205,18 @@ export default function LinkComponentModal({
   const canSave = componentType && selectedModel && selectedVersion && selectedFile;
 
   return (
-    <Modal {...dialog} onClose={handleClose} size="lg" title="">
-      <Stack gap="md">
-        <Group justify="space-between" wrap="nowrap">
-          <Group gap="xs">
-            <IconLink size={24} />
-            <Title order={4}>Link Existing Component</Title>
-          </Group>
-          <CloseButton onClick={handleClose} />
+    <Modal
+      {...dialog}
+      onClose={handleClose}
+      size="xl"
+      title={
+        <Group gap="xs">
+          <IconLink size={24} />
+          <Title order={4}>Link Existing Component</Title>
         </Group>
-
+      }
+    >
+      <Stack gap="md">
         <Text size="sm" c="dimmed">
           Link to an existing model on Civitai as a required component. Users will be directed to
           download it alongside your model.

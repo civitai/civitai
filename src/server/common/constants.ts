@@ -66,7 +66,15 @@ export const constants = {
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
   modelFileQuantTypes: ['Q8_0', 'Q6_K', 'Q5_K_M', 'Q4_K_M', 'Q4_K_S', 'Q3_K_M', 'Q2_K'],
-  modelFileComponentTypes: ['VAE', 'TextEncoder', 'UNet', 'CLIPVision', 'ControlNet', 'Config', 'Other'],
+  modelFileComponentTypes: [
+    'VAE',
+    'TextEncoder',
+    'UNet',
+    'CLIPVision',
+    'ControlNet',
+    'Config',
+    'Other',
+  ],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,

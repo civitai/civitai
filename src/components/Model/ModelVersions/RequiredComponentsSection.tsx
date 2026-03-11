@@ -376,7 +376,9 @@ function ComponentGroup({
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
-        aria-label={`${config.name}, ${files.length} variants available. Click to ${expanded ? 'collapse' : 'expand'}.`}
+        aria-label={`${config.name}, ${files.length} variants available. Click to ${
+          expanded ? 'collapse' : 'expand'
+        }.`}
         style={{ cursor: 'pointer' }}
         onClick={toggle}
         onKeyDown={(e: React.KeyboardEvent) => {
@@ -448,7 +450,9 @@ function ComponentGroup({
                 role="option"
                 tabIndex={0}
                 aria-selected={isSelected}
-                aria-label={`${getFileLabel(file)}${isBestMatch ? ', best match' : ''}, ${getFileDescription(file)}, ${formatKBytes(file.sizeKB)}`}
+                aria-label={`${getFileLabel(file)}${
+                  isBestMatch ? ', best match' : ''
+                }, ${getFileDescription(file)}, ${formatKBytes(file.sizeKB)}`}
                 style={{
                   backgroundColor: isSelected ? 'rgba(34, 139, 230, 0.1)' : undefined,
                   borderBottom: `1px solid ${
