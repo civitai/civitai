@@ -271,7 +271,7 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
               <Stack gap={6}>
                 <Group gap={6} align="center">
                   <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-                    Deposit address
+                    Your deposit address
                   </Text>
                   <Badge size="xs" variant="light" color="blue" radius="sm">
                     {chainLabel}

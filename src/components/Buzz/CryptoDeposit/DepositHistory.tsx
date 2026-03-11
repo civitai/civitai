@@ -73,7 +73,7 @@ export function DepositHistory() {
     return (
       <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
         <Title order={5} mb="sm">
-          Recent Deposits
+          Your Recent Deposits
         </Title>
         <Stack gap="sm">
           {[0, 1, 2].map((i) => (
@@ -116,7 +116,7 @@ export function DepositHistory() {
   return (
     <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
       <Group justify="space-between" mb="sm">
-        <Title order={5}>Recent Deposits</Title>
+        <Title order={5}>Your Recent Deposits</Title>
         <SignalStatusBadge
           status={signalStatus}
           onRefresh={() => utils.nowPayments.getDepositHistory.invalidate()}
@@ -238,7 +238,7 @@ function EmptyDepositState({
     <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
       <Stack gap="sm" py="md">
         <Group justify="space-between">
-          <Title order={5}>Recent Deposits</Title>
+          <Title order={5}>Your Recent Deposits</Title>
           <SignalStatusBadge status={signalStatus} onRefresh={onRefresh} />
         </Group>
         <Paper
