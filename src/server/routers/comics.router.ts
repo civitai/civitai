@@ -2402,6 +2402,7 @@ export const comicsRouter = router({
       await updateComicProjectNsfwLevels([input.projectId]);
 
       const isScheduled = input.scheduledAt && input.scheduledAt > new Date();
+      const isFirstPublish = chapter.status === ComicChapterStatus.Draft;
 
       const updated = await dbWrite.comicChapter.update({
         where: {
