@@ -370,7 +370,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
   const unstable = unstableResources?.includes(id);
 
   return (
-    <Button.Group>
+    <Button.Group className="max-w-full">
       <Button
         size="compact-sm"
         variant="default"
@@ -385,6 +385,8 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
           ) : undefined
         }
         color={unstable ? 'yellow' : undefined}
+        className="min-w-0 flex-1"
+        classNames={{ label: 'truncate' }}
       >
         {model.name} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
