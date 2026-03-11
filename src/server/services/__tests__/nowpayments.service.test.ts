@@ -165,9 +165,19 @@ describe('processDeposit', () => {
     });
   });
 
-  it('does not grant buzz on confirmed status', async () => {
-    const event = makeWebhookEvent({ payment_status: 'confirmed', outcome_amount: 5.0 });
-    const result = await processDeposit(12345, 'confirmed', event);
+  it('grants buzz on partially_paid status', async () => {
+    const event = makeWebhookEvent({ payment_status: 'partially_paid', outcome_amount: 3.0 });
+    const result = await processDeposit(12345, 'partially_paid', event);
+
+    expect(result).toEqual({ userId: 42, buzzAmount: 3000, transactionId: 'tx_123' });
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 3000 })
+    );
+  });
+
+  it('does not grant buzz on confirming status', async () => {
+    const event = makeWebhookEvent({ payment_status: 'confirming', outcome_amount: 5.0 });
+    const result = await processDeposit(12345, 'confirming', event);
 
     expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();

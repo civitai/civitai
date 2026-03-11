@@ -104,27 +104,28 @@ export function DepositHistory() {
       </Group>
       <Stack gap="sm">
         {deposits.map((deposit) => {
-          // Fee display
-          const hasFeeRecord = deposit.depositFee != null && deposit.serviceFee != null;
-          const totalFeeUsdc = hasFeeRecord
-            ? (deposit.depositFee ?? 0) + (deposit.serviceFee ?? 0)
-            : null;
-
+          // Only show fees once the deposit is finished (fees aren't final until then)
           let feeUsdc: number | null = null;
-          if (totalFeeUsdc != null && totalFeeUsdc > 0) {
-            feeUsdc = totalFeeUsdc;
-          } else if (
-            !hasFeeRecord &&
-            deposit.status === 'finished' &&
-            deposit.outcomeAmount != null &&
-            deposit.amountSent != null
-          ) {
-            // Estimate fee for stablecoins
-            const currency = deposit.currencySent?.toLowerCase() ?? '';
-            const isStablecoin = currency.includes('usd');
-            if (isStablecoin && deposit.amountSent > 0) {
-              const diff = deposit.amountSent - deposit.outcomeAmount;
-              if (diff > 0) feeUsdc = diff;
+          if (deposit.status === 'finished') {
+            const hasFeeRecord = deposit.depositFee != null && deposit.serviceFee != null;
+            const totalFeeUsdc = hasFeeRecord
+              ? (deposit.depositFee ?? 0) + (deposit.serviceFee ?? 0)
+              : null;
+
+            if (totalFeeUsdc != null && totalFeeUsdc > 0) {
+              feeUsdc = totalFeeUsdc;
+            } else if (
+              !hasFeeRecord &&
+              deposit.outcomeAmount != null &&
+              deposit.amountSent != null
+            ) {
+              // Estimate fee for stablecoins
+              const currency = deposit.currencySent?.toLowerCase() ?? '';
+              const isStablecoin = currency.includes('usd');
+              if (isStablecoin && deposit.amountSent > 0) {
+                const diff = deposit.amountSent - deposit.outcomeAmount;
+                if (diff > 0) feeUsdc = diff;
+              }
             }
           }
 
@@ -159,7 +160,7 @@ export function DepositHistory() {
                     {feeUsdc != null && (
                       <Group gap={2} wrap="nowrap">
                         <Text size="xs" c="dimmed">
-                          Fee: ${feeUsdc.toFixed(2)}
+                          Fee: ${(Math.ceil(feeUsdc * 100) / 100).toFixed(2)}
                         </Text>
                         <FeeInfoPopover />
                       </Group>
@@ -345,15 +346,10 @@ function FeeInfoPopover() {
 function DepositStatusBadge({ status }: { status: string }) {
   switch (status) {
     case 'finished':
+    case 'partially_paid':
       return (
         <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
           Complete
-        </Badge>
-      );
-    case 'confirmed':
-      return (
-        <Badge color="blue" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
-          Confirmed
         </Badge>
       );
     case 'confirming':

@@ -63,8 +63,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send({ error: 'Missing payment_status or payment_id' });
     }
 
-    // Process confirming, confirmed, and finished statuses
-    if (['confirming', 'confirmed', 'finished'].includes(paymentStatus)) {
+    // Process actionable statuses (partially_paid treated like finished for buzz grant)
+    if (['confirming', 'finished', 'partially_paid'].includes(paymentStatus)) {
       await processDeposit(event.payment_id, paymentStatus, event);
     }
   } catch (error: any) {

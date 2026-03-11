@@ -127,11 +127,11 @@ export const processDeposit = async (
     chain = wallet?.chain ?? null;
   }
 
-  // Compute buzz amount for finished deposits
+  // Compute buzz amount for finished/partially_paid deposits
   let buzzAmount = 0;
   let transactionId: string | undefined;
 
-  if (webhookStatus === 'finished') {
+  if (webhookStatus === 'finished' || webhookStatus === 'partially_paid') {
     const outcomeAmount = event.outcome_amount;
     if (!outcomeAmount || outcomeAmount <= 0) {
       await log({
