@@ -20,13 +20,13 @@ import {
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import dayjs from '~/shared/utils/dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { getChainDisplayName } from '~/server/common/chain-config';
+import { getChainDisplayName, getNetworkDisplayName } from '~/server/common/chain-config';
 import { trpc } from '~/utils/trpc';
 
 export function DepositHistory() {
@@ -39,6 +39,26 @@ export function DepositHistory() {
     { page, perPage },
     { keepPreviousData: true, staleTime: 30 * 1000 }
   );
+
+  // Reuse supported currencies query (React Query deduplicates) for ticker/network display
+  const { data: currencies } = trpc.nowPayments.getSupportedCurrencies.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Build a lookup: NowPayments currency code → { ticker, network }
+  const currencyLookup = useMemo(() => {
+    if (!currencies) return {};
+    const lookup: Record<string, { ticker: string; network: string | null | undefined }> = {};
+    for (const group of currencies) {
+      for (const net of group.networks) {
+        lookup[net.code.toLowerCase()] = {
+          ticker: (net.ticker ?? group.ticker).toUpperCase(),
+          network: net.network,
+        };
+      }
+    }
+    return lookup;
+  }, [currencies]);
 
   // Live updates are handled by the global useCryptoDepositSignal hook
   // in SignalsRegistrar.tsx, which invalidates getDepositHistory on signal receipt.
@@ -129,8 +149,17 @@ export function DepositHistory() {
             }
           }
 
-          const ticker = deposit.currencySent?.toUpperCase() ?? '';
-          const chainBadge = deposit.chain ? getChainDisplayName(deposit.chain) : null;
+          const currencyInfo = currencyLookup[deposit.currencySent?.toLowerCase() ?? ''];
+          const ticker = currencyInfo?.ticker ?? deposit.currencySent?.toUpperCase() ?? '';
+          // Show network badge (e.g., "Base") only when it adds info beyond the chain name
+          const chainName = deposit.chain ? getChainDisplayName(deposit.chain) : null;
+          const networkName = currencyInfo?.network
+            ? getNetworkDisplayName(currencyInfo.network)
+            : null;
+          // Skip network badge when it matches the chain name (e.g., BTC on Bitcoin)
+          const networkBadge = networkName && networkName !== chainName ? networkName : null;
+          // Show chain badge when no network badge and chain info exists
+          const chainBadge = !networkBadge && chainName ? chainName : null;
 
           return (
             <Paper
@@ -150,6 +179,11 @@ export function DepositHistory() {
                     <Text size="sm" fw={600} tt="uppercase">
                       {ticker}
                     </Text>
+                    {networkBadge && (
+                      <Badge size="xs" variant="light" color="gray" radius="sm">
+                        {networkBadge}
+                      </Badge>
+                    )}
                     {chainBadge && (
                       <Badge size="xs" variant="light" color="blue" radius="sm">
                         {chainBadge}
