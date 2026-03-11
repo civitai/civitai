@@ -26,7 +26,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import dayjs from '~/shared/utils/dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { getChainDisplayName, getNetworkDisplayName } from '~/server/common/chain-config';
+import { getNetworkDisplayName } from '~/server/common/chain-config';
 import { trpc } from '~/utils/trpc';
 
 export function DepositHistory() {
@@ -45,15 +45,17 @@ export function DepositHistory() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Build a lookup: NowPayments currency code → { ticker, network }
+  // Build a lookup: NowPayments currency code → { ticker, network, multiNetwork }
   const currencyLookup = useMemo(() => {
     if (!currencies) return {};
-    const lookup: Record<string, { ticker: string; network: string | null | undefined }> = {};
+    const lookup: Record<string, { ticker: string; network: string | null | undefined; multiNetwork: boolean }> = {};
     for (const group of currencies) {
+      const multiNetwork = group.networks.length > 1;
       for (const net of group.networks) {
         lookup[net.code.toLowerCase()] = {
           ticker: (net.ticker ?? group.ticker).toUpperCase(),
           network: net.network,
+          multiNetwork,
         };
       }
     }
@@ -124,9 +126,9 @@ export function DepositHistory() {
       </Group>
       <Stack gap="sm">
         {deposits.map((deposit) => {
-          // Only show fees once the deposit is finished (fees aren't final until then)
+          // Only show fees once the deposit is complete (fees aren't final until then)
           let feeUsdc: number | null = null;
-          if (deposit.status === 'finished') {
+          if (deposit.status === 'finished' || deposit.status === 'partially_paid') {
             const hasFeeRecord = deposit.depositFee != null && deposit.serviceFee != null;
             const totalFeeUsdc = hasFeeRecord
               ? (deposit.depositFee ?? 0) + (deposit.serviceFee ?? 0)
@@ -151,15 +153,11 @@ export function DepositHistory() {
 
           const currencyInfo = currencyLookup[deposit.currencySent?.toLowerCase() ?? ''];
           const ticker = currencyInfo?.ticker ?? deposit.currencySent?.toUpperCase() ?? '';
-          // Show network badge (e.g., "Base") only when it adds info beyond the chain name
-          const chainName = deposit.chain ? getChainDisplayName(deposit.chain) : null;
-          const networkName = currencyInfo?.network
-            ? getNetworkDisplayName(currencyInfo.network)
-            : null;
-          // Skip network badge when it matches the chain name (e.g., BTC on Bitcoin)
-          const networkBadge = networkName && networkName !== chainName ? networkName : null;
-          // Show chain badge when no network badge and chain info exists
-          const chainBadge = !networkBadge && chainName ? chainName : null;
+          // Show network badge when the ticker exists on multiple networks (USDC, USDT, etc.)
+          const networkBadge =
+            currencyInfo?.multiNetwork && currencyInfo.network
+              ? getNetworkDisplayName(currencyInfo.network)
+              : null;
 
           return (
             <Paper
@@ -182,11 +180,6 @@ export function DepositHistory() {
                     {networkBadge && (
                       <Badge size="xs" variant="light" color="gray" radius="sm">
                         {networkBadge}
-                      </Badge>
-                    )}
-                    {chainBadge && (
-                      <Badge size="xs" variant="light" color="blue" radius="sm">
-                        {chainBadge}
                       </Badge>
                     )}
                   </Group>
