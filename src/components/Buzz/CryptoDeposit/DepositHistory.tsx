@@ -1,6 +1,8 @@
 import {
+  ActionIcon,
   Badge,
   Group,
+  HoverCard,
   Pagination,
   Paper,
   Popover,
@@ -14,17 +16,19 @@ import {
   IconCheck,
   IconClock,
   IconLoader,
+  IconPlus,
   IconRefresh,
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { BonusBuzzContent } from '~/components/Buzz/CryptoDeposit/BonusBuzzContent';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import dayjs from '~/shared/utils/dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { getNetworkDisplayName, isDepositComplete } from '~/server/common/chain-config';
+import { getNetworkDisplayName } from '~/server/common/chain-config';
 import { trpc } from '~/utils/trpc';
 
 export function DepositHistory() {
@@ -126,7 +130,7 @@ export function DepositHistory() {
         {deposits.map((deposit) => {
           // Only show fees once the deposit is complete (fees aren't final until then)
           let feeUsdc: number | null = null;
-          if (isDepositComplete(deposit.status)) {
+          if (deposit.status === 'finished') {
             const hasFeeRecord = deposit.depositFee != null && deposit.serviceFee != null;
             const totalFeeUsdc = hasFeeRecord
               ? (deposit.depositFee ?? 0) + (deposit.serviceFee ?? 0)
@@ -188,12 +192,12 @@ export function DepositHistory() {
                     <Group gap={4} wrap="nowrap">
                       <IconClock size={12} className="text-dimmed" />
                       <Text size="xs" c="dimmed">
-                        <DepositDate date={deposit.date} />
+                        <DaysFromNow date={deposit.date} live />
                       </Text>
                     </Group>
                   </Group>
                 </Stack>
-                {/* Right side: buzz + status stacked */}
+                {/* Right side: buzz + bonus + status stacked */}
                 {deposit.buzzCredited != null ? (
                   <Stack gap={2} align="flex-end">
                     <Group gap={4} wrap="nowrap">
@@ -201,6 +205,14 @@ export function DepositHistory() {
                       <Text size="lg" fw={700}>
                         {numberWithCommas(deposit.buzzCredited)}
                       </Text>
+                      {deposit.bonusBuzz != null && deposit.bonusBuzz > 0 && (
+                        <div className="ml-1">
+                          <BonusBuzzPopover
+                            bonusBuzz={deposit.bonusBuzz}
+                            multiplier={deposit.multiplier}
+                          />
+                        </div>
+                      )}
                     </Group>
                     <DepositStatusBadge status={deposit.status} />
                   </Stack>
@@ -267,17 +279,6 @@ function EmptyDepositState({
         </Group>
       </Stack>
     </Paper>
-  );
-}
-
-function DepositDate({ date }: { date: string }) {
-  const d = dayjs(date);
-  const isRecent = dayjs().diff(d, 'hour') < 24;
-  const display = isRecent ? d.fromNow() : d.format('MMM D, h:mma');
-  return (
-    <time title={d.format()} dateTime={d.format()}>
-      {display}
-    </time>
   );
 }
 
@@ -373,8 +374,42 @@ function FeePopover({ amount }: { amount: number }) {
   );
 }
 
+function BonusBuzzPopover({
+  bonusBuzz,
+  multiplier,
+}: {
+  bonusBuzz: number;
+  multiplier: number | null | undefined;
+}) {
+  return (
+    <HoverCard
+      width={240}
+      position="top"
+      withArrow
+      shadow="md"
+      openDelay={500}
+      styles={{
+        dropdown: {
+          background: 'var(--mantine-color-yellow-light)',
+          border: 'none',
+          backdropFilter: 'blur(16px)',
+        },
+      }}
+    >
+      <HoverCard.Target>
+        <ActionIcon variant="light" color="yellow" size="xs" radius="xs" aria-label="Membership bonus details">
+          <IconPlus size={12} />
+        </ActionIcon>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <BonusBuzzContent bonusBuzz={bonusBuzz} multiplier={multiplier ?? 100} />
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
+
 function DepositStatusBadge({ status }: { status: string }) {
-  if (isDepositComplete(status)) {
+  if (status === 'finished') {
     return (
       <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
         Complete

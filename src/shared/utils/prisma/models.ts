@@ -336,6 +336,8 @@ export interface CryptoDeposit {
   payAmount: number | null;
   outcomeAmount: number | null;
   buzzCredited: number | null;
+  bonusBuzz: number | null;
+  multiplier: number | null;
   depositFee: number | null;
   serviceFee: number | null;
   feeCurrency: string | null;

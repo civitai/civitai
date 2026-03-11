@@ -1,6 +1,6 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
-import { grantBuzzPurchase } from './buzz.service';
+import { getMultipliersForUser, grantBuzzPurchase } from './buzz.service';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -129,6 +129,8 @@ export const processDeposit = async (
 
   // Compute buzz amount for finished/partially_paid deposits
   let buzzAmount = 0;
+  let bonusBuzz: number | null = null;
+  let multiplierInt: number | null = null;
   let transactionId: string | undefined;
 
   if (isDepositComplete(webhookStatus)) {
@@ -141,6 +143,13 @@ export const processDeposit = async (
       });
     } else {
       buzzAmount = outcomeAmountToBuzz(outcomeAmount);
+
+      // Capture multiplier info before granting buzz
+      const { purchasesMultiplier } = await getMultipliersForUser(userId);
+      if (purchasesMultiplier > 1) {
+        multiplierInt = Math.round(purchasesMultiplier * 100);
+        bonusBuzz = Math.floor(buzzAmount * purchasesMultiplier) - buzzAmount;
+      }
 
       transactionId = await grantBuzzPurchase({
         userId,
@@ -165,11 +174,13 @@ export const processDeposit = async (
   if (event.payment_id) {
     try {
       const depositData = {
-        status: webhookStatus,
+        status: isDepositComplete(webhookStatus) ? 'finished' : webhookStatus,
         payCurrency: event.pay_currency ?? 'unknown',
         payAmount: event.actually_paid ?? null,
         outcomeAmount: event.outcome_amount ?? null,
         buzzCredited: buzzAmount > 0 ? buzzAmount : null,
+        bonusBuzz,
+        multiplier: multiplierInt,
         depositFee: event.fee ? parseFloat(event.fee.depositFee) : null,
         serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : null,
         feeCurrency: event.fee?.currency ?? null,
@@ -194,13 +205,14 @@ export const processDeposit = async (
     }
   }
 
-  // Send signal for ALL statuses (confirming, confirmed, finished)
+  // Send signal for ALL statuses (confirming, finished)
+  const normalizedStatus = isDepositComplete(webhookStatus) ? 'finished' : webhookStatus;
   await signalClient.send({
     userId,
     target: SignalMessages.CryptoDepositUpdate,
     data: {
       paymentId: event.payment_id,
-      status: event.payment_status,
+      status: normalizedStatus,
       amount: event.actually_paid,
       currency: event.pay_currency,
       outcomeAmount: event.outcome_amount,
@@ -277,6 +289,8 @@ export const getDepositHistory = async (
       currencySent: d.payCurrency,
       outcomeAmount: d.outcomeAmount ?? 0,
       buzzCredited: d.buzzCredited,
+      bonusBuzz: d.bonusBuzz,
+      multiplier: d.multiplier,
       status: d.status,
       depositFee: d.depositFee,
       serviceFee: d.serviceFee,

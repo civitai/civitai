@@ -229,6 +229,8 @@ model CryptoDeposit {
   payAmount     Float?
   outcomeAmount Float?
   buzzCredited  Int?
+  bonusBuzz     Int?
+  multiplier    Int?
   depositFee    Float?
   serviceFee    Float?
   feeCurrency   String?
