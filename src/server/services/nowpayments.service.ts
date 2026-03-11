@@ -11,7 +11,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { getChainConfig, getChainForNetwork } from '~/server/common/chain-config';
+import { getChainConfig, getChainForNetwork, outcomeAmountToBuzz } from '~/server/common/chain-config';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
@@ -149,7 +149,7 @@ export const processDeposit = async (
       return { userId, buzzAmount: 0 };
     }
 
-    const buzzAmount = Math.floor(outcomeAmount * 1000);
+    const buzzAmount = outcomeAmountToBuzz(outcomeAmount);
 
     const transactionId = await grantBuzzPurchase({
       userId,
@@ -325,7 +325,7 @@ export const getDepositHistory = async (
 
       const outcomeAmount = payment.outcome_amount ?? 0;
       const buzzCredited =
-        payment.payment_status === 'finished' ? Math.floor(outcomeAmount * 1000) : null;
+        payment.payment_status === 'finished' ? outcomeAmountToBuzz(outcomeAmount) : null;
       const fee = feeMap.get(paymentId);
 
       return {
@@ -352,23 +352,21 @@ export const getDepositHistory = async (
 
 export const bustDepositCache = async (userId: number) => {
   const wallets = await dbRead.cryptoWallet.findMany({ where: { userId } });
+  const walletsWithAccount = wallets.filter((w) => w.smartAccount);
 
-  await Promise.all(
-    wallets
-      .filter((w) => w.smartAccount)
-      .map(async (wallet) => {
-        // Bust the parent payment cache (which contains payment_extra_ids)
-        await redis.del(paymentCacheKey(wallet.smartAccount!));
+  // Process sequentially to avoid hammering NowPayments API with parallel calls
+  for (const wallet of walletsWithAccount) {
+    // Bust the parent payment cache (which contains payment_extra_ids)
+    await redis.del(paymentCacheKey(wallet.smartAccount!));
 
-        // Fetch fresh state and bust all known child payment caches
-        const parentPayment = await nowpaymentsCaller.getPaymentStatus(wallet.smartAccount!);
-        if (parentPayment?.payment_extra_ids) {
-          await Promise.all(
-            parentPayment.payment_extra_ids.map((id) => redis.del(paymentCacheKey(id)))
-          );
-        }
-      })
-  );
+    // Fetch fresh state and bust all known child payment caches
+    const parentPayment = await nowpaymentsCaller.getPaymentStatus(wallet.smartAccount!);
+    if (parentPayment?.payment_extra_ids) {
+      await Promise.all(
+        parentPayment.payment_extra_ids.map((id) => redis.del(paymentCacheKey(id)))
+      );
+    }
+  }
 };
 
 export type SupportedCurrencyNetwork = {

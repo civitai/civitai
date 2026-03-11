@@ -14,6 +14,7 @@ type NOWPaymentsAccessToken = {
 class NOWPaymentsCaller extends HttpCaller {
   private static instance: NOWPaymentsCaller;
   private static acessToken: NOWPaymentsAccessToken;
+  private static pendingAuth: Promise<string> | null = null;
 
   protected constructor(baseUrl?: string) {
     baseUrl ??= env.NOW_PAYMENTS_API_URL;
@@ -215,6 +216,20 @@ class NOWPaymentsCaller extends HttpCaller {
       return NOWPaymentsCaller.acessToken.accessToken;
     }
 
+    // Prevent concurrent auth calls — reuse in-flight request
+    if (NOWPaymentsCaller.pendingAuth) {
+      return NOWPaymentsCaller.pendingAuth;
+    }
+
+    NOWPaymentsCaller.pendingAuth = this._doAuthenticate();
+    try {
+      return await NOWPaymentsCaller.pendingAuth;
+    } finally {
+      NOWPaymentsCaller.pendingAuth = null;
+    }
+  }
+
+  private async _doAuthenticate(): Promise<string> {
     const response = await this.postRaw('/v1/auth', {
       body: JSON.stringify({
         email: env.NOW_PAYMENTS_EMAIL,

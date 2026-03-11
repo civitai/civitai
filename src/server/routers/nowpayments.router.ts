@@ -17,6 +17,9 @@ import { CacheTTL } from '~/server/common/constants';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 
 export const nowPaymentsRouter = router({
+  // NOTE: This is a query with write side effects (creates address on first call).
+  // Safe because the service layer uses distributed lock + DB dedup, so retries are idempotent.
+  // Consider migrating to .mutation() with corresponding client-side useMutation() call.
   getDepositAddress: protectedProcedure
     .input(getDepositAddressInputSchema)
     .query(getDepositAddressHandler),

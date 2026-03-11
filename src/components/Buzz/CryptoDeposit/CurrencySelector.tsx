@@ -5,6 +5,7 @@ import {
   Skeleton,
   Stack,
   Text,
+  UnstyledButton,
 } from '@mantine/core';
 import React, { useCallback, useMemo, useState } from 'react';
 import { getFiatDisplay } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -112,7 +113,7 @@ export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
   }
 
   return (
-    <Group gap={4} wrap="wrap">
+    <Group gap={4} wrap="wrap" role="group" aria-label="Select cryptocurrency">
       {(currencies ?? []).map((group) => {
         const isSelected = selectedTicker === group.ticker;
         const isMulti = group.networks.length > 1;
@@ -154,17 +155,22 @@ export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
         }
 
         return (
-          <Badge
+          <UnstyledButton
             key={group.ticker}
-            variant={isSelected ? 'filled' : 'light'}
-            color={isSelected ? 'blue' : 'gray'}
-            size="sm"
-            radius="sm"
-            className="cursor-pointer"
             onClick={() => handleTickerChange(group.ticker)}
+            aria-label={`Select ${group.ticker.toUpperCase()}`}
+            aria-pressed={isSelected}
           >
-            {group.ticker.toUpperCase()}
-          </Badge>
+            <Badge
+              variant={isSelected ? 'filled' : 'light'}
+              color={isSelected ? 'blue' : 'gray'}
+              size="sm"
+              radius="sm"
+              className="cursor-pointer"
+            >
+              {group.ticker.toUpperCase()}
+            </Badge>
+          </UnstyledButton>
         );
       })}
     </Group>

@@ -25,7 +25,11 @@ import {
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DepositCardProps } from '../DepositAddressCard';
-import { CurrencySelector } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
+import {
+  CurrencyBadges,
+  MinDepositInfo,
+  useCurrencySelection,
+} from '~/components/Buzz/CryptoDeposit/CurrencySelector';
 import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -33,6 +37,7 @@ import {
   useCurrentUserSettings,
   useMutateUserSettings,
 } from '~/components/UserSettings/hooks';
+import { getChainDisplayName } from '~/server/common/chain-config';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -40,20 +45,6 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
   ssr: false,
   loading: () => <Skeleton height={150} width={150} radius="md" />,
 });
-
-/** Human-friendly chain names for display */
-const CHAIN_DISPLAY_NAMES: Record<string, string> = {
-  evm: 'Ethereum',
-  sol: 'Solana',
-  trx: 'Tron',
-  btc: 'Bitcoin',
-  doge: 'Dogecoin',
-  ltc: 'Litecoin',
-};
-
-function getChainDisplayName(chain: string): string {
-  return CHAIN_DISPLAY_NAMES[chain] ?? chain.toUpperCase();
-}
 
 export function DepositCardVariantC({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
   const clipboard = useClipboard({ timeout: 2000 });
@@ -88,13 +79,21 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
     }
   }, [userSettings.preferredFiatCurrency]);
 
-  const handleFiatChange = useCallback(
-    (fiat: string) => {
-      setSelectedFiat(fiat);
-      updateSettings.mutate({ preferredFiatCurrency: fiat });
-    },
-    [updateSettings]
-  );
+  // Ref to avoid unstable dependency — updateSettings object identity changes each render
+  const updateSettingsRef = useRef(updateSettings);
+  updateSettingsRef.current = updateSettings;
+
+  const handleFiatChange = useCallback((fiat: string) => {
+    setSelectedFiat(fiat);
+    updateSettingsRef.current.mutate({ preferredFiatCurrency: fiat });
+  }, []);
+
+  // Single source of truth for currency selection
+  const currencyState = useCurrencySelection({
+    selectedFiat,
+    onFiatChange: handleFiatChange,
+    onSelect: onCurrencySelect,
+  });
 
   const { data: conversionRate, isFetching: loadingRate } =
     trpc.nowPayments.getBuzzConversionRate.useQuery(
@@ -221,6 +220,14 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
             </Text>
           )}
 
+          {/* Currency selector — always visible at top */}
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+              Select currency
+            </Text>
+            <CurrencyBadges state={currencyState} />
+          </Stack>
+
           {isEmpty && !loading ? (
             <Stack align="center" gap="md" py="xl">
               <ThemeIcon size={56} variant="light" color="blue" radius="xl">
@@ -238,14 +245,6 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
             </Stack>
           ) : (
             <>
-              {/* Currency selector — first so user picks currency before seeing address */}
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-                  Select currency
-                </Text>
-                <CurrencySelector selectedFiat={selectedFiat} onFiatChange={handleFiatChange} onSelect={onCurrencySelect} showMin={false} />
-              </Stack>
-
               {/* QR code with chaser border */}
               <Group justify="center" className="overflow-visible">
                 {isEmpty && loading ? (
@@ -255,7 +254,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
                 )}
               </Group>
 
-              {/* Address + copy + min deposit */}
+              {/* Address + copy */}
               <Stack gap={6}>
                 <Group gap={6} align="center">
                   <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
@@ -308,7 +307,8 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
                     </Text>
                   </Group>
                 )}
-                <CurrencySelector selectedFiat={selectedFiat} onFiatChange={handleFiatChange} onSelect={onCurrencySelect} showMin />
+                {/* Min deposit — below address */}
+                <MinDepositInfo state={currencyState} />
               </Stack>
             </>
           )}

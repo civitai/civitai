@@ -28,22 +28,9 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import dayjs from '~/shared/utils/dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { getChainDisplayName } from '~/server/common/chain-config';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-/** Human-friendly chain labels for deposit history badges */
-const CHAIN_BADGE_LABELS: Record<string, string> = {
-  evm: 'Base',
-  sol: 'Solana',
-  trx: 'Tron',
-  btc: 'Bitcoin',
-  doge: 'Dogecoin',
-  ltc: 'Litecoin',
-};
-
-function getChainBadgeLabel(chain: string): string {
-  return CHAIN_BADGE_LABELS[chain] ?? chain.toUpperCase();
-}
 
 export function DepositHistory() {
   const [page, setPage] = useState(1);
@@ -205,7 +192,7 @@ export function DepositHistory() {
           // Show chain badge when no network badge is shown (so every row has context)
           const chainBadge =
             !networkBadge && currencyInfo?.chain
-              ? getChainBadgeLabel(currencyInfo.chain)
+              ? getChainDisplayName(currencyInfo.chain)
               : null;
 
           return (

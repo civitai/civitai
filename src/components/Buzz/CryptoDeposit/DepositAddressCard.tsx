@@ -1,3 +1,5 @@
+import { useCallback } from 'react';
+import type { GetDepositAddressInput } from '~/server/schema/nowpayments.schema';
 import { trpc } from '~/utils/trpc';
 import { DepositCardVariantC } from './variants/DepositCardVariantC';
 
@@ -14,33 +16,28 @@ export function DepositAddressCard({
   chain = 'evm',
   onCurrencySelect,
 }: {
-  chain?: string;
+  chain?: GetDepositAddressInput['chain'];
   onCurrencySelect?: (code: string, chain: string) => void;
 }) {
-  const utils = trpc.useUtils();
-
   const {
     data: walletData,
     isLoading: loading,
     error,
     refetch,
-  } = trpc.nowPayments.getDepositAddress.useQuery(
-    { chain },
-    {
-      onSuccess: () => {
-        utils.nowPayments.getDepositHistory.invalidate();
-      },
-    }
-  );
+  } = trpc.nowPayments.getDepositAddress.useQuery({ chain });
 
   const depositAddress = walletData?.address ?? '';
+
+  const handleRetry = useCallback(() => {
+    refetch();
+  }, [refetch]);
 
   return (
     <DepositCardVariantC
       depositAddress={depositAddress}
       error={error}
       loading={loading}
-      onRetry={() => refetch()}
+      onRetry={handleRetry}
       chain={chain}
       onCurrencySelect={onCurrencySelect}
     />

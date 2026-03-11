@@ -4,13 +4,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DepositAddressCard } from '~/components/Buzz/CryptoDeposit/DepositAddressCard';
 import { OnrampGuidance, OnrampGuidanceToggle } from '~/components/Buzz/CryptoDeposit/OnrampGuidance';
 import { DepositHistory } from '~/components/Buzz/CryptoDeposit/DepositHistory';
+import type { GetDepositAddressInput } from '~/server/schema/nowpayments.schema';
 
 export function CryptoDepositTab() {
   const currentUser = useCurrentUser();
-  const [selectedChain, setSelectedChain] = useState('evm');
+  const [selectedChain, setSelectedChain] = useState<GetDepositAddressInput['chain']>('evm');
 
   const handleCurrencySelect = useCallback((_code: string, chain: string) => {
-    setSelectedChain(chain);
+    setSelectedChain(chain as GetDepositAddressInput['chain']);
   }, []);
 
   if (!currentUser) {

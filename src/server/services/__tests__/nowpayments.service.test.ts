@@ -12,12 +12,12 @@ const {
 } = vi.hoisted(() => {
   const mockCryptoWallet = {
     findUnique: vi.fn(),
-    upsert: vi.fn(),
+    create: vi.fn(),
   };
 
   return {
     mockDbRead: {
-      cryptoWallet: { findUnique: vi.fn() },
+      cryptoWallet: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
       cryptoDepositFee: { findMany: vi.fn().mockResolvedValue([]) },
     },
     mockDbWrite: {
@@ -99,7 +99,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 
 // Import after mocks
 import {
-  createDepositAddress,
+  getDepositAddress,
   processDeposit,
   getDepositHistory,
 } from '~/server/services/nowpayments.service';
@@ -296,9 +296,9 @@ describe('processDeposit', () => {
   });
 });
 
-// ─── createDepositAddress ────────────────────────────────────────────────────
+// ─── getDepositAddress ───────────────────────────────────────────────────────
 
-describe('createDepositAddress', () => {
+describe('getDepositAddress', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -306,13 +306,14 @@ describe('createDepositAddress', () => {
   it('returns existing wallet without calling NowPayments', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
       userId: 42,
+      chain: 'evm',
       wallet: '0xExistingAddress',
       smartAccount: '12345',
     });
 
-    const result = await createDepositAddress(42);
+    const result = await getDepositAddress(42);
 
-    expect(result).toEqual({ address: '0xExistingAddress', paymentId: 12345 });
+    expect(result).toEqual({ address: '0xExistingAddress', paymentId: 12345, chain: 'evm' });
     expect(mockNowpaymentsCaller.createPayment).not.toHaveBeenCalled();
   });
 
@@ -323,26 +324,23 @@ describe('createDepositAddress', () => {
       payment_id: 67890,
     });
 
-    const result = await createDepositAddress(42);
+    const result = await getDepositAddress(42);
 
-    expect(result).toEqual({ address: '0xNewAddress', paymentId: 67890 });
+    expect(result).toEqual({ address: '0xNewAddress', paymentId: 67890, chain: 'evm' });
     expect(mockNowpaymentsCaller.createPayment).toHaveBeenCalledWith({
-      price_amount: 1,
+      price_amount: 20,
       price_currency: 'usd',
       pay_currency: 'usdcbase',
       order_id: 'user:42',
       ipn_callback_url: 'https://civitai.com/api/webhooks/nowpayments',
     });
-    expect(mockDbWrite.cryptoWallet.upsert).toHaveBeenCalledWith({
-      where: { userId: 42 },
-      create: {
+    expect(mockDbWrite.cryptoWallet.create).toHaveBeenCalledWith({
+      data: {
         userId: 42,
+        chain: 'evm',
         wallet: '0xNewAddress',
         smartAccount: '67890',
-      },
-      update: {
-        wallet: '0xNewAddress',
-        smartAccount: '67890',
+        payCurrency: 'usdcbase',
       },
     });
   });
@@ -354,10 +352,10 @@ describe('createDepositAddress', () => {
       payment_id: 67890,
     });
 
-    await createDepositAddress(42);
+    await getDepositAddress(42);
 
     expect(mockWithDistributedLock).toHaveBeenCalledWith(
-      { key: 'crypto-deposit:create:42' },
+      { key: 'crypto-deposit:create:42:evm' },
       expect.any(Function)
     );
   });
@@ -366,7 +364,7 @@ describe('createDepositAddress', () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue(null);
     mockNowpaymentsCaller.createPayment.mockResolvedValue(null);
 
-    await expect(createDepositAddress(42)).rejects.toThrow(
+    await expect(getDepositAddress(42)).rejects.toThrow(
       'Failed to create deposit address via NowPayments'
     );
   });
@@ -374,13 +372,14 @@ describe('createDepositAddress', () => {
   it('handles null smartAccount on existing wallet', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
       userId: 42,
+      chain: 'evm',
       wallet: '0xExistingAddress',
       smartAccount: null,
     });
 
     // wallet exists but smartAccount is null — still returns the address
-    const result = await createDepositAddress(42);
-    expect(result).toEqual({ address: '0xExistingAddress', paymentId: null });
+    const result = await getDepositAddress(42);
+    expect(result).toEqual({ address: '0xExistingAddress', paymentId: null, chain: 'evm' });
   });
 });
 
@@ -392,29 +391,29 @@ describe('getDepositHistory', () => {
   });
 
   it('returns empty when no wallet exists', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue(null);
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([]);
 
     const result = await getDepositHistory(42);
     expect(result).toEqual({ deposits: [], total: 0 });
   });
 
   it('returns empty when wallet has no smartAccount', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: null,
-    });
+    }]);
 
     const result = await getDepositHistory(42);
     expect(result).toEqual({ deposits: [], total: 0 });
   });
 
   it('includes parent payment when it has been paid', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
       payment_id: 100,
@@ -436,11 +435,11 @@ describe('getDepositHistory', () => {
   });
 
   it('excludes parent payment when it has not been paid', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
       payment_id: 100,
@@ -459,11 +458,11 @@ describe('getDepositHistory', () => {
   });
 
   it('includes both parent and child payments, newest-first', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: string | number) => {
       const numId = typeof id === 'string' ? Number(id) : id;
@@ -503,11 +502,11 @@ describe('getDepositHistory', () => {
   });
 
   it('fetches parent payment via cache (dedup handled by Redis in production)', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
       payment_id: 100,
@@ -528,11 +527,11 @@ describe('getDepositHistory', () => {
   });
 
   it('calculates buzzCredited only for finished deposits', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: string | number) => {
       const numId = typeof id === 'string' ? Number(id) : id;
@@ -582,11 +581,11 @@ describe('getDepositHistory', () => {
   });
 
   it('includes fee data from CryptoDepositFee table', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
       payment_id: 100,
@@ -622,11 +621,11 @@ describe('getDepositHistory', () => {
   });
 
   it('returns null fees when no fee record exists', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
       payment_id: 100,
@@ -652,11 +651,11 @@ describe('getDepositHistory', () => {
   });
 
   it('filters out null child payments', async () => {
-    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({
+    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
       userId: 42,
       wallet: '0xAddr',
       smartAccount: '100',
-    });
+    }]);
 
     mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: string | number) => {
       const numId = typeof id === 'string' ? Number(id) : id;

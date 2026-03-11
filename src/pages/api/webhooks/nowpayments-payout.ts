@@ -20,7 +20,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 
-  const sig = req.headers['x-nowpayments-sig'];
+  const rawSig = req.headers['x-nowpayments-sig'];
+  const sig = Array.isArray(rawSig) ? rawSig[0] : rawSig;
   const webhookSecret = env.NOW_PAYMENTS_IPN_KEY;
 
   // Track to ClickHouse (fire and forget)
@@ -38,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    const { isValid } = client.validateWebhookEvent(sig as string, req.body);
+    const { isValid } = client.validateWebhookEvent(sig, req.body);
     if (!isValid) {
       await logToAxiom({
         name: 'nowpayments-payout-webhook',
@@ -62,7 +63,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       message: `Webhook error: ${error.message}`,
       error: error.stack,
     });
-    return res.status(400).send(`Webhook Error: ${error.message}`);
+    return res.status(400).send({ error: 'Webhook processing failed' });
   }
 
   return res.status(200).json({ received: true });

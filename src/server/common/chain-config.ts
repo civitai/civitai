@@ -3,6 +3,8 @@
 export type ChainConfig = {
   /** Address family identifier stored in DB */
   chain: string;
+  /** Human-friendly name shown in the UI */
+  displayName: string;
   /** NowPayments `network` field values that map to this chain */
   networks: string[];
   /** Currency code used when creating the NowPayments payment order */
@@ -10,12 +12,12 @@ export type ChainConfig = {
 };
 
 export const CHAIN_CONFIGS: ChainConfig[] = [
-  { chain: 'evm', networks: ['base', 'eth', 'polygon', 'arb', 'bsc', 'op', 'matic'], targetCurrency: 'usdcbase' },
-  { chain: 'sol', networks: ['sol'], targetCurrency: 'usdcsol' },
-  { chain: 'trx', networks: ['trx'], targetCurrency: 'usdttrc20' },
-  { chain: 'btc', networks: ['btc'], targetCurrency: 'btc' },
-  { chain: 'doge', networks: ['doge'], targetCurrency: 'doge' },
-  { chain: 'ltc', networks: ['ltc'], targetCurrency: 'ltc' },
+  { chain: 'evm', displayName: 'Base', networks: ['base', 'eth', 'polygon', 'arb', 'bsc', 'op', 'matic'], targetCurrency: 'usdcbase' },
+  { chain: 'sol', displayName: 'Solana', networks: ['sol'], targetCurrency: 'usdcsol' },
+  { chain: 'trx', displayName: 'Tron', networks: ['trx'], targetCurrency: 'usdttrc20' },
+  { chain: 'btc', displayName: 'Bitcoin', networks: ['btc'], targetCurrency: 'btc' },
+  { chain: 'doge', displayName: 'Dogecoin', networks: ['doge'], targetCurrency: 'doge' },
+  { chain: 'ltc', displayName: 'Litecoin', networks: ['ltc'], targetCurrency: 'ltc' },
 ];
 
 /** Lookup: NowPayments network → chain config */
@@ -34,4 +36,17 @@ export function getChainForNetwork(network: string): ChainConfig | undefined {
 /** Get the chain config by chain identifier (e.g., 'evm', 'btc'). */
 export function getChainConfig(chain: string): ChainConfig | undefined {
   return CHAIN_CONFIGS.find((c) => c.chain === chain);
+}
+
+/** Get a human-friendly display name for a chain (e.g., 'evm' -> 'Base'). */
+export function getChainDisplayName(chain: string): string {
+  return getChainConfig(chain)?.displayName ?? chain.toUpperCase();
+}
+
+/**
+ * Convert a USDC outcome amount to Buzz.
+ * 1 USDC = 1000 Buzz, fractional Buzz truncated.
+ */
+export function outcomeAmountToBuzz(outcomeAmount: number): number {
+  return Math.floor(outcomeAmount * 1000);
 }
