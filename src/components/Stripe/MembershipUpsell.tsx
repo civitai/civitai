@@ -5,14 +5,17 @@ import {
   Button,
   Anchor,
   Badge,
+  Collapse,
   Loader,
   Center,
   Card,
   Title,
   ThemeIcon,
   Box,
+  UnstyledButton,
 } from '@mantine/core';
-import { IconCheck, IconDiamond, IconStar } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
+import { IconBolt, IconCheck, IconChevronDown, IconDiamond, IconStar } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -22,7 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -128,26 +131,12 @@ export const MembershipUpsell = ({
           </div>
         </Group>
 
-        {/* Benefits - Compact list */}
-        <Stack gap="xs">
-          {benefits.slice(0, 3).map((benefit, index) =>
-            benefit.content ? (
-              <Group gap="xs" key={index} wrap="nowrap" align="flex-start">
-                <ThemeIcon size={16} radius="xl" color="grape" variant="light">
-                  <IconCheck size={10} />
-                </ThemeIcon>
-                <Text className={classes.benefitText} size="xs">
-                  {benefit.content}
-                </Text>
-              </Group>
-            ) : null
-          )}
-          {benefits.length > 3 && (
-            <Text size="xs" c="dimmed" ta="center">
-              + {benefits.length - 3} more benefits
-            </Text>
-          )}
-        </Stack>
+        {/* Benefits - Compact list with expand */}
+        <BenefitsList
+          benefits={benefits}
+          multiplier={(metadata.purchasesMultiplier ?? 1) > 1 ? metadata.purchasesMultiplier! : undefined}
+          buzzAmount={buzzAmount}
+        />
 
         {/* CTA Section - Compact */}
         <Stack gap="xs" mt="sm">
@@ -220,3 +209,98 @@ export const MembershipUpsell = ({
     </Card>
   );
 };
+
+function BenefitRow({ content }: { content: string }) {
+  return (
+    <Group gap="xs" wrap="nowrap" align="flex-start">
+      <ThemeIcon size={16} radius="xl" color="grape" variant="light">
+        <IconCheck size={10} />
+      </ThemeIcon>
+      <Text className={classes.benefitText} size="xs">
+        {content}
+      </Text>
+    </Group>
+  );
+}
+
+function BenefitsList({
+  benefits,
+  multiplier,
+  buzzAmount,
+}: {
+  benefits: { content?: string }[];
+  multiplier?: number;
+  buzzAmount: number;
+}) {
+  const [expanded, { toggle }] = useDisclosure(false);
+  const filtered = benefits.filter((b) => b.content);
+  const visible = filtered.slice(0, 3);
+  const remaining = filtered.slice(3);
+
+  const multiplierRow = multiplier ? (
+    <Group gap="sm" wrap="nowrap" align="flex-start" my={8}>
+      <ThemeIcon
+        size={26}
+        radius="xl"
+        color="grape"
+        variant="filled"
+        style={{ filter: 'drop-shadow(0 0 4px var(--mantine-color-grape-5))' }}
+      >
+        <IconBolt size={14} />
+      </ThemeIcon>
+      <div>
+        <Text size="md" fw={700} style={{ textShadow: '0 0 6px var(--mantine-color-grape-5)' }}>
+          {(((multiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on every purchase
+        </Text>
+        {buzzAmount > 0 && (
+          <Text size="xs" c="dimmed">
+            +{numberWithCommas(Math.round(buzzAmount * ((multiplier ?? 1) - 1)))} extra on this
+            purchase
+          </Text>
+        )}
+      </div>
+    </Group>
+  ) : null;
+
+  if (remaining.length === 0) {
+    return (
+      <Stack gap="xs">
+        {multiplierRow}
+        {visible.map((b, i) => (
+          <BenefitRow key={i} content={b.content!} />
+        ))}
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="xs">
+      {multiplierRow}
+      {visible.map((b, i) => (
+        <BenefitRow key={i} content={b.content!} />
+      ))}
+      <Collapse in={expanded}>
+        <Stack gap="xs">
+          {remaining.map((b, i) => (
+            <BenefitRow key={i} content={b.content!} />
+          ))}
+        </Stack>
+      </Collapse>
+      <UnstyledButton onClick={toggle} aria-expanded={expanded} aria-label="Show more benefits">
+        <Group gap={4} justify="center">
+          <Text size="xs" c="dimmed">
+            {expanded ? 'Show less' : `+ ${remaining.length} more benefits`}
+          </Text>
+          <IconChevronDown
+            size={14}
+            className="text-dimmed"
+            style={{
+              transform: expanded ? 'rotate(180deg)' : undefined,
+              transition: 'transform 200ms',
+            }}
+          />
+        </Group>
+      </UnstyledButton>
+    </Stack>
+  );
+}
