@@ -44,7 +44,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await log({
         message: 'Invalid signature',
         sig,
-        webhookSecret,
         data,
       });
       return res.status(400).send({

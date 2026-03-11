@@ -1,5 +1,6 @@
 import { Button, Divider, Group, Paper, Stack, Tabs, Text, Title } from '@mantine/core';
 import { IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
+import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { trpc } from '~/utils/trpc';
 
@@ -148,11 +149,6 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
     ],
   },
 ];
-
-const outerCardStyle = {
-  background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
-  boxShadow: 'light-dark(0 1px 3px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.5))',
-};
 
 const ALERT_ID = 'crypto-onramp-guidance';
 

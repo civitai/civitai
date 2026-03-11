@@ -5,31 +5,12 @@ import {
   Skeleton,
   Stack,
   Text,
-  UnstyledButton,
 } from '@mantine/core';
 import React, { useCallback, useMemo, useState } from 'react';
+import { getFiatDisplay } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
+import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const FIAT_OPTIONS = [
-  { value: 'usd', label: 'USD' },
-  { value: 'eur', label: 'EUR' },
-  { value: 'gbp', label: 'GBP' },
-  { value: 'cad', label: 'CAD' },
-  { value: 'aud', label: 'AUD' },
-  { value: 'jpy', label: 'JPY' },
-  { value: 'brl', label: 'BRL' },
-];
-
-const FIAT_SYMBOLS: Record<string, string> = {
-  usd: '$',
-  eur: '€',
-  gbp: '£',
-  cad: 'C$',
-  aud: 'A$',
-  jpy: '¥',
-  brl: 'R$',
-};
 
 export function CurrencySelector({
   selectedFiat: controlledFiat,
@@ -90,8 +71,7 @@ export function CurrencySelector({
     { enabled: !!selectedCode, staleTime: 60 * 1000 }
   );
 
-  const fiatSymbol = FIAT_SYMBOLS[selectedFiat] ?? selectedFiat.toUpperCase();
-  const fiatLabel = FIAT_OPTIONS.find((f) => f.value === selectedFiat)?.label ?? 'USD';
+  const { symbol: fiatSymbol } = getFiatDisplay(selectedFiat);
 
   const networkLabel = useMemo(() => {
     if (!selectedGroup || selectedGroup.networks.length <= 1) return null;
@@ -187,26 +167,7 @@ export function CurrencySelector({
             </Text>
           ) : null}
           {' '}
-          <Menu position="bottom-start" withinPortal shadow="sm">
-            <Menu.Target>
-              <UnstyledButton className="inline-flex items-center">
-                <Text span size="xs" c="blue" className="cursor-pointer">
-                  {fiatLabel} ▾
-                </Text>
-              </UnstyledButton>
-            </Menu.Target>
-            <Menu.Dropdown>
-              {FIAT_OPTIONS.map((opt) => (
-                <Menu.Item
-                  key={opt.value}
-                  onClick={() => handleFiatChange(opt.value)}
-                  fw={selectedFiat === opt.value ? 600 : undefined}
-                >
-                  {FIAT_SYMBOLS[opt.value]} {opt.label}
-                </Menu.Item>
-              ))}
-            </Menu.Dropdown>
-          </Menu>
+          <FiatMenu selectedFiat={selectedFiat} onFiatChange={handleFiatChange} />
         </Text>
       </Group>
     </Stack>

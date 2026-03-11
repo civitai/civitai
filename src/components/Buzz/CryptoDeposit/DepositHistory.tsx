@@ -10,6 +10,7 @@ import {
   Text,
   Title,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
 import {
   IconCheck,
@@ -20,20 +21,15 @@ import {
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
+import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import dayjs from '~/shared/utils/dayjs';
-import { useCallback, useMemo, useState } from 'react';
-import { useSignalConnection, useSignalContext } from '~/components/Signals/SignalsProvider';
-import { SignalMessages } from '~/server/common/enums';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import dayjs from '~/shared/utils/dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const outerCardStyle = {
-  background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
-  boxShadow: 'light-dark(0 1px 3px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.5))',
-};
 
 export function DepositHistory() {
   const [page, setPage] = useState(1);
@@ -50,7 +46,7 @@ export function DepositHistory() {
 
   const { data, isLoading } = trpc.nowPayments.getDepositHistory.useQuery(
     { page, perPage },
-    { keepPreviousData: true }
+    { keepPreviousData: true, staleTime: 30 * 1000 }
   );
 
   // Reuse the supported currencies query (React Query deduplicates)
@@ -78,18 +74,8 @@ export function DepositHistory() {
     return lookup;
   }, [currencies]);
 
-  // Live updates via signal -- track status overrides locally, then refetch
-  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
-  useSignalConnection(
-    SignalMessages.CryptoDepositUpdate,
-    useCallback(
-      (signal: { paymentId: string | number; status: string }) => {
-        setStatusOverrides((prev) => ({ ...prev, [String(signal.paymentId)]: signal.status }));
-        utils.nowPayments.getDepositHistory.invalidate();
-      },
-      [utils]
-    )
-  );
+  // Live updates are handled by the global useCryptoDepositSignal hook
+  // in SignalsRegistrar.tsx, which invalidates getDepositHistory on signal receipt.
 
   const deposits = (data?.deposits ?? []).filter(
     (d): d is NonNullable<typeof d> => d != null
@@ -194,7 +180,7 @@ export function DepositHistory() {
             }
           }
 
-          const displayStatus = statusOverrides[String(deposit.paymentId)] ?? deposit.status;
+          const displayStatus = deposit.status;
           const ticker = currencyInfo?.ticker ?? deposit.currencySent?.toUpperCase() ?? '';
           const networkBadge =
             currencyInfo?.hasMultipleNetworks && currencyInfo.network
@@ -363,12 +349,14 @@ function SignalStatusBadge({
   }
 
   return (
-    <Group gap={4} wrap="nowrap" style={{ cursor: 'pointer' }} onClick={onRefresh}>
-      <IconWifiOff size={14} className="text-red-500" />
-      <Text size="xs" c="red" td="underline">
-        Disconnected &mdash; refresh
-      </Text>
-    </Group>
+    <UnstyledButton onClick={onRefresh} aria-label="Refresh deposit history (live updates disconnected)">
+      <Group gap={4} wrap="nowrap">
+        <IconWifiOff size={14} className="text-red-500" />
+        <Text size="xs" c="red" td="underline">
+          Disconnected &mdash; refresh
+        </Text>
+      </Group>
+    </UnstyledButton>
   );
 }
 
@@ -376,7 +364,7 @@ function FeeInfoPopover() {
   return (
     <Popover width={280} position="top" withArrow shadow="md">
       <Popover.Target>
-        <ActionIcon variant="subtle" color="gray" size="xs">
+        <ActionIcon variant="subtle" color="gray" size="xs" aria-label="Fee information">
           <IconInfoCircle size={14} />
         </ActionIcon>
       </Popover.Target>

@@ -40,7 +40,7 @@ export function DepositAddressCard() {
       depositAddress={depositAddress}
       error={error}
       loading={loading || isIdle}
-      onRetry={() => createOrGetAddress()}
+      onRetry={createOrGetAddress}
     />
   );
 }

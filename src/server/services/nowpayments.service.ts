@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages } from '~/server/common/enums';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -14,6 +15,13 @@ import { fetchThroughCache } from '~/server/utils/cache-helpers';
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
+
+/** Max number of concurrent requests when fetching min amounts for currencies */
+const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
+
+/** Helper to build a typed Redis cache key for crypto payment status */
+const paymentCacheKey = (paymentId: number | string): RedisKeyTemplateCache =>
+  `${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${paymentId}` as RedisKeyTemplateCache;
 
 export const createDepositAddress = async (userId: number) => {
   // Check if wallet already exists before acquiring lock
@@ -116,9 +124,9 @@ export const processDeposit = async (
   });
 
   // Bust cached payment data so next fetch gets fresh state
-  await redis.del(`${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${event.payment_id}` as never);
+  await redis.del(paymentCacheKey(event.payment_id!));
   if (event.parent_payment_id) {
-    await redis.del(`${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${event.parent_payment_id}` as never);
+    await redis.del(paymentCacheKey(event.parent_payment_id));
   }
 
   // Only grant buzz on finished status
@@ -186,21 +194,65 @@ export const processDeposit = async (
   return { userId, buzzAmount: 0 };
 };
 
+/**
+ * Reprocess a deposit by fetching its current state from NowPayments.
+ * Used by the mod reprocess-order endpoint when the webhook was missed.
+ */
+export const reprocessDeposit = async (paymentId: number) => {
+  const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
+  if (!payment) {
+    throw new Error(`Payment ${paymentId} not found on NowPayments`);
+  }
+
+  if (payment.payment_status !== 'finished') {
+    throw new Error(
+      `Payment ${paymentId} is not finished (status: ${payment.payment_status})`
+    );
+  }
+
+  const orderId = payment.order_id;
+  if (!orderId || !orderId.startsWith('user:')) {
+    throw new Error(`Payment ${paymentId} has invalid order_id: ${orderId}`);
+  }
+
+  // Build a webhook-like event from the GET response
+  const event: NOWPayments.WebhookEvent = {
+    payment_id: typeof payment.payment_id === 'string'
+      ? parseInt(payment.payment_id, 10)
+      : payment.payment_id,
+    payment_status: payment.payment_status,
+    order_id: payment.order_id,
+    outcome_amount: payment.outcome_amount,
+    actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+    pay_currency: payment.pay_currency,
+    pay_address: payment.pay_address,
+    parent_payment_id: payment.parent_payment_id,
+  };
+
+  return processDeposit(paymentId, 'finished', event);
+};
+
 // Cached wrapper for individual payment status lookups
 const getCachedPaymentStatus = async (paymentId: number | string) => {
-  const cacheKey = `${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${paymentId}` as never;
   return fetchThroughCache(
-    cacheKey,
+    paymentCacheKey(paymentId),
     async () => nowpaymentsCaller.getPaymentStatus(paymentId),
     { ttl: CacheTTL.hour }
   );
 };
+
+/** Hard cap on perPage to prevent abuse */
+const MAX_PER_PAGE = 25;
 
 export const getDepositHistory = async (
   userId: number,
   page: number = 1,
   perPage: number = 3
 ) => {
+  // Clamp inputs to safe ranges
+  page = Math.max(1, page);
+  perPage = Math.min(Math.max(1, perPage), MAX_PER_PAGE);
+
   const wallet = await dbRead.cryptoWallet.findUnique({ where: { userId } });
   if (!wallet?.smartAccount) {
     return { deposits: [], total: 0 };
@@ -287,15 +339,13 @@ export const bustDepositCache = async (userId: number) => {
   if (!wallet?.smartAccount) return;
 
   // Bust the parent payment cache (which contains payment_extra_ids)
-  await redis.del(`${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${wallet.smartAccount}` as never);
+  await redis.del(paymentCacheKey(wallet.smartAccount));
 
   // Bust all known child payment caches
   const parentPayment = await nowpaymentsCaller.getPaymentStatus(wallet.smartAccount);
   if (parentPayment?.payment_extra_ids) {
     await Promise.all(
-      parentPayment.payment_extra_ids.map((id) =>
-        redis.del(`${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${id}` as never)
-      )
+      parentPayment.payment_extra_ids.map((id) => redis.del(paymentCacheKey(id)))
     );
   }
 };
@@ -318,6 +368,30 @@ export type SupportedCurrencyGroup = {
 };
 
 const CACHE_KEY = REDIS_KEYS.CACHES.SUPPORTED_CRYPTO_CURRENCIES;
+
+/**
+ * Run async tasks with bounded concurrency.
+ * Returns results in the same order as the input items.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
 
 export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
   // Check cache first
@@ -347,9 +421,11 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
     selectedCodes.has(c.code.toLowerCase())
   );
 
-  // Fetch min amounts for each currency (in parallel)
-  const currenciesWithMin: SupportedCurrencyNetwork[] = await Promise.all(
-    selectedCurrencies.map(async (currency) => {
+  // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
+  const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
+    selectedCurrencies,
+    MAX_CONCURRENT_MIN_AMOUNT_REQUESTS,
+    async (currency) => {
       const minAmount = await nowpaymentsCaller.getMinimumPaymentAmount({
         currency_from: currency.code,
         currency_to: 'usdcbase',
@@ -366,7 +442,7 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
         minAmount: minAmount?.min_amount ?? null,
         minAmountUsd: minAmount?.fiat_equivalent ?? null,
       };
-    })
+    }
   );
 
   // Group by ticker
@@ -393,9 +469,10 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
 };
 
 export const getBuzzConversionRate = async (fiat: string) => {
-  const cacheKey = `${REDIS_KEYS.CACHES.CRYPTO_CONVERSION_RATE}:${fiat}`;
+  const cacheKey =
+    `${REDIS_KEYS.CACHES.CRYPTO_CONVERSION_RATE}:${fiat}` as RedisKeyTemplateCache;
   return fetchThroughCache(
-    cacheKey as never,
+    cacheKey,
     async () => {
       const estimate = await nowpaymentsCaller.getPriceEstimate({
         amount: 1,
@@ -410,6 +487,9 @@ export const getBuzzConversionRate = async (fiat: string) => {
       // estimated_amount = how many fiat units for 1 USDC
       // 1 USDC = 1000 Buzz, so 1000 Buzz costs estimated_amount in fiat
       const rate = parseFloat(String(estimate.estimated_amount));
+      if (!rate || rate <= 0) {
+        return { fiat, rate: null, buzzPerUnit: null };
+      }
       return {
         fiat,
         rate,
@@ -421,9 +501,10 @@ export const getBuzzConversionRate = async (fiat: string) => {
 };
 
 export const getMinAmount = async (currencyCode: string, fiat: string) => {
-  const cacheKey = `${REDIS_KEYS.CACHES.CRYPTO_MIN_AMOUNT}:${currencyCode}:${fiat}`;
+  const cacheKey =
+    `${REDIS_KEYS.CACHES.CRYPTO_MIN_AMOUNT}:${currencyCode}:${fiat}` as RedisKeyTemplateCache;
   return fetchThroughCache(
-    cacheKey as never,
+    cacheKey,
     async () => {
       const result = await nowpaymentsCaller.getMinimumPaymentAmount({
         currency_from: currencyCode,

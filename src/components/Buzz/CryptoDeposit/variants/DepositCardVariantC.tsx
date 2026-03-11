@@ -1,17 +1,14 @@
 import {
   ActionIcon,
-  Box,
   Button,
   Divider,
   Group,
-  Menu,
   Paper,
   Skeleton,
   Stack,
   Text,
   ThemeIcon,
   Tooltip,
-  UnstyledButton,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import {
@@ -23,10 +20,12 @@ import {
   IconCurrencyBitcoin,
   IconWallet,
 } from '@tabler/icons-react';
-import { QRCodeSVG } from 'qrcode.react';
-import { useCallback, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DepositCardProps } from '../DepositAddressCard';
 import { CurrencySelector } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
+import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
+import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import {
   useCurrentUserSettings,
@@ -35,19 +34,10 @@ import {
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-const FIAT_OPTIONS = [
-  { value: 'usd', label: 'USD', symbol: '$' },
-  { value: 'eur', label: 'EUR', symbol: '€' },
-  { value: 'gbp', label: 'GBP', symbol: '£' },
-  { value: 'cad', label: 'CAD', symbol: 'C$' },
-  { value: 'aud', label: 'AUD', symbol: 'A$' },
-  { value: 'jpy', label: 'JPY', symbol: '¥' },
-  { value: 'brl', label: 'BRL', symbol: 'R$' },
-];
-
-const FIAT_SYMBOLS: Record<string, string> = Object.fromEntries(
-  FIAT_OPTIONS.map((f) => [f.value, f.symbol])
-);
+const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeSVG), {
+  ssr: false,
+  loading: () => <Skeleton height={150} width={150} radius="md" />,
+});
 
 export function DepositCardVariantC({ depositAddress, error, loading, onRetry }: DepositCardProps) {
   const clipboard = useClipboard({ timeout: 2000 });
@@ -55,14 +45,20 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
   const updateSettings = useMutateUserSettings();
   const [selectedFiat, setSelectedFiat] = useState('usd');
 
-  // Spotlight state for the info panel
-  const [spotlight, setSpotlight] = useState({ x: 0, y: 0, opacity: 0 });
+  // Spotlight effect — uses refs + direct DOM manipulation to avoid re-renders on mouse move
+  const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = spotlightRef.current;
+    if (!el) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    setSpotlight({ x: e.clientX - rect.left, y: e.clientY - rect.top, opacity: 1 });
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`;
+    el.style.opacity = '1';
   }, []);
   const handleMouseLeave = useCallback(() => {
-    setSpotlight((s) => ({ ...s, opacity: 0 }));
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
   }, []);
 
   // Sync from saved user preference on load
@@ -72,10 +68,13 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
     }
   }, [userSettings.preferredFiatCurrency]);
 
-  const handleFiatChange = (fiat: string) => {
-    setSelectedFiat(fiat);
-    updateSettings.mutate({ preferredFiatCurrency: fiat });
-  };
+  const handleFiatChange = useCallback(
+    (fiat: string) => {
+      setSelectedFiat(fiat);
+      updateSettings.mutate({ preferredFiatCurrency: fiat });
+    },
+    [updateSettings]
+  );
 
   const { data: conversionRate, isFetching: loadingRate } =
     trpc.nowPayments.getBuzzConversionRate.useQuery(
@@ -84,8 +83,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
     );
 
   const isEmpty = !depositAddress;
-  const fiatSymbol = FIAT_SYMBOLS[selectedFiat] ?? selectedFiat.toUpperCase();
-  const fiatLabel = FIAT_OPTIONS.find((f) => f.value === selectedFiat)?.label ?? 'USD';
+  const { symbol: fiatSymbol } = getFiatDisplay(selectedFiat);
 
   // rate = fiat per 1 USDC. 1 USDC = 1000 Buzz. So 1000 Buzz = rate fiat units.
   const buzzPrice = conversionRate?.rate != null ? conversionRate.rate : null;
@@ -96,8 +94,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
       withBorder
       style={{
         overflow: 'hidden',
-        background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
-        boxShadow: 'light-dark(0 1px 3px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.5))',
+        ...outerCardStyle,
       }}
     >
       <div className="grid grid-cols-1 sm:grid-cols-[55%_45%]">
@@ -107,13 +104,11 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
         >
-          {/* Spotlight glow */}
+          {/* Spotlight glow — styled via ref to avoid re-renders */}
           <div
+            ref={spotlightRef}
             className="absolute inset-0 pointer-events-none transition-opacity duration-500"
-            style={{
-              background: `radial-gradient(400px circle at ${spotlight.x}px ${spotlight.y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`,
-              opacity: spotlight.opacity,
-            }}
+            style={{ opacity: 0 }}
           />
 
           {/* Accent border */}
@@ -150,26 +145,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
                     —
                   </Text>
                 )}
-                <Menu position="bottom-start" withinPortal shadow="sm">
-                  <Menu.Target>
-                    <UnstyledButton className="inline-flex items-center">
-                      <Text span size="sm" c="blue" className="cursor-pointer" fw={500}>
-                        {fiatLabel} ▾
-                      </Text>
-                    </UnstyledButton>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {FIAT_OPTIONS.map((opt) => (
-                      <Menu.Item
-                        key={opt.value}
-                        onClick={() => handleFiatChange(opt.value)}
-                        fw={selectedFiat === opt.value ? 600 : undefined}
-                      >
-                        {opt.symbol} {opt.label}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
+                <FiatMenu selectedFiat={selectedFiat} onFiatChange={handleFiatChange} size="sm" fw={500} />
               </Group>
             </Stack>
 
@@ -278,6 +254,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
                         color={clipboard.copied ? 'green' : 'gray'}
                         onClick={() => clipboard.copy(depositAddress)}
                         className="shrink-0"
+                        aria-label={clipboard.copied ? 'Address copied' : 'Copy deposit address'}
                       >
                         {clipboard.copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                       </ActionIcon>
