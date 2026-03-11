@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Group,
   Pagination,
@@ -14,7 +13,6 @@ import {
 import {
   IconCheck,
   IconClock,
-  IconInfoCircle,
   IconLoader,
   IconRefresh,
   IconWallet,
@@ -185,12 +183,7 @@ export function DepositHistory() {
                   </Group>
                   <Group gap="md" wrap="nowrap">
                     {feeUsdc != null && (
-                      <Group gap={2} wrap="nowrap">
-                        <Text size="xs" c="dimmed">
-                          Fee: ${(Math.ceil(feeUsdc * 100) / 100).toFixed(2)}
-                        </Text>
-                        <FeeInfoPopover />
-                      </Group>
+                      <FeePopover amount={feeUsdc} />
                     )}
                     <Group gap={4} wrap="nowrap">
                       <IconClock size={12} className="text-dimmed" />
@@ -332,13 +325,23 @@ function SignalStatusBadge({
   );
 }
 
-function FeeInfoPopover() {
+function FeePopover({ amount }: { amount: number }) {
+  const display = `Fee: $${(Math.ceil(amount * 100) / 100).toFixed(2)}`;
   return (
     <Popover width={280} position="top" withArrow shadow="md">
       <Popover.Target>
-        <ActionIcon variant="subtle" color="gray" size="xs" aria-label="Fee information">
-          <IconInfoCircle size={14} />
-        </ActionIcon>
+        <UnstyledButton
+          className="cursor-help"
+          aria-label="Fee information"
+        >
+          <Text
+            size="xs"
+            c="dimmed"
+            className="underline decoration-dotted decoration-gray-400 dark:decoration-gray-600 underline-offset-2"
+          >
+            {display}
+          </Text>
+        </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown>
         <Stack gap="xs">
