@@ -24,7 +24,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import dayjs from '~/shared/utils/dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { getNetworkDisplayName } from '~/server/common/chain-config';
+import { getNetworkDisplayName, isDepositComplete } from '~/server/common/chain-config';
 import { trpc } from '~/utils/trpc';
 
 export function DepositHistory() {
@@ -126,7 +126,7 @@ export function DepositHistory() {
         {deposits.map((deposit) => {
           // Only show fees once the deposit is complete (fees aren't final until then)
           let feeUsdc: number | null = null;
-          if (deposit.status === 'finished' || deposit.status === 'partially_paid') {
+          if (isDepositComplete(deposit.status)) {
             const hasFeeRecord = deposit.depositFee != null && deposit.serviceFee != null;
             const totalFeeUsdc = hasFeeRecord
               ? (deposit.depositFee ?? 0) + (deposit.serviceFee ?? 0)
@@ -374,14 +374,15 @@ function FeePopover({ amount }: { amount: number }) {
 }
 
 function DepositStatusBadge({ status }: { status: string }) {
+  if (isDepositComplete(status)) {
+    return (
+      <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
+        Complete
+      </Badge>
+    );
+  }
+
   switch (status) {
-    case 'finished':
-    case 'partially_paid':
-      return (
-        <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
-          Complete
-        </Badge>
-      );
     case 'confirming':
       return (
         <Badge color="yellow" variant="light" size="sm" leftSection={<IconLoader size={12} />}>

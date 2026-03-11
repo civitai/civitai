@@ -11,7 +11,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { getChainConfig, getChainForNetwork, outcomeAmountToBuzz } from '~/server/common/chain-config';
+import { getChainConfig, getChainForNetwork, isDepositComplete, outcomeAmountToBuzz } from '~/server/common/chain-config';
 
 /** IPN callback URL — configurable for dev (webhook.site) vs prod */
 const getIpnCallbackUrl = () =>
@@ -131,7 +131,7 @@ export const processDeposit = async (
   let buzzAmount = 0;
   let transactionId: string | undefined;
 
-  if (webhookStatus === 'finished' || webhookStatus === 'partially_paid') {
+  if (isDepositComplete(webhookStatus)) {
     const outcomeAmount = event.outcome_amount;
     if (!outcomeAmount || outcomeAmount <= 0) {
       await log({

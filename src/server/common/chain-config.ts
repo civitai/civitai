@@ -71,3 +71,11 @@ export function getNetworkDisplayName(network: string): string {
 export function outcomeAmountToBuzz(outcomeAmount: number): number {
   return Math.floor(outcomeAmount * 1000);
 }
+
+/** Deposit statuses that mean buzz has been credited. */
+const DEPOSIT_COMPLETED_STATUSES = new Set(['finished', 'partially_paid']);
+
+/** Check if a deposit status means buzz has been credited. */
+export function isDepositComplete(status: string): boolean {
+  return DEPOSIT_COMPLETED_STATUSES.has(status);
+}

@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { showNotification } from '@mantine/notifications';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
+import { isDepositComplete } from '~/server/common/chain-config';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -43,7 +44,7 @@ export const useCryptoDepositSignal = () => {
       const currencyDisplay = currencyNames[data.currency?.toLowerCase()] ?? data.currency.toUpperCase();
 
       // Show a toast notification when a deposit completes
-      if (data.status === 'finished') {
+      if (isDepositComplete(data.status)) {
         const buzzAmount = data.outcomeAmount ? Math.floor(data.outcomeAmount * 1000) : null;
         showNotification({
           title: 'Crypto Deposit Complete',
