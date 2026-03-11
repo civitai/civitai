@@ -455,11 +455,13 @@ export const RewardsList = ({
           </Paper>
         );
       })}
-      <Tooltip label="Daily Buzz rewards reset at midnight UTC" withArrow>
-        <Text size="xs" c="dimmed" ta="right">
-          Resets in <Countdown endTime={nextReset} format="short" />
-        </Text>
-      </Tooltip>
+      <Text size="xs" c="dimmed" ta="right">
+        <Tooltip label="Daily Buzz rewards reset at midnight UTC" withArrow>
+          <span>
+            Resets in <Countdown endTime={nextReset} format="short" />
+          </span>
+        </Tooltip>
+      </Text>
     </Stack>
   );
 };
