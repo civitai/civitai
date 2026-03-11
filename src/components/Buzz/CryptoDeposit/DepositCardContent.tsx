@@ -24,7 +24,7 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DepositCardProps } from '../DepositAddressCard';
+import type { DepositCardProps } from './DepositAddressCard';
 import {
   CurrencyBadges,
   MinDepositInfo,
@@ -37,7 +37,7 @@ import {
   useCurrentUserSettings,
   useMutateUserSettings,
 } from '~/components/UserSettings/hooks';
-import { getChainDisplayName } from '~/server/common/chain-config';
+import { getChainDisplayName, getNetworkDisplayName } from '~/server/common/chain-config';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -46,7 +46,7 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
   loading: () => <Skeleton height={150} width={150} radius="md" />,
 });
 
-export function DepositCardVariantC({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
+export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
   const clipboard = useClipboard({ timeout: 2000 });
   const userSettings = useCurrentUserSettings();
   const updateSettings = useMutateUserSettings();
@@ -103,6 +103,19 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
 
   const isEmpty = !depositAddress;
   const { symbol: fiatSymbol } = getFiatDisplay(selectedFiat);
+
+  // Build chain badge label: "Ethereum — Base" for multi-network chains, "Bitcoin" for single-network
+  const chainLabel = (() => {
+    const chainName = getChainDisplayName(chain);
+    const networkCode = currencyState.selectedNetwork?.network;
+    if (!networkCode) return chainName;
+    const networkName = getNetworkDisplayName(networkCode);
+    // Only show network suffix for multi-network chains where network differs from chain name
+    if (currencyState.selectedGroup && currencyState.selectedGroup.networks.length > 1 && networkName !== chainName) {
+      return `${chainName} — ${networkName}`;
+    }
+    return chainName;
+  })();
 
   // rate = fiat per 1 USDC. 1 USDC = 1000 Buzz. So 1000 Buzz = rate fiat units.
   const buzzPrice = conversionRate?.rate != null ? conversionRate.rate : null;
@@ -261,7 +274,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
                     Deposit address
                   </Text>
                   <Badge size="xs" variant="light" color="blue" radius="sm">
-                    {getChainDisplayName(chain)}
+                    {chainLabel}
                   </Badge>
                 </Group>
                 {isEmpty && loading ? (
@@ -281,7 +294,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
                       {depositAddress}
                     </Text>
                     <Tooltip
-                      label={clipboard.copied ? `Copied: ${getChainDisplayName(chain)} address` : 'Copy address'}
+                      label={clipboard.copied ? `Copied: ${chainLabel} address` : 'Copy address'}
                       withArrow
                     >
                       <ActionIcon
@@ -307,7 +320,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry, c
                     </Text>
                   </Group>
                 )}
-                {/* Min deposit — below address */}
+                {/* Minimum deposit — below address */}
                 <MinDepositInfo state={currencyState} />
               </Stack>
             </>

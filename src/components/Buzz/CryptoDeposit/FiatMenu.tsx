@@ -4,7 +4,7 @@ import { FIAT_OPTIONS, FIAT_SYMBOLS } from '~/components/Buzz/CryptoDeposit/cryp
 /**
  * Inline fiat-currency picker rendered as a "USD ▾" dropdown.
  * Used in both the CurrencySelector (min-deposit row) and the
- * DepositCardVariantC (conversion-rate panel).
+ * DepositCardContent (conversion-rate panel).
  */
 export function FiatMenu({
   selectedFiat,

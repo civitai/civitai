@@ -185,8 +185,8 @@ export function MinDepositInfo({ state }: { state: CurrencySelectionState }) {
 
   return (
     <Group gap={4} align="center">
-      <Text size="xs" c="dimmed">
-        Min {selectedTicker.toUpperCase()} deposit
+      <Text component="div" size="xs" c="dimmed">
+        Minimum {selectedTicker.toUpperCase()} deposit
         {networkLabel ? ` on ${networkLabel}` : ''}
         :{' '}
         {loadingMin ? (

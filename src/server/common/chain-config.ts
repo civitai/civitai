@@ -12,7 +12,7 @@ export type ChainConfig = {
 };
 
 export const CHAIN_CONFIGS: ChainConfig[] = [
-  { chain: 'evm', displayName: 'Base', networks: ['base', 'eth', 'polygon', 'arb', 'bsc', 'op', 'matic'], targetCurrency: 'usdcbase' },
+  { chain: 'evm', displayName: 'Ethereum', networks: ['base', 'eth', 'polygon', 'arb', 'bsc', 'op', 'matic'], targetCurrency: 'usdcbase' },
   { chain: 'sol', displayName: 'Solana', networks: ['sol'], targetCurrency: 'usdcsol' },
   { chain: 'trx', displayName: 'Tron', networks: ['trx'], targetCurrency: 'usdttrc20' },
   { chain: 'btc', displayName: 'Bitcoin', networks: ['btc'], targetCurrency: 'btc' },
@@ -38,9 +38,30 @@ export function getChainConfig(chain: string): ChainConfig | undefined {
   return CHAIN_CONFIGS.find((c) => c.chain === chain);
 }
 
-/** Get a human-friendly display name for a chain (e.g., 'evm' -> 'Base'). */
+/** Human-friendly network names for display (NowPayments network codes → pretty names). */
+const NETWORK_DISPLAY_NAMES: Record<string, string> = {
+  base: 'Base',
+  eth: 'Ethereum',
+  polygon: 'Polygon',
+  arb: 'Arbitrum',
+  bsc: 'BSC',
+  op: 'Optimism',
+  matic: 'Polygon',
+  sol: 'Solana',
+  trx: 'Tron',
+  btc: 'Bitcoin',
+  doge: 'Dogecoin',
+  ltc: 'Litecoin',
+};
+
+/** Get a human-friendly display name for a chain (e.g., 'evm' -> 'Ethereum'). */
 export function getChainDisplayName(chain: string): string {
   return getChainConfig(chain)?.displayName ?? chain.toUpperCase();
+}
+
+/** Get a human-friendly display name for a NowPayments network (e.g., 'bsc' -> 'BSC'). */
+export function getNetworkDisplayName(network: string): string {
+  return NETWORK_DISPLAY_NAMES[network.toLowerCase()] ?? network.toUpperCase();
 }
 
 /**

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import type { GetDepositAddressInput } from '~/server/schema/nowpayments.schema';
 import { trpc } from '~/utils/trpc';
-import { DepositCardVariantC } from './variants/DepositCardVariantC';
+import { DepositCardContent } from './DepositCardContent';
 
 export type DepositCardProps = {
   depositAddress: string;
@@ -33,7 +33,7 @@ export function DepositAddressCard({
   }, [refetch]);
 
   return (
-    <DepositCardVariantC
+    <DepositCardContent
       depositAddress={depositAddress}
       error={error}
       loading={loading}
