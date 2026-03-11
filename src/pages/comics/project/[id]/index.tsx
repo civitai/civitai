@@ -15,6 +15,8 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowLeft,
   IconBook,
+  IconCalendar,
+  IconEye,
   IconEyeOff,
   IconGripVertical,
   IconLock,
@@ -26,6 +28,7 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -35,6 +38,15 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+
+const DrawingEditorModal = dynamic(
+  () =>
+    import(
+      '~/components/Generation/Input/DrawingEditor/DrawingEditorModal'
+    ).then((mod) => mod.DrawingEditorModal),
+  { ssr: false }
+);
 import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
   COMIC_MODEL_MAX_IMAGES,
@@ -51,10 +63,11 @@ import { SmartCreateModal } from '~/components/Comics/SmartCreateModal';
 import { SortableChapter } from '~/components/Comics/SortableChapter';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { ComicChapterStatus } from '~/shared/utils/prisma/enums';
+import { ComicChapterStatus, ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
 
@@ -95,7 +108,7 @@ function ProjectWorkspace() {
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
-    'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | null
+    'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | 'Grok' | null
   >(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
@@ -104,6 +117,12 @@ function ProjectWorkspace() {
   const [detailPanelId, setDetailPanelId] = useState<number | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
   const [publishEaInitial, setPublishEaInitial] = useState(false);
+  const [enhanceExistingSource, setEnhanceExistingSource] = useState<{
+    url: string;
+    previewUrl: string;
+    width: number;
+    height: number;
+  } | null>(null);
   const [chapterSettingsTarget, setChapterSettingsTarget] = useState<{
     position: number;
     name: string;
@@ -321,6 +340,11 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const updatePanelMutation = trpc.comics.updatePanel.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
+
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
     onSuccess: () => {
       refetch();
@@ -415,6 +439,8 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const { uploadToCF: uploadSketchToCF } = useCFImageUpload();
+
   // ── Handlers ──
   const handleModelChange = (value: string | null) => {
     setGenerationModel(value as typeof generationModel);
@@ -439,6 +465,7 @@ function ProjectWorkspace() {
     setAspectRatio('3:4');
     setGenerationModel(null);
     setSelectedImageIds(null);
+    setEnhanceExistingSource(null);
   };
 
   const handleGeneratePanel = async () => {
@@ -451,6 +478,12 @@ function ProjectWorkspace() {
         if (oldPanel) targetPosition = oldPanel.position;
       }
       if (regeneratingPanelId) {
+        // Clear the existing panel image so the UI shows a spinner immediately
+        await updatePanelMutation.mutateAsync({
+          panelId: regeneratingPanelId,
+          status: ComicPanelStatus.Generating,
+          imageUrl: null,
+        });
         await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
       }
       createPanelMutation.mutate({
@@ -485,6 +518,12 @@ function ProjectWorkspace() {
         if (oldPanel) targetPosition = oldPanel.position;
       }
       if (regeneratingPanelId) {
+        // Clear the existing panel image so the UI shows a spinner immediately
+        await updatePanelMutation.mutateAsync({
+          panelId: regeneratingPanelId,
+          status: ComicPanelStatus.Generating,
+          imageUrl: null,
+        });
         await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
       }
       enhancePanelMutation.mutate({
@@ -499,6 +538,7 @@ function ProjectWorkspace() {
         includePreviousImage,
         aspectRatio,
         baseModel: generationModel,
+        forceGenerate: true,
         ...(targetPosition != null ? { position: targetPosition } : {}),
         ...(selectedImageIds ? { selectedImageIds } : {}),
       });
@@ -650,15 +690,20 @@ function ProjectWorkspace() {
   };
 
   const handleTogglePublish = (chapterPosition: number, currentStatus: string) => {
-    if (currentStatus === ComicChapterStatus.Published) {
+    if (currentStatus === ComicChapterStatus.Published || currentStatus === ComicChapterStatus.Scheduled) {
       openConfirmModal({
-        title: 'Unpublish Chapter',
+        title: currentStatus === ComicChapterStatus.Scheduled ? 'Cancel Schedule' : 'Unpublish Chapter',
         children: (
           <Text size="sm">
-            This chapter will be reverted to draft and will no longer be visible to readers.
+            {currentStatus === ComicChapterStatus.Scheduled
+              ? 'This will cancel the scheduled publish and revert the chapter to draft.'
+              : 'This chapter will be reverted to draft and will no longer be visible to readers.'}
           </Text>
         ),
-        labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+        labels: {
+          confirm: currentStatus === ComicChapterStatus.Scheduled ? 'Cancel Schedule' : 'Unpublish',
+          cancel: 'Keep',
+        },
         confirmProps: { color: 'yellow' },
         onConfirm: () => {
           unpublishChapterMutation.mutate({ projectId, chapterPosition });
@@ -672,7 +717,8 @@ function ProjectWorkspace() {
   };
 
   const handleConfirmPublish = (
-    eaConfig: { buzzPrice: number; timeframe: number } | null
+    eaConfig: { buzzPrice: number; timeframe: number } | null,
+    scheduledAt?: Date
   ) => {
     if (activeChapterPosition == null) return;
     publishChapterMutation.mutate(
@@ -680,6 +726,7 @@ function ProjectWorkspace() {
         projectId,
         chapterPosition: activeChapterPosition,
         earlyAccessConfig: eaConfig,
+        scheduledAt,
       },
       { onSuccess: () => closePublishModal() }
     );
@@ -726,6 +773,67 @@ function ProjectWorkspace() {
     setDetailPanelId(null);
     setInsertAtPosition(index + 1);
     openPanelModal();
+  };
+
+  const handleSketchEdit = (panel: { id: number; imageUrl: string | null; image?: { width: number; height: number } | null }) => {
+    if (!panel.imageUrl) return;
+    const edgeUrl = getEdgeUrl(panel.imageUrl, { original: true }) ?? panel.imageUrl;
+
+    const openSketchDialog = (imgWidth: number, imgHeight: number) => {
+      dialogStore.trigger({
+        component: DrawingEditorModal,
+        props: {
+          sourceImage: { url: edgeUrl, width: imgWidth, height: imgHeight } as any,
+          onConfirm: async (blob: Blob) => {
+            try {
+              const file = new File([blob], 'sketch-annotation.jpg', { type: 'image/jpeg' });
+              const result = await uploadSketchToCF(file);
+              // Directly save the annotated image as the panel image
+              await updatePanelMutation.mutateAsync({
+                panelId: panel.id,
+                imageUrl: result.id,
+              });
+            } catch (err) {
+              console.error('Failed to save sketch edit:', err);
+              showErrorNotification({ error: err as Error, title: 'Failed to save sketch edit' });
+            }
+          },
+        },
+      });
+    };
+
+    // Pre-load image to get actual dimensions (panel.image may be null)
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      openSketchDialog(img.naturalWidth || panel.image?.width || 1024, img.naturalHeight || panel.image?.height || 1024);
+    };
+    img.onerror = () => {
+      openSketchDialog(panel.image?.width ?? 1024, panel.image?.height ?? 1024);
+    };
+    img.src = edgeUrl;
+  };
+
+  const handleEnhanceExisting = (panel: {
+    id: number;
+    imageUrl: string | null;
+    image?: { width: number; height: number } | null;
+  }) => {
+    if (!panel.imageUrl) return;
+    const previewUrl = getEdgeUrl(panel.imageUrl, { width: 400 }) ?? panel.imageUrl;
+    setRegeneratingPanelId(panel.id);
+    setEnhanceExistingSource({
+      url: panel.imageUrl,
+      previewUrl,
+      width: panel.image?.width ?? 1024,
+      height: panel.image?.height ?? 1024,
+    });
+    openPanelModal();
+  };
+
+  const handleDrawerEnhance = (panel: any) => {
+    setDetailPanelId(null);
+    handleEnhanceExisting(panel);
   };
 
   const getStatusDotClass = (status: string, hasRefs: boolean) => {
@@ -917,7 +1025,7 @@ function ProjectWorkspace() {
                         buzzPrice: number;
                         timeframe: number;
                       } | null;
-                      const isPaywalled =
+                      const isEarlyAccess =
                         chapter.status === ComicChapterStatus.Published &&
                         eaConfig != null &&
                         chapter.earlyAccessEndsAt != null &&
@@ -957,7 +1065,7 @@ function ProjectWorkspace() {
                             <div className={styles.chapterItemInfo}>
                               <p className={styles.chapterItemName}>
                                 {chapter.name}
-                                {isPaywalled && (
+                                {isEarlyAccess && (
                                   <IconLock
                                     size={11}
                                     className="inline-block ml-1 opacity-60"
@@ -974,9 +1082,11 @@ function ProjectWorkspace() {
                               >
                                 <Tooltip
                                   label={
-                                    chapter.status === ComicChapterStatus.Published
-                                      ? isPaywalled
-                                        ? `Paywalled · ${eaConfig!.buzzPrice} Buzz`
+                                    chapter.status === ComicChapterStatus.Scheduled
+                                      ? `Scheduled · ${chapter.publishedAt ? new Date(chapter.publishedAt).toLocaleDateString() : ''}`
+                                      : chapter.status === ComicChapterStatus.Published
+                                      ? isEarlyAccess
+                                        ? `Early Access · ${eaConfig!.buzzPrice} Buzz`
                                         : 'Published'
                                       : 'Draft'
                                   }
@@ -986,7 +1096,9 @@ function ProjectWorkspace() {
                                   <span
                                     className="inline-block w-1.5 h-1.5 rounded-full"
                                     style={{
-                                      background: isPaywalled
+                                      background: chapter.status === ComicChapterStatus.Scheduled
+                                        ? 'var(--mantine-color-blue-5)'
+                                        : isEarlyAccess
                                         ? 'var(--mantine-color-yellow-5)'
                                         : chapter.status === ComicChapterStatus.Published
                                         ? 'var(--mantine-color-green-5)'
@@ -1062,7 +1174,7 @@ function ProjectWorkspace() {
                     buzzPrice: number;
                     timeframe: number;
                   } | null;
-                  const isActivePaywalled =
+                  const isActiveEarlyAccess =
                     activeChapter.status === ComicChapterStatus.Published &&
                     activeEaConfig != null &&
                     activeChapter.earlyAccessEndsAt != null &&
@@ -1074,7 +1186,8 @@ function ProjectWorkspace() {
                     (unpublishChapterMutation.isLoading &&
                       unpublishChapterMutation.variables?.chapterPosition ===
                         activeChapter.position);
-                  const isDraft = activeChapter.status !== ComicChapterStatus.Published;
+                  const isDraft = activeChapter.status === ComicChapterStatus.Draft;
+                  const isScheduled = activeChapter.status === ComicChapterStatus.Scheduled;
 
                   return (
                     <Group justify="space-between" align="center" mb="md">
@@ -1085,19 +1198,47 @@ function ProjectWorkspace() {
                         <Badge
                           size="sm"
                           variant="light"
-                          color={isActivePaywalled ? 'yellow' : isDraft ? 'gray' : 'green'}
-                          leftSection={isActivePaywalled ? <IconLock size={10} /> : undefined}
+                          color={
+                            isScheduled
+                              ? 'blue'
+                              : isActiveEarlyAccess
+                              ? 'yellow'
+                              : isDraft
+                              ? 'gray'
+                              : 'green'
+                          }
+                          leftSection={
+                            isScheduled
+                              ? <IconCalendar size={10} />
+                              : isActiveEarlyAccess
+                              ? <IconLock size={10} />
+                              : undefined
+                          }
                         >
-                          {isActivePaywalled
-                            ? `Paywalled · ${activeEaConfig!.buzzPrice} Buzz`
+                          {isScheduled
+                            ? `Scheduled · ${activeChapter.publishedAt ? new Date(activeChapter.publishedAt).toLocaleDateString() : ''}`
+                            : isActiveEarlyAccess
+                            ? `Early Access · ${activeEaConfig!.buzzPrice} Buzz`
                             : isDraft
                             ? 'Draft'
                             : 'Published'}
                         </Badge>
                       </Group>
                       <Group gap="xs">
+                        {activeChapter.panels.length > 0 && (
+                          <Button
+                            size="xs"
+                            variant="light"
+                            leftSection={<IconEye size={14} />}
+                            component={Link}
+                            href={`/comics/project/${projectId}/read`}
+                            target="_blank"
+                          >
+                            Preview
+                          </Button>
+                        )}
                         {isDraft && (
-                          <Tooltip label="Publish with a Buzz paywall">
+                          <Tooltip label="Publish with Early Access pricing">
                             <Button
                               size="xs"
                               variant="light"
@@ -1111,7 +1252,7 @@ function ProjectWorkspace() {
                                 openPublishModal();
                               }}
                             >
-                              Paywall
+                              Early Access
                             </Button>
                           </Tooltip>
                         )}
@@ -1122,9 +1263,9 @@ function ProjectWorkspace() {
                           <Button
                             size="xs"
                             variant={isDraft ? 'filled' : 'light'}
-                            color={isDraft ? 'green' : 'yellow'}
+                            color={isDraft ? 'green' : isScheduled ? 'blue' : 'yellow'}
                             leftSection={
-                              isDraft ? <IconWorld size={14} /> : <IconEyeOff size={14} />
+                              isDraft ? <IconWorld size={14} /> : isScheduled ? <IconCalendar size={14} /> : <IconEyeOff size={14} />
                             }
                             disabled={isDraft && activeChapter.panels.length === 0}
                             loading={isPublishing}
@@ -1132,7 +1273,7 @@ function ProjectWorkspace() {
                               handleTogglePublish(activeChapter.position, activeChapter.status)
                             }
                           >
-                            {isDraft ? 'Publish' : 'Unpublish'}
+                            {isDraft ? 'Publish' : isScheduled ? 'Cancel Schedule' : 'Unpublish'}
                           </Button>
                         </Tooltip>
                       </Group>
@@ -1184,6 +1325,8 @@ function ProjectWorkspace() {
                             openPanelModal();
                           }}
                           onClick={() => setDetailPanelId(panel.id)}
+                          onSketchEdit={() => handleSketchEdit(panel as any)}
+                          onEnhance={() => handleEnhanceExisting(panel as any)}
                         />
                       </SortablePanel>
                     ))}
@@ -1226,6 +1369,8 @@ function ProjectWorkspace() {
         onRegenerate={handleDrawerRegenerate}
         onInsertAfter={handleDrawerInsertAfter}
         onDelete={(panelId) => deletePanelMutation.mutate({ panelId })}
+        onSketchEdit={handleSketchEdit}
+        onEnhance={handleDrawerEnhance}
       />
 
       <PanelModal
@@ -1263,6 +1408,7 @@ function ProjectWorkspace() {
         isCreatePending={createPanelMutation.isPending}
         isEnhancePending={enhancePanelMutation.isPending}
         isBulkPending={bulkCreateMutation.isPending}
+        initialEnhanceSource={enhanceExistingSource}
       />
 
       <SmartCreateModal

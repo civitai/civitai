@@ -52,6 +52,7 @@ import {
   nanoBananaProSizes,
   seedreamSizes,
   qwenSizes,
+  grokSizes,
 } from '~/server/common/constants';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
@@ -122,6 +123,13 @@ const COMIC_MODEL_CONFIG: Record<
     img2imgVersionId: 2558804,
     maxReferenceImages: 3,
     sizes: qwenSizes,
+  },
+  Grok: {
+    engine: 'grok',
+    baseModel: 'Grok',
+    versionId: 2738377,
+    maxReferenceImages: 7,
+    sizes: grokSizes,
   },
 };
 
@@ -205,7 +213,11 @@ const getProjectSchema = z.object({
 
 // Reference (character/location/item) creation — always global per user
 const createReferenceSchema = z.object({
-  name: z.string().min(1).max(255),
+  name: z
+    .string()
+    .min(1)
+    .max(255)
+    .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
   type: z.nativeEnum(ComicReferenceType).default(ComicReferenceType.Character),
   description: z.string().max(2000).optional(),
 });
@@ -224,7 +236,7 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen']);
+const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen', 'Grok']);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -243,9 +255,9 @@ const createPanelSchema = z.object({
 const updatePanelSchema = z.object({
   panelId: z.number().int(),
   status: z.nativeEnum(ComicPanelStatus).optional(),
-  imageUrl: z.string().url().optional(),
+  imageUrl: z.string().nullish(),
   civitaiJobId: z.string().optional(),
-  errorMessage: z.string().optional(),
+  errorMessage: z.string().nullish(),
 });
 
 const deletePanelSchema = z.object({
@@ -318,6 +330,8 @@ const enhancePanelSchema = z.object({
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
+  // When true, always run AI generation even without a prompt (e.g. aspect ratio change, sketch annotations)
+  forceGenerate: z.boolean().default(false),
 });
 
 const bulkCreatePanelsSchema = z.object({
@@ -358,6 +372,15 @@ const updateProjectSchema = z.object({
 
 const deleteReferenceSchema = z.object({
   referenceId: z.number().int(),
+});
+
+const updateReferenceSchema = z.object({
+  referenceId: z.number().int(),
+  name: z
+    .string()
+    .min(1)
+    .max(100)
+    .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
 });
 
 const chapterEarlyAccessConfigSchema = z
@@ -620,7 +643,7 @@ export const comicsRouter = router({
                   select: { referenceId: true },
                 },
                 image: {
-                  select: { nsfwLevel: true },
+                  select: { nsfwLevel: true, width: true, height: true },
                 },
               },
             },
@@ -710,10 +733,11 @@ export const comicsRouter = router({
         sort: z.enum(['Newest', 'MostFollowed', 'MostChapters']).default('Newest'),
         followed: z.boolean().optional(),
         userId: z.number().optional(),
+        browsingLevel: z.number().int().min(0).optional(),
       })
     )
     .query(async ({ input, ctx }) => {
-      const { limit, cursor, genre, period, sort, followed, userId } = input;
+      const { limit, cursor, genre, period, sort, followed, userId, browsingLevel } = input;
 
       // Build where clause
       const where: any = {
@@ -734,6 +758,15 @@ export const comicsRouter = router({
 
       if (genre) where.genre = genre;
       if (userId) where.userId = userId;
+
+      // NSFW browsing level filter — compute allowed nsfwLevel values using bitwise match
+      if (browsingLevel != null && browsingLevel > 0) {
+        const allowedNsfwLevels = [0]; // Always include unclassified (nsfwLevel=0)
+        for (let i = 1; i <= 63; i++) {
+          if ((i & browsingLevel) !== 0) allowedNsfwLevels.push(i);
+        }
+        where.nsfwLevel = { in: allowedNsfwLevels };
+      }
 
       if (period && period !== 'AllTime') {
         const periodMap: Record<string, number> = {
@@ -2284,6 +2317,7 @@ export const comicsRouter = router({
         projectId: z.number().int(),
         chapterPosition: z.number().int().min(0),
         earlyAccessConfig: chapterEarlyAccessConfigSchema.optional(),
+        scheduledAt: z.date().optional(),
       })
     )
     .use(isChapterOwner)
@@ -2335,19 +2369,26 @@ export const comicsRouter = router({
       await updateComicChapterNsfwLevels([input.projectId]);
       await updateComicProjectNsfwLevels([input.projectId]);
 
+      const isScheduled = input.scheduledAt && input.scheduledAt > new Date();
       const isFirstPublish = !chapter.publishedAt;
+
       const updated = await dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
         data: {
-          status: ComicChapterStatus.Published,
-          ...(isFirstPublish ? { publishedAt: new Date() } : {}),
+          status: isScheduled ? ComicChapterStatus.Scheduled : ComicChapterStatus.Published,
+          ...(isFirstPublish ? { publishedAt: isScheduled ? input.scheduledAt : new Date() } : {}),
           ...(input.earlyAccessConfig !== undefined
             ? { earlyAccessConfig: input.earlyAccessConfig ?? undefined }
             : {}),
         },
       });
+
+      // For scheduled chapters, skip notifications and project publish until the scheduled time
+      if (isScheduled) {
+        return updated;
+      }
 
       // Set project publishedAt on first ever chapter publish
       if (!chapter.project.publishedAt) {
@@ -2412,11 +2453,16 @@ export const comicsRouter = router({
         );
       }
 
+      const isScheduled = chapter.status === ComicChapterStatus.Scheduled;
       const updated = await dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
-        data: { status: ComicChapterStatus.Draft },
+        data: {
+          status: ComicChapterStatus.Draft,
+          // Clear publishedAt when canceling a schedule (it was set to the future date)
+          ...(isScheduled ? { publishedAt: null } : {}),
+        },
       });
 
       // Update search index — unpublishing may affect discoverability
@@ -2817,8 +2863,8 @@ export const comicsRouter = router({
         nextPosition = (lastPanel?.position ?? -1) + 1;
       }
 
-      // No prompt → create panel directly from image (free)
-      if (!input.prompt || !input.prompt.trim()) {
+      // No prompt and not forced → create panel directly from image (free)
+      if ((!input.prompt || !input.prompt.trim()) && !input.forceGenerate) {
         const image = await createImage({
           url: input.sourceImageUrl,
           type: 'image',
@@ -2947,11 +2993,12 @@ export const comicsRouter = router({
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
       // Build prompt — optionally enhance
-      let fullPrompt = input.prompt;
-      if (input.enhance) {
+      const userPrompt = input.prompt?.trim() || '';
+      let fullPrompt = userPrompt;
+      if (input.enhance && userPrompt) {
         fullPrompt = await enhanceComicPrompt({
           token,
-          userPrompt: input.prompt,
+          userPrompt,
           characterName: primaryReferenceName,
           characterNames: allReferenceNames,
           previousPanel: effectiveContext ?? undefined,
@@ -2984,8 +3031,8 @@ export const comicsRouter = router({
         data: {
           projectId: input.projectId,
           chapterPosition: input.chapterPosition,
-          prompt: input.prompt,
-          enhancedPrompt: input.enhance ? fullPrompt : null,
+          prompt: userPrompt,
+          enhancedPrompt: input.enhance && userPrompt ? fullPrompt : null,
           position: nextPosition,
           status: ComicPanelStatus.Pending,
           metadata,
@@ -3002,7 +3049,7 @@ export const comicsRouter = router({
       try {
         const result = await createImageGen({
           params: {
-            prompt: fullPrompt,
+            prompt: fullPrompt || '',
             negativePrompt: '',
             engine: modelConfig.engine,
             baseModel: modelConfig.baseModel as any,
@@ -3509,6 +3556,23 @@ export const comicsRouter = router({
         where: { id: input.referenceId },
       });
       return { success: true };
+    }),
+
+  updateReference: comicProtectedProcedure
+    .input(updateReferenceSchema)
+    .mutation(async ({ ctx, input }) => {
+      const reference = await dbRead.comicReference.findUnique({
+        where: { id: input.referenceId },
+        select: { userId: true },
+      });
+      if (!reference || reference.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+      const updated = await dbWrite.comicReference.update({
+        where: { id: input.referenceId },
+        data: { name: input.name },
+      });
+      return updated;
     }),
 
   deleteReferenceImage: comicProtectedProcedure

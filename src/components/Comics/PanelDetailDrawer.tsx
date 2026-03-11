@@ -1,11 +1,13 @@
 import { ActionIcon, Text, Title } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconPencil,
   IconPlus,
   IconRefreshDot,
   IconSparkles,
   IconTrash,
   IconUser,
+  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -21,6 +23,7 @@ interface PanelDetailDrawerProps {
   detailPanel: {
     id: number;
     imageUrl: string | null;
+    image?: { width: number; height: number } | null;
     status: string;
     prompt: string;
     enhancedPrompt: string | null;
@@ -34,6 +37,8 @@ interface PanelDetailDrawerProps {
   onRegenerate: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
   onInsertAfter: (index: number) => void;
   onDelete: (panelId: number) => void;
+  onSketchEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
+  onEnhance?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
 }
 
 export function PanelDetailDrawer({
@@ -45,6 +50,8 @@ export function PanelDetailDrawer({
   onRegenerate,
   onInsertAfter,
   onDelete,
+  onSketchEdit,
+  onEnhance,
 }: PanelDetailDrawerProps) {
   // Lock body scroll when drawer is open
   useEffect(() => {
@@ -217,6 +224,24 @@ export function PanelDetailDrawer({
 
               {/* Actions */}
               <div className={styles.detailActions}>
+                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onSketchEdit && (
+                  <button
+                    className={styles.subtleBtn}
+                    onClick={() => onSketchEdit(detailPanel)}
+                  >
+                    <IconPencil size={16} />
+                    Sketch Edit
+                  </button>
+                )}
+                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onEnhance && (
+                  <button
+                    className={styles.subtleBtn}
+                    onClick={() => onEnhance(detailPanel)}
+                  >
+                    <IconWand size={16} />
+                    Enhance
+                  </button>
+                )}
                 {(detailPanel.status === 'Ready' || detailPanel.status === 'Failed') && (
                   <button
                     className={styles.gradientBtn}

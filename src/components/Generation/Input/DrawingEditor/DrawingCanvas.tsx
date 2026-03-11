@@ -1,57 +1,34 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import dynamic from 'next/dynamic';
 import type Konva from 'konva';
+import {
+  Stage,
+  Layer,
+  Line,
+  Image as KonvaImage,
+  Rect,
+  Ellipse,
+  Arrow,
+  Text as KonvaText,
+  Group,
+  Shape,
+  Transformer,
+} from 'react-konva';
 import type {
   DrawingCanvasProps,
   DrawingLineElement,
   DrawingRectElement,
   DrawingCircleElement,
   DrawingArrowElement,
+  DrawingSpeechBubbleElement,
   DrawingTextElement,
+  DrawingImageElement,
   DrawingElement,
 } from './drawing.types';
 import { generateElementId, isTransformableElement } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
-import { ActionIcon, Loader, Text } from '@mantine/core';
-import { IconTrash } from '@tabler/icons-react';
+import { ActionIcon, Loader, Text, Tooltip } from '@mantine/core';
+import { IconTrash, IconFlipHorizontal, IconFlipVertical } from '@tabler/icons-react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-
-// Dynamic imports for SSR compatibility
-const Stage = dynamic(() => import('react-konva').then((mod) => mod.Stage), {
-  ssr: false,
-});
-
-const Layer = dynamic(() => import('react-konva').then((mod) => mod.Layer), {
-  ssr: false,
-});
-
-const Line = dynamic(() => import('react-konva').then((mod) => mod.Line), {
-  ssr: false,
-});
-
-const KonvaImage = dynamic(() => import('react-konva').then((mod) => mod.Image), {
-  ssr: false,
-});
-
-const Rect = dynamic(() => import('react-konva').then((mod) => mod.Rect), {
-  ssr: false,
-});
-
-const Ellipse = dynamic(() => import('react-konva').then((mod) => mod.Ellipse), {
-  ssr: false,
-});
-
-const Arrow = dynamic(() => import('react-konva').then((mod) => mod.Arrow), {
-  ssr: false,
-});
-
-const KonvaText = dynamic(() => import('react-konva').then((mod) => mod.Text), {
-  ssr: false,
-});
-
-const Transformer = dynamic(() => import('react-konva').then((mod) => mod.Transformer), {
-  ssr: false,
-});
 
 // Helper to ensure single points render as dots by duplicating the point
 function getDrawablePoints(points: number[]): number[] {
@@ -79,6 +56,7 @@ export function DrawingCanvas({
   onSelectedIdChange,
   onCommit,
   editingTextId,
+  overlayImages,
 }: DrawingCanvasProps) {
   const isMobile = useIsMobile({ type: 'media', breakpoint: 'md' });
   const [isDrawing, setIsDrawing] = useState(false);
@@ -86,7 +64,6 @@ export function DrawingCanvas({
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
-  const [transformerReady, setTransformerReady] = useState(false);
   const currentLineRef = useRef<DrawingLineElement | null>(null);
   const stageInstanceRef = useRef<Konva.Stage | null>(null);
   const stageReadyCalledRef = useRef(false);
@@ -154,44 +131,24 @@ export function DrawingCanvas({
     };
   }, [backgroundImage]);
 
-  // Update transformer when selection changes or transformer becomes ready
-  // Uses requestAnimationFrame to ensure shape refs are populated after dynamic components render
+  // Update transformer when selection changes
   useEffect(() => {
-    // Check if transformer is available and has the nodes method (may not be ready due to dynamic import)
-    if (
-      !transformerReady ||
-      !transformerRef.current ||
-      typeof transformerRef.current.nodes !== 'function'
-    )
-      return;
+    if (!transformerRef.current) return;
 
-    // Use requestAnimationFrame to ensure shape refs are populated after render
-    const frameId = requestAnimationFrame(() => {
-      if (selectedId && tool === 'select') {
-        const selectedElement = elements.find((el) => el.id === selectedId);
-        const selectedNode = shapeRefs.current.get(selectedId);
-        // Only attach transformer if element is transformable (not lines)
-        // Lines can be selected and moved but don't show resize/rotate handles
-        if (
-          selectedNode &&
-          selectedElement &&
-          isTransformableElement(selectedElement) &&
-          transformerRef.current
-        ) {
-          transformerRef.current.nodes([selectedNode]);
-          transformerRef.current.getLayer()?.batchDraw();
-        } else if (transformerRef.current) {
-          transformerRef.current.nodes([]);
-          transformerRef.current.getLayer()?.batchDraw();
-        }
-      } else if (transformerRef.current) {
+    if (selectedId && tool === 'select') {
+      const selectedElement = elements.find((el) => el.id === selectedId);
+      const selectedNode = shapeRefs.current.get(selectedId);
+      // Only attach transformer if element is transformable (not eraser lines)
+      if (selectedNode && selectedElement && isTransformableElement(selectedElement)) {
+        transformerRef.current.nodes([selectedNode]);
+      } else {
         transformerRef.current.nodes([]);
-        transformerRef.current.getLayer()?.batchDraw();
       }
-    });
-
-    return () => cancelAnimationFrame(frameId);
-  }, [selectedId, tool, elements, transformerReady]);
+    } else {
+      transformerRef.current.nodes([]);
+    }
+    transformerRef.current.getLayer()?.batchDraw();
+  }, [selectedId, tool, elements, overlayImages]);
 
   // Store shape ref
   const setShapeRef = useCallback((id: string, node: Konva.Node | null) => {
@@ -256,7 +213,14 @@ export function DrawingCanvas({
             const newPoints = el.points.map((val, i) => (i % 2 === 0 ? val + newX : val + newY));
             return { ...el, points: newPoints };
           }
+          case 'speechBubble': {
+            const dx = newX - el.x;
+            const dy = newY - el.y;
+            return { ...el, x: newX, y: newY, tailX: el.tailX + dx, tailY: el.tailY + dy };
+          }
           case 'text':
+            return { ...el, x: newX, y: newY };
+          case 'image':
             return { ...el, x: newX, y: newY };
           default:
             return el;
@@ -335,6 +299,23 @@ export function DrawingCanvas({
               rotation: node.rotation(),
             };
           }
+          case 'speechBubble': {
+            const scaleX = node.scaleX();
+            const scaleY = node.scaleY();
+            node.scaleX(1);
+            node.scaleY(1);
+            const bubbleEl = el as DrawingSpeechBubbleElement;
+            return {
+              ...el,
+              x: node.x(),
+              y: node.y(),
+              width: Math.max(5, bubbleEl.width * scaleX),
+              height: Math.max(5, bubbleEl.height * scaleY),
+              tailX: node.x() + bubbleEl.width * scaleX * 0.25,
+              tailY: node.y() + bubbleEl.height * scaleY + Math.max(20, bubbleEl.height * scaleY * 0.4),
+              rotation: node.rotation(),
+            };
+          }
           case 'text': {
             const textEl = el as DrawingTextElement;
             const scaleX = node.scaleX();
@@ -350,6 +331,21 @@ export function DrawingCanvas({
               width: Math.max(20, newWidth),
               scaleX: 1,
               scaleY: scaleY,
+              rotation: node.rotation(),
+            };
+          }
+          case 'image': {
+            const imgEl = el as DrawingImageElement;
+            const scaleX = node.scaleX();
+            const scaleY = node.scaleY();
+            node.scaleX(1);
+            node.scaleY(1);
+            return {
+              ...el,
+              x: node.x(),
+              y: node.y(),
+              width: Math.max(10, imgEl.width * scaleX),
+              height: Math.max(10, imgEl.height * scaleY),
               rotation: node.rotation(),
             };
           }
@@ -374,6 +370,22 @@ export function DrawingCanvas({
     onSelectedIdChange(null);
     onCommit?.();
   }, [selectedId, elements, onElementsChange, onSelectedIdChange, onCommit]);
+
+  // Handle image flip
+  const handleFlipElement = useCallback(
+    (axis: 'x' | 'y') => {
+      if (!selectedId) return;
+      const updatedElements = elements.map((el) => {
+        if (el.id !== selectedId || el.type !== 'image') return el;
+        return axis === 'x'
+          ? { ...el, flipX: !el.flipX }
+          : { ...el, flipY: !el.flipY };
+      });
+      onElementsChange(updatedElements);
+      onCommit?.();
+    },
+    [selectedId, elements, onElementsChange, onCommit]
+  );
 
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.evt.preventDefault();
@@ -449,6 +461,22 @@ export function DrawingCanvas({
       };
       setIsDrawing(true);
       onElementsChange([...elements, newArrow]);
+    } else if (tool === 'speechBubble') {
+      setDragStart(pos);
+      const newBubble: DrawingSpeechBubbleElement = {
+        type: 'speechBubble',
+        id: generateElementId(),
+        x: pos.x,
+        y: pos.y,
+        width: 0,
+        height: 0,
+        tailX: pos.x,
+        tailY: pos.y + 30,
+        color: brushColor,
+        strokeWidth: brushSize,
+      };
+      setIsDrawing(true);
+      onElementsChange([...elements, newBubble]);
     } else if (tool === 'text') {
       // Notify parent to show text input at this position
       onTextPlacement?.(pos);
@@ -509,6 +537,22 @@ export function DrawingCanvas({
         points: [dragStart.x, dragStart.y, pos.x, pos.y],
       };
       onElementsChange([...elements.slice(0, -1), updatedArrow]);
+    } else if (tool === 'speechBubble' && dragStart) {
+      const lastElement = elements[elements.length - 1] as DrawingSpeechBubbleElement;
+      const x = Math.min(dragStart.x, pos.x);
+      const y = Math.min(dragStart.y, pos.y);
+      const w = Math.abs(pos.x - dragStart.x);
+      const h = Math.abs(pos.y - dragStart.y);
+      const updatedBubble: DrawingSpeechBubbleElement = {
+        ...lastElement,
+        x,
+        y,
+        width: w,
+        height: h,
+        tailX: x + w * 0.25,
+        tailY: y + h + Math.max(20, h * 0.4),
+      };
+      onElementsChange([...elements.slice(0, -1), updatedBubble]);
     }
   };
 
@@ -523,7 +567,7 @@ export function DrawingCanvas({
     let shouldRemove = false;
 
     if (lastElement) {
-      if (lastElement.type === 'rectangle') {
+      if (lastElement.type === 'rectangle' || lastElement.type === 'speechBubble') {
         shouldRemove = lastElement.width < 2 && lastElement.height < 2;
       } else if (lastElement.type === 'circle') {
         shouldRemove = lastElement.radiusX < 2 && lastElement.radiusY < 2;
@@ -768,8 +812,10 @@ export function DrawingCanvas({
                     y={element.y}
                     width={element.width}
                     height={element.height}
+                    fill="#ffffff"
                     stroke={element.color}
                     strokeWidth={element.strokeWidth}
+                    cornerRadius={4}
                     rotation={element.rotation || 0}
                     draggable={isDraggable}
                     onClick={(e) => handleShapeClick(e, element)}
@@ -787,6 +833,7 @@ export function DrawingCanvas({
                     y={element.y}
                     radiusX={element.radiusX}
                     radiusY={element.radiusY}
+                    fill="#ffffff"
                     stroke={element.color}
                     strokeWidth={element.strokeWidth}
                     rotation={element.rotation || 0}
@@ -815,6 +862,49 @@ export function DrawingCanvas({
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
                   />
                 );
+              case 'speechBubble':
+                return (
+                  <Group
+                    key={element.id}
+                    ref={(node) => setShapeRef(element.id, node)}
+                    x={element.x}
+                    y={element.y}
+                    rotation={element.rotation || 0}
+                    draggable={isDraggable}
+                    onClick={(e) => handleShapeClick(e, element)}
+                    onTap={(e) => handleShapeClick(e, element)}
+                    onDragEnd={(e) => handleDragEnd(e, element)}
+                    onTransformEnd={(e) => handleTransformEnd(e, element)}
+                  >
+                    <Shape
+                      sceneFunc={(context, shape) => {
+                        const w = element.width;
+                        const h = element.height;
+                        const r = Math.min(w, h) * 0.25;
+                        // Draw rounded rectangle bubble
+                        context.beginPath();
+                        context.moveTo(r, 0);
+                        context.lineTo(w - r, 0);
+                        context.quadraticCurveTo(w, 0, w, r);
+                        context.lineTo(w, h - r);
+                        context.quadraticCurveTo(w, h, w - r, h);
+                        // Tail at bottom-left
+                        context.lineTo(w * 0.35, h);
+                        context.lineTo(element.tailX - element.x, element.tailY - element.y);
+                        context.lineTo(w * 0.15, h);
+                        context.lineTo(r, h);
+                        context.quadraticCurveTo(0, h, 0, h - r);
+                        context.lineTo(0, r);
+                        context.quadraticCurveTo(0, 0, r, 0);
+                        context.closePath();
+                        context.fillStrokeShape(shape);
+                      }}
+                      fill="#ffffff"
+                      stroke={element.color}
+                      strokeWidth={element.strokeWidth}
+                    />
+                  </Group>
+                );
               case 'text':
                 return (
                   <KonvaText
@@ -839,6 +929,38 @@ export function DrawingCanvas({
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
                   />
                 );
+              case 'image': {
+                const overlayImg = overlayImages?.get(element.id);
+                if (!overlayImg) return null;
+                // Use Group wrapper (same pattern as speechBubble) so
+                // the Transformer can reliably attach via the Group ref.
+                return (
+                  <Group
+                    key={element.id}
+                    ref={(node) => setShapeRef(element.id, node)}
+                    x={element.x}
+                    y={element.y}
+                    rotation={element.rotation || 0}
+                    draggable={isDraggable}
+                    onClick={(e) => handleShapeClick(e, element)}
+                    onTap={(e) => handleShapeClick(e, element)}
+                    onDragEnd={(e) => handleDragEnd(e, element)}
+                    onTransformEnd={(e) => handleTransformEnd(e, element)}
+                  >
+                    {/* Invisible hit rect for reliable click detection */}
+                    <Rect width={element.width} height={element.height} fill="transparent" />
+                    <KonvaImage
+                      image={overlayImg}
+                      width={element.width}
+                      height={element.height}
+                      x={element.flipX ? element.width : 0}
+                      y={element.flipY ? element.height : 0}
+                      scaleX={element.flipX ? -1 : 1}
+                      scaleY={element.flipY ? -1 : 1}
+                    />
+                  </Group>
+                );
+              }
               default:
                 return null;
             }
@@ -848,9 +970,6 @@ export function DrawingCanvas({
           <Transformer
             ref={(node) => {
               transformerRef.current = node;
-              if (node && !transformerReady) {
-                setTransformerReady(true);
-              }
             }}
             flipEnabled={false}
             rotateEnabled={true}
@@ -878,30 +997,60 @@ export function DrawingCanvas({
       {/* Custom cursor overlay */}
       {renderCursor()}
 
-      {/* Floating remove button */}
-      {selectedId && isSelectMode && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 20,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 10,
-          }}
-        >
-          <ActionIcon
-            size="lg"
-            color="red"
-            variant="filled"
-            onClick={handleRemoveElement}
+      {/* Floating action buttons for selected element */}
+      {selectedId && isSelectMode && (() => {
+        const selectedElement = elements.find((el) => el.id === selectedId);
+        const isImage = selectedElement?.type === 'image';
+        return (
+          <div
             style={{
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+              position: 'absolute',
+              bottom: 20,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 10,
+              display: 'flex',
+              gap: 6,
             }}
           >
-            <IconTrash size={18} />
-          </ActionIcon>
-        </div>
-      )}
+            {isImage && (
+              <>
+                <Tooltip label="Flip horizontal" withArrow position="top">
+                  <ActionIcon
+                    size="lg"
+                    variant="filled"
+                    color="dark"
+                    onClick={() => handleFlipElement('x')}
+                    style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+                  >
+                    <IconFlipHorizontal size={18} />
+                  </ActionIcon>
+                </Tooltip>
+                <Tooltip label="Flip vertical" withArrow position="top">
+                  <ActionIcon
+                    size="lg"
+                    variant="filled"
+                    color="dark"
+                    onClick={() => handleFlipElement('y')}
+                    style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+                  >
+                    <IconFlipVertical size={18} />
+                  </ActionIcon>
+                </Tooltip>
+              </>
+            )}
+            <ActionIcon
+              size="lg"
+              color="red"
+              variant="filled"
+              onClick={handleRemoveElement}
+              style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+            >
+              <IconTrash size={18} />
+            </ActionIcon>
+          </div>
+        );
+      })()}
     </div>
   );
 }

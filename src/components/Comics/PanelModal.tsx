@@ -10,9 +10,11 @@ import {
   Switch,
   Text,
   TextInput,
+  Tooltip,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
+  IconPencil,
   IconPhotoUp,
   IconPlus,
   IconPhoto,
@@ -23,13 +25,15 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { DrawingEditorModal } from '~/components/Generation/Input/DrawingEditor/DrawingEditorModal';
+import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import {
   COMIC_MODEL_OPTIONS,
@@ -40,6 +44,7 @@ import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { SortableBulkItem } from '~/components/Comics/SortableBulkItem';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
@@ -97,6 +102,13 @@ interface PanelModalProps {
   isCreatePending: boolean;
   isEnhancePending: boolean;
   isBulkPending: boolean;
+  // Optional: pre-populate enhance tab from sketch edit
+  initialEnhanceSource?: {
+    url: string;
+    previewUrl: string;
+    width: number;
+    height: number;
+  } | null;
 }
 
 export function PanelModal({
@@ -134,6 +146,7 @@ export function PanelModal({
   isCreatePending,
   isEnhancePending,
   isBulkPending,
+  initialEnhanceSource,
 }: PanelModalProps) {
   const [panelMode, setPanelMode] = useState<'generate' | 'enhance' | 'bulk' | 'import'>(
     'generate'
@@ -147,6 +160,10 @@ export function PanelModal({
     height: number;
   } | null>(null);
   const [enhanceUploading, setEnhanceUploading] = useState(false);
+  // Persists drawing elements so the user can re-open the editor and continue annotating
+  const [annotationElements, setAnnotationElements] = useState<DrawingElement[]>([]);
+  // The original (clean, un-annotated) source URL for re-opening the editor
+  const [originalSourceUrl, setOriginalSourceUrl] = useState<string | null>(null);
   const {
     uploadToCF: uploadEnhanceToCF,
     resetFiles: resetEnhanceFiles,
@@ -175,11 +192,21 @@ export function PanelModal({
     setEnhanceUploading(false);
     setPanelMode('generate');
     resetEnhanceFiles();
+    setAnnotationElements([]);
+    setOriginalSourceUrl(null);
     setBulkItems([]);
     setBulkEnhance(true);
     resetBulkFiles();
     setImportSelected([]);
   };
+
+  // Auto-switch to enhance tab when initialEnhanceSource is provided (e.g., from sketch edit)
+  useEffect(() => {
+    if (initialEnhanceSource) {
+      setEnhanceSourceImage(initialEnhanceSource);
+      setPanelMode('enhance');
+    }
+  }, [initialEnhanceSource]);
 
   // ── Enhance handlers ──
   const handleEnhanceImageDrop = async (files: File[]) => {
@@ -247,6 +274,54 @@ export function PanelModal({
               previewUrl: img.url,
               width,
               height,
+            });
+          } finally {
+            setEnhanceUploading(false);
+          }
+        },
+      },
+    });
+  };
+
+  // Open sketch/annotation editor on the current enhance source image
+  const handleAnnotateSource = () => {
+    if (!enhanceSourceImage) return;
+
+    // Always draw on the original (clean) source so annotations layer correctly.
+    // On first annotate, save the current url as the original.
+    const cleanUrl = originalSourceUrl ?? enhanceSourceImage.url;
+    if (!originalSourceUrl) setOriginalSourceUrl(enhanceSourceImage.url);
+
+    const sourceUrl = cleanUrl.startsWith('http')
+      ? cleanUrl
+      : getEdgeUrl(cleanUrl, { original: true }) ?? cleanUrl;
+
+    dialogStore.trigger({
+      component: DrawingEditorModal,
+      props: {
+        sourceImage: {
+          url: sourceUrl,
+          width: enhanceSourceImage.width,
+          height: enhanceSourceImage.height,
+        },
+        initialLines: annotationElements,
+        confirmLabel: 'Continue to Enhance',
+        onConfirm: async (blob: Blob, elements: DrawingElement[]) => {
+          setAnnotationElements(elements);
+          setEnhanceUploading(true);
+          try {
+            const file = new File([blob], 'annotated-source.jpg', { type: 'image/jpeg' });
+            const result = await uploadEnhanceToCF(file);
+            setEnhanceSourceImage({
+              url: result.id,
+              previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+              width: enhanceSourceImage.width,
+              height: enhanceSourceImage.height,
+            });
+          } catch (err) {
+            showErrorNotification({
+              error: err as Error,
+              title: 'Failed to save annotation',
             });
           } finally {
             setEnhanceUploading(false);
@@ -440,7 +515,9 @@ export function PanelModal({
       onClose={handlePanelModalClose}
       title={
         regeneratingPanelId
-          ? 'Regenerate Panel'
+          ? panelMode === 'enhance'
+            ? 'Enhance Panel'
+            : 'Regenerate Panel'
           : insertAtPosition != null
           ? 'Insert Panel'
           : 'Create Panel'
@@ -559,6 +636,7 @@ export function PanelModal({
 
           <Select
             label="Generation Model"
+            description="Each model has different strengths, image limits, and supported sizes"
             data={COMIC_MODEL_OPTIONS}
             value={effectiveModel}
             onChange={onModelChange}
@@ -568,20 +646,28 @@ export function PanelModal({
             value={aspectRatio}
             onChange={setAspectRatio}
             aspectRatios={activeAspectRatios}
+            description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
           />
 
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
-            <BuzzTransactionButton
-              buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
-              label={insertAtPosition != null ? 'Insert' : 'Generate'}
-              loading={isSubmitting || isCreatePending}
-              disabled={!prompt.trim()}
-              onPerformTransaction={onGeneratePanel}
-              showPurchaseModal
-            />
+            <Tooltip
+              label={`Generation: ${panelCost} Buzz + Enhance: ${enhanceCost} Buzz`}
+              disabled={!enhancePrompt}
+              withArrow
+              position="top"
+            >
+              <BuzzTransactionButton
+                buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
+                label={insertAtPosition != null ? 'Insert' : 'Generate'}
+                loading={isSubmitting || isCreatePending}
+                disabled={!prompt.trim()}
+                onPerformTransaction={onGeneratePanel}
+                showPurchaseModal
+              />
+            </Tooltip>
           </Group>
         </Stack>
       ) : panelMode === 'enhance' ? (
@@ -655,18 +741,39 @@ export function PanelModal({
                   }
                   alt="Source"
                 />
-                <ActionIcon
-                  className={styles.enhanceImageRemove}
-                  variant="filled"
-                  color="dark"
-                  size="sm"
-                  onClick={() => {
-                    setEnhanceSourceImage(null);
-                    resetEnhanceFiles();
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 6,
+                    right: 6,
+                    display: 'flex',
+                    gap: 4,
                   }}
                 >
-                  <IconX size={14} />
-                </ActionIcon>
+                  <Tooltip label="Annotate image">
+                    <ActionIcon
+                      variant="filled"
+                      color="dark"
+                      size="sm"
+                      onClick={handleAnnotateSource}
+                    >
+                      <IconPencil size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <ActionIcon
+                    variant="filled"
+                    color="dark"
+                    size="sm"
+                    onClick={() => {
+                      setEnhanceSourceImage(null);
+                      resetEnhanceFiles();
+                      setAnnotationElements([]);
+                      setOriginalSourceUrl(null);
+                    }}
+                  >
+                    <IconX size={14} />
+                  </ActionIcon>
+                </div>
               </div>
             </div>
           )}
@@ -717,43 +824,36 @@ export function PanelModal({
                   refImageBudget={refImageBudget}
                 />
               )}
-              <Select
-                label="Generation Model"
-                data={COMIC_MODEL_OPTIONS}
-                value={effectiveModel}
-                onChange={onModelChange}
-                size="sm"
-              />
-              <AspectRatioSelector
-                value={aspectRatio}
-                onChange={setAspectRatio}
-                aspectRatios={activeAspectRatios}
-              />
             </>
           )}
+
+          <Select
+            label="Generation Model"
+            description="Each model has different strengths, image limits, and supported sizes"
+            data={COMIC_MODEL_OPTIONS}
+            value={effectiveModel}
+            onChange={onModelChange}
+            size="sm"
+          />
+          <AspectRatioSelector
+            value={aspectRatio}
+            onChange={setAspectRatio}
+            aspectRatios={activeAspectRatios}
+            description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
+          />
 
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
-            {!prompt.trim() ? (
-              <Button
-                onClick={handleEnhanceSubmit}
-                loading={isSubmitting || isEnhancePending}
-                disabled={!enhanceSourceImage}
-              >
-                {regeneratingPanelId ? 'Regenerate' : 'Add Panel'}
-              </Button>
-            ) : (
-              <BuzzTransactionButton
-                buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
-                label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
-                loading={isSubmitting || isEnhancePending}
-                disabled={!enhanceSourceImage}
-                onPerformTransaction={handleEnhanceSubmit}
-                showPurchaseModal
-              />
-            )}
+            <BuzzTransactionButton
+              buzzAmount={panelCost + (prompt.trim() && enhancePrompt ? enhanceCost : 0)}
+              label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
+              loading={isSubmitting || isEnhancePending}
+              disabled={!enhanceSourceImage}
+              onPerformTransaction={handleEnhanceSubmit}
+              showPurchaseModal
+            />
           </Group>
         </Stack>
       ) : panelMode === 'bulk' ? (
@@ -807,6 +907,7 @@ export function PanelModal({
 
           <Select
             label="Generation Model"
+            description="Each model has different strengths, image limits, and supported sizes"
             data={COMIC_MODEL_OPTIONS}
             value={effectiveModel}
             onChange={onModelChange}

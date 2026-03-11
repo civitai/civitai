@@ -190,7 +190,7 @@ export type ComicReferenceStatus = "Pending" | "Ready" | "Failed";
 
 export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
 
-export type ComicChapterStatus = "Draft" | "Published";
+export type ComicChapterStatus = "Draft" | "Published" | "Scheduled";
 
 export type ComicReferenceType = "Character" | "Location" | "Item" | "Style";
 

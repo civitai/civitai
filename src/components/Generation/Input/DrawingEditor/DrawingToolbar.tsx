@@ -25,6 +25,8 @@ import {
   IconKeyboard,
   IconDotsVertical,
   IconCategory,
+  IconMessageCircle,
+  IconPhotoPlus,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { DrawingToolbarProps, DrawingTool } from './drawing.types';
@@ -44,10 +46,11 @@ function ShapesPopover({
     { tool: 'rectangle', icon: <IconSquare size={18} />, label: 'Rectangle' },
     { tool: 'circle', icon: <IconCircle size={18} />, label: 'Circle' },
     { tool: 'arrow', icon: <IconArrowNarrowRight size={18} />, label: 'Arrow' },
+    { tool: 'speechBubble', icon: <IconMessageCircle size={18} />, label: 'Speech Bubble' },
     { tool: 'text', icon: <IconTypography size={18} />, label: 'Text' },
   ];
 
-  const isShapeActive = ['rectangle', 'circle', 'arrow', 'text'].includes(currentTool);
+  const isShapeActive = ['rectangle', 'circle', 'arrow', 'speechBubble', 'text'].includes(currentTool);
   const activeShape = shapeTools.find((s) => s.tool === currentTool);
 
   return (
@@ -122,6 +125,7 @@ export function DrawingToolbar({
   onUndo,
   canUndo,
   onDownload,
+  onAddImage,
   isMobile = false,
 }: DrawingToolbarProps) {
   // Show colors for all tools except eraser and select
@@ -288,6 +292,13 @@ export function DrawingToolbar({
 
           {/* Actions - Undo visible, rest in overflow menu */}
           <div className={styles.actions}>
+            {onAddImage && (
+              <Tooltip label="Add Image" withArrow>
+                <ActionIcon variant="subtle" size="lg" radius="md" onClick={onAddImage}>
+                  <IconPhotoPlus size={20} />
+                </ActionIcon>
+              </Tooltip>
+            )}
             <Tooltip label="Undo" withArrow>
               <ActionIcon
                 variant="subtle"
@@ -355,6 +366,12 @@ export function DrawingToolbar({
             label="Arrow"
             active={tool === 'arrow'}
             onClick={() => onToolChange('arrow')}
+          />
+          <ToolButton
+            icon={<IconMessageCircle size={18} />}
+            label="Speech Bubble"
+            active={tool === 'speechBubble'}
+            onClick={() => onToolChange('speechBubble')}
           />
           <ToolButton
             icon={<IconTypography size={18} />}
@@ -494,6 +511,13 @@ export function DrawingToolbar({
 
         {/* Actions */}
         <div className={styles.actions}>
+          {onAddImage && (
+            <Tooltip label="Add Image Overlay" withArrow>
+              <ActionIcon variant="subtle" size="lg" radius="md" onClick={onAddImage}>
+                <IconPhotoPlus size={20} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Tooltip label="Undo (Ctrl+Z)" withArrow>
             <ActionIcon variant="subtle" size="lg" radius="md" onClick={onUndo} disabled={!canUndo}>
               <IconArrowBackUp size={20} />
