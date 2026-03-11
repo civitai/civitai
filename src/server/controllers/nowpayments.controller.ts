@@ -6,7 +6,6 @@ import type {
   GetMinAmountInput,
 } from '~/server/schema/nowpayments.schema';
 import {
-  bustDepositCache,
   getDepositAddress,
   getBuzzConversionRate,
   getDepositHistory,
@@ -50,11 +49,3 @@ export const getBuzzConversionRateHandler = async ({
   return getBuzzConversionRate(input.fiat);
 };
 
-export const bustDepositCacheHandler = async ({
-  ctx,
-}: {
-  ctx: DeepNonNullable<Context>;
-}) => {
-  await bustDepositCache(ctx.user.id);
-  return { success: true };
-};

@@ -18,11 +18,11 @@ const {
   return {
     mockDbRead: {
       cryptoWallet: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-      cryptoDepositFee: { findMany: vi.fn().mockResolvedValue([]) },
+      cryptoDeposit: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
     },
     mockDbWrite: {
       cryptoWallet: mockCryptoWallet,
-      cryptoDepositFee: { upsert: vi.fn().mockResolvedValue({}) },
+      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}) },
     },
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
@@ -84,7 +84,6 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: {
     CACHES: {
       SUPPORTED_CRYPTO_CURRENCIES: 'packed:caches:supported-crypto-currencies',
-      CRYPTO_PAYMENT_STATUS: 'packed:caches:crypto-payment-status',
     },
   },
 }));
@@ -118,6 +117,7 @@ function makeWebhookEvent(
     outcome_currency: 'usdcbase',
     price_amount: 10,
     price_currency: 'usd',
+    pay_address: '0xTestAddr',
     ...overrides,
   };
 }
@@ -127,13 +127,15 @@ function makeWebhookEvent(
 describe('processDeposit', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: wallet lookup returns a chain
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
   });
 
   it('parses userId from order_id and sends signal', async () => {
     const event = makeWebhookEvent({ payment_status: 'confirming' });
     const result = await processDeposit(12345, 'confirming', event);
 
-    expect(result).toEqual({ userId: 42, buzzAmount: 0 });
+    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
     expect(mockSignalClient.send).toHaveBeenCalledWith({
       userId: 42,
       target: 'crypto-deposit:update',
@@ -167,7 +169,7 @@ describe('processDeposit', () => {
     const event = makeWebhookEvent({ payment_status: 'confirmed', outcome_amount: 5.0 });
     const result = await processDeposit(12345, 'confirmed', event);
 
-    expect(result).toEqual({ userId: 42, buzzAmount: 0 });
+    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 
@@ -198,7 +200,7 @@ describe('processDeposit', () => {
     const event = makeWebhookEvent({ outcome_amount: 0 });
     const result = await processDeposit(12345, 'finished', event);
 
-    expect(result).toEqual({ userId: 42, buzzAmount: 0 });
+    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 
@@ -206,7 +208,7 @@ describe('processDeposit', () => {
     const event = makeWebhookEvent({ outcome_amount: null });
     const result = await processDeposit(12345, 'finished', event);
 
-    expect(result).toEqual({ userId: 42, buzzAmount: 0 });
+    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 
@@ -242,7 +244,27 @@ describe('processDeposit', () => {
     );
   });
 
-  it('stores fee data from webhook on finished status', async () => {
+  it('upserts CryptoDeposit record on every webhook status', async () => {
+    const event = makeWebhookEvent({ payment_status: 'confirming' });
+    await processDeposit(12345, 'confirming', event);
+
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith({
+      where: { paymentId: BigInt(12345) },
+      create: expect.objectContaining({
+        paymentId: BigInt(12345),
+        userId: 42,
+        status: 'confirming',
+        payCurrency: 'btc',
+        chain: 'evm',
+      }),
+      update: expect.objectContaining({
+        status: 'confirming',
+        payCurrency: 'btc',
+      }),
+    });
+  });
+
+  it('stores fee data in CryptoDeposit on finished status', async () => {
     const event = makeWebhookEvent({
       outcome_amount: 9.5,
       actually_paid_at_fiat: 10.0,
@@ -255,41 +277,28 @@ describe('processDeposit', () => {
     });
     await processDeposit(12345, 'finished', event);
 
-    expect(mockDbWrite.cryptoDepositFee.upsert).toHaveBeenCalledWith({
-      where: { paymentId: 12345 },
-      create: {
-        paymentId: 12345,
-        depositFee: 0.25,
-        serviceFee: 0.15,
-        feeCurrency: 'usdcbase',
-        paidFiat: 10.0,
-      },
-      update: {
-        depositFee: 0.25,
-        serviceFee: 0.15,
-        feeCurrency: 'usdcbase',
-        paidFiat: 10.0,
-      },
-    });
-  });
-
-  it('does not store fee data on non-finished status', async () => {
-    const event = makeWebhookEvent({ payment_status: 'confirming' });
-    await processDeposit(12345, 'confirming', event);
-
-    expect(mockDbWrite.cryptoDepositFee.upsert).not.toHaveBeenCalled();
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          depositFee: 0.25,
+          serviceFee: 0.15,
+          feeCurrency: 'usdcbase',
+          paidFiat: 10.0,
+        }),
+      })
+    );
   });
 
   it('handles missing fee object gracefully', async () => {
     const event = makeWebhookEvent({ outcome_amount: 5.0, fee: null });
     await processDeposit(12345, 'finished', event);
 
-    expect(mockDbWrite.cryptoDepositFee.upsert).toHaveBeenCalledWith(
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
-          depositFee: 0,
-          serviceFee: 0,
-          feeCurrency: 'usdcbase',
+          depositFee: null,
+          serviceFee: null,
+          feeCurrency: null,
         }),
       })
     );
@@ -390,301 +399,77 @@ describe('getDepositHistory', () => {
     vi.clearAllMocks();
   });
 
-  it('returns empty when no wallet exists', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([]);
+  it('returns empty when no deposits exist', async () => {
+    mockDbRead.cryptoDeposit.findMany.mockResolvedValue([]);
+    mockDbRead.cryptoDeposit.count.mockResolvedValue(0);
 
     const result = await getDepositHistory(42);
     expect(result).toEqual({ deposits: [], total: 0 });
   });
 
-  it('returns empty when wallet has no smartAccount', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: null,
-    }]);
+  it('returns deposits ordered by createdAt desc with pagination', async () => {
+    const now = new Date();
+    const yesterday = new Date(Date.now() - 86400000);
 
-    const result = await getDepositHistory(42);
-    expect(result).toEqual({ deposits: [], total: 0 });
-  });
-
-  it('includes parent payment when it has been paid', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
-      payment_id: 100,
-      payment_status: 'finished',
-      actually_paid: 1,
-      pay_amount: 1,
-      pay_currency: 'usdcbase',
-      outcome_amount: 0.99,
-      created_at: '2025-01-01T00:00:00Z',
-      payment_extra_ids: undefined, // No child payments yet
-    });
-
-    const result = await getDepositHistory(42, 1, 3);
-
-    expect(result.total).toBe(1);
-    expect(result.deposits).toHaveLength(1);
-    expect(result.deposits[0]?.paymentId).toBe(100);
-    expect(result.deposits[0]?.buzzCredited).toBe(990); // 0.99 * 1000 floored
-  });
-
-  it('excludes parent payment when it has not been paid', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
-      payment_id: 100,
-      payment_status: 'waiting',
-      actually_paid: 0,
-      pay_amount: 1,
-      pay_currency: 'usdcbase',
-      outcome_amount: 0,
-      created_at: '2025-01-01T00:00:00Z',
-      payment_extra_ids: undefined,
-    });
-
-    const result = await getDepositHistory(42, 1, 3);
-    expect(result.total).toBe(0);
-    expect(result.deposits).toHaveLength(0);
-  });
-
-  it('includes both parent and child payments, newest-first', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: string | number) => {
-      const numId = typeof id === 'string' ? Number(id) : id;
-      if (numId === 100) {
-        // Parent payment (also paid)
-        return {
-          payment_id: 100,
-          payment_extra_ids: [101, 102, 103, 104, 105],
-          payment_status: 'finished',
-          actually_paid: 1,
-          pay_amount: 1,
-          pay_currency: 'usdcbase',
-          outcome_amount: 0.99,
-          created_at: '2025-01-01T00:00:00Z',
-        };
-      }
-      // Child payments
-      return {
-        payment_id: numId,
-        payment_status: 'finished',
-        actually_paid: 10,
-        pay_amount: 10,
-        pay_currency: 'btc',
-        outcome_amount: 9.5,
-        created_at: `2025-01-0${numId - 100}T00:00:00Z`,
-      };
-    });
-
-    // 5 children + 1 parent = 6 total, page 1 perPage 3 => IDs 105, 104, 103
-    const result = await getDepositHistory(42, 1, 3);
-
-    expect(result.total).toBe(6);
-    expect(result.deposits).toHaveLength(3);
-    expect(result.deposits[0]?.paymentId).toBe(105);
-    expect(result.deposits[1]?.paymentId).toBe(104);
-    expect(result.deposits[2]?.paymentId).toBe(103);
-  });
-
-  it('fetches parent payment via cache (dedup handled by Redis in production)', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
-      payment_id: 100,
-      payment_status: 'finished',
-      actually_paid: 5,
-      pay_amount: 5,
-      pay_currency: 'usdcbase',
-      outcome_amount: 4.95,
-      created_at: '2025-01-01T00:00:00Z',
-      payment_extra_ids: undefined,
-    });
-
-    const result = await getDepositHistory(42, 1, 10);
-
-    // Parent payment appears as a deposit when it has been paid
-    expect(result.deposits).toHaveLength(1);
-    expect(result.deposits[0]?.paymentId).toBe(100);
-  });
-
-  it('calculates buzzCredited only for finished deposits', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: string | number) => {
-      const numId = typeof id === 'string' ? Number(id) : id;
-      if (numId === 100) {
-        return {
-          payment_id: 100,
-          payment_extra_ids: [101, 102],
-          payment_status: 'finished',
-          actually_paid: 1,
-          pay_amount: 1,
-          pay_currency: 'usdcbase',
-          outcome_amount: 0.99,
-          created_at: '2025-01-00T00:00:00Z',
-        };
-      }
-      if (numId === 101) {
-        return {
-          payment_id: 101,
-          payment_status: 'finished',
-          outcome_amount: 5.0,
-          actually_paid: 5,
-          pay_amount: 5,
-          pay_currency: 'usdcbase',
-          created_at: '2025-01-02T00:00:00Z',
-        };
-      }
-      return {
-        payment_id: 102,
-        payment_status: 'confirming',
-        outcome_amount: 3.0,
-        actually_paid: 3,
-        pay_amount: 3,
-        pay_currency: 'usdcbase',
-        created_at: '2025-01-01T00:00:00Z',
-      };
-    });
-
-    const result = await getDepositHistory(42, 1, 10);
-
-    // finished: 5.0 * 1000 = 5000 buzz
-    const finished = result.deposits.find((d) => d?.paymentId === 101);
-    expect(finished?.buzzCredited).toBe(5000);
-
-    // confirming: null (not yet credited)
-    const confirming = result.deposits.find((d) => d?.paymentId === 102);
-    expect(confirming?.buzzCredited).toBeNull();
-  });
-
-  it('includes fee data from CryptoDepositFee table', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
-      payment_id: 100,
-      payment_status: 'finished',
-      actually_paid: 10,
-      pay_amount: 10,
-      pay_currency: 'usdcbase',
-      outcome_amount: 9.5,
-      created_at: '2025-01-01T00:00:00Z',
-      payment_extra_ids: undefined,
-    });
-
-    mockDbRead.cryptoDepositFee.findMany.mockResolvedValue([
+    mockDbRead.cryptoDeposit.findMany.mockResolvedValue([
       {
-        paymentId: BigInt(100),
+        paymentId: BigInt(102),
+        userId: 42,
+        status: 'finished',
+        payCurrency: 'usdcbase',
+        payAmount: 10,
+        outcomeAmount: 9.5,
+        buzzCredited: 9500,
         depositFee: 0.25,
         serviceFee: 0.15,
         feeCurrency: 'usdcbase',
         paidFiat: 10.0,
-        createdAt: new Date(),
+        chain: 'evm',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        paymentId: BigInt(101),
+        userId: 42,
+        status: 'confirming',
+        payCurrency: 'btc',
+        payAmount: 0.0005,
+        outcomeAmount: null,
+        buzzCredited: null,
+        depositFee: null,
+        serviceFee: null,
+        feeCurrency: null,
+        paidFiat: null,
+        chain: 'btc',
+        createdAt: yesterday,
+        updatedAt: yesterday,
       },
     ]);
+    mockDbRead.cryptoDeposit.count.mockResolvedValue(2);
 
     const result = await getDepositHistory(42, 1, 3);
 
-    expect(result.deposits[0]).toMatchObject({
-      paymentId: 100,
-      depositFee: 0.25,
-      serviceFee: 0.15,
-      feeCurrency: 'usdcbase',
-      paidFiat: 10.0,
-    });
-  });
-
-  it('returns null fees when no fee record exists', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({
-      payment_id: 100,
-      payment_status: 'finished',
-      actually_paid: 5,
-      pay_amount: 5,
-      pay_currency: 'usdcbase',
-      outcome_amount: 4.95,
-      created_at: '2025-01-01T00:00:00Z',
-      payment_extra_ids: undefined,
-    });
-
-    mockDbRead.cryptoDepositFee.findMany.mockResolvedValue([]);
-
-    const result = await getDepositHistory(42, 1, 3);
-
-    expect(result.deposits[0]).toMatchObject({
-      depositFee: null,
-      serviceFee: null,
-      feeCurrency: null,
-      paidFiat: null,
-    });
-  });
-
-  it('filters out null child payments', async () => {
-    mockDbRead.cryptoWallet.findMany.mockResolvedValue([{
-      userId: 42,
-      wallet: '0xAddr',
-      smartAccount: '100',
-    }]);
-
-    mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: string | number) => {
-      const numId = typeof id === 'string' ? Number(id) : id;
-      if (numId === 100) {
-        return {
-          payment_id: 100,
-          payment_extra_ids: [101, 102],
-          payment_status: 'waiting',
-          actually_paid: 0,
-          pay_amount: 1,
-          pay_currency: 'usdcbase',
-          outcome_amount: 0,
-          created_at: '2025-01-00T00:00:00Z',
-        };
-      }
-      if (numId === 101) return null; // API failure for this child
-      return {
-        payment_id: 102,
-        payment_status: 'finished',
-        outcome_amount: 2.0,
-        actually_paid: 2,
-        pay_amount: 2,
-        pay_currency: 'eth',
-        created_at: '2025-01-01T00:00:00Z',
-      };
-    });
-
-    const result = await getDepositHistory(42, 1, 10);
-    expect(result.deposits).toHaveLength(1);
+    expect(result.total).toBe(2);
+    expect(result.deposits).toHaveLength(2);
     expect(result.deposits[0]?.paymentId).toBe(102);
+    expect(result.deposits[0]?.buzzCredited).toBe(9500);
+    expect(result.deposits[0]?.chain).toBe('evm');
+    expect(result.deposits[1]?.paymentId).toBe(101);
+    expect(result.deposits[1]?.buzzCredited).toBeNull();
+    expect(result.deposits[1]?.chain).toBe('btc');
+  });
+
+  it('clamps page and perPage to safe ranges', async () => {
+    mockDbRead.cryptoDeposit.findMany.mockResolvedValue([]);
+    mockDbRead.cryptoDeposit.count.mockResolvedValue(0);
+
+    await getDepositHistory(42, -1, 100);
+
+    expect(mockDbRead.cryptoDeposit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 0, // page clamped to 1 → skip 0
+        take: 25, // perPage clamped to MAX_PER_PAGE
+      })
+    );
   });
 });

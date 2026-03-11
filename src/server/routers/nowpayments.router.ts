@@ -1,5 +1,4 @@
 import {
-  bustDepositCacheHandler,
   getDepositAddressHandler,
   getBuzzConversionRateHandler,
   getDepositHistoryHandler,
@@ -14,7 +13,7 @@ import {
 } from '~/server/schema/nowpayments.schema';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
-import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { protectedProcedure, router } from '~/server/trpc';
 
 export const nowPaymentsRouter = router({
   // NOTE: This is a query with write side effects (creates address on first call).
@@ -26,7 +25,6 @@ export const nowPaymentsRouter = router({
   getDepositHistory: protectedProcedure
     .input(depositHistoryInputSchema)
     .query(getDepositHistoryHandler),
-  bustDepositCache: moderatorProcedure.mutation(bustDepositCacheHandler),
   getSupportedCurrencies: protectedProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(getSupportedCurrenciesHandler),

@@ -43,7 +43,7 @@ import { trpc } from '~/utils/trpc';
 
 const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeSVG), {
   ssr: false,
-  loading: () => <Skeleton height={150} width={150} radius="md" />,
+  loading: () => <div style={{ height: 150, width: 150 }} />,
 });
 
 export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {

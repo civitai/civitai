@@ -327,13 +327,22 @@ export interface CryptoWallet {
   payCurrency: string;
 }
 
-export interface CryptoDepositFee {
+export interface CryptoDeposit {
   paymentId: bigint;
-  depositFee: number;
-  serviceFee: number;
-  feeCurrency: string;
+  userId: number;
+  user?: User;
+  status: string;
+  payCurrency: string;
+  payAmount: number | null;
+  outcomeAmount: number | null;
+  buzzCredited: number | null;
+  depositFee: number | null;
+  serviceFee: number | null;
+  feeCurrency: string | null;
   paidFiat: number | null;
+  chain: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface CryptoTransaction {
@@ -479,6 +488,7 @@ export interface User {
   moderationRules?: ModerationRule[];
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
+  CryptoDeposit?: CryptoDeposit[];
   CryptoTransaction?: CryptoTransaction[];
   userRestrictions?: UserRestriction[];
   challengesCreated?: Challenge[];

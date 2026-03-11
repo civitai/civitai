@@ -858,8 +858,6 @@ export const REDIS_KEYS = {
     SUPPORTED_CRYPTO_CURRENCIES: 'packed:caches:supported-crypto-currencies',
     CRYPTO_CONVERSION_RATE: 'packed:caches:crypto-conversion-rate',
     CRYPTO_MIN_AMOUNT: 'packed:caches:crypto-min-amount',
-    CRYPTO_DEPOSIT_HISTORY: 'packed:caches:crypto-deposit-history',
-    CRYPTO_PAYMENT_STATUS: 'packed:caches:crypto-payment-status',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

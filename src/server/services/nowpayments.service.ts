@@ -13,16 +13,16 @@ import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { getChainConfig, getChainForNetwork, outcomeAmountToBuzz } from '~/server/common/chain-config';
 
+/** IPN callback URL — configurable for dev (webhook.site) vs prod */
+const getIpnCallbackUrl = () =>
+  env.NOWPAYMENTS_IPN_URL ?? `${env.NEXTAUTH_URL}/api/webhooks/nowpayments`;
+
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
 
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
-
-/** Helper to build a typed Redis cache key for crypto payment status */
-const paymentCacheKey = (paymentId: number | string): RedisKeyTemplateCache =>
-  `${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${paymentId}` as RedisKeyTemplateCache;
 
 export const getDepositAddress = async (userId: number, chain: string = 'evm') => {
   const config = getChainConfig(chain);
@@ -60,7 +60,7 @@ export const getDepositAddress = async (userId: number, chain: string = 'evm') =
         price_currency: 'usd',
         pay_currency: config.targetCurrency,
         order_id: `user:${userId}`,
-        ipn_callback_url: `${env.NEXTAUTH_URL}/api/webhooks/nowpayments`,
+        ipn_callback_url: getIpnCallbackUrl(),
       });
 
       if (!payment) {
@@ -118,6 +118,82 @@ export const processDeposit = async (
     throw new Error('Invalid userId in order_id');
   }
 
+  // Determine chain from pay_address → wallet → chain lookup
+  let chain: string | null = null;
+  if (event.pay_address) {
+    const wallet = await dbRead.cryptoWallet.findUnique({
+      where: { wallet: event.pay_address },
+    });
+    chain = wallet?.chain ?? null;
+  }
+
+  // Compute buzz amount for finished deposits
+  let buzzAmount = 0;
+  let transactionId: string | undefined;
+
+  if (webhookStatus === 'finished') {
+    const outcomeAmount = event.outcome_amount;
+    if (!outcomeAmount || outcomeAmount <= 0) {
+      await log({
+        message: 'Finished deposit with no outcome_amount',
+        paymentId,
+        event,
+      });
+    } else {
+      buzzAmount = outcomeAmountToBuzz(outcomeAmount);
+
+      transactionId = await grantBuzzPurchase({
+        userId,
+        amount: buzzAmount,
+        externalTransactionId: `np-deposit-${paymentId}`,
+        provider: 'nowpayments',
+        paymentId: event.payment_id,
+      });
+
+      if (!transactionId) {
+        await log({
+          message: 'Failed to create buzz transaction for deposit',
+          paymentId,
+          userId,
+          buzzAmount,
+        });
+      }
+    }
+  }
+
+  // Upsert the CryptoDeposit record on every webhook status
+  if (event.payment_id) {
+    try {
+      const depositData = {
+        status: webhookStatus,
+        payCurrency: event.pay_currency ?? 'unknown',
+        payAmount: event.actually_paid ?? null,
+        outcomeAmount: event.outcome_amount ?? null,
+        buzzCredited: buzzAmount > 0 ? buzzAmount : null,
+        depositFee: event.fee ? parseFloat(event.fee.depositFee) : null,
+        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : null,
+        feeCurrency: event.fee?.currency ?? null,
+        paidFiat: event.actually_paid_at_fiat ?? null,
+        chain,
+      };
+      await dbWrite.cryptoDeposit.upsert({
+        where: { paymentId: BigInt(event.payment_id) },
+        create: {
+          paymentId: BigInt(event.payment_id),
+          userId,
+          ...depositData,
+        },
+        update: depositData,
+      });
+    } catch (e) {
+      await log({
+        message: 'Failed to upsert CryptoDeposit record',
+        paymentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   // Send signal for ALL statuses (confirming, confirmed, finished)
   await signalClient.send({
     userId,
@@ -131,75 +207,7 @@ export const processDeposit = async (
     },
   });
 
-  // Bust cached payment data so next fetch gets fresh state
-  await redis.del(paymentCacheKey(event.payment_id!));
-  if (event.parent_payment_id) {
-    await redis.del(paymentCacheKey(event.parent_payment_id));
-  }
-
-  // Only grant buzz on finished status
-  if (webhookStatus === 'finished') {
-    const outcomeAmount = event.outcome_amount;
-    if (!outcomeAmount || outcomeAmount <= 0) {
-      await log({
-        message: 'Finished deposit with no outcome_amount',
-        paymentId,
-        event,
-      });
-      return { userId, buzzAmount: 0 };
-    }
-
-    const buzzAmount = outcomeAmountToBuzz(outcomeAmount);
-
-    const transactionId = await grantBuzzPurchase({
-      userId,
-      amount: buzzAmount,
-      externalTransactionId: `np-deposit-${paymentId}`,
-      provider: 'nowpayments',
-      paymentId: event.payment_id,
-    });
-
-    if (!transactionId) {
-      await log({
-        message: 'Failed to create buzz transaction for deposit',
-        paymentId,
-        userId,
-        buzzAmount,
-      });
-    }
-
-    // Store webhook-only fee data (not available via GET endpoint)
-    if (event.payment_id) {
-      try {
-        await dbWrite.cryptoDepositFee.upsert({
-          where: { paymentId: event.payment_id },
-          create: {
-            paymentId: event.payment_id,
-            depositFee: event.fee ? parseFloat(event.fee.depositFee) : 0,
-            serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : 0,
-            feeCurrency: event.fee?.currency ?? 'usdcbase',
-            paidFiat: event.actually_paid_at_fiat ?? null,
-          },
-          update: {
-            depositFee: event.fee ? parseFloat(event.fee.depositFee) : 0,
-            serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : 0,
-            feeCurrency: event.fee?.currency ?? 'usdcbase',
-            paidFiat: event.actually_paid_at_fiat ?? null,
-          },
-        });
-      } catch (e) {
-        await log({
-          message: 'Failed to store deposit fee data',
-          paymentId,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
-    }
-
-    return { userId, buzzAmount, transactionId };
-  }
-
-  return { userId, buzzAmount: 0 };
+  return { userId, buzzAmount, transactionId };
 };
 
 /**
@@ -240,15 +248,6 @@ export const reprocessDeposit = async (paymentId: number) => {
   return processDeposit(paymentId, 'finished', event);
 };
 
-// Cached wrapper for individual payment status lookups
-const getCachedPaymentStatus = async (paymentId: number | string) => {
-  return fetchThroughCache(
-    paymentCacheKey(paymentId),
-    async () => nowpaymentsCaller.getPaymentStatus(paymentId),
-    { ttl: CacheTTL.hour }
-  );
-};
-
 /** Hard cap on perPage to prevent abuse */
 const MAX_PER_PAGE = 25;
 
@@ -257,116 +256,36 @@ export const getDepositHistory = async (
   page: number = 1,
   perPage: number = 3
 ) => {
-  // Clamp inputs to safe ranges
   page = Math.max(1, page);
   perPage = Math.min(Math.max(1, perPage), MAX_PER_PAGE);
 
-  const wallets = await dbRead.cryptoWallet.findMany({ where: { userId } });
-  if (wallets.length === 0) {
-    return { deposits: [], total: 0 };
-  }
-
-  // Fetch all parent payments in PARALLEL, with per-chain error isolation
-  const parentResults = await Promise.all(
-    wallets
-      .filter((w) => w.smartAccount)
-      .map(async (wallet) => {
-        try {
-          return await getCachedPaymentStatus(wallet.smartAccount!);
-        } catch {
-          return null; // Skip this chain if API fails
-        }
-      })
-  );
-
-  // Aggregate all payment IDs across all chains
-  const allIds: number[] = [];
-  for (const parentPayment of parentResults) {
-    if (!parentPayment) continue;
-
-    const extraIds: number[] = parentPayment.payment_extra_ids ?? [];
-    allIds.push(...extraIds);
-
-    const parentId =
-      typeof parentPayment.payment_id === 'string'
-        ? parseInt(parentPayment.payment_id, 10)
-        : parentPayment.payment_id;
-
-    // Include the parent payment if it has actually been paid
-    if (parentPayment.actually_paid && Number(parentPayment.actually_paid) > 0) {
-      allIds.push(parentId);
-    }
-  }
-
-  // Sort newest first (highest IDs are newest)
-  const sortedIds = allIds.sort((a, b) => b - a);
-  const total = sortedIds.length;
-
-  // Paginate
-  const start = (page - 1) * perPage;
-  const pageIds = sortedIds.slice(start, start + perPage);
-
-  // Fetch fee data for page IDs in one query (non-critical, degrade gracefully)
-  let feeMap = new Map<number, { depositFee: number; serviceFee: number; feeCurrency: string | null; paidFiat: number | null }>();
-  try {
-    const feeRecords = await dbRead.cryptoDepositFee.findMany({
-      where: { paymentId: { in: pageIds.map(BigInt) } },
-    });
-    feeMap = new Map(feeRecords.map((f) => [Number(f.paymentId), f]));
-  } catch (e) {
-    // Fee data is supplemental — continue without it
-  }
-
-  // Fetch payment details (all cached individually)
-  const deposits = (await Promise.all(
-    pageIds.map(async (paymentId) => {
-      const payment = await getCachedPaymentStatus(paymentId);
-      if (!payment) return null;
-
-      const outcomeAmount = payment.outcome_amount ?? 0;
-      const buzzCredited =
-        payment.payment_status === 'finished' ? outcomeAmountToBuzz(outcomeAmount) : null;
-      const fee = feeMap.get(paymentId);
-
-      return {
-        paymentId: payment.payment_id,
-        date: payment.created_at,
-        amountSent: payment.actually_paid ?? payment.pay_amount,
-        currencySent: payment.pay_currency,
-        outcomeAmount,
-        buzzCredited,
-        status: payment.payment_status,
-        depositFee: fee?.depositFee ?? null,
-        serviceFee: fee?.serviceFee ?? null,
-        feeCurrency: fee?.feeCurrency ?? null,
-        paidFiat: fee?.paidFiat ?? null,
-      };
-    })
-  ));
+  const [deposits, total] = await Promise.all([
+    dbRead.cryptoDeposit.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * perPage,
+      take: perPage,
+    }),
+    dbRead.cryptoDeposit.count({ where: { userId } }),
+  ]);
 
   return {
-    deposits: deposits.filter(Boolean),
+    deposits: deposits.map((d) => ({
+      paymentId: Number(d.paymentId),
+      date: d.createdAt.toISOString(),
+      amountSent: d.payAmount,
+      currencySent: d.payCurrency,
+      outcomeAmount: d.outcomeAmount ?? 0,
+      buzzCredited: d.buzzCredited,
+      status: d.status,
+      depositFee: d.depositFee,
+      serviceFee: d.serviceFee,
+      feeCurrency: d.feeCurrency,
+      paidFiat: d.paidFiat,
+      chain: d.chain,
+    })),
     total,
   };
-};
-
-export const bustDepositCache = async (userId: number) => {
-  const wallets = await dbRead.cryptoWallet.findMany({ where: { userId } });
-  const walletsWithAccount = wallets.filter((w) => w.smartAccount);
-
-  // Process sequentially to avoid hammering NowPayments API with parallel calls
-  for (const wallet of walletsWithAccount) {
-    // Bust the parent payment cache (which contains payment_extra_ids)
-    await redis.del(paymentCacheKey(wallet.smartAccount!));
-
-    // Fetch fresh state and bust all known child payment caches
-    const parentPayment = await nowpaymentsCaller.getPaymentStatus(wallet.smartAccount!);
-    if (parentPayment?.payment_extra_ids) {
-      await Promise.all(
-        parentPayment.payment_extra_ids.map((id) => redis.del(paymentCacheKey(id)))
-      );
-    }
-  }
 };
 
 export type SupportedCurrencyNetwork = {
