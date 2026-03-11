@@ -20,6 +20,13 @@ import {
 } from './common';
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/** Maximum output resolution (longest side) for hires fix upscaling */
+const MAX_UPSCALE_RESOLUTION = 4096;
+
+// =============================================================================
 // Aspect Ratios
 // =============================================================================
 
@@ -138,4 +145,37 @@ export const stableDiffusionGraph = new DataGraph<
       };
     },
     ['workflow', 'images']
+  )
+  // Computed upscale dimensions for hires-fix workflows.
+  // Derived from the source image (img2img) or aspect ratio (txt2img) dimensions,
+  // scaled 1.5× clamped so the longest side doesn't exceed MAX_UPSCALE_RESOLUTION.
+  .computed(
+    'upscaleWidth',
+    (ctx) => {
+      if (!ctx.workflow.includes('hires')) return undefined;
+      const w = ctx.images?.[0]?.width ?? ctx.aspectRatio?.width;
+      const h = ctx.images?.[0]?.height ?? ctx.aspectRatio?.height;
+      if (!w || !h) return undefined;
+      const scale =
+        Math.max(w, h) * 1.5 <= MAX_UPSCALE_RESOLUTION
+          ? 1.5
+          : MAX_UPSCALE_RESOLUTION / Math.max(w, h);
+      return Math.round(w * scale);
+    },
+    ['workflow', 'images', 'aspectRatio']
+  )
+  .computed(
+    'upscaleHeight',
+    (ctx) => {
+      if (!ctx.workflow.includes('hires')) return undefined;
+      const w = ctx.images?.[0]?.width ?? ctx.aspectRatio?.width;
+      const h = ctx.images?.[0]?.height ?? ctx.aspectRatio?.height;
+      if (!w || !h) return undefined;
+      const scale =
+        Math.max(w, h) * 1.5 <= MAX_UPSCALE_RESOLUTION
+          ? 1.5
+          : MAX_UPSCALE_RESOLUTION / Math.max(w, h);
+      return Math.round(h * scale);
+    },
+    ['workflow', 'images', 'aspectRatio']
   );

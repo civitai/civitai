@@ -32,6 +32,36 @@
   }
 }
 
+.actionsFooter {
+  border-top: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-7));
+  gap: 4px;
+  padding: 4px;
+}
+
+.footerButton {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  transition: background-color 0.15s, color 0.15s;
+  cursor: pointer;
+  border-radius: var(--mantine-radius-sm);
+
+  &:hover {
+    background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  }
+}
+
+.footerDivider {
+  width: 1px;
+  height: 16px;
+  align-self: center;
+  background: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
 .favoriteButton {
   background: rgba(240, 62, 62, 0.5);
 }
@@ -42,6 +72,26 @@
   border: none;
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
   padding: 4px;
+}
+
+.desktopOnly {
+  /* Hide on small containers */
+  @container (max-width: 420px) {
+    display: none !important;
+  }
+  /* Hide on touch/coarse-pointer devices regardless of container size */
+  @media (pointer: coarse) {
+    display: none !important;
+  }
+}
+
+.mobileOnly {
+  /* Hide only when large container AND precise pointer (mouse) — show otherwise */
+  @container (min-width: 421px) {
+    @media (pointer: fine) {
+      display: none !important;
+    }
+  }
 }
 
 .scrollableDropdown {

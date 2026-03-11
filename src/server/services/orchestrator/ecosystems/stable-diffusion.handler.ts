@@ -23,7 +23,6 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import type { GenerationHandlerCtx } from '.';
 import { createComfyInput } from './comfy-input';
 import { defineHandler } from './handler-factory';
-import { removeEmpty } from '~/utils/object-helpers';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -48,9 +47,6 @@ const SDXL_DRAFT_LORA = {
   air: 'urn:air:sdxl1:lora:civitai:391999@391999',
   strength: 1,
 } as const;
-
-/** Maximum output resolution (longest side) for hires fix upscaling */
-const MAX_UPSCALE_RESOLUTION = 4096;
 
 /** Workflows that always use comfy (regardless of images) */
 const COMFY_ALWAYS = [
@@ -238,16 +234,11 @@ export const createStableDiffusionInput = defineHandler<
     }
 
     if (isHires) {
-      const w = workflowData.width as number;
-      const h = workflowData.height as number;
-      const maxDim = Math.max(w, h);
-      // Upscale by 1.5x but clamp so the longest side doesn't exceed the max resolution
-      const scale = maxDim * 1.5 <= MAX_UPSCALE_RESOLUTION ? 1.5 : MAX_UPSCALE_RESOLUTION / maxDim;
-      workflowData.upscaleWidth = Math.round(w * scale);
-      workflowData.upscaleHeight = Math.round(h * scale);
+      workflowData.upscaleWidth = data.upscaleWidth;
+      workflowData.upscaleHeight = data.upscaleHeight;
     }
 
-    const comfyInput = await createComfyInput(
+    return createComfyInput(
       {
         key: comfyKey,
         quantity,
@@ -256,16 +247,6 @@ export const createStableDiffusionInput = defineHandler<
       },
       ctx
     );
-
-    return {
-      ...comfyInput,
-      metadata: {
-        params: removeEmpty({
-          upscaleWidth: workflowData.upscaleWidth,
-          upscaleHeight: workflowData.upscaleHeight,
-        }),
-      },
-    };
   }
 
   return createTextToImageInput(

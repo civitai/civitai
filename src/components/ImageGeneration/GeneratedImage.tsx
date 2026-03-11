@@ -16,15 +16,15 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 
 import { getStepMeta } from './GenerationForm/generation.utils';
@@ -193,109 +193,128 @@ export function GeneratedImage({
     <TwCard
       ref={ref}
       className={clsx(
-        'max-h-full max-w-full items-center justify-center',
+        'max-w-full border',
+        isLightbox ? 'max-h-full items-center justify-center' : 'w-full self-start',
         classes.imageWrapper,
         selected && 'ring-2 ring-blue-5/60'
       )}
-      style={{ aspectRatio: image.aspect }}
+      style={isLightbox ? { aspectRatio: image.aspect } : undefined}
     >
+      {!isLightbox && !inView && <div style={{ aspectRatio: image.aspect }} />}
       {(isLightbox || inView) && (
         <>
-          {
-            <EdgeMedia2
-              // Use previewUrl for rendering in queue (smaller/faster), but full url for lightbox
-              src={isLightbox ? image.url : image.previewUrl ?? image.url}
-              type={image.type}
-              alt=""
-              className={clsx('max-h-full min-h-0 w-auto max-w-full', {
-                ['cursor-pointer']: !isLightbox,
-                // ['pointer-events-none']: running,
-              })}
-              onClick={handleImageClick}
-              onMouseDown={(e) => {
-                // Always use full url when opening in new tab
-                if (e.button === 1) return handleAuxClick(image.url);
-              }}
-              wrapperProps={{
-                onClick: handleImageClick,
-                onMouseDown: (e) => {
+          <div
+            className="relative flex items-center justify-center"
+            style={{ aspectRatio: image.aspect }}
+          >
+            {
+              <EdgeMedia2
+                // Use previewUrl for rendering in queue (smaller/faster), but full url for lightbox
+                src={isLightbox ? image.url : image.previewUrl ?? image.url}
+                type={image.type}
+                alt=""
+                className={clsx('max-h-full min-h-0 w-auto max-w-full', {
+                  ['cursor-pointer']: !isLightbox,
+                  // ['pointer-events-none']: running,
+                })}
+                onClick={handleImageClick}
+                onMouseDown={(e) => {
                   // Always use full url when opening in new tab
                   if (e.button === 1) return handleAuxClick(image.url);
-                },
-              }}
-              muted={!isLightbox || !isActiveSlide}
-              controls={isLightbox && isActiveSlide}
-              disableWebm
-              disablePoster
-              imageProps={{
-                onDragStart: handleDragImage,
-                onContextMenu: handleContextMenu,
-              }}
-              videoProps={{
-                onDragStart: handleDragVideo,
-                onContextMenu: handleContextMenu,
-                draggable: true,
-                autoPlay: true,
-              }}
-            />
-          }
-          <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
-
-          {!isLightbox && !image.blockedReason && (
-            <label className="absolute left-3 top-3" data-tour="gen:select">
-              <Checkbox
-                className={classes.checkbox}
-                checked={selected}
-                onChange={(e) => handleToggleSelect(e.target.checked)}
+                }}
+                wrapperProps={{
+                  onClick: handleImageClick,
+                  onMouseDown: (e) => {
+                    // Always use full url when opening in new tab
+                    if (e.button === 1) return handleAuxClick(image.url);
+                  },
+                }}
+                muted={!isLightbox || !isActiveSlide}
+                controls={isLightbox && isActiveSlide}
+                disableWebm
+                disablePoster
+                imageProps={{
+                  onDragStart: handleDragImage,
+                  onContextMenu: handleContextMenu,
+                }}
+                videoProps={{
+                  onDragStart: handleDragVideo,
+                  onContextMenu: handleContextMenu,
+                  draggable: true,
+                  autoPlay: true,
+                }}
               />
-            </label>
-          )}
-          {!image.blockedReason && (
-            <Menu zIndex={400} withinPortal>
-              <Menu.Target>
-                <div className="absolute right-3 top-3">
-                  <LegacyActionIcon variant="transparent">
-                    <IconDotsVertical
-                      size={26}
-                      color="#fff"
+            }
+            <div className="pointer-events-none absolute size-full shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
+
+            {!isLightbox && !image.blockedReason && (
+              <label className="absolute left-3 top-3" data-tour="gen:select">
+                <Checkbox
+                  className={classes.checkbox}
+                  checked={selected}
+                  onChange={(e) => handleToggleSelect(e.target.checked)}
+                />
+              </label>
+            )}
+            {!image.blockedReason && (
+              <Menu zIndex={400} withinPortal>
+                <Menu.Target>
+                  <div className="absolute right-3 top-3">
+                    <LegacyActionIcon variant="transparent">
+                      <IconDotsVertical
+                        size={26}
+                        color="#fff"
+                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      />
+                    </LegacyActionIcon>
+                  </div>
+                </Menu.Target>
+                <Menu.Dropdown className={classes.scrollableDropdown}>
+                  <GeneratedItemWorkflowMenu image={image} isLightbox={isLightbox} />
+                </Menu.Dropdown>
+              </Menu>
+            )}
+
+            {!image.blockedReason && (
+              <GeneratedImageActions
+                image={image}
+                state={state}
+                isLightbox={isLightbox}
+                isOverlay={!isLightbox}
+                onToggleFavorite={handleToggleFavorite}
+                onToggleFeedback={handleToggleFeedback}
+              />
+            )}
+
+            {!isLightbox && (
+              <div className="absolute bottom-2 right-2">
+                <ImageMetaPopover
+                  meta={step.params as any}
+                  zIndex={imageGenerationDrawerZIndex + 1}
+                  hideSoftware
+                >
+                  <LegacyActionIcon variant="transparent" size="md">
+                    <IconInfoCircle
+                      color="white"
                       filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
                     />
                   </LegacyActionIcon>
-                </div>
-              </Menu.Target>
-              <Menu.Dropdown className={classes.scrollableDropdown}>
-                <GeneratedItemWorkflowMenu image={image} isLightbox={isLightbox} />
-              </Menu.Dropdown>
-            </Menu>
-          )}
+                </ImageMetaPopover>
+              </div>
+            )}
+          </div>
 
-          {!image.blockedReason && (
+          {!isLightbox && !image.blockedReason && (
             <GeneratedImageActions
               image={image}
               state={state}
-              isLightbox={isLightbox}
+              isMobileFooter
               onToggleFavorite={handleToggleFavorite}
               onToggleFeedback={handleToggleFeedback}
             />
-          )}
-          {!isLightbox && (
-            <div className="absolute bottom-2 right-2">
-              <ImageMetaPopover
-                meta={step.params as any}
-                zIndex={imageGenerationDrawerZIndex + 1}
-                hideSoftware
-              >
-                <LegacyActionIcon variant="transparent" size="md">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </LegacyActionIcon>
-              </ImageMetaPopover>
-            </div>
           )}
         </>
       )}
@@ -307,77 +326,144 @@ function GeneratedImageActions({
   image,
   state,
   isLightbox,
+  isOverlay,
+  isMobileFooter,
   onToggleFavorite,
   onToggleFeedback,
 }: {
   image: BlobData;
   state: { favorite?: boolean; feedback?: string };
   isLightbox?: boolean;
+  isOverlay?: boolean;
+  isMobileFooter?: boolean;
   onToggleFavorite: (value: boolean) => void;
   onToggleFeedback: (feedback: 'liked' | 'disliked') => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
+  if (isLightbox || isOverlay) {
+    return (
+      <div
+        className={clsx(
+          classes.actionsWrapper,
+          menuOpen && classes.actionsVisible,
+          isOverlay && classes.desktopOnly,
+          image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+          'absolute flex flex-wrap items-center gap-1 p-1'
+        )}
+      >
+        <LegacyActionIcon
+          size="md"
+          className={state.favorite ? classes.favoriteButton : undefined}
+          variant={state.favorite ? 'light' : 'subtle'}
+          color={state.favorite ? 'red' : 'gray'}
+          onClick={() => onToggleFavorite(!state.favorite)}
+        >
+          <IconHeart size={16} />
+        </LegacyActionIcon>
+
+        <LegacyActionIcon
+          size="md"
+          variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+          color={state.feedback === 'liked' ? 'green' : 'gray'}
+          onClick={() => onToggleFeedback('liked')}
+        >
+          <IconThumbUp size={16} />
+        </LegacyActionIcon>
+
+        <LegacyActionIcon
+          size="md"
+          variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+          color={state.feedback === 'disliked' ? 'red' : 'gray'}
+          onClick={() => onToggleFeedback('disliked')}
+        >
+          <IconThumbDown size={16} />
+        </LegacyActionIcon>
+
+        <Menu
+          zIndex={400}
+          trigger="click-hover"
+          openDelay={100}
+          closeDelay={100}
+          transitionProps={{
+            transition: 'fade',
+            duration: 150,
+          }}
+          withinPortal
+          position="top"
+          onChange={setMenuOpen}
+          withArrow
+        >
+          <Menu.Target>
+            <LegacyActionIcon size="md">
+              <IconWand size={16} />
+            </LegacyActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
+            <GeneratedItemWorkflowMenu image={image} workflowsOnly isLightbox={isLightbox} />
+          </Menu.Dropdown>
+        </Menu>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={clsx(
-        classes.actionsWrapper,
-        menuOpen && classes.actionsVisible,
-        isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
-        'absolute flex flex-wrap items-center gap-1 p-1'
-      )}
+      className={clsx(classes.actionsFooter, isMobileFooter && classes.mobileOnly, 'flex w-full')}
     >
-      <LegacyActionIcon
-        size="md"
-        className={state.favorite ? classes.favoriteButton : undefined}
-        variant={state.favorite ? 'light' : 'subtle'}
-        color={state.favorite ? 'red' : 'gray'}
+      <button
+        className={clsx(classes.footerButton, state.favorite && 'bg-red-5/20 text-red-5')}
         onClick={() => onToggleFavorite(!state.favorite)}
       >
         <IconHeart size={16} />
-      </LegacyActionIcon>
+      </button>
+
+      <div className={classes.footerDivider} />
+
+      <button
+        className={clsx(
+          classes.footerButton,
+          state.feedback === 'liked' && 'bg-green-5/20 text-green-5'
+        )}
+        onClick={() => onToggleFeedback('liked')}
+      >
+        <IconThumbUp size={16} />
+      </button>
+
+      <div className={classes.footerDivider} />
+
+      <button
+        className={clsx(
+          classes.footerButton,
+          state.feedback === 'disliked' && 'bg-red-5/20 text-red-5'
+        )}
+        onClick={() => onToggleFeedback('disliked')}
+      >
+        <IconThumbDown size={16} />
+      </button>
+
+      <div className={classes.footerDivider} />
 
       <Menu
         zIndex={400}
         trigger="click-hover"
         openDelay={100}
         closeDelay={100}
-        transitionProps={{
-          transition: 'fade',
-          duration: 150,
-        }}
+        transitionProps={{ transition: 'fade', duration: 150 }}
         withinPortal
         position="top"
         onChange={setMenuOpen}
         withArrow
       >
         <Menu.Target>
-          <LegacyActionIcon size="md">
+          <button className={classes.footerButton}>
             <IconWand size={16} />
-          </LegacyActionIcon>
+          </button>
         </Menu.Target>
         <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
-          <GeneratedItemWorkflowMenu image={image} workflowsOnly isLightbox={isLightbox} />
+          <GeneratedItemWorkflowMenu image={image} workflowsOnly />
         </Menu.Dropdown>
       </Menu>
-
-      <LegacyActionIcon
-        size="md"
-        variant={state.feedback === 'liked' ? 'light' : 'subtle'}
-        color={state.feedback === 'liked' ? 'green' : 'gray'}
-        onClick={() => onToggleFeedback('liked')}
-      >
-        <IconThumbUp size={16} />
-      </LegacyActionIcon>
-
-      <LegacyActionIcon
-        size="md"
-        variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
-        color={state.feedback === 'disliked' ? 'red' : 'gray'}
-        onClick={() => onToggleFeedback('disliked')}
-      >
-        <IconThumbDown size={16} />
-      </LegacyActionIcon>
     </div>
   );
 }

@@ -179,6 +179,7 @@ export function SourceImageUploadMultiple({
   const [error, setError] = useState<string | null>(null);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
+  const verifiedDimsRef = useRef(new Set<string>());
 
   const previewImages = useMemo(() => {
     if (!value) return [];
@@ -294,23 +295,56 @@ export function SourceImageUploadMultiple({
     }
   }, [value, warnOnMissingAiMetadata]);
 
-  // Extract and store source metadata for enhancement workflows
+  // Verify image dimensions and extract source metadata for enhancement workflows
   useEffect(() => {
-    if (!value) return;
+    if (!value?.length) return;
 
-    for (const { url } of value) {
-      // Check if metadata already exists in the store
-      const existing = sourceMetadataStore.getMetadata(url);
-      if (existing) continue;
+    const unverified = value.filter(({ url }) => !verifiedDimsRef.current.has(url));
+    for (const { url } of unverified) verifiedDimsRef.current.add(url);
 
-      // Extract metadata from the image
-      extractSourceMetadataFromUrl(url).then((metadata) => {
-        if (metadata) {
-          sourceMetadataStore.setMetadata(url, metadata);
+    // Verify dimensions for new images and correct the value if they differ
+    if (unverified.length) {
+      const snapshot = value;
+      Promise.all(
+        unverified.map(({ url }) =>
+          getImageDimensions(url)
+            .then(({ width, height }) => ({ url, width, height }))
+            .catch(() => null)
+        )
+      ).then((results) => {
+        const verified = results.filter(
+          (r): r is { url: string; width: number; height: number } => r !== null
+        );
+
+        // Cache verified dims in the store for use by resolveImageDimensions
+        for (const { url, width, height } of verified) {
+          sourceMetadataStore.setMetadata(url, { width, height });
+        }
+
+        // Correct the value if any dims differ from what was stored
+        const corrections = verified.filter((r) => {
+          const orig = snapshot.find((v) => v.url === r.url);
+          return orig && (orig.width !== r.width || orig.height !== r.height);
+        });
+        if (corrections.length) {
+          onChange?.(
+            snapshot.map((img) => {
+              const fix = corrections.find((c) => c.url === img.url);
+              return fix ? { ...img, width: fix.width, height: fix.height } : img;
+            })
+          );
         }
       });
     }
-  }, [value]);
+
+    // Extract generation metadata for images not in store
+    for (const { url } of value) {
+      if (sourceMetadataStore.getMetadata(url)) continue;
+      extractSourceMetadataFromUrl(url).then((metadata) => {
+        if (metadata) sourceMetadataStore.setMetadata(url, metadata);
+      });
+    }
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-upload data: URLs (e.g., base64 from metadata extraction)
   // Treat them as if they were dropped in the dropzone.

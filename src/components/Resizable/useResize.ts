@@ -46,7 +46,7 @@ export const useResize = (options: Props) => {
 
   const mouseMoveClient = orientation === 'horizontal' ? 'clientX' : 'clientY';
 
-  const startResizing = useCallback((e: MouseEvent) => {
+  const startResizing = useCallback((e: MouseEvent | TouchEvent) => {
     e.preventDefault();
     setIsResizing(true);
   }, []);
@@ -56,11 +56,18 @@ export const useResize = (options: Props) => {
     if (frame.current) cancelAnimationFrame(frame.current);
   }, []);
 
+  const getClientPosition = (e: MouseEvent | TouchEvent) => {
+    if (e instanceof TouchEvent) {
+      return orientation === 'horizontal' ? e.touches[0].clientX : e.touches[0].clientY;
+    }
+    return e[mouseMoveClient];
+  };
+
   const resize = useCallback(
-    (mouseMoveEvent: MouseEvent) => {
+    (moveEvent: MouseEvent | TouchEvent) => {
       if (isResizing && ref) {
         const getWidth = () => {
-          const clientPosition = mouseMoveEvent[mouseMoveClient];
+          const clientPosition = getClientPosition(moveEvent);
           const width = resizePosition
             ? clientPosition - ref.getBoundingClientRect()[clientRectDict[resizePosition]]
             : clientPosition;
@@ -83,11 +90,17 @@ export const useResize = (options: Props) => {
   useEffect(() => {
     window.addEventListener('mousemove', resize);
     window.addEventListener('mouseup', stopResizing);
+    window.addEventListener('touchmove', resize, { passive: false });
+    window.addEventListener('touchend', stopResizing);
     resizerRef?.addEventListener('mousedown', startResizing);
+    resizerRef?.addEventListener('touchstart', startResizing, { passive: false });
     return () => {
       window.removeEventListener('mousemove', resize);
       window.removeEventListener('mouseup', stopResizing);
+      window.removeEventListener('touchmove', resize);
+      window.removeEventListener('touchend', stopResizing);
       resizerRef?.removeEventListener('mousedown', startResizing);
+      resizerRef?.removeEventListener('touchstart', startResizing);
       if (frame.current) cancelAnimationFrame(frame.current);
     };
   }, [resize, stopResizing, resizerRef, ref, startResizing]);

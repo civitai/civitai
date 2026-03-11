@@ -601,7 +601,10 @@ async function createStepInputs(
       };
     }
 
-    // Merge additional params from step creator (e.g. comfy-input metadata)
+    // TODO (remove by 2026-04-10): Step-computed params (e.g. upscaleWidth/upscaleHeight) are
+    // now computed nodes on the graph and flow into workflow.metadata automatically via
+    // toStepMetadata. This merge is kept for backwards compatibility in case any handler
+    // still returns additionalMetadata.params. Remove once confirmed no handlers do this.
     const mergedMeta = { ...metadataCtx.stepMetadata };
     if (
       additionalMetadata &&
@@ -609,6 +612,7 @@ async function createStepInputs(
       typeof additionalMetadata.params === 'object'
     ) {
       mergedMeta.params = { ...mergedMeta.params, ...additionalMetadata.params };
+      metadataCtx.stepMetadata.params = mergedMeta.params;
     }
 
     // Source context fallback (step creators that don't pre-compute)
@@ -625,14 +629,13 @@ async function createStepInputs(
 
     // Standard: build imageMetadata from merged step metadata.
     // Don't store full params/resources on step — they live on workflow.metadata.
-    // Only pass through step-creator-specific metadata (if any).
     return {
       ...rest,
       input: {
         ...(rest.input as object),
         imageMetadata: buildImageMetadata(mergedMeta.params, mergedMeta.resources),
       },
-      metadata: additionalMetadata ?? {},
+      metadata: {},
     };
   });
 }
@@ -1274,12 +1277,16 @@ export function formatStepOutputs(
         }
       }
 
+      // Check upscaleWidth/upscaleHeight: new-format equivalent of transformation
+      // targetDimensions. Set by hires-fix workflows to represent the final output
+      // size after upscaling, which differs from the source image width/height.
       if (!width || !height) {
         width = params.upscaleWidth as number | undefined;
         height = params.upscaleHeight as number | undefined;
       }
 
-      // Fall back to main params if not found in transformations
+      // Fall back to source dimensions from params (input image dims for img2img,
+      // or aspect ratio target dims for txt2img)
       if (!width || !height) {
         width = params.width as number | undefined;
         height = params.height as number | undefined;
@@ -1455,7 +1462,7 @@ function formatStep(
         remixOfId,
         images: metadata.images as NormalizedStepMetadata['images'],
       }),
-      ...(resolvedResources ? { resources: resolvedResources } : {}),
+      ...(resolvedResources?.length ? { resources: resolvedResources } : {}),
     },
     images,
     errors: errors.length > 0 ? errors : undefined,
@@ -1653,9 +1660,10 @@ export async function getWorkflowStatusUpdate({
           params = mapDataToGraphInput(legacyParams, [], { stepType: step.$type });
         }
 
-        // For dimension resolution, use step params or fall back to workflow params
-        const paramsForDimensions =
-          Object.keys(metadata.params ?? {}).length > 0 ? undefined : wfParams;
+        // For dimension resolution, prefer step params (legacy format stores upscale dims there),
+        // fall back to workflow-level params (new format stores them on workflow.metadata).
+        const stepParams = (metadata.params ?? {}) as Record<string, unknown>;
+        const paramsForDimensions = Object.keys(stepParams).length > 0 ? stepParams : wfParams;
 
         // Format step outputs using the shared utility
         const { images, errors } = formatStepOutputs(
