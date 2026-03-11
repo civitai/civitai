@@ -73,7 +73,6 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { env } from '~/env/client';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -245,9 +244,7 @@ export function ImageDetail2() {
       <Meta
         title={title}
         images={image}
-        links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/images/${image.id}`, rel: 'canonical' },
-        ]}
+        canonical={`/images/${image.id}`}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>

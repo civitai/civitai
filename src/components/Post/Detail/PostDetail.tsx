@@ -55,7 +55,6 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { toStringList } from '~/utils/array-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -175,11 +174,7 @@ export function PostDetailContent({ postId }: Props) {
         }
         keywords={toStringList(post?.tags.map((x) => x.name) ?? [])}
         images={images}
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]
-            : undefined
-        }
+        canonical={`/posts/${postId}`}
         deIndex={post?.availability === Availability.Unsearchable}
       />
       <SensitiveShield

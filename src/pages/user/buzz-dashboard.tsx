@@ -29,7 +29,6 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -99,11 +98,6 @@ export default function UserBuzzDashboard() {
     <>
       <Meta
         title="Civitai | My Buzz Dashboard"
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/buzz-dashboard`, rel: 'canonical' }]
-            : undefined
-        }
         deIndex
       />
       <Container size="lg">

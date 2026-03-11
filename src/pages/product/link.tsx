@@ -56,6 +56,7 @@ export default function LinkApp(props: ServerSideProps) {
       <Meta
         title="Civitai Link | One-click install Stable Diffusion & Flux models"
         description="Directly download any resource from Civitai to your local model library."
+        canonical="/product/link"
       />
       <Container>
         <Flex

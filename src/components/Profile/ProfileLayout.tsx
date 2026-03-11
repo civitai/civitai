@@ -6,7 +6,6 @@ import React from 'react';
 
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -48,12 +47,13 @@ export function ProfileLayout({
             stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           images={user.profilePicture}
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
+          canonical={`/user/${username}`}
         />
       ) : (
         <Meta
           title="Creator Profile | Civitai"
           description="Learn more about this awesome creator on Civitai."
+          canonical={`/user/${username}`}
         />
       )}
       {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}

@@ -775,7 +775,7 @@ function ProjectWorkspace() {
 
   return (
     <>
-      <Meta title={`${project.name} - Civitai Comics`} />
+      <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/project/${projectId}`} />
 
       <Container size="xl" py="xl">
         <Stack gap="xl">

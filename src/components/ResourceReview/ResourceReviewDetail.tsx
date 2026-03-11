@@ -108,7 +108,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         } this resource. ${
           data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
         }`}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}
+        canonical={`/reviews/${reviewId}`}
         schema={metaSchema}
       />
       <Container my="md" w="100%">

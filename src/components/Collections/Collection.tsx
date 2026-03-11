@@ -563,6 +563,7 @@ export function Collection({
                 : ''
             }
             images={collection.image}
+            canonical={`/collections/${collection.id}`}
             deIndex={
               collection.read !== 'Public' || collection.availability === Availability.Unsearchable
             }

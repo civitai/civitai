@@ -7,7 +7,6 @@ import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
@@ -71,9 +70,7 @@ export default function ContentPage({
       <Meta
         title={`${title} | Civitai`}
         description={description ?? truncate(removeTags(markdownContent), { length: 150 })}
-        links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/content/${slugString}`, rel: 'canonical' },
-        ]}
+        canonical={`/content/${slugString}`}
       />
       <Container size="md" pt="sm">
         <Stack mb="lg" gap={0}>

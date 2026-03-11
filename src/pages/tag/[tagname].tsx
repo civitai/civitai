@@ -7,7 +7,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -36,7 +35,7 @@ export default function TagPage({
       <Meta
         title={`${tag?.name} AI Models | Civitai`}
         description={`Browse ${tag?.name} Stable Diffusion & Flux models, LoRAs, checkpoints, embeddings, and more for AI image generation.`}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/tag/${tagname}`, rel: 'canonical' }]}
+        canonical={`/tag/${tagname}`}
         deIndex={tag?.unfeatured ?? false}
       />
       {tag && (

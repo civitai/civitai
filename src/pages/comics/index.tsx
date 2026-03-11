@@ -39,7 +39,7 @@ function ComicsBrowse() {
 
   return (
     <>
-      <Meta title="Comics - Civitai" description="Browse AI-generated comics on Civitai" />
+      <Meta title="Comics - Civitai" description="Browse AI-generated comics on Civitai" canonical="/comics" />
       <MasonryContainer>
         <Stack gap="xs">
           <ComicGenreScroller value={genre} onChange={(g) => setQuery({ genre: g })} />

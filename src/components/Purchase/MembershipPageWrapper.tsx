@@ -53,6 +53,7 @@ export function MembershipPageWrapper({
       <Meta
         title="Memberships | Civitai"
         description="As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks."
+        deIndex={true}
       />
       <Container size={containerSize}>
         <Stack>

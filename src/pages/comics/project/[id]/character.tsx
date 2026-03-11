@@ -276,7 +276,7 @@ function ReferenceUpload() {
   if (characterId && !existingReference && project) {
     return (
       <>
-        <Meta title={`Reference Not Found - ${project?.name} - Civitai Comics`} />
+        <Meta title={`Reference Not Found - ${project?.name} - Civitai Comics`} deIndex={true} />
         <Container size="md" py="xl">
           <Stack gap="xl">
             <Group>
@@ -308,7 +308,7 @@ function ReferenceUpload() {
 
     return (
       <>
-        <Meta title={`Reference - ${project?.name} - Civitai Comics`} />
+        <Meta title={`Reference - ${project?.name} - Civitai Comics`} deIndex={true} />
 
         <Container size="md" py="xl">
           <Stack gap="xl">
@@ -578,7 +578,7 @@ function ReferenceUpload() {
   // New reference creation form — simple upload flow
   return (
     <>
-      <Meta title={`Add Reference - ${project?.name} - Civitai Comics`} />
+      <Meta title={`Add Reference - ${project?.name} - Civitai Comics`} deIndex={true} />
 
       <Container size="md" py="xl">
         <Stack gap="xl">

@@ -293,6 +293,7 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
         <Meta
           title="Gift Cards | Civitai"
           description="Purchase Civitai Buzz gift cards and membership packages"
+          canonical="/gift-cards"
         />
         <Container size="xl" py="xl">
           <Title order={1} mb="lg">
@@ -316,6 +317,7 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
       <Meta
         title="Gift Cards | Civitai"
         description="Purchase Civitai Buzz gift cards and membership packages"
+        canonical="/gift-cards"
       />
 
       <Container size="xl" py="xl">

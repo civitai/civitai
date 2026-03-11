@@ -162,7 +162,7 @@ export default Page(
         <Meta
           title="Knights of New Order"
           description="Join the Knights of the New Order and rate images to earn rewards."
-          links={[{ rel: 'canonical', href: '/games/knights-of-new-order' }]}
+          canonical="/games/knights-of-new-order"
         />
         <IsClient>
           {(!isLoading && !playerData) || !joined ? (

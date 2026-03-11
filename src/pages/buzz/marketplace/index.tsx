@@ -5,7 +5,6 @@ import { MarketplaceOverview } from '~/components/Marketplace/MarketplaceOvervie
 import { MarketplaceProvider } from '~/components/Marketplace/MarketplaceProvider';
 import { SellerListings } from '~/components/Marketplace/SellerListings';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -21,11 +20,7 @@ export default function MarketplacePage() {
       <Meta
         title="Buzz Marketplace | Civitai"
         description="Explore the latest marketplace trends and insights on Civitai."
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [{ rel: 'canonical', href: `${env.NEXT_PUBLIC_BASE_URL}/buzz/marketplace` }]
-            : undefined
-        }
+        canonical="/buzz/marketplace"
       />
       <Container size="xl" py="lg">
         <Stack gap="xl">
