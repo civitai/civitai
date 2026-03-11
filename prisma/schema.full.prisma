@@ -216,6 +216,15 @@ model CryptoWallet {
   smartAccount String? @unique
 }
 
+model CryptoDepositFee {
+  paymentId  BigInt   @id
+  depositFee Float    @default(0)
+  serviceFee Float    @default(0)
+  feeCurrency String  @default("usdcbase")
+  paidFiat   Float?
+  createdAt  DateTime @default(now())
+}
+
 enum CryptoTransactionStatus {
   WaitingForRamp // Ramp url created
   RampTimedOut // Been 5 minutes since url was created and still not tx associated with key

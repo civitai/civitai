@@ -325,6 +325,15 @@ export interface CryptoWallet {
   smartAccount: string | null;
 }
 
+export interface CryptoDepositFee {
+  paymentId: bigint;
+  depositFee: number;
+  serviceFee: number;
+  feeCurrency: string;
+  paidFiat: number | null;
+  createdAt: Date;
+}
+
 export interface CryptoTransaction {
   key: string;
   userId: number;

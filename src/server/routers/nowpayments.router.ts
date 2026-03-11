@@ -1,22 +1,35 @@
 import {
-  getStatus,
-  getPriceEstimate,
-  createPaymentInvoice,
+  bustDepositCacheHandler,
+  createDepositAddressHandler,
+  getBuzzConversionRateHandler,
+  getDepositHistoryHandler,
+  getMinAmountHandler,
+  getSupportedCurrenciesHandler,
 } from '~/server/controllers/nowpayments.controller';
 import {
-  transactionCreateSchema,
-  priceEstimateInputSchema,
-  createPaymentInvoiceInputSchema,
+  depositHistoryInputSchema,
+  getBuzzConversionRateInputSchema,
+  getMinAmountInputSchema,
 } from '~/server/schema/nowpayments.schema';
-import { protectedProcedure, router } from '~/server/trpc';
+import { edgeCacheIt } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
+import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 
 export const nowPaymentsRouter = router({
-  getStatus: protectedProcedure.query(getStatus),
-  getPriceEstimate: protectedProcedure.input(priceEstimateInputSchema).mutation(getPriceEstimate),
-  createPaymentInvoice: protectedProcedure
-    .input(createPaymentInvoiceInputSchema)
-    .mutation(createPaymentInvoice),
-  // createBuzzPurchaseTransaction: protectedProcedure
-  //   .input(transactionCreateSchema)
-  //   .mutation(createBuzzPurchaseTransactionHandler),
+  createDepositAddress: protectedProcedure.mutation(createDepositAddressHandler),
+  getDepositHistory: protectedProcedure
+    .input(depositHistoryInputSchema)
+    .query(getDepositHistoryHandler),
+  bustDepositCache: moderatorProcedure.mutation(bustDepositCacheHandler),
+  getSupportedCurrencies: protectedProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(getSupportedCurrenciesHandler),
+  getMinAmount: protectedProcedure
+    .input(getMinAmountInputSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(getMinAmountHandler),
+  getBuzzConversionRate: protectedProcedure
+    .input(getBuzzConversionRateInputSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(getBuzzConversionRateHandler),
 });

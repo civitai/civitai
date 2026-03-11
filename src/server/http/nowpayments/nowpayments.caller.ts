@@ -98,17 +98,13 @@ class NOWPaymentsCaller extends HttpCaller {
   async getPriceEstimate(
     input: NOWPayments.EstimatePriceInput
   ): Promise<NOWPayments.EstimatePriceResponse | null> {
-    console.log('Estimate Price Input', input);
     const response = await this.getRaw(`/estimate`, { queryParams: input });
-
-    console.log(response);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get price estimate', response.statusText);
       return null;
     }
     const data = await response.json();
-
     return NOWPayments.estimatePriceResponseSchema.parse(data);
   }
 
@@ -163,6 +159,28 @@ class NOWPaymentsCaller extends HttpCaller {
     }
     const data = await response.json();
     return NOWPayments.createPaymentResponseSchema.parse(data);
+  }
+
+  async getMerchantCoins(): Promise<NOWPayments.MerchantCoinsResponse | null> {
+    const response = await this.getRaw(`/merchant/coins`);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get merchant coins', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.merchantCoinsResponseSchema.parse(data);
+  }
+
+  async getFullCurrencies(): Promise<NOWPayments.FullCurrenciesResponse | null> {
+    const response = await this.getRaw(`/full-currencies`);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get full currencies', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.fullCurrenciesResponseSchema.parse(data);
   }
 
   async getBalance(): Promise<NOWPayments.BalanceResponse | null> {

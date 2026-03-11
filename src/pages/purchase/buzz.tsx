@@ -1,18 +1,16 @@
-import { Alert, Center, Container, Divider, Group, Stack, Text, Title } from '@mantine/core';
+import { Alert, Center, Container, Divider, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import * as z from 'zod';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { BuzzPurchaseLayout } from '~/components/Buzz/BuzzPurchaseLayout';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import animationClasses from '~/libs/animations.module.scss';
-import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -110,7 +108,8 @@ export default function PurchaseBuzz() {
           </Stack>
         </Alert>
       )}
-      <BuzzPurchaseImproved
+      <BuzzPurchaseLayout
+        buzzType={buzzType}
         onPurchaseSuccess={handlePurchaseSuccess}
         minBuzzAmount={minBuzzAmount}
         purchaseSuccessMessage={

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
-import { processBuzzOrder as processBuzzOrderNowPayments } from '~/server/services/nowpayments.service';
+import { processDeposit } from '~/server/services/nowpayments.service';
 import { processBuzzOrder as processBuzzOrderCoinbase } from '~/server/services/coinbase.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -22,7 +22,13 @@ export default ModEndpoint(
 
     try {
       if (provider === 'nowpayments') {
-        const data = await processBuzzOrderNowPayments(orderId);
+        // For reprocessing, we treat it as a finished deposit
+        const data = await processDeposit(Number(orderId), 'finished', {
+          payment_id: Number(orderId),
+          payment_status: 'finished',
+          order_id: null,
+          outcome_amount: null,
+        } as any);
         if (!data) {
           return res.status(404).json({
             error: 'Order not found or not processed yet',

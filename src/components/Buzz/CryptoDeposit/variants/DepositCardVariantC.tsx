@@ -1,0 +1,338 @@
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Divider,
+  Group,
+  Menu,
+  Paper,
+  Skeleton,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
+import { useClipboard } from '@mantine/hooks';
+import {
+  IconArrowRight,
+  IconBolt,
+  IconCheck,
+  IconCoins,
+  IconCopy,
+  IconCurrencyBitcoin,
+  IconWallet,
+} from '@tabler/icons-react';
+import { QRCodeSVG } from 'qrcode.react';
+import { useCallback, useEffect, useState } from 'react';
+import type { DepositCardProps } from '../DepositAddressCard';
+import { CurrencySelector } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import {
+  useCurrentUserSettings,
+  useMutateUserSettings,
+} from '~/components/UserSettings/hooks';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
+
+const FIAT_OPTIONS = [
+  { value: 'usd', label: 'USD', symbol: '$' },
+  { value: 'eur', label: 'EUR', symbol: '€' },
+  { value: 'gbp', label: 'GBP', symbol: '£' },
+  { value: 'cad', label: 'CAD', symbol: 'C$' },
+  { value: 'aud', label: 'AUD', symbol: 'A$' },
+  { value: 'jpy', label: 'JPY', symbol: '¥' },
+  { value: 'brl', label: 'BRL', symbol: 'R$' },
+];
+
+const FIAT_SYMBOLS: Record<string, string> = Object.fromEntries(
+  FIAT_OPTIONS.map((f) => [f.value, f.symbol])
+);
+
+export function DepositCardVariantC({ depositAddress, error, loading, onRetry }: DepositCardProps) {
+  const clipboard = useClipboard({ timeout: 2000 });
+  const userSettings = useCurrentUserSettings();
+  const updateSettings = useMutateUserSettings();
+  const [selectedFiat, setSelectedFiat] = useState('usd');
+
+  // Spotlight state for the info panel
+  const [spotlight, setSpotlight] = useState({ x: 0, y: 0, opacity: 0 });
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setSpotlight({ x: e.clientX - rect.left, y: e.clientY - rect.top, opacity: 1 });
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    setSpotlight((s) => ({ ...s, opacity: 0 }));
+  }, []);
+
+  // Sync from saved user preference on load
+  useEffect(() => {
+    if (userSettings.preferredFiatCurrency) {
+      setSelectedFiat(userSettings.preferredFiatCurrency);
+    }
+  }, [userSettings.preferredFiatCurrency]);
+
+  const handleFiatChange = (fiat: string) => {
+    setSelectedFiat(fiat);
+    updateSettings.mutate({ preferredFiatCurrency: fiat });
+  };
+
+  const { data: conversionRate, isFetching: loadingRate } =
+    trpc.nowPayments.getBuzzConversionRate.useQuery(
+      { fiat: selectedFiat },
+      { staleTime: 60 * 1000 }
+    );
+
+  const isEmpty = !depositAddress;
+  const fiatSymbol = FIAT_SYMBOLS[selectedFiat] ?? selectedFiat.toUpperCase();
+  const fiatLabel = FIAT_OPTIONS.find((f) => f.value === selectedFiat)?.label ?? 'USD';
+
+  // rate = fiat per 1 USDC. 1 USDC = 1000 Buzz. So 1000 Buzz = rate fiat units.
+  const buzzPrice = conversionRate?.rate != null ? conversionRate.rate : null;
+
+  return (
+    <Paper
+      radius="md"
+      withBorder
+      style={{
+        overflow: 'hidden',
+        background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
+        boxShadow: 'light-dark(0 1px 3px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.5))',
+      }}
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-[55%_45%]">
+        {/* ── Right info panel with spotlight effect ── */}
+        <div
+          className="order-first sm:order-last relative overflow-hidden border-b border-gray-200 dark:border-white/5 sm:border-b-0 sm:border-l bg-gradient-to-br from-blue-500/5 to-yellow-500/5 dark:from-blue-500/[0.06] dark:to-yellow-500/[0.06]"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          {/* Spotlight glow */}
+          <div
+            className="absolute inset-0 pointer-events-none transition-opacity duration-500"
+            style={{
+              background: `radial-gradient(400px circle at ${spotlight.x}px ${spotlight.y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`,
+              opacity: spotlight.opacity,
+            }}
+          />
+
+          {/* Accent border */}
+          <div className="absolute left-0 top-[10%] bottom-[10%] w-[3px] rounded-sm bg-gradient-to-b from-blue-500 to-yellow-500 z-[1]" />
+
+          <Stack gap="md" p="lg" pl="xl" className="relative z-[1]">
+            {/* Conversion rate — most prominent */}
+            <Stack gap={4}>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+                Conversion rate
+              </Text>
+              <Group gap={6} align="center">
+                <CurrencyIcon currency="BUZZ" size={22} />
+                <Text fw={800} size="xl" style={{ lineHeight: 1 }}>
+                  1,000
+                </Text>
+                <Text c="dimmed" size="sm" fw={500}>
+                  Buzz
+                </Text>
+                <Text c="dimmed" size="lg" fw={300}>
+                  =
+                </Text>
+                {loadingRate ? (
+                  <Skeleton height={24} width={50} radius="sm" />
+                ) : buzzPrice != null ? (
+                  <Text fw={800} size="xl" c="green" style={{ lineHeight: 1 }}>
+                    {fiatSymbol}
+                    {buzzPrice < 10
+                      ? buzzPrice.toFixed(2)
+                      : numberWithCommas(Math.round(buzzPrice))}
+                  </Text>
+                ) : (
+                  <Text fw={800} size="xl" c="dimmed" style={{ lineHeight: 1 }}>
+                    —
+                  </Text>
+                )}
+                <Menu position="bottom-start" withinPortal shadow="sm">
+                  <Menu.Target>
+                    <UnstyledButton className="inline-flex items-center">
+                      <Text span size="sm" c="blue" className="cursor-pointer" fw={500}>
+                        {fiatLabel} ▾
+                      </Text>
+                    </UnstyledButton>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {FIAT_OPTIONS.map((opt) => (
+                      <Menu.Item
+                        key={opt.value}
+                        onClick={() => handleFiatChange(opt.value)}
+                        fw={selectedFiat === opt.value ? 600 : undefined}
+                      >
+                        {opt.symbol} {opt.label}
+                      </Menu.Item>
+                    ))}
+                  </Menu.Dropdown>
+                </Menu>
+              </Group>
+            </Stack>
+
+            <Divider className="opacity-15 dark:opacity-15" />
+
+            {/* Conversion flow visual */}
+            <Stack gap={6}>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+                How it works
+              </Text>
+              <Group gap={4} align="center" wrap="nowrap">
+                <ThemeIcon size="sm" variant="light" color="orange" radius="xl">
+                  <IconCurrencyBitcoin size={12} />
+                </ThemeIcon>
+                <Text size="xs" c="dimmed" fw={500}>
+                  Crypto
+                </Text>
+                <IconArrowRight size={12} className="text-gray-400 dark:text-gray-600 shrink-0" />
+                <ThemeIcon size="sm" variant="light" color="blue" radius="xl">
+                  <IconCoins size={12} />
+                </ThemeIcon>
+                <Text size="xs" c="dimmed" fw={500}>
+                  Converted
+                </Text>
+                <IconArrowRight size={12} className="text-gray-400 dark:text-gray-600 shrink-0" />
+                <ThemeIcon size="sm" variant="light" color="yellow" radius="xl">
+                  <IconBolt size={12} />
+                </ThemeIcon>
+                <Text size="xs" c="yellow.4" fw={600}>
+                  Buzz
+                </Text>
+              </Group>
+            </Stack>
+
+            <Divider className="opacity-15 dark:opacity-15" />
+
+            {/* Key facts */}
+            <Stack gap={8}>
+              <FactRow text="Buzz credited upon receipt" />
+              <FactRow text="Most transactions complete in one minute" />
+              <FactRow text="Your address is permanent — reuse it anytime" />
+              <FactRow text="Send any amount above the minimum" />
+              <FactRow text="Works from any wallet or exchange" />
+            </Stack>
+          </Stack>
+        </div>
+
+        {/* ── Left action panel ── */}
+        <Stack gap="lg" p="lg">
+          {error && (
+            <Text size="sm" c="red.4">
+              {error.message ?? 'Failed to load address'}
+            </Text>
+          )}
+
+          {isEmpty && !loading ? (
+            <Stack align="center" gap="md" py="xl">
+              <ThemeIcon size={56} variant="light" color="blue" radius="xl">
+                <IconWallet size={28} />
+              </ThemeIcon>
+              <Stack gap={4} align="center">
+                <Text fw={600}>Generate deposit address</Text>
+                <Text size="xs" c="dimmed" ta="center">
+                  We&apos;ll create a wallet address for your account
+                </Text>
+              </Stack>
+              <Button onClick={onRetry} loading={loading} leftSection={<IconWallet size={16} />}>
+                Generate address
+              </Button>
+            </Stack>
+          ) : (
+            <>
+              {/* QR code with chaser border */}
+              <Group justify="center" className="overflow-visible">
+                {isEmpty && loading ? (
+                  <Skeleton height={170} width={170} radius="xl" />
+                ) : (
+                  <QRChaser address={depositAddress} />
+                )}
+              </Group>
+
+              {/* Address + copy */}
+              <Stack gap={6}>
+                <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                  Deposit address
+                </Text>
+                {isEmpty && loading ? (
+                  <Skeleton height={38} radius="md" />
+                ) : (
+                  <Group
+                    gap={8}
+                    wrap="nowrap"
+                    p="xs"
+                    className="rounded-md border border-gray-200 bg-gray-50 dark:border-white/10 dark:bg-white/[0.04]"
+                  >
+                    <Text
+                      size="xs"
+                      ff="monospace"
+                      className="break-all flex-1 leading-relaxed text-gray-700 dark:text-gray-300"
+                    >
+                      {depositAddress}
+                    </Text>
+                    <Tooltip label={clipboard.copied ? 'Copied!' : 'Copy address'} withArrow>
+                      <ActionIcon
+                        variant="subtle"
+                        color={clipboard.copied ? 'green' : 'gray'}
+                        onClick={() => clipboard.copy(depositAddress)}
+                        className="shrink-0"
+                      >
+                        {clipboard.copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+                )}
+              </Stack>
+
+              {/* Currency selector */}
+              <Stack gap={4}>
+                <Group gap={8} align="baseline">
+                  <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                    Accepted currencies
+                  </Text>
+                  <Text size="xs" c="gray.7" style={{ fontStyle: 'italic' }}>
+                    Select to see minimum deposit
+                  </Text>
+                </Group>
+                <CurrencySelector selectedFiat={selectedFiat} onFiatChange={handleFiatChange} />
+              </Stack>
+            </>
+          )}
+        </Stack>
+      </div>
+    </Paper>
+  );
+}
+
+function QRChaser({ address }: { address: string }) {
+  return (
+    <div className="rounded-xl shadow-[0_4px_6px_-1px_rgba(0,0,0,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,0,0,0.8)]">
+      <div className="relative rounded-xl p-0.5 overflow-hidden">
+        {/* Spinning conic gradient — chaser effect */}
+        <div className="absolute -inset-1/2 animate-border-chase pointer-events-none bg-[conic-gradient(from_0deg,transparent_0%,transparent_60%,rgba(0,0,0,0.15)_75%,rgba(0,0,0,0.25)_80%,rgba(0,0,0,0.15)_85%,transparent_100%)] dark:bg-[conic-gradient(from_0deg,transparent_0%,transparent_60%,rgba(255,255,255,0.5)_75%,rgba(255,255,255,0.8)_80%,rgba(255,255,255,0.5)_85%,transparent_100%)]" />
+        {/* Static faint border */}
+        <div className="absolute inset-0 rounded-xl border-2 border-black/5 dark:border-white/10 pointer-events-none z-[1]" />
+        <div className="relative z-[1] inline-flex rounded-lg bg-white p-2.5">
+          <QRCodeSVG value={address} size={150} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FactRow({ text, highlight }: { text: string; highlight?: boolean }) {
+  return (
+    <Group gap={6} align="flex-start" wrap="nowrap">
+      <div
+        className={`mt-1.5 size-1.5 shrink-0 rounded-full ${
+          highlight ? 'bg-yellow-400' : 'bg-gray-400 dark:bg-gray-600'
+        }`}
+      />
+      <Text size="xs" c={highlight ? 'yellow.4' : 'dimmed'} fw={highlight ? 600 : undefined}>
+        {text}
+      </Text>
+    </Group>
+  );
+}
