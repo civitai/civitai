@@ -354,8 +354,10 @@ function ProjectWorkspace() {
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
-    onSuccess: () => refetch(),
-    onError: handleMutationError,
+    onError: (err) => {
+      handleMutationError(err);
+      refetch();
+    },
   });
 
   const createChapterMutation = trpc.comics.createChapter.useMutation({
@@ -435,8 +437,10 @@ function ProjectWorkspace() {
   });
 
   const reorderChaptersMutation = trpc.comics.reorderChapters.useMutation({
-    onSuccess: () => refetch(),
-    onError: handleMutationError,
+    onError: (err) => {
+      handleMutationError(err);
+      refetch();
+    },
   });
 
   const { uploadToCF: uploadSketchToCF } = useCFImageUpload();
@@ -597,6 +601,20 @@ function ProjectWorkspace() {
     const newIndex = panels.findIndex((p) => p.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
     const reordered = arrayMove(panels, oldIndex, newIndex);
+
+    // Optimistic update
+    utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        chapters: prev.chapters.map((ch) =>
+          ch.position === activeChapter.position
+            ? { ...ch, panels: reordered.map((p, i) => ({ ...p, position: i })) }
+            : ch
+        ),
+      };
+    });
+
     reorderPanelsMutation.mutate({
       projectId,
       chapterPosition: activeChapter.position,
@@ -611,11 +629,18 @@ function ProjectWorkspace() {
     const oldIndex = chapters.findIndex((ch) => ch.position === active.id);
     const newIndex = chapters.findIndex((ch) => ch.position === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-    const newOrder = arrayMove(
-      chapters.map((ch) => ch.position),
-      oldIndex,
-      newIndex
-    );
+    const reorderedChapters = arrayMove(chapters, oldIndex, newIndex);
+    const newOrder = reorderedChapters.map((ch) => ch.position);
+
+    // Optimistic update
+    utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        chapters: reorderedChapters.map((ch, i) => ({ ...ch, position: i })),
+      };
+    });
+
     reorderChaptersMutation.mutate({ projectId, order: newOrder });
   };
 

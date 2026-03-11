@@ -221,7 +221,7 @@ function ReferenceUpload() {
   });
 
   const reorderRefImagesMutation = trpc.comics.reorderReferenceImages.useMutation({
-    onSuccess: () => refetchProject(),
+    onError: () => refetchProject(),
   });
 
   // Inline rename state
@@ -266,11 +266,22 @@ function ReferenceUpload() {
     const oldIndex = refImages.findIndex((ri) => ri.image.id === active.id);
     const newIndex = refImages.findIndex((ri) => ri.image.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-    const newOrder = arrayMove(
-      refImages.map((ri) => ri.image.id),
-      oldIndex,
-      newIndex
-    );
+    const reorderedImages = arrayMove(refImages, oldIndex, newIndex);
+    const newOrder = reorderedImages.map((ri) => ri.image.id);
+
+    // Optimistic update
+    utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        references: prev.references.map((ref) =>
+          ref.id === existingReference.id
+            ? { ...ref, images: reorderedImages.map((ri, i) => ({ ...ri, position: i })) }
+            : ref
+        ),
+      };
+    });
+
     reorderRefImagesMutation.mutate({
       referenceId: existingReference.id,
       imageIds: newOrder,
