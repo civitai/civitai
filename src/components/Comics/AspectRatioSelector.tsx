@@ -4,16 +4,23 @@ export function AspectRatioSelector({
   value,
   onChange,
   aspectRatios,
+  description,
 }: {
   value: string;
   onChange: (value: string) => void;
   aspectRatios: { label: string; width: number; height: number }[];
+  description?: string;
 }) {
   return (
     <div className="flex flex-col gap-1">
       <Text size="sm" fw={500}>
         Aspect Ratio
       </Text>
+      {description && (
+        <Text size="xs" c="dimmed">
+          {description}
+        </Text>
+      )}
       <SegmentedControl
         value={value}
         onChange={onChange}

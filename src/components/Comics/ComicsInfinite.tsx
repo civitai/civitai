@@ -7,6 +7,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { ComicGenre } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -19,6 +20,7 @@ type ComicFilters = {
 
 export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
   const [debouncedFilters, cancel] = useDebouncedValue(filterOverrides, 500);
+  const browsingLevel = useBrowsingSettings((s) => s.browsingLevel);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.comics.getPublicProjects.useInfiniteQuery(
@@ -34,6 +36,7 @@ export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false 
           | 'AllTime'
           | undefined,
         followed: debouncedFilters.followed,
+        browsingLevel,
       },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );

@@ -78,7 +78,7 @@ export function ChapterSettingsModal({
         {isPublished && (
           <>
             <Switch
-              label="Early Access Paywall"
+              label="Early Access"
               description="Require Buzz payment to read this chapter"
               checked={chapterSettingsEaEnabled}
               onChange={(e) => setChapterSettingsEaEnabled(e.currentTarget.checked)}

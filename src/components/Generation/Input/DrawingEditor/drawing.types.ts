@@ -2,7 +2,7 @@ import type Konva from 'konva';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 
 // Tool types for selection
-export type DrawingTool = 'select' | 'brush' | 'eraser' | 'rectangle' | 'circle' | 'arrow' | 'text';
+export type DrawingTool = 'select' | 'brush' | 'eraser' | 'rectangle' | 'circle' | 'arrow' | 'text' | 'speechBubble';
 
 // Base interface with shared properties
 interface DrawingElementBase {
@@ -45,6 +45,34 @@ export interface DrawingArrowElement extends DrawingElementBase {
   rotation?: number;
 }
 
+// Speech bubble element
+export interface DrawingSpeechBubbleElement extends DrawingElementBase {
+  type: 'speechBubble';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  tailX: number; // tail tip position relative to bubble center
+  tailY: number;
+  rotation?: number;
+}
+
+// Image overlay element
+export interface DrawingImageElement {
+  type: 'image';
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageUrl: string; // Data URL of the overlay
+  color: string; // Unused, kept for interface consistency
+  strokeWidth: number; // Unused, kept for consistency
+  rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
+}
+
 // Text element
 export interface DrawingTextElement {
   type: 'text';
@@ -67,7 +95,9 @@ export type DrawingElement =
   | DrawingRectElement
   | DrawingCircleElement
   | DrawingArrowElement
-  | DrawingTextElement;
+  | DrawingSpeechBubbleElement
+  | DrawingTextElement
+  | DrawingImageElement;
 
 // Schema-compatible element type (id is optional for backward compatibility with form data)
 export type DrawingElementSchema =
@@ -75,7 +105,9 @@ export type DrawingElementSchema =
   | (Omit<DrawingRectElement, 'id'> & { id?: string })
   | (Omit<DrawingCircleElement, 'id'> & { id?: string })
   | (Omit<DrawingArrowElement, 'id'> & { id?: string })
-  | (Omit<DrawingTextElement, 'id'> & { id?: string });
+  | (Omit<DrawingSpeechBubbleElement, 'id'> & { id?: string })
+  | (Omit<DrawingTextElement, 'id'> & { id?: string })
+  | (Omit<DrawingImageElement, 'id'> & { id?: string });
 
 // Legacy type alias for backward compatibility (DrawingLine without 'type' field)
 export interface DrawingLine {
@@ -118,6 +150,8 @@ export interface DrawingCanvasProps {
   onCommit?: () => void;
   // ID of text element currently being edited (to hide it from canvas)
   editingTextId?: string | null;
+  // Pre-loaded HTMLImageElement instances for image overlay elements
+  overlayImages?: Map<string, HTMLImageElement>;
 }
 
 // Updated toolbar props
@@ -132,6 +166,7 @@ export interface DrawingToolbarProps {
   onUndo: () => void;
   canUndo: boolean;
   onDownload?: () => void;
+  onAddImage?: () => void;
   isMobile?: boolean;
 }
 
@@ -142,4 +177,5 @@ export interface DrawingEditorModalProps {
   onConfirm: (drawingBlob: Blob, elements: DrawingElement[]) => void | Promise<void>;
   onCancel?: () => void;
   initialLines?: DrawingLineInput[]; // Accepts both old and new formats
+  confirmLabel?: string; // Custom label for the confirm button (default: "Apply")
 }

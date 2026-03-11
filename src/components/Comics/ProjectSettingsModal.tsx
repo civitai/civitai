@@ -202,6 +202,7 @@ export function ProjectSettingsModal({
             { value: 'Seedream', label: 'Seedream v4.5' },
             { value: 'OpenAI', label: 'OpenAI GPT-Image' },
             { value: 'Qwen', label: 'Qwen' },
+            { value: 'Grok', label: 'Grok Imagine' },
           ]}
           value={editBaseModel}
           onChange={setEditBaseModel}

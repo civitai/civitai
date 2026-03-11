@@ -1,4 +1,4 @@
-import { ActionIcon, Badge } from '@mantine/core';
+import { ActionIcon, Badge, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconTrash, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -22,16 +22,20 @@ export function ReferenceSidebarItem({
   getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
 }) {
   const coverImage = referenceImageMap.get(ref.id);
-  const hasImages = (ref.images?.length ?? 0) > 0;
+  const imageCount = ref.images?.length ?? 0;
+  const hasImages = imageCount > 0;
   const isFailed = ref.status === 'Failed';
+  const refType = ref.type ?? 'Character';
+  const tooltipLabel = `${refType} · ${imageCount} image${imageCount !== 1 ? 's' : ''}`;
 
   return (
-    <div className={styles.characterCard}>
-      <Link
-        href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
-        className={styles.characterAvatar}
-        onClick={(e: React.MouseEvent) => e.stopPropagation()}
-      >
+    <Tooltip label={tooltipLabel} withArrow position="right" openDelay={300}>
+    <Link
+      href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
+      className={styles.characterCard}
+      style={{ textDecoration: 'none' }}
+    >
+      <div className={styles.characterAvatar}>
         {isFailed ? (
           <IconAlertTriangle size={18} style={{ color: '#fa5252' }} />
         ) : coverImage ? (
@@ -53,17 +57,13 @@ export function ReferenceSidebarItem({
         ) : (
           <IconUser size={18} style={{ color: '#909296' }} />
         )}
-      </Link>
+      </div>
 
       <div className={styles.characterInfo}>
         <div className="flex items-center gap-1">
-          <Link
-            href={`/comics/project/${projectId}/character?characterId=${ref.id}`}
-            className={styles.characterName}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-          >
+          <span className={styles.characterName}>
             {ref.name}
-          </Link>
+          </span>
           {ref.type && ref.type !== 'Character' && refTypeBadge[ref.type] && (
             <Badge size="xs" variant="light" color={refTypeBadge[ref.type].color}>
               {refTypeBadge[ref.type].label}
@@ -82,6 +82,7 @@ export function ReferenceSidebarItem({
           color="red"
           size="sm"
           onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
             e.stopPropagation();
             onDelete(ref.id, ref.name);
           }}
@@ -89,6 +90,7 @@ export function ReferenceSidebarItem({
           <IconTrash size={14} />
         </ActionIcon>
       </div>
-    </div>
+    </Link>
+    </Tooltip>
   );
 }

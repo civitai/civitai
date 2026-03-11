@@ -4957,6 +4957,7 @@ enum ComicPanelStatus {
 enum ComicChapterStatus {
   Draft
   Published
+  Scheduled
 }
 
 enum ComicReferenceType {

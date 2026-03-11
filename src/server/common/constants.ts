@@ -691,6 +691,14 @@ export const qwenSizes = [
   { label: '9:16', width: 928, height: 1664 },
 ];
 
+export const grokSizes = [
+  { label: '16:9', width: 1824, height: 1024 },
+  { label: '4:3', width: 1184, height: 888 },
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', width: 888, height: 1184 },
+  { label: '9:16', width: 1024, height: 1824 },
+];
+
 export const ponyV7Sizes = [
   { label: '3:2', width: 1536, height: 1024 },
   { label: '6:5', width: 1536, height: 1280 },
