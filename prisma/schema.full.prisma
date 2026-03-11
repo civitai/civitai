@@ -210,10 +210,14 @@ model CashWithdrawal {
 }
 
 model CryptoWallet {
-  userId       Int     @id
+  userId       Int
   user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chain        String  @default("evm")
   wallet       String  @unique
   smartAccount String? @unique
+  payCurrency  String  @default("usdcbase")
+
+  @@id([userId, chain])
 }
 
 model CryptoDepositFee {

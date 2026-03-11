@@ -31,6 +31,20 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
+/** Human-friendly chain labels for deposit history badges */
+const CHAIN_BADGE_LABELS: Record<string, string> = {
+  evm: 'Base',
+  sol: 'Solana',
+  trx: 'Tron',
+  btc: 'Bitcoin',
+  doge: 'Dogecoin',
+  ltc: 'Litecoin',
+};
+
+function getChainBadgeLabel(chain: string): string {
+  return CHAIN_BADGE_LABELS[chain] ?? chain.toUpperCase();
+}
+
 export function DepositHistory() {
   const [page, setPage] = useState(1);
   const perPage = 3;
@@ -54,12 +68,12 @@ export function DepositHistory() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Build a lookup: currency code -> { ticker, network, hasMultipleNetworks }
+  // Build a lookup: currency code -> { ticker, network, chain, hasMultipleNetworks }
   const currencyLookup = useMemo(() => {
     if (!currencies) return {};
     const lookup: Record<
       string,
-      { ticker: string; network: string | null | undefined; hasMultipleNetworks: boolean }
+      { ticker: string; network: string | null | undefined; chain: string | null; hasMultipleNetworks: boolean }
     > = {};
     for (const group of currencies) {
       const hasMultipleNetworks = group.networks.length > 1;
@@ -67,6 +81,7 @@ export function DepositHistory() {
         lookup[net.code.toLowerCase()] = {
           ticker: (net.ticker ?? group.ticker).toUpperCase(),
           network: net.network,
+          chain: net.chain ?? null,
           hasMultipleNetworks,
         };
       }
@@ -182,9 +197,15 @@ export function DepositHistory() {
 
           const displayStatus = deposit.status;
           const ticker = currencyInfo?.ticker ?? deposit.currencySent?.toUpperCase() ?? '';
+          // Show network badge for multi-network tickers (e.g., USDC on Base vs Polygon)
           const networkBadge =
             currencyInfo?.hasMultipleNetworks && currencyInfo.network
               ? getDisplayName(currencyInfo.network.toLowerCase())
+              : null;
+          // Show chain badge when no network badge is shown (so every row has context)
+          const chainBadge =
+            !networkBadge && currencyInfo?.chain
+              ? getChainBadgeLabel(currencyInfo.chain)
               : null;
 
           return (
@@ -208,6 +229,11 @@ export function DepositHistory() {
                     {networkBadge && (
                       <Badge size="xs" variant="light" color="gray" radius="sm">
                         {networkBadge}
+                      </Badge>
+                    )}
+                    {chainBadge && (
+                      <Badge size="xs" variant="light" color="blue" radius="sm">
+                        {chainBadge}
                       </Badge>
                     )}
                   </Group>

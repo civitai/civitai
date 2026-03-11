@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Button,
   Divider,
   Group,
@@ -12,6 +13,7 @@ import {
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import {
+  IconAlertTriangle,
   IconArrowRight,
   IconBolt,
   IconCheck,
@@ -39,11 +41,29 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
   loading: () => <Skeleton height={150} width={150} radius="md" />,
 });
 
-export function DepositCardVariantC({ depositAddress, error, loading, onRetry }: DepositCardProps) {
+/** Human-friendly chain names for display */
+const CHAIN_DISPLAY_NAMES: Record<string, string> = {
+  evm: 'Ethereum',
+  sol: 'Solana',
+  trx: 'Tron',
+  btc: 'Bitcoin',
+  doge: 'Dogecoin',
+  ltc: 'Litecoin',
+};
+
+function getChainDisplayName(chain: string): string {
+  return CHAIN_DISPLAY_NAMES[chain] ?? chain.toUpperCase();
+}
+
+export function DepositCardVariantC({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
   const clipboard = useClipboard({ timeout: 2000 });
   const userSettings = useCurrentUserSettings();
   const updateSettings = useMutateUserSettings();
   const [selectedFiat, setSelectedFiat] = useState('usd');
+
+  // Track if chain changed after user copied address
+  const [copiedChain, setCopiedChain] = useState<string | null>(null);
+  const chainChangedAfterCopy = copiedChain != null && copiedChain !== chain;
 
   // Spotlight effect — uses refs + direct DOM manipulation to avoid re-renders on mouse move
   const spotlightRef = useRef<HTMLDivElement>(null);
@@ -100,7 +120,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
       <div className="grid grid-cols-1 sm:grid-cols-[55%_45%]">
         {/* ── Right info panel with spotlight effect ── */}
         <div
-          className="order-first sm:order-last relative overflow-hidden border-b border-gray-200 dark:border-white/5 sm:border-b-0 sm:border-l bg-gradient-to-br from-blue-500/5 to-yellow-500/5 dark:from-blue-500/[0.06] dark:to-yellow-500/[0.06]"
+          className="order-last relative overflow-hidden border-t border-gray-200 dark:border-white/5 sm:border-t-0 sm:border-l bg-gradient-to-br from-blue-500/5 to-yellow-500/5 dark:from-blue-500/[0.06] dark:to-yellow-500/[0.06]"
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
         >
@@ -186,7 +206,7 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
             <Stack gap={8}>
               <FactRow text="Buzz credited upon receipt" />
               <FactRow text="Most transactions complete in one minute" />
-              <FactRow text="Your address is permanent — reuse it anytime" />
+              <FactRow text="Each address is permanent — reuse it anytime" />
               <FactRow text="Send any amount above the minimum" />
               <FactRow text="Works from any wallet or exchange" />
             </Stack>
@@ -218,6 +238,14 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
             </Stack>
           ) : (
             <>
+              {/* Currency selector — first so user picks currency before seeing address */}
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                  Select currency
+                </Text>
+                <CurrencySelector selectedFiat={selectedFiat} onFiatChange={handleFiatChange} onSelect={onCurrencySelect} showMin={false} />
+              </Stack>
+
               {/* QR code with chaser border */}
               <Group justify="center" className="overflow-visible">
                 {isEmpty && loading ? (
@@ -227,11 +255,16 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
                 )}
               </Group>
 
-              {/* Address + copy */}
+              {/* Address + copy + min deposit */}
               <Stack gap={6}>
-                <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-                  Deposit address
-                </Text>
+                <Group gap={6} align="center">
+                  <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                    Deposit address
+                  </Text>
+                  <Badge size="xs" variant="light" color="blue" radius="sm">
+                    {getChainDisplayName(chain)}
+                  </Badge>
+                </Group>
                 {isEmpty && loading ? (
                   <Skeleton height={38} radius="md" />
                 ) : (
@@ -248,11 +281,17 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
                     >
                       {depositAddress}
                     </Text>
-                    <Tooltip label={clipboard.copied ? 'Copied!' : 'Copy address'} withArrow>
+                    <Tooltip
+                      label={clipboard.copied ? `Copied: ${getChainDisplayName(chain)} address` : 'Copy address'}
+                      withArrow
+                    >
                       <ActionIcon
                         variant="subtle"
                         color={clipboard.copied ? 'green' : 'gray'}
-                        onClick={() => clipboard.copy(depositAddress)}
+                        onClick={() => {
+                          clipboard.copy(depositAddress);
+                          setCopiedChain(chain);
+                        }}
                         className="shrink-0"
                         aria-label={clipboard.copied ? 'Address copied' : 'Copy deposit address'}
                       >
@@ -261,19 +300,15 @@ export function DepositCardVariantC({ depositAddress, error, loading, onRetry }:
                     </Tooltip>
                   </Group>
                 )}
-              </Stack>
-
-              {/* Currency selector */}
-              <Stack gap={4}>
-                <Group gap={8} align="baseline">
-                  <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-                    Accepted currencies
-                  </Text>
-                  <Text size="xs" c="gray.7" style={{ fontStyle: 'italic' }}>
-                    Select to see minimum deposit
-                  </Text>
-                </Group>
-                <CurrencySelector selectedFiat={selectedFiat} onFiatChange={handleFiatChange} />
+                {chainChangedAfterCopy && (
+                  <Group gap={4} wrap="nowrap">
+                    <IconAlertTriangle size={14} className="text-yellow-500 shrink-0" />
+                    <Text size="xs" c="yellow">
+                      Address changed — please re-copy
+                    </Text>
+                  </Group>
+                )}
+                <CurrencySelector selectedFiat={selectedFiat} onFiatChange={handleFiatChange} onSelect={onCurrencySelect} showMin />
               </Stack>
             </>
           )}

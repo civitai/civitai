@@ -11,6 +11,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { getChainConfig, getChainForNetwork } from '~/server/common/chain-config';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
@@ -23,32 +24,41 @@ const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 const paymentCacheKey = (paymentId: number | string): RedisKeyTemplateCache =>
   `${REDIS_KEYS.CACHES.CRYPTO_PAYMENT_STATUS}:${paymentId}` as RedisKeyTemplateCache;
 
-export const createDepositAddress = async (userId: number) => {
+export const getDepositAddress = async (userId: number, chain: string = 'evm') => {
+  const config = getChainConfig(chain);
+  if (!config) throw new Error(`Unsupported chain: ${chain}`);
+
   // Check if wallet already exists before acquiring lock
-  const existing = await dbRead.cryptoWallet.findUnique({ where: { userId } });
+  const existing = await dbRead.cryptoWallet.findUnique({
+    where: { userId_chain: { userId, chain } },
+  });
   if (existing?.wallet) {
     return {
       address: existing.wallet,
       paymentId: existing.smartAccount ? Number(existing.smartAccount) : null,
+      chain,
     };
   }
 
   const result = await withDistributedLock(
-    { key: `crypto-deposit:create:${userId}` },
+    { key: `crypto-deposit:create:${userId}:${chain}` },
     async () => {
       // Double-check inside lock
-      const existingInLock = await dbRead.cryptoWallet.findUnique({ where: { userId } });
+      const existingInLock = await dbRead.cryptoWallet.findUnique({
+        where: { userId_chain: { userId, chain } },
+      });
       if (existingInLock?.wallet) {
         return {
           address: existingInLock.wallet,
           paymentId: existingInLock.smartAccount ? Number(existingInLock.smartAccount) : null,
+          chain,
         };
       }
 
       const payment = await nowpaymentsCaller.createPayment({
-        price_amount: 1,
+        price_amount: 20, // Must exceed min amount for all chains (USDTTRC20 requires ~$10)
         price_currency: 'usd',
-        pay_currency: 'usdcbase',
+        pay_currency: config.targetCurrency,
         order_id: `user:${userId}`,
         ipn_callback_url: `${env.NEXTAUTH_URL}/api/webhooks/nowpayments`,
       });
@@ -57,22 +67,20 @@ export const createDepositAddress = async (userId: number) => {
         throw new Error('Failed to create deposit address via NowPayments');
       }
 
-      await dbWrite.cryptoWallet.upsert({
-        where: { userId },
-        create: {
+      await dbWrite.cryptoWallet.create({
+        data: {
           userId,
+          chain,
           wallet: payment.pay_address,
           smartAccount: String(payment.payment_id),
-        },
-        update: {
-          wallet: payment.pay_address,
-          smartAccount: String(payment.payment_id),
+          payCurrency: config.targetCurrency,
         },
       });
 
       return {
         address: payment.pay_address,
         paymentId: payment.payment_id,
+        chain,
       };
     }
   );
@@ -253,33 +261,41 @@ export const getDepositHistory = async (
   page = Math.max(1, page);
   perPage = Math.min(Math.max(1, perPage), MAX_PER_PAGE);
 
-  const wallet = await dbRead.cryptoWallet.findUnique({ where: { userId } });
-  if (!wallet?.smartAccount) {
+  const wallets = await dbRead.cryptoWallet.findMany({ where: { userId } });
+  if (wallets.length === 0) {
     return { deposits: [], total: 0 };
   }
 
-  // Get parent payment to read payment_extra_ids (cached)
-  const parentPayment = await getCachedPaymentStatus(wallet.smartAccount);
-  if (!parentPayment) {
-    await log({
-      message: 'Failed to fetch parent payment for deposit history',
-      userId,
-      smartAccount: wallet.smartAccount,
-    });
-    return { deposits: [], total: 0 };
-  }
+  // Fetch all parent payments in PARALLEL, with per-chain error isolation
+  const parentResults = await Promise.all(
+    wallets
+      .filter((w) => w.smartAccount)
+      .map(async (wallet) => {
+        try {
+          return await getCachedPaymentStatus(wallet.smartAccount!);
+        } catch {
+          return null; // Skip this chain if API fails
+        }
+      })
+  );
 
-  // Build list of all payment IDs: child payments (repeats) + the parent payment itself
-  const extraIds: number[] = parentPayment.payment_extra_ids ?? [];
-  const parentId =
-    typeof parentPayment.payment_id === 'string'
-      ? parseInt(parentPayment.payment_id, 10)
-      : parentPayment.payment_id;
+  // Aggregate all payment IDs across all chains
+  const allIds: number[] = [];
+  for (const parentPayment of parentResults) {
+    if (!parentPayment) continue;
 
-  // Include the parent payment if it has actually been paid
-  const allIds = [...extraIds];
-  if (parentPayment.actually_paid && Number(parentPayment.actually_paid) > 0) {
-    allIds.push(parentId);
+    const extraIds: number[] = parentPayment.payment_extra_ids ?? [];
+    allIds.push(...extraIds);
+
+    const parentId =
+      typeof parentPayment.payment_id === 'string'
+        ? parseInt(parentPayment.payment_id, 10)
+        : parentPayment.payment_id;
+
+    // Include the parent payment if it has actually been paid
+    if (parentPayment.actually_paid && Number(parentPayment.actually_paid) > 0) {
+      allIds.push(parentId);
+    }
   }
 
   // Sort newest first (highest IDs are newest)
@@ -335,19 +351,24 @@ export const getDepositHistory = async (
 };
 
 export const bustDepositCache = async (userId: number) => {
-  const wallet = await dbRead.cryptoWallet.findUnique({ where: { userId } });
-  if (!wallet?.smartAccount) return;
+  const wallets = await dbRead.cryptoWallet.findMany({ where: { userId } });
 
-  // Bust the parent payment cache (which contains payment_extra_ids)
-  await redis.del(paymentCacheKey(wallet.smartAccount));
+  await Promise.all(
+    wallets
+      .filter((w) => w.smartAccount)
+      .map(async (wallet) => {
+        // Bust the parent payment cache (which contains payment_extra_ids)
+        await redis.del(paymentCacheKey(wallet.smartAccount!));
 
-  // Bust all known child payment caches
-  const parentPayment = await nowpaymentsCaller.getPaymentStatus(wallet.smartAccount);
-  if (parentPayment?.payment_extra_ids) {
-    await Promise.all(
-      parentPayment.payment_extra_ids.map((id) => redis.del(paymentCacheKey(id)))
-    );
-  }
+        // Fetch fresh state and bust all known child payment caches
+        const parentPayment = await nowpaymentsCaller.getPaymentStatus(wallet.smartAccount!);
+        if (parentPayment?.payment_extra_ids) {
+          await Promise.all(
+            parentPayment.payment_extra_ids.map((id) => redis.del(paymentCacheKey(id)))
+          );
+        }
+      })
+  );
 };
 
 export type SupportedCurrencyNetwork = {
@@ -359,6 +380,7 @@ export type SupportedCurrencyNetwork = {
   isStable: boolean;
   minAmount: number | null;
   minAmountUsd: number | null;
+  chain: string | null;
 };
 
 export type SupportedCurrencyGroup = {
@@ -416,10 +438,10 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
     merchantCoins.selectedCurrencies.map((c) => c.toLowerCase())
   );
 
-  // Filter full currencies to only our selected ones
-  const selectedCurrencies = fullCurrencies.currencies.filter((c) =>
-    selectedCodes.has(c.code.toLowerCase())
-  );
+  // Filter full currencies to only our selected ones, and only those on supported chains
+  const selectedCurrencies = fullCurrencies.currencies
+    .filter((c) => selectedCodes.has(c.code.toLowerCase()))
+    .filter((c) => c.network && getChainForNetwork(c.network));
 
   // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
   const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
@@ -441,6 +463,7 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
         isStable: currency.is_stable ?? false,
         minAmount: minAmount?.min_amount ?? null,
         minAmountUsd: minAmount?.fiat_equivalent ?? null,
+        chain: getChainForNetwork(currency.network ?? '')?.chain ?? null,
       };
     }
   );

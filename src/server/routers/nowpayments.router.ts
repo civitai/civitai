@@ -1,6 +1,6 @@
 import {
   bustDepositCacheHandler,
-  createDepositAddressHandler,
+  getDepositAddressHandler,
   getBuzzConversionRateHandler,
   getDepositHistoryHandler,
   getMinAmountHandler,
@@ -8,6 +8,7 @@ import {
 } from '~/server/controllers/nowpayments.controller';
 import {
   depositHistoryInputSchema,
+  getDepositAddressInputSchema,
   getBuzzConversionRateInputSchema,
   getMinAmountInputSchema,
 } from '~/server/schema/nowpayments.schema';
@@ -16,7 +17,9 @@ import { CacheTTL } from '~/server/common/constants';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 
 export const nowPaymentsRouter = router({
-  createDepositAddress: protectedProcedure.mutation(createDepositAddressHandler),
+  getDepositAddress: protectedProcedure
+    .input(getDepositAddressInputSchema)
+    .query(getDepositAddressHandler),
   getDepositHistory: protectedProcedure
     .input(depositHistoryInputSchema)
     .query(getDepositHistoryHandler),

@@ -204,6 +204,50 @@ class NOWPaymentsCaller extends HttpCaller {
     const data = await response.json();
     return NOWPayments.payoutCurrenciesResponseSchema.parse(data);
   }
+
+  async authenticate(): Promise<string> {
+    // Check cached token first
+    if (
+      NOWPaymentsCaller.acessToken &&
+      Date.now() - NOWPaymentsCaller.acessToken.createdAt <
+        NOWPaymentsCaller.acessToken.expiresIn * 1000
+    ) {
+      return NOWPaymentsCaller.acessToken.accessToken;
+    }
+
+    const response = await this.postRaw('/v1/auth', {
+      body: JSON.stringify({
+        email: env.NOW_PAYMENTS_EMAIL,
+        password: env.NOW_PAYMENTS_PASSWORD,
+      }),
+    });
+    if (!response.ok) throw new Error('Failed to authenticate with NowPayments');
+    const data = await response.json();
+    const parsed = NOWPayments.authResponseSchema.parse(data);
+
+    NOWPaymentsCaller.acessToken = {
+      accessToken: parsed.token,
+      expiresIn: parsed.expires_in ?? 300, // 5min default
+      createdAt: Date.now(),
+    };
+    return parsed.token;
+  }
+
+  async createPayout(
+    input: NOWPayments.CreatePayoutInput,
+    jwtToken: string
+  ): Promise<NOWPayments.CreatePayoutResponse | null> {
+    const response = await this.postRaw('/v1/payout', {
+      body: JSON.stringify(input),
+      headers: { Authorization: `Bearer ${jwtToken}` },
+    });
+    if (!response.ok) {
+      console.error('Failed to create payout', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.createPayoutResponseSchema.parse(data);
+  }
 }
 
 export default NOWPaymentsCaller.getInstance();

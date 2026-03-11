@@ -1,4 +1,3 @@
-import React, { useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { DepositCardVariantC } from './variants/DepositCardVariantC';
 
@@ -7,31 +6,32 @@ export type DepositCardProps = {
   error: { message: string } | null;
   loading: boolean;
   onRetry: () => void;
+  chain: string;
+  onCurrencySelect?: (code: string, chain: string) => void;
 };
 
-export function DepositAddressCard() {
+export function DepositAddressCard({
+  chain = 'evm',
+  onCurrencySelect,
+}: {
+  chain?: string;
+  onCurrencySelect?: (code: string, chain: string) => void;
+}) {
   const utils = trpc.useUtils();
 
   const {
-    mutate: createOrGetAddress,
     data: walletData,
-    isPending: loading,
-    isIdle,
+    isLoading: loading,
     error,
-  } = trpc.nowPayments.createDepositAddress.useMutation({
-    onSuccess: () => {
-      utils.nowPayments.getDepositHistory.invalidate();
-    },
-  });
-
-  const [autoChecked, setAutoChecked] = useState(false);
-  React.useEffect(() => {
-    if (!autoChecked) {
-      setAutoChecked(true);
-      createOrGetAddress();
+    refetch,
+  } = trpc.nowPayments.getDepositAddress.useQuery(
+    { chain },
+    {
+      onSuccess: () => {
+        utils.nowPayments.getDepositHistory.invalidate();
+      },
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  );
 
   const depositAddress = walletData?.address ?? '';
 
@@ -39,8 +39,10 @@ export function DepositAddressCard() {
     <DepositCardVariantC
       depositAddress={depositAddress}
       error={error}
-      loading={loading || isIdle}
-      onRetry={createOrGetAddress}
+      loading={loading}
+      onRetry={() => refetch()}
+      chain={chain}
+      onCurrencySelect={onCurrencySelect}
     />
   );
 }

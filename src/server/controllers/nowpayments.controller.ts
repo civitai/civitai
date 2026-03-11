@@ -2,23 +2,26 @@ import type { Context } from '~/server/createContext';
 import type {
   DepositHistoryInput,
   GetBuzzConversionRateInput,
+  GetDepositAddressInput,
   GetMinAmountInput,
 } from '~/server/schema/nowpayments.schema';
 import {
   bustDepositCache,
-  createDepositAddress,
+  getDepositAddress,
   getBuzzConversionRate,
   getDepositHistory,
   getMinAmount,
   getSupportedCurrencies,
 } from '~/server/services/nowpayments.service';
 
-export const createDepositAddressHandler = async ({
+export const getDepositAddressHandler = async ({
   ctx,
+  input,
 }: {
   ctx: DeepNonNullable<Context>;
+  input: GetDepositAddressInput;
 }) => {
-  return createDepositAddress(ctx.user.id);
+  return getDepositAddress(ctx.user.id, input.chain);
 };
 
 export const getDepositHistoryHandler = async ({

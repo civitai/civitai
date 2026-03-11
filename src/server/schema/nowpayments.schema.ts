@@ -6,6 +6,11 @@ export const depositHistoryInputSchema = z.object({
   perPage: z.number().int().min(1).max(25).default(3),
 });
 
+export type GetDepositAddressInput = z.infer<typeof getDepositAddressInputSchema>;
+export const getDepositAddressInputSchema = z.object({
+  chain: z.string().default('evm'),
+});
+
 export type GetMinAmountInput = z.infer<typeof getMinAmountInputSchema>;
 export const getMinAmountInputSchema = z.object({
   currencyCode: z.string().min(1).max(20),

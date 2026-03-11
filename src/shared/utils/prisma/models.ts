@@ -321,8 +321,10 @@ export interface CashWithdrawal {
 export interface CryptoWallet {
   userId: number;
   user?: User;
+  chain: string;
   wallet: string;
   smartAccount: string | null;
+  payCurrency: string;
 }
 
 export interface CryptoDepositFee {

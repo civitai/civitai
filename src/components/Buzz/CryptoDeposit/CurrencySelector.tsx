@@ -12,22 +12,21 @@ import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function CurrencySelector({
-  selectedFiat: controlledFiat,
+// ── Hook: owns all currency selection state + queries ──
+
+export type CurrencySelectionState = ReturnType<typeof useCurrencySelection>;
+
+export function useCurrencySelection({
+  selectedFiat,
   onFiatChange,
+  onSelect,
 }: {
-  selectedFiat?: string;
-  onFiatChange?: (fiat: string) => void;
-} = {}) {
+  selectedFiat: string;
+  onFiatChange: (fiat: string) => void;
+  onSelect?: (code: string, chain: string) => void;
+}) {
   const [selectedTicker, setSelectedTicker] = useState<string>('usdc');
   const [selectedCode, setSelectedCode] = useState<string>('USDCBASE');
-  const [internalFiat, setInternalFiat] = useState<string>('usd');
-
-  const selectedFiat = controlledFiat ?? internalFiat;
-  const handleFiatChange = (fiat: string) => {
-    setInternalFiat(fiat);
-    onFiatChange?.(fiat);
-  };
 
   const { data: currencies, isLoading: loadingCurrencies } =
     trpc.nowPayments.getSupportedCurrencies.useQuery(undefined, { staleTime: 5 * 60 * 1000 });
@@ -37,9 +36,11 @@ export function CurrencySelector({
     if (!currencies) return;
     const group = currencies.find((g) => g.ticker === selectedTicker);
     if (group && !group.networks.some((n) => n.code === selectedCode)) {
-      setSelectedCode(group.networks[0].code);
+      const network = group.networks[0];
+      setSelectedCode(network.code);
+      onSelect?.(network.code, network.chain ?? 'evm');
     }
-  }, [currencies, selectedTicker, selectedCode]);
+  }, [currencies, selectedTicker, selectedCode, onSelect]);
 
   const selectedGroup = useMemo(
     () => currencies?.find((g) => g.ticker === selectedTicker) ?? null,
@@ -54,16 +55,18 @@ export function CurrencySelector({
   const handleTickerChange = useCallback(
     (ticker: string, code?: string) => {
       setSelectedTicker(ticker);
+      const group = currencies?.find((g) => g.ticker === ticker);
       if (code) {
         setSelectedCode(code);
-      } else {
-        const group = currencies?.find((g) => g.ticker === ticker);
-        if (group && group.networks.length > 0) {
-          setSelectedCode(group.networks[0].code);
-        }
+        const network = group?.networks.find((n) => n.code === code);
+        onSelect?.(code, network?.chain ?? 'evm');
+      } else if (group && group.networks.length > 0) {
+        const network = group.networks[0];
+        setSelectedCode(network.code);
+        onSelect?.(network.code, network.chain ?? 'evm');
       }
     },
-    [currencies]
+    [currencies, onSelect]
   );
 
   const { data: minData, isFetching: loadingMin } = trpc.nowPayments.getMinAmount.useQuery(
@@ -71,105 +74,154 @@ export function CurrencySelector({
     { enabled: !!selectedCode, staleTime: 60 * 1000 }
   );
 
-  const { symbol: fiatSymbol } = getFiatDisplay(selectedFiat);
-
   const networkLabel = useMemo(() => {
     if (!selectedGroup || selectedGroup.networks.length <= 1) return null;
     const raw = selectedNetwork?.network ?? selectedNetwork?.name ?? '';
     return getDisplayName(raw.toLowerCase());
   }, [selectedGroup, selectedNetwork]);
 
+  return {
+    currencies,
+    loadingCurrencies,
+    selectedTicker,
+    selectedCode,
+    selectedGroup,
+    selectedNetwork,
+    handleTickerChange,
+    minData,
+    loadingMin,
+    networkLabel,
+    selectedFiat,
+    onFiatChange,
+  };
+}
+
+// ── Presentational: currency badges ──
+
+export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
+  const { currencies, loadingCurrencies, selectedTicker, selectedCode, handleTickerChange } = state;
+
   if (loadingCurrencies) {
     return (
-      <Stack gap={6}>
-        <Group gap={4} wrap="wrap">
-          {[50, 40, 55, 45, 60].map((w, i) => (
-            <Skeleton key={i} height={22} width={w} radius="sm" />
-          ))}
-        </Group>
-        <Skeleton height={14} width={180} radius="sm" />
-      </Stack>
+      <Group gap={4} wrap="wrap">
+        {[50, 40, 55, 45, 60].map((w, i) => (
+          <Skeleton key={i} height={22} width={w} radius="sm" />
+        ))}
+      </Group>
     );
   }
 
   return (
-    <Stack gap={6}>
-      {/* Currency badges */}
-      <Group gap={4} wrap="wrap">
-        {(currencies ?? []).map((group) => {
-          const isSelected = selectedTicker === group.ticker;
-          const isMulti = group.networks.length > 1;
+    <Group gap={4} wrap="wrap">
+      {(currencies ?? []).map((group) => {
+        const isSelected = selectedTicker === group.ticker;
+        const isMulti = group.networks.length > 1;
 
-          if (isMulti) {
-            return (
-              <Menu key={group.ticker} withinPortal position="bottom-start" shadow="sm">
-                <Menu.Target>
-                  <Badge
-                    variant={isSelected ? 'filled' : 'light'}
-                    color={isSelected ? 'blue' : 'gray'}
-                    size="sm"
-                    radius="sm"
-                    className="cursor-pointer"
-                  >
-                    {group.ticker.toUpperCase()}
-                    <Text component="span" size="xs" ml={2} style={{ opacity: 0.6 }}>
-                      ·{group.networks.length}
-                    </Text>
-                  </Badge>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {group.networks.map((network) => {
-                    const netKey = (network.network ?? '').toLowerCase();
-                    const netName = getDisplayName(netKey) || network.network || network.name;
-                    return (
-                      <Menu.Item
-                        key={network.code}
-                        fw={selectedCode === network.code ? 700 : undefined}
-                        onClick={() => handleTickerChange(group.ticker, network.code)}
-                      >
-                        {netName}
-                      </Menu.Item>
-                    );
-                  })}
-                </Menu.Dropdown>
-              </Menu>
-            );
-          }
-
+        if (isMulti) {
           return (
-            <Badge
-              key={group.ticker}
-              variant={isSelected ? 'filled' : 'light'}
-              color={isSelected ? 'blue' : 'gray'}
-              size="sm"
-              radius="sm"
-              className="cursor-pointer"
-              onClick={() => handleTickerChange(group.ticker)}
-            >
-              {group.ticker.toUpperCase()}
-            </Badge>
+            <Menu key={group.ticker} withinPortal position="bottom-start" shadow="sm">
+              <Menu.Target>
+                <Badge
+                  variant={isSelected ? 'filled' : 'light'}
+                  color={isSelected ? 'blue' : 'gray'}
+                  size="sm"
+                  radius="sm"
+                  className="cursor-pointer"
+                >
+                  {group.ticker.toUpperCase()}
+                  <Text component="span" size="xs" ml={2} style={{ opacity: 0.6 }}>
+                    ·{group.networks.length}
+                  </Text>
+                </Badge>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {group.networks.map((network) => {
+                  const netKey = (network.network ?? '').toLowerCase();
+                  const netName = getDisplayName(netKey) || network.network || network.name;
+                  return (
+                    <Menu.Item
+                      key={network.code}
+                      fw={selectedCode === network.code ? 700 : undefined}
+                      onClick={() => handleTickerChange(group.ticker, network.code)}
+                    >
+                      {netName}
+                    </Menu.Item>
+                  );
+                })}
+              </Menu.Dropdown>
+            </Menu>
           );
-        })}
-      </Group>
+        }
 
-      {/* Min deposit */}
-      <Group gap={4} align="center">
-        <Text size="xs" c="dimmed">
-          Min {selectedTicker.toUpperCase()} deposit
-          {networkLabel ? ` on ${networkLabel}` : ''}
-          :{' '}
-          {loadingMin ? (
-            <Skeleton height={12} width={40} radius="sm" className="inline-block align-middle" />
-          ) : minData?.fiatEquivalent != null ? (
-            <Text span fw={600}>
-              {fiatSymbol}
-              {(Math.ceil(minData.fiatEquivalent * 100) / 100).toFixed(2)}
-            </Text>
-          ) : null}
-          {' '}
-          <FiatMenu selectedFiat={selectedFiat} onFiatChange={handleFiatChange} />
-        </Text>
-      </Group>
+        return (
+          <Badge
+            key={group.ticker}
+            variant={isSelected ? 'filled' : 'light'}
+            color={isSelected ? 'blue' : 'gray'}
+            size="sm"
+            radius="sm"
+            className="cursor-pointer"
+            onClick={() => handleTickerChange(group.ticker)}
+          >
+            {group.ticker.toUpperCase()}
+          </Badge>
+        );
+      })}
+    </Group>
+  );
+}
+
+// ── Presentational: min deposit line ──
+
+export function MinDepositInfo({ state }: { state: CurrencySelectionState }) {
+  const { selectedTicker, networkLabel, loadingMin, minData, selectedFiat, onFiatChange } = state;
+  const { symbol: fiatSymbol } = getFiatDisplay(selectedFiat);
+
+  return (
+    <Group gap={4} align="center">
+      <Text size="xs" c="dimmed">
+        Min {selectedTicker.toUpperCase()} deposit
+        {networkLabel ? ` on ${networkLabel}` : ''}
+        :{' '}
+        {loadingMin ? (
+          <Skeleton height={12} width={40} radius="sm" className="inline-block align-middle" />
+        ) : minData?.fiatEquivalent != null ? (
+          <Text span fw={600}>
+            {fiatSymbol}
+            {(Math.ceil(minData.fiatEquivalent * 100) / 100).toFixed(2)}
+          </Text>
+        ) : null}
+        {' '}
+        <FiatMenu selectedFiat={selectedFiat} onFiatChange={onFiatChange} />
+      </Text>
+    </Group>
+  );
+}
+
+// ── Legacy combined component (kept for backward compat if needed) ──
+
+export function CurrencySelector({
+  selectedFiat: controlledFiat,
+  onFiatChange,
+  onSelect,
+}: {
+  selectedFiat?: string;
+  onFiatChange?: (fiat: string) => void;
+  onSelect?: (code: string, chain: string) => void;
+} = {}) {
+  const [internalFiat, setInternalFiat] = useState<string>('usd');
+  const selectedFiat = controlledFiat ?? internalFiat;
+  const handleFiatChange = (fiat: string) => {
+    setInternalFiat(fiat);
+    onFiatChange?.(fiat);
+  };
+
+  const state = useCurrencySelection({ selectedFiat, onFiatChange: handleFiatChange, onSelect });
+
+  return (
+    <Stack gap={6}>
+      <CurrencyBadges state={state} />
+      <MinDepositInfo state={state} />
     </Stack>
   );
 }

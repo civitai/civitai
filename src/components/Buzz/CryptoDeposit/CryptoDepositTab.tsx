@@ -1,4 +1,5 @@
 import { Alert, Stack, Text } from '@mantine/core';
+import { useCallback, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DepositAddressCard } from '~/components/Buzz/CryptoDeposit/DepositAddressCard';
 import { OnrampGuidance, OnrampGuidanceToggle } from '~/components/Buzz/CryptoDeposit/OnrampGuidance';
@@ -6,6 +7,11 @@ import { DepositHistory } from '~/components/Buzz/CryptoDeposit/DepositHistory';
 
 export function CryptoDepositTab() {
   const currentUser = useCurrentUser();
+  const [selectedChain, setSelectedChain] = useState('evm');
+
+  const handleCurrencySelect = useCallback((_code: string, chain: string) => {
+    setSelectedChain(chain);
+  }, []);
 
   if (!currentUser) {
     return (
@@ -17,7 +23,7 @@ export function CryptoDepositTab() {
 
   return (
     <Stack gap="lg" mt="md">
-      <DepositAddressCard />
+      <DepositAddressCard chain={selectedChain} onCurrencySelect={handleCurrencySelect} />
       <OnrampGuidance />
       <DepositHistory />
       <OnrampGuidanceToggle />
