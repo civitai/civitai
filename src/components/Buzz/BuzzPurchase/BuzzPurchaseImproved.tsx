@@ -11,6 +11,7 @@ import {
   ThemeIcon,
   Badge,
   Card,
+  Paper,
   SimpleGrid,
   Title,
   Divider,
@@ -48,6 +49,7 @@ import { useAppContext } from '~/providers/AppProvider';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import classes from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
@@ -420,7 +422,7 @@ export const BuzzPurchaseImproved = ({
                 </Stack>
               </Center>
             ) : (
-              <Card className={classes.packageSection} padding="md" radius="md">
+              <Paper className={classes.packageSection} p="md" radius="md" withBorder style={outerCardStyle}>
                 <Stack gap="md">
                   <div>
                     <Title order={3} size="lg" mb={0}>
@@ -924,7 +926,7 @@ export const BuzzPurchaseImproved = ({
                     </Stack>
                   </Card>
                 </Stack>
-              </Card>
+              </Paper>
             )}
           </Stack>
     </div>

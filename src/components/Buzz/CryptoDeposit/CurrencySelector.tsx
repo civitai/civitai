@@ -106,7 +106,7 @@ export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
     return (
       <Group gap={4} wrap="wrap">
         {[50, 40, 55, 45, 60].map((w, i) => (
-          <Skeleton key={i} height={22} width={w} radius="sm" />
+          <Skeleton key={i} height={26} width={w} radius="sm" />
         ))}
       </Group>
     );
@@ -122,18 +122,20 @@ export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
           return (
             <Menu key={group.ticker} withinPortal position="bottom-start" shadow="sm">
               <Menu.Target>
-                <Badge
-                  variant={isSelected ? 'filled' : 'light'}
-                  color={isSelected ? 'blue' : 'gray'}
-                  size="sm"
-                  radius="sm"
-                  className="cursor-pointer"
-                >
-                  {group.ticker.toUpperCase()}
-                  <Text component="span" size="xs" ml={2} style={{ opacity: 0.6 }}>
-                    ·{group.networks.length}
-                  </Text>
-                </Badge>
+                <UnstyledButton>
+                  <Badge
+                    variant={isSelected ? 'filled' : 'light'}
+                    color={isSelected ? 'blue' : 'gray'}
+                    size="md"
+                    radius="sm"
+                    className="cursor-pointer"
+                  >
+                    {group.ticker.toUpperCase()}
+                    <span className="ml-0.5 opacity-60">
+                      ·{group.networks.length}
+                    </span>
+                  </Badge>
+                </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
                 {group.networks.map((network) => {
@@ -164,7 +166,7 @@ export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
             <Badge
               variant={isSelected ? 'filled' : 'light'}
               color={isSelected ? 'blue' : 'gray'}
-              size="sm"
+              size="md"
               radius="sm"
               className="cursor-pointer"
             >

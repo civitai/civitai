@@ -62,20 +62,20 @@ export const BuzzFeatures = ({
           <Group
             key={feature}
             wrap="nowrap"
-            gap={compact ? 'sm' : 'md'}
+            gap="sm"
             align="center"
             className={classes.featureItem}
           >
             <ThemeIcon
-              size={compact ? 22 : 26}
-              radius="md"
-              className={classes.featureIcon}
-              variant="filled"
+              size={22}
+              radius="xl"
+              variant="light"
               color={buzzConfig.color}
+              className="shrink-0"
             >
-              <IconBolt size={compact ? 14 : 16} stroke={2.5} fill="currentColor" />
+              <IconBolt size={13} stroke={2.5} fill="currentColor" />
             </ThemeIcon>
-            <Text size={compact ? 'sm' : 'md'} className={classes.featureText} fw={500} lh={1.4}>
+            <Text size="sm" className={classes.featureText} lh={1.4}>
               {feature}
             </Text>
           </Group>

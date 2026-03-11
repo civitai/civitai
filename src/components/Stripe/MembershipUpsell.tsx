@@ -5,17 +5,14 @@ import {
   Button,
   Anchor,
   Badge,
-  Collapse,
   Loader,
   Center,
   Card,
   Title,
   ThemeIcon,
   Box,
-  UnstyledButton,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import { IconBolt, IconCheck, IconChevronDown, IconDiamond, IconStar } from '@tabler/icons-react';
+import { IconBolt, IconCheck, IconDiamond, IconStar } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -99,27 +96,25 @@ export const MembershipUpsell = ({
     <Card className={classes.membershipCard} padding="md" radius="md">
       <Stack gap="sm">
         {/* Header with badge */}
-        <Group justify="space-between" align="flex-start">
-          <Badge variant="light" size="md" color="grape" className={classes.badge}>
-            <Group gap={4}>
-              <IconStar size={16} fill="currentColor" />
-              <Text tt="uppercase" fw={600} size="xs">
-                Pro
-              </Text>
-            </Group>
-          </Badge>
+        <Badge variant="light" size="md" color="grape" className={classes.badge}>
+          <Group gap={4}>
+            <IconStar size={16} fill="currentColor" />
+            <Text tt="uppercase" fw={600} size="xs">
+              Pro
+            </Text>
+          </Group>
+        </Badge>
 
-          {image && (
-            <Box className={classes.imageWrapper}>
-              <EdgeMedia src={image} width={50} />
-            </Box>
-          )}
-        </Group>
+        {image && (
+          <Box className={classes.imageFloat}>
+            <EdgeMedia src={image} width={80} />
+          </Box>
+        )}
 
         {/* Title and icon */}
         <Group gap="sm" align="center">
-          <ThemeIcon size={40} radius="xl" className={classes.tierIcon}>
-            <IconDiamond size={20} />
+          <ThemeIcon size={32} radius="lg" className={classes.tierIcon}>
+            <IconDiamond size={18} />
           </ThemeIcon>
           <div>
             <Title order={3} className={classes.title} size="md">
@@ -212,11 +207,11 @@ export const MembershipUpsell = ({
 
 function BenefitRow({ content }: { content: string }) {
   return (
-    <Group gap="xs" wrap="nowrap" align="flex-start">
-      <ThemeIcon size={16} radius="xl" color="grape" variant="light">
-        <IconCheck size={10} />
+    <Group gap="sm" wrap="nowrap" align="center">
+      <ThemeIcon size={22} radius="xl" color="grape" variant="light" className="shrink-0">
+        <IconCheck size={12} />
       </ThemeIcon>
-      <Text className={classes.benefitText} size="xs">
+      <Text className={classes.benefitText} size="sm">
         {content}
       </Text>
     </Group>
@@ -232,75 +227,37 @@ function BenefitsList({
   multiplier?: number;
   buzzAmount: number;
 }) {
-  const [expanded, { toggle }] = useDisclosure(false);
   const filtered = benefits.filter((b) => b.content);
-  const visible = filtered.slice(0, 3);
-  const remaining = filtered.slice(3);
-
-  const multiplierRow = multiplier ? (
-    <Group gap="sm" wrap="nowrap" align="flex-start" my={8}>
-      <ThemeIcon
-        size={26}
-        radius="xl"
-        color="grape"
-        variant="filled"
-        style={{ filter: 'drop-shadow(0 0 4px var(--mantine-color-grape-5))' }}
-      >
-        <IconBolt size={14} />
-      </ThemeIcon>
-      <div>
-        <Text size="md" fw={700} style={{ textShadow: '0 0 6px var(--mantine-color-grape-5)' }}>
-          {(((multiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on every purchase
-        </Text>
-        {buzzAmount > 0 && (
-          <Text size="xs" c="dimmed">
-            +{numberWithCommas(Math.round(buzzAmount * ((multiplier ?? 1) - 1)))} extra on this
-            purchase
-          </Text>
-        )}
-      </div>
-    </Group>
-  ) : null;
-
-  if (remaining.length === 0) {
-    return (
-      <Stack gap="xs">
-        {multiplierRow}
-        {visible.map((b, i) => (
-          <BenefitRow key={i} content={b.content!} />
-        ))}
-      </Stack>
-    );
-  }
 
   return (
     <Stack gap="xs">
-      {multiplierRow}
-      {visible.map((b, i) => (
+      {multiplier && (
+        <Group gap="sm" wrap="nowrap" align="flex-start" my={4}>
+          <ThemeIcon
+            size={26}
+            radius="xl"
+            color="grape"
+            variant="light"
+            className="shrink-0"
+          >
+            <IconBolt size={16} />
+          </ThemeIcon>
+          <div>
+            <Text size="md" className={classes.multiplierText}>
+              {(((multiplier - 1) * 100).toFixed(0))}% Bonus Buzz on every purchase
+            </Text>
+            {buzzAmount > 0 && (
+              <Text size="xs" c="dimmed">
+                +{numberWithCommas(Math.round(buzzAmount * (multiplier - 1)))} extra on this
+                purchase
+              </Text>
+            )}
+          </div>
+        </Group>
+      )}
+      {filtered.map((b, i) => (
         <BenefitRow key={i} content={b.content!} />
       ))}
-      <Collapse in={expanded}>
-        <Stack gap="xs">
-          {remaining.map((b, i) => (
-            <BenefitRow key={i} content={b.content!} />
-          ))}
-        </Stack>
-      </Collapse>
-      <UnstyledButton onClick={toggle} aria-expanded={expanded} aria-label="Show more benefits">
-        <Group gap={4} justify="center">
-          <Text size="xs" c="dimmed">
-            {expanded ? 'Show less' : `+ ${remaining.length} more benefits`}
-          </Text>
-          <IconChevronDown
-            size={14}
-            className="text-dimmed"
-            style={{
-              transform: expanded ? 'rotate(180deg)' : undefined,
-              transition: 'transform 200ms',
-            }}
-          />
-        </Group>
-      </UnstyledButton>
     </Stack>
   );
 }

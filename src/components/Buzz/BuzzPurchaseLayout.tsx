@@ -20,7 +20,7 @@ export const BuzzPurchaseLayout = ({
   const canUpgradeMembership = useCanUpgrade();
 
   return (
-    <Grid>
+    <Grid style={{ maxWidth: 1200, margin: '0 auto', width: '100%' }}>
       <Grid.Col span={{ base: 12, md: 8 }}>
         <Tabs defaultValue="crypto" variant="pills" color="yellow.7">
           <Group gap="sm" mb="lg" align="center">
