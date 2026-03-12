@@ -134,11 +134,13 @@ export function PanelDetailDrawer({
                 </Text>
               </div>
 
-              {/* Original prompt */}
-              <div>
-                <div className={styles.detailSectionTitle}>Original Prompt</div>
-                <div className={styles.promptBox}>{detailPanel.prompt}</div>
-              </div>
+              {/* Original prompt (hide for imported panels with no prompt) */}
+              {detailPanel.prompt ? (
+                <div>
+                  <div className={styles.detailSectionTitle}>Original Prompt</div>
+                  <div className={styles.promptBox}>{detailPanel.prompt}</div>
+                </div>
+              ) : null}
 
               {/* Enhanced prompt */}
               {detailPanel.enhancedPrompt && (
@@ -171,8 +173,9 @@ export function PanelDetailDrawer({
                 </div>
               )}
 
-              {/* Source Image (for enhanced panels) */}
-              {(detailPanel.metadata as Record<string, any> | null)?.sourceImageUrl && (
+              {/* Source Image (for enhanced panels, not for plain imports) */}
+              {(detailPanel.metadata as Record<string, any> | null)?.sourceImageUrl &&
+                detailPanel.prompt && (
                 <div>
                   <div className={styles.detailSectionTitle}>Source Image</div>
                   <div className={styles.enhanceImagePreview}>
@@ -193,6 +196,24 @@ export function PanelDetailDrawer({
               {(() => {
                 const meta = detailPanel.metadata as Record<string, any> | null;
                 if (!meta) return null;
+
+                // Imported panels have a sourceImageUrl but no prompt and no generation settings
+                const isImported =
+                  !detailPanel.prompt &&
+                  meta.sourceImageUrl &&
+                  meta.enhanceEnabled === undefined;
+
+                if (isImported) {
+                  return (
+                    <div>
+                      <div className={styles.detailSectionTitle}>Settings</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={styles.detailCharacterPill}>Imported image</span>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div>
                     <div className={styles.detailSectionTitle}>Settings</div>

@@ -385,8 +385,8 @@ const updateReferenceSchema = z.object({
 
 const chapterEarlyAccessConfigSchema = z
   .object({
-    buzzPrice: z.number().int().min(1),
-    timeframe: z.number().int().min(1).max(365),
+    buzzPrice: z.number().int().min(1).max(10000),
+    timeframe: z.number().int().min(1).max(30),
   })
   .nullable();
 
@@ -1103,7 +1103,9 @@ export const comicsRouter = router({
           disablePoi: false,
           priority: 'low',
           sourceImage: null,
-          images: null,
+          // Pass a dummy image so the estimate reflects img2img pricing (references are
+          // included in actual generation, which changes the cost).
+          images: [{ url: 'https://placeholder', width: defaultDims.width, height: defaultDims.height }],
         },
         resources: [{ id: modelConfig.versionId, strength: 1 }],
         tags: ['comics'],
@@ -1692,13 +1694,19 @@ export const comicsRouter = router({
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
       // Build prompt — optionally enhance via LLM
+      // Only pass mentioned character names to avoid the enhancer injecting unrelated references
+      const mentionedRefIdSet = new Set(mentionedReferenceIds);
+      const mentionedNames = allUserRefs
+        .filter((r) => mentionedRefIdSet.has(r.id))
+        .map((r) => r.name);
+
       let fullPrompt: string;
       if (input.enhance) {
         fullPrompt = await enhanceComicPrompt({
           token,
           userPrompt: input.prompt,
           characterName: primaryReferenceName,
-          characterNames: allReferenceNames,
+          characterNames: mentionedNames.length > 0 ? mentionedNames : allReferenceNames,
           previousPanel: effectiveContext ?? undefined,
         });
       } else {
@@ -1900,12 +1908,10 @@ export const comicsRouter = router({
     });
 
     // Recalculate NSFW levels after panel removal
-    updateComicChapterNsfwLevels([panel.projectId]).catch((e) =>
-      console.error(`Failed to update chapter NSFW after panel delete:`, e)
-    );
-    updateComicProjectNsfwLevels([panel.projectId]).catch((e) =>
-      console.error(`Failed to update project NSFW after panel delete:`, e)
-    );
+    // Project NSFW is derived from chapter NSFW, so chapter must update first
+    updateComicChapterNsfwLevels([panel.projectId])
+      .then(() => updateComicProjectNsfwLevels([panel.projectId]))
+      .catch((e) => console.error(`Failed to update NSFW levels after panel delete:`, e));
 
     return { success: true };
   }),
@@ -3025,6 +3031,12 @@ export const comicsRouter = router({
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
       // Build prompt — optionally enhance
+      // Only pass mentioned character names to avoid the enhancer injecting unrelated references
+      const mentionedRefIdSet = new Set(mentionedReferenceIds);
+      const mentionedNames = allUserRefs
+        .filter((r) => mentionedRefIdSet.has(r.id))
+        .map((r) => r.name);
+
       const userPrompt = input.prompt?.trim() || '';
       let fullPrompt = userPrompt;
       if (input.enhance && userPrompt) {
@@ -3032,7 +3044,7 @@ export const comicsRouter = router({
           token,
           userPrompt,
           characterName: primaryReferenceName,
-          characterNames: allReferenceNames,
+          characterNames: mentionedNames.length > 0 ? mentionedNames : allReferenceNames,
           previousPanel: effectiveContext ?? undefined,
         });
       }

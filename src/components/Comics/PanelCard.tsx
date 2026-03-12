@@ -195,6 +195,52 @@ export function PanelCard({
             </div>
           ) : status === 'Failed' ? (
             <div className={styles.panelFailed}>
+              <div className="absolute top-2 right-2">
+                <div className={styles.panelMenu}>
+                  <Menu position="bottom-end" withinPortal>
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="filled"
+                        color="dark"
+                        size="sm"
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                      >
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        leftSection={<IconRefreshDot size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onRegenerate();
+                        }}
+                      >
+                        Regenerate
+                      </Menu.Item>
+                      <Menu.Item
+                        leftSection={<IconPlus size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onInsertAfter();
+                        }}
+                      >
+                        Insert after
+                      </Menu.Item>
+                      <Menu.Item
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onDelete();
+                        }}
+                      >
+                        Delete
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                </div>
+              </div>
               <IconAlertTriangle size={28} />
               <Text size="xs" c="red">
                 Failed

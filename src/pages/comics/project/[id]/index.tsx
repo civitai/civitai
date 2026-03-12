@@ -282,7 +282,27 @@ function ProjectWorkspace() {
             error: new Error('Buzz has been refunded automatically.'),
           });
         }
-        if (hasTerminal) refetch();
+        if (hasTerminal) {
+          // Optimistically update panels from poll results, then invalidate cache for fresh data
+          utils.comics.getProject.setData({ id: projectId }, (prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              chapters: prev.chapters.map((ch) => ({
+                ...ch,
+                panels: ch.panels.map((p) => {
+                  const polled = results.find(
+                    (r, idx) => toPoll[idx] === p.id && (r.status === 'Ready' || r.status === 'Failed')
+                  );
+                  if (!polled) return p;
+                  return { ...p, status: polled.status, imageUrl: polled.imageUrl ?? p.imageUrl };
+                }),
+              })),
+            };
+          });
+          // Invalidate to get full fresh data (image records, NSFW levels, etc.)
+          await utils.comics.getProject.invalidate({ id: projectId });
+        }
       } catch {
         /* ignore */
       }
@@ -851,14 +871,32 @@ function ProjectWorkspace() {
   }) => {
     if (!panel.imageUrl) return;
     const previewUrl = getEdgeUrl(panel.imageUrl, { width: 400 }) ?? panel.imageUrl;
-    setRegeneratingPanelId(panel.id);
-    setEnhanceExistingSource({
-      url: panel.imageUrl,
-      previewUrl,
-      width: panel.image?.width ?? 1024,
-      height: panel.image?.height ?? 1024,
-    });
-    openPanelModal();
+    const edgeUrl = getEdgeUrl(panel.imageUrl, { original: true }) ?? panel.imageUrl;
+
+    const openWithDimensions = (imgWidth: number, imgHeight: number) => {
+      setRegeneratingPanelId(panel.id);
+      setEnhanceExistingSource({
+        url: panel.imageUrl!,
+        previewUrl,
+        width: imgWidth,
+        height: imgHeight,
+      });
+      openPanelModal();
+    };
+
+    // Pre-load image to get actual dimensions (panel.image may be null)
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      openWithDimensions(
+        img.naturalWidth || panel.image?.width || 1024,
+        img.naturalHeight || panel.image?.height || 1024
+      );
+    };
+    img.onerror = () => {
+      openWithDimensions(panel.image?.width ?? 1024, panel.image?.height ?? 1024);
+    };
+    img.src = edgeUrl;
   };
 
   const handleDrawerEnhance = (panel: any) => {
