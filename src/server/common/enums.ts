@@ -141,6 +141,7 @@ export enum SignalMessages {
   NewOrderPlayerUpdate = 'new-order:player-update',
   MetricUpdate = 'metric:update',
   SessionRefresh = 'session:refresh',
+  CryptoDepositUpdate = 'crypto-deposit:update',
 }
 
 export enum BountySort {

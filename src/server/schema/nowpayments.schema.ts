@@ -1,22 +1,23 @@
 import * as z from 'zod';
-import { constants } from '~/server/common/constants';
 
-export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;
-export const transactionCreateSchema = z.object({
-  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
-  currency: z.string(),
-  usdAmount: z.number(),
-  recaptchaToken: z.string(),
+export type DepositHistoryInput = z.infer<typeof depositHistoryInputSchema>;
+export const depositHistoryInputSchema = z.object({
+  page: z.number().int().min(1).default(1),
+  perPage: z.number().int().min(1).max(25).default(3),
 });
 
-export type PriceEstimateInput = z.infer<typeof priceEstimateInputSchema>;
-export const priceEstimateInputSchema = z.object({
-  unitAmount: z.number(),
-  currencyTo: z.string().optional(),
+export type GetDepositAddressInput = z.infer<typeof getDepositAddressInputSchema>;
+export const getDepositAddressInputSchema = z.object({
+  chain: z.enum(['evm', 'sol', 'trx', 'btc', 'doge', 'ltc']).default('evm'),
 });
 
-export type CreatePaymentInvoiceInput = z.infer<typeof createPaymentInvoiceInputSchema>;
-export const createPaymentInvoiceInputSchema = z.object({
-  unitAmount: z.number(),
-  buzzAmount: z.number(),
+export type GetMinAmountInput = z.infer<typeof getMinAmountInputSchema>;
+export const getMinAmountInputSchema = z.object({
+  currencyCode: z.string().min(1).max(20),
+  fiat: z.string().min(1).max(10).default('usd'),
+});
+
+export type GetBuzzConversionRateInput = z.infer<typeof getBuzzConversionRateInputSchema>;
+export const getBuzzConversionRateInputSchema = z.object({
+  fiat: z.string().min(1).max(10).default('usd'),
 });

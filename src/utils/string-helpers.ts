@@ -64,6 +64,23 @@ const nameOverrides: Record<string, string> = {
   'Wan Video': 'WAN Video',
   commentV2: 'Comment',
   CommentV2: 'Comment',
+  // Crypto network display names (NowPayments API returns varying codes)
+  base: 'Base',
+  eth: 'Ethereum',
+  ethereum: 'Ethereum',
+  trx: 'Tron',
+  tron: 'Tron',
+  sol: 'Solana',
+  solana: 'Solana',
+  bsc: 'BNB Chain',
+  matic: 'Polygon',
+  polygon: 'Polygon',
+  avaxc: 'Avalanche',
+  avalanche: 'Avalanche',
+  arb: 'Arbitrum',
+  arbitrum: 'Arbitrum',
+  op: 'Optimism',
+  optimism: 'Optimism',
 };
 
 export function getDisplayName(

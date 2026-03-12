@@ -68,8 +68,8 @@ export namespace NOWPayments {
       price_currency: z.string(),
       pay_amount: z.number(),
       pay_currency: z.string(),
-      order_id: z.string(),
-      order_description: z.string(),
+      order_id: z.string().nullish(),
+      order_description: z.string().nullish(),
       ipn_callback_url: z.string().nullish(),
       created_at: z.string(),
       updated_at: z.string(),
@@ -82,6 +82,12 @@ export namespace NOWPayments {
       time_limit: z.number().nullish(),
       burning_percent: z.union([z.number(), z.string()]).nullish(),
       expiration_estimate_date: z.string().nullish(),
+      payment_extra_ids: z.array(z.number()).nullish(),
+      origin_type: z.string().nullish(),
+      outcome_amount: z.number().nullish(),
+      outcome_currency: z.string().nullish(),
+      actually_paid: z.union([z.number(), z.string()]).nullish(),
+      parent_payment_id: z.number().nullish(),
     })
     .passthrough();
 
@@ -106,11 +112,13 @@ export namespace NOWPayments {
   export const minAmountInputSchema = z.object({
     currency_from: z.string(),
     currency_to: z.string(),
+    fiat_equivalent: z.string().nullish(),
   });
 
   export type MinAmountResponse = z.infer<typeof minAmountResponseSchema>;
   export const minAmountResponseSchema = z.object({
     min_amount: z.number(),
+    fiat_equivalent: z.number().nullish(),
   });
 
   // Exchange Rate
@@ -160,6 +168,66 @@ export namespace NOWPayments {
     payments: z.array(z.lazy(() => createPaymentResponseSchema)),
   });
 
+  // Merchant Coins
+  export type MerchantCoinsResponse = z.infer<typeof merchantCoinsResponseSchema>;
+  export const merchantCoinsResponseSchema = z.object({
+    selectedCurrencies: z.array(z.string()),
+  });
+
+  // Full Currencies
+  export type FullCurrency = z.infer<typeof fullCurrencySchema>;
+  export const fullCurrencySchema = z.object({
+    code: z.string(),
+    name: z.string(),
+    network: z.string().nullish(),
+    ticker: z.string().nullish(),
+    logo_url: z.string().nullish(),
+    is_stable: z.boolean().nullish(),
+  });
+
+  export type FullCurrenciesResponse = z.infer<typeof fullCurrenciesResponseSchema>;
+  export const fullCurrenciesResponseSchema = z.object({
+    currencies: z.array(fullCurrencySchema),
+  });
+
+  // Auth
+  export type AuthResponse = z.infer<typeof authResponseSchema>;
+  export const authResponseSchema = z.object({
+    token: z.string(),
+    expires_in: z.number().optional(),
+  });
+
+  // Payout
+  export type CreatePayoutInput = z.infer<typeof createPayoutInputSchema>;
+  export const createPayoutInputSchema = z.object({
+    withdrawals: z.array(
+      z.object({
+        address: z.string(),
+        currency: z.string(),
+        amount: z.number(),
+        ipn_callback_url: z.string().optional(),
+      })
+    ),
+  });
+
+  export type CreatePayoutResponse = z.infer<typeof createPayoutResponseSchema>;
+  export const createPayoutResponseSchema = z
+    .object({
+      id: z.string(),
+      withdrawals: z.array(
+        z
+          .object({
+            id: z.string(),
+            address: z.string(),
+            currency: z.string(),
+            amount: z.number().optional(),
+            status: z.string().optional(),
+          })
+          .passthrough()
+      ),
+    })
+    .passthrough();
+
   export type WebhookEvent = z.infer<typeof webhookSchema>;
   export const webhookSchema = z.object({
     actually_paid: z.number().nullish(),
@@ -182,7 +250,8 @@ export namespace NOWPayments {
     pay_amount: z.number().nullish(),
     pay_currency: z.string().nullish(),
     payin_extra_id: z.string().nullish(),
-    payment_extra_ids: z.any().nullish(),
+    payment_extra_ids: z.array(z.number()).nullish(),
+    origin_type: z.string().nullish(),
     payment_id: z.number().nullish(),
     payment_status: z.string().nullish(),
     price_amount: z.number().nullish(),

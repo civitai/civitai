@@ -12,7 +12,7 @@ import {
   ThemeIcon,
   Box,
 } from '@mantine/core';
-import { IconCheck, IconDiamond, IconStar } from '@tabler/icons-react';
+import { IconBolt, IconCheck, IconDiamond, IconStar } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -22,7 +22,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -96,27 +96,25 @@ export const MembershipUpsell = ({
     <Card className={classes.membershipCard} padding="md" radius="md">
       <Stack gap="sm">
         {/* Header with badge */}
-        <Group justify="space-between" align="flex-start">
-          <Badge variant="light" size="md" color="grape" className={classes.badge}>
-            <Group gap={4}>
-              <IconStar size={16} fill="currentColor" />
-              <Text tt="uppercase" fw={600} size="xs">
-                Pro
-              </Text>
-            </Group>
-          </Badge>
+        <Badge variant="light" size="md" color="grape" className={classes.badge}>
+          <Group gap={4}>
+            <IconStar size={16} fill="currentColor" />
+            <Text tt="uppercase" fw={600} size="xs">
+              Pro
+            </Text>
+          </Group>
+        </Badge>
 
-          {image && (
-            <Box className={classes.imageWrapper}>
-              <EdgeMedia src={image} width={50} />
-            </Box>
-          )}
-        </Group>
+        {image && (
+          <Box className={classes.imageFloat}>
+            <EdgeMedia src={image} width={80} />
+          </Box>
+        )}
 
         {/* Title and icon */}
         <Group gap="sm" align="center">
-          <ThemeIcon size={40} radius="xl" className={classes.tierIcon}>
-            <IconDiamond size={20} />
+          <ThemeIcon size={32} radius="lg" className={classes.tierIcon}>
+            <IconDiamond size={18} />
           </ThemeIcon>
           <div>
             <Title order={3} className={classes.title} size="md">
@@ -128,26 +126,12 @@ export const MembershipUpsell = ({
           </div>
         </Group>
 
-        {/* Benefits - Compact list */}
-        <Stack gap="xs">
-          {benefits.slice(0, 3).map((benefit, index) =>
-            benefit.content ? (
-              <Group gap="xs" key={index} wrap="nowrap" align="flex-start">
-                <ThemeIcon size={16} radius="xl" color="grape" variant="light">
-                  <IconCheck size={10} />
-                </ThemeIcon>
-                <Text className={classes.benefitText} size="xs">
-                  {benefit.content}
-                </Text>
-              </Group>
-            ) : null
-          )}
-          {benefits.length > 3 && (
-            <Text size="xs" c="dimmed" ta="center">
-              + {benefits.length - 3} more benefits
-            </Text>
-          )}
-        </Stack>
+        {/* Benefits - Compact list with expand */}
+        <BenefitsList
+          benefits={benefits}
+          multiplier={(metadata.purchasesMultiplier ?? 1) > 1 ? metadata.purchasesMultiplier! : undefined}
+          buzzAmount={buzzAmount}
+        />
 
         {/* CTA Section - Compact */}
         <Stack gap="xs" mt="sm">
@@ -220,3 +204,60 @@ export const MembershipUpsell = ({
     </Card>
   );
 };
+
+function BenefitRow({ content }: { content: React.ReactNode }) {
+  return (
+    <Group gap="sm" wrap="nowrap" align="center">
+      <ThemeIcon size={22} radius="xl" color="grape" variant="light" className="shrink-0">
+        <IconCheck size={12} />
+      </ThemeIcon>
+      <Text className={classes.benefitText} size="sm" component="div">
+        {content}
+      </Text>
+    </Group>
+  );
+}
+
+function BenefitsList({
+  benefits,
+  multiplier,
+  buzzAmount,
+}: {
+  benefits: { content?: React.ReactNode }[];
+  multiplier?: number;
+  buzzAmount: number;
+}) {
+  const filtered = benefits.filter((b) => b.content);
+
+  return (
+    <Stack gap="xs">
+      {multiplier && (
+        <Group gap="sm" wrap="nowrap" align="flex-start" my={4}>
+          <ThemeIcon
+            size={26}
+            radius="xl"
+            color="grape"
+            variant="light"
+            className="shrink-0"
+          >
+            <IconBolt size={16} />
+          </ThemeIcon>
+          <div>
+            <Text size="md" className={classes.multiplierText}>
+              {(((multiplier - 1) * 100).toFixed(0))}% Bonus Buzz on every purchase
+            </Text>
+            {buzzAmount > 0 && (
+              <Text size="xs" c="dimmed">
+                +{numberWithCommas(Math.round(buzzAmount * (multiplier - 1)))} extra on this
+                purchase
+              </Text>
+            )}
+          </div>
+        </Group>
+      )}
+      {filtered.map((b, i) => (
+        <BenefitRow key={i} content={b.content!} />
+      ))}
+    </Stack>
+  );
+}

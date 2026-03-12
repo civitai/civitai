@@ -210,10 +210,36 @@ model CashWithdrawal {
 }
 
 model CryptoWallet {
-  userId       Int     @id
+  userId       Int
   user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chain        String  @default("evm")
   wallet       String  @unique
   smartAccount String? @unique
+  payCurrency  String  @default("usdcbase")
+
+  @@id([userId, chain])
+}
+
+model CryptoDeposit {
+  paymentId     BigInt   @id
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status        String   @default("waiting")
+  payCurrency   String
+  payAmount     Float?
+  outcomeAmount Float?
+  buzzCredited  Int?
+  bonusBuzz     Int?
+  multiplier    Int?
+  depositFee    Float?
+  serviceFee    Float?
+  feeCurrency   String?
+  paidFiat      Float?
+  chain         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum CryptoTransactionStatus {
@@ -380,6 +406,7 @@ model User {
   moderationRules            ModerationRule[]
   playerInfo                 NewOrderPlayer?
   CryptoWallet               CryptoWallet[]
+  CryptoDeposit              CryptoDeposit[]
   CryptoTransaction          CryptoTransaction[]
   userRestrictions            UserRestriction[]               @relation("userRestrictions")
   challengesCreated          Challenge[]

@@ -1,6 +1,7 @@
 import SharedWorker from '@okikio/sharedworker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDev } from '~/env/other';
 import { trpc } from '~/utils/trpc';
 import type {
   SignalConnectionState,
@@ -32,6 +33,7 @@ export function useSignalsWorker(options?: {
   const queryUtils = trpc.useUtils();
   const { data } = trpc.signals.getToken.useQuery(undefined, {
     enabled: !!userId && shouldInitialize,
+    retry: isDev ? false : 3,
   });
   const accessToken = data?.accessToken;
 

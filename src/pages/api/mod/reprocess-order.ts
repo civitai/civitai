@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
-import { processBuzzOrder as processBuzzOrderNowPayments } from '~/server/services/nowpayments.service';
+import { reprocessDeposit } from '~/server/services/nowpayments.service';
 import { processBuzzOrder as processBuzzOrderCoinbase } from '~/server/services/coinbase.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -22,7 +22,7 @@ export default ModEndpoint(
 
     try {
       if (provider === 'nowpayments') {
-        const data = await processBuzzOrderNowPayments(orderId);
+        const data = await reprocessDeposit(Number(orderId));
         if (!data) {
           return res.status(404).json({
             error: 'Order not found or not processed yet',
@@ -46,7 +46,7 @@ export default ModEndpoint(
         return res.status(200).json(reprocess);
       }
     } catch (e) {
-      console.error('Error processing image with Clavata:', e);
+      console.error('Error reprocessing order:', e);
       return res.status(500).json({
         error: (e as Error).message,
       });

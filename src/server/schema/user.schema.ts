@@ -259,6 +259,7 @@ export const userSettingsSchema = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+  preferredFiatCurrency: z.string().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -281,9 +282,14 @@ export const setUserSettingsInput = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+  preferredFiatCurrency: z.string().optional(),
 });
 
-export const dismissAlertSchema = z.object({ alertId: z.string() });
+export const dismissAlertSchema = z.object({
+  alertId: z.string(),
+  dismiss: z.boolean().default(true),
+});
+export const restoreAlertSchema = z.object({ alertId: z.string() });
 
 export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
 export const userOnboardingSchema = z.discriminatedUnion('step', [
