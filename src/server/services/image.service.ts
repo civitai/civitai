@@ -1811,6 +1811,7 @@ export const getAllImagesIndex = async (
     imageMeta,
     imageMetadata,
     thumbnails,
+    imageMetrics,
   ] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
@@ -1824,6 +1825,7 @@ export const getAllImagesIndex = async (
     include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
     await getMetadataForImages(videoIds), // Only need this for videos
     await getThumbnailsForImages(videoIds), // Only need this for videos
+    getImageMetricsObject(searchResults),
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -1834,13 +1836,14 @@ export const getAllImagesIndex = async (
     const metadata = imageMetadata[sr.id]?.metadata ?? null;
     const thumbnail = thumbnails[sr.id] ?? null;
     const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
+    const metrics = imageMetrics[sr.id];
 
     return {
       ...sr,
       modelVersionId: sr.postedToId,
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
-      metadata: { ...metadata, width: sr.width, height: sr.height },
+      metadata: { ...metadata, width: sr.width ?? 0, height: sr.height ?? 0 },
       publishedAt: publishedAtUnix ? sr.sortAt : undefined,
       //
       user: {
@@ -1850,6 +1853,17 @@ export const getAllImagesIndex = async (
         deletedAt: thisUser.deletedAt,
         cosmetics: userCosmetics?.[sr.userId] ?? [],
         profilePicture: profilePictures?.[sr.userId] ?? null,
+      },
+      stats: {
+        likeCountAllTime: metrics?.reactionLike ?? 0,
+        laughCountAllTime: metrics?.reactionLaugh ?? 0,
+        heartCountAllTime: metrics?.reactionHeart ?? 0,
+        cryCountAllTime: metrics?.reactionCry ?? 0,
+        commentCountAllTime: metrics?.comment ?? 0,
+        collectedCountAllTime: metrics?.collection ?? 0,
+        tippedAmountCountAllTime: metrics?.buzz ?? 0,
+        dislikeCountAllTime: 0,
+        viewCountAllTime: 0,
       },
       reactions,
       cosmetic: imageCosmetics?.[sr.id] ?? null,
@@ -1939,20 +1953,38 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
     input.currentUserId?.toString() || 'anonymous'
   );
+  console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
-  // Primary mode: bypass Meili entirely, query BitDex directly with full docs
+  // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
+  // Uses keyset cursors (not offset) to avoid max_page_size limit.
   if (bitdexMode === 'primary') {
     try {
-      const bitdexResult = await getImagesFromBitdexPreFilter(input, true);
-      if (bitdexResult?.docs?.length) {
-        const data = bitdexResult.docs.map((doc) => mapBitdexDoc(doc));
-        return { data, nextCursor: undefined };
+      // Decode BitDex keyset cursor from the consumer's cursor format "offset|bdx:JSON"
+      let bitdexCursor: any = undefined;
+      if (input.cursor) {
+        const raw = input.cursor.toString();
+        const pipeIdx = raw.indexOf('|');
+        const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
+        if (entryPart.startsWith('bdx:')) {
+          try { bitdexCursor = JSON.parse(entryPart.slice(4)); } catch {}
+        }
       }
+
+      const bitdexResult = await getImagesFromBitdexPreFilter(input, true, bitdexCursor);
+      if (bitdexResult?.documents?.length) {
+        const data = bitdexResult.documents.map((doc) => mapBitdexDoc(doc));
+        // Encode BitDex keyset cursor for next page
+        const nextCursor = bitdexResult.cursor ? `bdx:${JSON.stringify(bitdexResult.cursor)}` : undefined;
+        console.log('[BitDex] PRIMARY serving', data.length, 'docs, total:', bitdexResult.total_matched, 'cursor:', nextCursor ? 'yes' : 'none');
+        return { data, nextCursor };
+      }
+      // If BitDex returned IDs but no documents, fall through to Meili
       if (bitdexResult) {
-        // Fallback: docs not returned, use IDs only
-        return { data: bitdexResult.ids.map((id) => ({ id })), nextCursor: undefined };
+        console.log('[BitDex] PRIMARY got', bitdexResult.ids.length, 'ids but no docs, falling through to Meili');
       }
+      console.log('[BitDex] PRIMARY returned null, falling through to Meili');
     } catch (err) {
+      console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
     }
     // Fall through to Meili if BitDex fails
@@ -2655,56 +2687,52 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
 }
 
-// --- BitDex document mapping (mapped_string reverse lookup) ---
-const bitdexTypeMap: Record<number, string> = { 1: 'image', 2: 'video', 3: 'audio' };
-const bitdexAvailabilityMap: Record<number, string> = { 1: 'Public', 2: 'Private', 3: 'Unsearchable' };
-const bitdexBaseModelMap: Record<number, string> = {
-  1: 'SD 1.4', 2: 'SD 1.5', 3: 'SD 1.5 LCM', 4: 'SD 2.0', 5: 'SD 2.0 768',
-  6: 'SD 2.1', 7: 'SD 2.1 768', 10: 'SDXL 0.9', 11: 'SDXL 1.0', 12: 'SDXL 1.0 LCM',
-  13: 'SDXL Distilled', 14: 'SDXL Turbo', 15: 'SDXL Lightning', 16: 'SDXL Hyper',
-  20: 'Pony', 30: 'Flux.1 S', 31: 'Flux.1 D', 32: 'Flux.1 D2', 40: 'Illustrious',
-  41: 'NoobAI', 50: 'Stable Cascade', 60: 'SVD', 61: 'SVD XT', 70: 'Stable Audio',
-  80: 'HunyuanDiT', 81: 'HunyuanVideo', 82: 'Mochi', 83: 'LTXV', 84: 'CogVideoX',
-  90: 'Kolors', 91: 'Lumina', 92: 'PixArt a', 93: 'PixArt E',
+// --- BitDex document mapping ---
+// BitDex returns mapped_string fields as lowercase strings and sort fields as u32 unix seconds.
+// Availability needs capitalization to match Prisma enum. Zero values for optional IDs mean absent.
+
+const bitdexAvailabilityNormalize: Record<string, string> = {
+  public: 'Public', private: 'Private', unsearchable: 'Unsearchable',
 };
-const bitdexBlockedForMap: Record<number, string> = { 1: 'tos', 2: 'moderated', 3: 'CSAM', 4: 'AiNotVerified' };
 
 /** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
 function mapBitdexDoc(doc: Record<string, unknown>) {
+  const sortAtUnix = (doc.sortAt as number) * 1000; // u32 seconds → epoch ms
+  const publishedAtRaw = doc.publishedAt as number | null;
   return {
     id: doc.id as number,
     url: doc.url as string,
-    hash: doc.hash as string | null,
+    hash: (doc.hash as string) || null,
     nsfwLevel: doc.nsfwLevel as number,
     userId: doc.userId as number,
-    type: bitdexTypeMap[doc.type as number] ?? 'image',
-    availability: bitdexAvailabilityMap[doc.availability as number] ?? 'Public',
-    baseModel: bitdexBaseModelMap[doc.baseModel as number] ?? null,
-    postId: doc.postId as number | null,
-    postedToId: doc.postedToId as number | null,
-    remixOfId: doc.remixOfId as number | null,
+    type: (doc.type as string) || 'image',
+    availability: bitdexAvailabilityNormalize[(doc.availability as string)] ?? 'Public',
+    baseModel: (doc.baseModel as string) || null,
+    postId: (doc.postId as number) || null,
+    postedToId: (doc.postedToId as number) || null,
+    remixOfId: (doc.remixOfId as number) || null,
     hasMeta: doc.hasMeta as boolean,
     onSite: doc.onSite as boolean,
     poi: doc.poi as boolean,
     minor: doc.minor as boolean,
-    width: doc.width as number | null,
-    height: doc.height as number | null,
-    needsReview: doc.needsReview as string | null,
-    reactionCount: doc.reactionCount as number,
-    commentCount: doc.commentCount as number,
-    collectedCount: doc.collectedCount as number,
-    sortAt: new Date((doc.sortAt as number) * 1000).toISOString(), // BitDex stores unix seconds
-    sortAtUnix: (doc.sortAt as number) * 1000, // Convert to epoch ms to match Meili format
-    publishedAtUnix: doc.publishedAt ? (doc.publishedAt as number) * 1000 : null,
-    tagIds: doc.tagIds as number[] ?? [],
-    modelVersionIds: doc.modelVersionIds as number[] ?? [],
-    toolIds: doc.toolIds as number[] ?? [],
-    techniqueIds: doc.techniqueIds as number[] ?? [],
-    blockedFor: doc.blockedFor != null ? bitdexBlockedForMap[doc.blockedFor as number] : null,
+    width: (doc.width as number) || null,
+    height: (doc.height as number) || null,
+    needsReview: (doc.needsReview as string) || null,
+    reactionCount: (doc.reactionCount as number) || 0,
+    commentCount: (doc.commentCount as number) || 0,
+    collectedCount: (doc.collectedCount as number) || 0,
+    sortAt: new Date(sortAtUnix),
+    sortAtUnix,
+    publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
+    tagIds: (doc.tagIds as number[]) ?? [],
+    modelVersionIds: (doc.modelVersionIds as number[]) ?? [],
+    toolIds: (doc.toolIds as number[]) ?? [],
+    techniqueIds: (doc.techniqueIds as number[]) ?? [],
+    blockedFor: ((doc.blockedFor as string) || null) as BlockedReason | null,
     // Fields expected by consumer but not stored in BitDex
     hideMeta: false,
     index: 0,
-    acceptableMinor: doc.acceptableMinor as boolean ?? false,
+    acceptableMinor: (doc.acceptableMinor as boolean) ?? false,
   };
 }
 
@@ -2738,6 +2766,7 @@ const _or = (...cs: (FilterClause | null)[]): FilterClause => {
 export async function getImagesFromBitdexPreFilter(
   input: ImageSearchInput,
   includeDocs?: boolean | string[],
+  cursor?: any,
 ) {
   let { postIds = [] } = input;
   const {
@@ -2949,9 +2978,16 @@ export async function getImagesFromBitdexPreFilter(
     bitdexSort = { field: 'sortAt', direction: 'Desc' };
   }
 
-  // BitDex native keyset cursor: { sort_value, slot_id }
-  // For now, use offset-based pagination (compatible with Meili behavior).
-  return queryBitdex('civitai', filters, bitdexSort, limit, undefined, offset, includeDocs);
+  // Use keyset cursor when available, fall back to offset
+  console.log('[BitDex] sort:', JSON.stringify(bitdexSort), 'period:', period, 'filters:', filters.length, 'limit:', limit, 'cursor:', cursor ? 'yes' : 'no', 'offset:', offset);
+  const result = await queryBitdex('civitai', filters, bitdexSort, limit, cursor, cursor ? undefined : offset, includeDocs);
+  if (result?.documents?.length) {
+    const sample = result.documents.slice(0, 5).map((d: any) => ({ id: d.id, reactionCount: d.reactionCount, sortAt: d.sortAt }));
+    console.log('[BitDex] docs sample:', JSON.stringify(sample));
+  } else {
+    console.log('[BitDex] result:', result ? `ids=${result.ids.length}, docs=${result.documents?.length ?? 'none'}` : 'null');
+  }
+  return result;
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {

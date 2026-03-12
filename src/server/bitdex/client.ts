@@ -23,7 +23,7 @@ export interface BitdexQueryResult {
   total_matched: number;
   cursor?: any;
   elapsed_us: number;
-  docs?: Record<string, unknown>[];
+  documents?: Record<string, unknown>[];
 }
 
 /**
