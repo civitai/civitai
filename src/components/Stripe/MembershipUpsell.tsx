@@ -211,7 +211,7 @@ function BenefitRow({ content }: { content: React.ReactNode }) {
       <ThemeIcon size={22} radius="xl" color="grape" variant="light" className="shrink-0">
         <IconCheck size={12} />
       </ThemeIcon>
-      <Text className={classes.benefitText} size="sm">
+      <Text className={classes.benefitText} size="sm" component="div">
         {content}
       </Text>
     </Group>

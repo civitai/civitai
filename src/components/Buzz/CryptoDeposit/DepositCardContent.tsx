@@ -124,7 +124,6 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
     <Paper
       radius="md"
       withBorder
-      h="100%"
       style={{
         overflow: 'hidden',
         ...outerCardStyle,

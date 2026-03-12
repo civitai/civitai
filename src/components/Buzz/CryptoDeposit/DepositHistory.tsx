@@ -75,7 +75,7 @@ export function DepositHistory() {
 
   if (isLoading && deposits.length === 0) {
     return (
-      <Paper p="lg" radius="md" withBorder h="100%" style={outerCardStyle}>
+      <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
         <Title order={5} mb="sm">
           Your Recent Deposits
         </Title>
@@ -118,7 +118,7 @@ export function DepositHistory() {
   }
 
   return (
-    <Paper p="lg" radius="md" withBorder h="100%" style={outerCardStyle}>
+    <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
       <Group justify="space-between" mb="sm">
         <Title order={5}>Your Recent Deposits</Title>
         <SignalStatusBadge
@@ -247,8 +247,8 @@ function EmptyDepositState({
   onRefresh: () => void;
 }) {
   return (
-    <Paper p="lg" radius="md" withBorder h="100%" style={outerCardStyle}>
-      <Stack gap="sm" py="md">
+    <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
+      <Stack gap="sm">
         <Group justify="space-between">
           <Title order={5}>Your Recent Deposits</Title>
           <SignalStatusBadge status={signalStatus} onRefresh={onRefresh} />
