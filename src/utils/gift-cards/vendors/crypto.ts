@@ -30,9 +30,9 @@ export const cryptoVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/bronze_final',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
-          { months: 3, url: '', image: '/images/gift-cards/bronze_final' },
+          { months: 3, url: '', image: '/images/gift-cards/bronze_final.webp' },
           { months: 6, url: '', image: '/images/gift-cards/Bronze6.webp' },
           { months: 12, url: '', image: '/images/gift-cards/Bronze12.webp' },
         ],

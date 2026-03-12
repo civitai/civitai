@@ -26,12 +26,12 @@ export const buybuzzVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/bronze_final',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://buybuzz.io/products/bronze-membership-gift-card?variant=46208038142101',
-            image: '/images/gift-cards/bronze_final',
+            image: '/images/gift-cards/bronze_final.webp',
           },
           {
             months: 6,

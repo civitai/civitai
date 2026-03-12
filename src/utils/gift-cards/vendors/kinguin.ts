@@ -42,12 +42,12 @@ export const kinguinVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/bronze_final',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://www.kinguin.net/category/378758/civitai-com-3-month-bronze-membership-gift-card?referrer=civitai.com',
-            image: '/images/gift-cards/bronze_final',
+            image: '/images/gift-cards/bronze_final.webp',
           },
           {
             months: 6,

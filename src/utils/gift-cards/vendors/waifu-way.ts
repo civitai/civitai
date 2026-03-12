@@ -32,12 +32,12 @@ export const waifuWayVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/bronze_final',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://waifuway.com/products/buzz-membership-bronze?variant=42048243236949',
-            image: '/images/gift-cards/bronze_final',
+            image: '/images/gift-cards/bronze_final.webp',
           },
         ],
       },

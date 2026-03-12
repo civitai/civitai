@@ -32,12 +32,12 @@ export const lewtDropVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/bronze_final',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://lewtdrop.com/products/buzz-membership-gift-card-bronze?variant=53151980748960',
-            image: '/images/gift-cards/bronze_final',
+            image: '/images/gift-cards/bronze_final.webp',
           },
         ],
       },
