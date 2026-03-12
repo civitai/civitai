@@ -173,13 +173,18 @@ export function PanelCard({
             </div>
             <div className="flex flex-col gap-1">
               {referenceNames.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {referenceNames.map((name) => (
+                <div className="flex flex-wrap gap-1" style={{ maxHeight: 44, overflow: 'hidden' }}>
+                  {referenceNames.slice(0, 3).map((name) => (
                     <span key={name} className={styles.panelCharacterPill}>
                       <IconUser size={10} />
                       {name}
                     </span>
                   ))}
+                  {referenceNames.length > 3 && (
+                    <span className={styles.panelCharacterPill}>
+                      +{referenceNames.length - 3}
+                    </span>
+                  )}
                 </div>
               )}
               <p className={styles.panelPrompt}>{prompt}</p>

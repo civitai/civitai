@@ -5,6 +5,7 @@ import {
   Container,
   Group,
   Loader,
+  ScrollArea,
   Stack,
   Text,
   Title,
@@ -222,13 +223,65 @@ function ProjectWorkspace() {
   }, [prompt, activeReferences]);
 
   const mentionedRefImageCount = useMemo(
-    () => mentionedReferences.reduce((sum, c) => sum + ((c as any).images?.length ?? 0), 0),
+    () => mentionedReferences.reduce((sum, c) => sum + (c.images?.length ?? 0), 0),
     [mentionedReferences]
   );
 
   const mentionedIdKey = mentionedReferences.map((r) => r.id).join(',');
+  const prevMentionedIdKeyRef = useRef(mentionedIdKey);
   useEffect(() => {
-    setSelectedImageIds(null);
+    const prevKey = prevMentionedIdKeyRef.current;
+    prevMentionedIdKeyRef.current = mentionedIdKey;
+
+    // Nothing changed — skip
+    if (prevKey === mentionedIdKey) return;
+
+    const prevIds = new Set(prevKey ? prevKey.split(',').filter(Boolean).map(Number) : []);
+    const currIds = new Set(
+      mentionedIdKey ? mentionedIdKey.split(',').filter(Boolean).map(Number) : []
+    );
+
+    // If no references remain, reset to null
+    if (currIds.size === 0) {
+      setSelectedImageIds(null);
+      return;
+    }
+
+    // If selections were null (all images selected), keep null so new refs auto-include
+    if (selectedImageIds === null) return;
+
+    // Find which references were added vs removed
+    const addedIds = [...currIds].filter((id) => !prevIds.has(id));
+    const removedIds = [...prevIds].filter((id) => !currIds.has(id));
+
+    // Collect image IDs belonging to removed references so we can strip them
+    const removedImageIds = new Set<number>();
+    for (const ref of activeReferences) {
+      if (removedIds.includes(ref.id)) {
+        for (const ri of ref.images ?? []) {
+          if (ri.image?.id) removedImageIds.add(ri.image.id);
+        }
+      }
+    }
+
+    // Collect image IDs belonging to newly added references so we auto-include them
+    const addedImageIds: number[] = [];
+    for (const ref of mentionedReferences) {
+      if (addedIds.includes(ref.id)) {
+        for (const ri of ref.images ?? []) {
+          if (ri.image?.id) addedImageIds.push(ri.image.id);
+        }
+      }
+    }
+
+    // Filter out removed images, add new ones
+    const next = selectedImageIds
+      .filter((id) => !removedImageIds.has(id))
+      .concat(addedImageIds);
+
+    // If result is empty (shouldn't happen normally), reset to null
+    setSelectedImageIds(next.length > 0 ? next : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mentionedIdKey]);
 
   const reservedSlots = useMemo(() => (includePreviousImage ? 1 : 0), [includePreviousImage]);
@@ -881,6 +934,7 @@ function ProjectWorkspace() {
       dialogStore.trigger({
         component: DrawingEditorModal,
         props: {
+          confirmLabel: 'Continue to Enhance',
           sourceImage: { url: edgeUrl, width: imgWidth, height: imgHeight } as any,
           onConfirm: async (blob: Blob) => {
             try {
@@ -976,7 +1030,7 @@ function ProjectWorkspace() {
       <Container size="xl" py="xl">
         <Stack align="center" gap="md" py={60}>
           <Loader color="yellow" />
-          <Text c="dimmed">Loading project...</Text>
+          <Text size="sm" c="dimmed">Loading project...</Text>
         </Stack>
       </Container>
     );
@@ -1028,7 +1082,7 @@ function ProjectWorkspace() {
                 >
                   <IconArrowLeft size={16} />
                 </ActionIcon>
-                <Title order={3} style={{ fontWeight: 700 }} lineClamp={1}>
+                <Title order={3} fw={700} lineClamp={1}>
                   {project.name}
                 </Title>
               </Group>
@@ -1092,36 +1146,38 @@ function ProjectWorkspace() {
                 </ActionIcon>
               </div>
 
-              <Stack gap={8}>
-                {allReferences.length === 0 ? (
-                  <div className="flex flex-col items-center py-8 text-center">
-                    <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
-                    <Text size="xs" c="dimmed" mb="md">
-                      References help maintain character consistency across panels. Optional — you
-                      can generate panels without them.
-                    </Text>
-                    <button
-                      className={styles.gradientBtn}
-                      onClick={() => router.push(`/comics/project/${projectId}/character`)}
-                    >
-                      <IconPlus size={14} />
-                      Add Reference
-                    </button>
-                  </div>
-                ) : (
-                  allReferences.map((ref) => (
-                    <ReferenceSidebarItem
-                      key={ref.id}
-                      character={ref}
-                      projectId={projectId}
-                      referenceImageMap={referenceImageMap}
-                      onDelete={handleDeleteReference}
-                      getStatusDotClass={getStatusDotClass}
-                      getStatusLabel={getStatusLabel}
-                    />
-                  ))
-                )}
-              </Stack>
+              <ScrollArea.Autosize mah="calc(100vh - 240px)" scrollbarSize={6}>
+                <Stack gap={8}>
+                  {allReferences.length === 0 ? (
+                    <div className="flex flex-col items-center py-8 text-center">
+                      <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
+                      <Text size="xs" c="dimmed" mb="md">
+                        References help maintain character consistency across panels. Optional — you
+                        can generate panels without them.
+                      </Text>
+                      <button
+                        className={styles.gradientBtn}
+                        onClick={() => router.push(`/comics/project/${projectId}/character`)}
+                      >
+                        <IconPlus size={14} />
+                        Add Reference
+                      </button>
+                    </div>
+                  ) : (
+                    allReferences.map((ref) => (
+                      <ReferenceSidebarItem
+                        key={ref.id}
+                        character={ref}
+                        projectId={projectId}
+                        referenceImageMap={referenceImageMap}
+                        onDelete={handleDeleteReference}
+                        getStatusDotClass={getStatusDotClass}
+                        getStatusLabel={getStatusLabel}
+                      />
+                    ))
+                  )}
+                </Stack>
+              </ScrollArea.Autosize>
             </div>
 
             {/* ── Sidebar: Chapters ───────────────── */}
@@ -1406,7 +1462,7 @@ function ProjectWorkspace() {
               {activeChapter && activeChapter.panels.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
                   <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                  <Text c="dimmed" mb="md">
+                  <Text size="sm" c="dimmed" mb="md">
                     No panels yet. Create your first panel!
                   </Text>
                   <Text c="dimmed" size="xs" maw={360}>
@@ -1485,6 +1541,7 @@ function ProjectWorkspace() {
       <PanelDetailDrawer
         detailPanelId={detailPanelId}
         setDetailPanelId={setDetailPanelId}
+        projectId={project.id}
         detailPanel={detailPanel as any}
         detailPanelIndex={detailPanelIndex}
         referenceNameMap={referenceNameMap}

@@ -1,9 +1,10 @@
-import { ActionIcon, Text, Title } from '@mantine/core';
+import { ActionIcon, Badge, Text, Title } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconPencil,
   IconPlus,
   IconRefreshDot,
+  IconShield,
   IconSparkles,
   IconTrash,
   IconUser,
@@ -15,15 +16,21 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { openConfirmModal } from '@mantine/modals';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getNsfwLabel } from '~/components/Comics/PanelCard';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
+import { NsfwLevel } from '~/server/common/enums';
+import { trpc } from '~/utils/trpc';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 interface PanelDetailDrawerProps {
   detailPanelId: number | null;
   setDetailPanelId: (id: number | null) => void;
+  projectId: number;
   detailPanel: {
     id: number;
+    imageId?: number | null;
     imageUrl: string | null;
-    image?: { width: number; height: number } | null;
+    image?: { width: number; height: number; nsfwLevel: number } | null;
     status: string;
     prompt: string;
     enhancedPrompt: string | null;
@@ -44,6 +51,7 @@ interface PanelDetailDrawerProps {
 export function PanelDetailDrawer({
   detailPanelId,
   setDetailPanelId,
+  projectId,
   detailPanel,
   detailPanelIndex,
   referenceNameMap,
@@ -53,6 +61,7 @@ export function PanelDetailDrawer({
   onSketchEdit,
   onEnhance,
 }: PanelDetailDrawerProps) {
+  const utils = trpc.useUtils();
   // Lock body scroll when drawer is open
   useEffect(() => {
     if (detailPanelId != null) {
@@ -79,7 +88,7 @@ export function PanelDetailDrawer({
         {detailPanel && (
           <>
             <div className={styles.drawerHeader}>
-              <Title order={4} style={{ fontWeight: 700 }}>
+              <Title order={4} fw={700}>
                 Panel #{detailPanelIndex >= 0 ? detailPanelIndex + 1 : '?'}
               </Title>
               <ActionIcon variant="subtle" c="dimmed" onClick={() => setDetailPanelId(null)}>
@@ -133,6 +142,42 @@ export function PanelDetailDrawer({
                   {new Date(detailPanel.createdAt).toLocaleDateString()}
                 </Text>
               </div>
+
+              {/* NSFW Rating */}
+              {detailPanel.imageId && detailPanel.image?.nsfwLevel != null && (
+                <div>
+                  <div className={styles.detailSectionTitle}>Content Rating</div>
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const nsfwInfo = getNsfwLabel(detailPanel.image.nsfwLevel);
+                      return nsfwInfo ? (
+                        <Badge size="sm" color={nsfwInfo.color} variant="filled">
+                          {nsfwInfo.label}
+                        </Badge>
+                      ) : (
+                        <Badge size="sm" color="gray" variant="filled">
+                          Unrated
+                        </Badge>
+                      );
+                    })()}
+                    <button
+                      className={styles.subtleBtnSm}
+                      onClick={() => {
+                        openSetBrowsingLevelModal({
+                          imageId: detailPanel.imageId!,
+                          nsfwLevel: detailPanel.image!.nsfwLevel as NsfwLevel,
+                          onSubmit: () => {
+                            void utils.comics.getProject.invalidate({ id: projectId });
+                          },
+                        });
+                      }}
+                    >
+                      <IconShield size={14} />
+                      Change Rating
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Original prompt (hide for imported panels with no prompt) */}
               {detailPanel.prompt ? (

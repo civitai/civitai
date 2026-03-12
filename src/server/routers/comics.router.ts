@@ -41,6 +41,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -3729,7 +3730,7 @@ export const comicsRouter = router({
 
   getChapterThread: comicPublicProcedure
     .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const thread = await dbRead.thread.findUnique({
         where: {
           comicProjectId_comicChapterPosition: {
@@ -3743,13 +3744,8 @@ export const comicsRouter = router({
           commentCount: true,
           comments: {
             orderBy: { createdAt: 'asc' },
-            select: {
-              id: true,
-              content: true,
-              createdAt: true,
-              user: { select: userWithCosmeticsSelect },
-              reactions: { select: { userId: true, reaction: true } },
-            },
+            where: ctx.user?.isModerator ? {} : { hidden: false },
+            select: commentV2Select,
           },
         },
       });

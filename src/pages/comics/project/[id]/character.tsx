@@ -333,6 +333,20 @@ function ReferenceUpload() {
     });
   };
 
+  const handleUrlDrop = async (e: React.DragEvent, onFiles: (files: File[]) => void) => {
+    const url = e.dataTransfer.getData('text/uri-list');
+    if (!url) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const blob = await fetchBlob(url);
+    if (!blob) return;
+    const urlPath = url.split('?')[0]; // strip query params
+    const file = new File([blob], urlPath.substring(urlPath.lastIndexOf('/')), {
+      type: blob.type,
+    });
+    onFiles([file]);
+  };
+
   const handleRefImageDrop = async (files: File[]) => {
     for (const file of files) {
       const result = await uploadToCF(file);
@@ -386,7 +400,7 @@ function ReferenceUpload() {
             <Card withBorder p="xl">
               <Stack align="center" gap="lg">
                 <IconAlertTriangle size={40} className="text-yellow-500" />
-                <Text c="dimmed">This reference could not be found.</Text>
+                <Text size="sm" c="dimmed">This reference could not be found.</Text>
                 <Button component={Link} href={`/comics/project/${projectId}`}>
                   Back to Project
                 </Button>
@@ -645,18 +659,7 @@ function ReferenceUpload() {
                     <Stack gap="sm">
                       <Dropzone
                         onDrop={handleRefImageDrop}
-                        onDropCapture={async (e: React.DragEvent) => {
-                          const url = e.dataTransfer.getData('text/uri-list');
-                          if (!url) return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const blob = await fetchBlob(url);
-                          if (!blob) return;
-                          const file = new File([blob], url.substring(url.lastIndexOf('/')), {
-                            type: blob.type,
-                          });
-                          handleRefImageDrop([file]);
-                        }}
+                        onDropCapture={(e) => handleUrlDrop(e, handleRefImageDrop)}
                         accept={IMAGE_MIME_TYPE}
                         maxFiles={10 - uploadedImages.length}
                         disabled={uploadedImages.length >= 10}
@@ -810,7 +813,7 @@ function ReferenceUpload() {
               <Card withBorder>
                 <Stack gap="md">
                   <div>
-                    <Text fw={500}>Upload Reference Images</Text>
+                    <Text size="sm" fw={500}>Upload Reference Images</Text>
                     <Text size="sm" c="dimmed">
                       Upload 1-10 images. These will be used as reference for panel generation.
                     </Text>
@@ -818,18 +821,7 @@ function ReferenceUpload() {
 
                   <Dropzone
                     onDrop={handleDrop}
-                    onDropCapture={async (e: React.DragEvent) => {
-                      const url = e.dataTransfer.getData('text/uri-list');
-                      if (!url) return;
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const blob = await fetchBlob(url);
-                      if (!blob) return;
-                      const file = new File([blob], url.substring(url.lastIndexOf('/')), {
-                        type: blob.type,
-                      });
-                      handleDrop([file]);
-                    }}
+                    onDropCapture={(e) => handleUrlDrop(e, handleDrop)}
                     accept={IMAGE_MIME_TYPE}
                     maxFiles={10 - images.length}
                     disabled={images.length >= 10 || isUploading}
@@ -846,7 +838,7 @@ function ReferenceUpload() {
                       </Dropzone.Idle>
 
                       <div>
-                        <Text size="lg" inline>
+                        <Text size="sm" inline>
                           Drop images here or click to browse
                         </Text>
                         <Text size="sm" c="dimmed" inline mt={7}>
@@ -944,7 +936,7 @@ function ReferenceUpload() {
 
               <Card withBorder>
                 <Stack gap="md">
-                  <Text fw={500}>Tips for Good References</Text>
+                  <Text size="sm" fw={500}>Tips for Good References</Text>
                   <ul className="text-sm text-gray-400 list-disc ml-4 space-y-1">
                     <li>Clear, front-facing view of the subject</li>
                     <li>Same subject in all images</li>
