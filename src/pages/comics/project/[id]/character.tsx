@@ -47,6 +47,7 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
+import { fetchBlob } from '~/utils/file-utils';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
   ssr: false,
@@ -177,10 +178,13 @@ function ReferenceUpload() {
       setUploadProgress(90);
 
       // 3. Add images to reference
-      addImagesMutation.mutate({
+      await addImagesMutation.mutateAsync({
         referenceId: reference.id,
         images: uploadedImages,
       });
+
+      setUploadProgress(100);
+      setIsUploading(false);
     } catch (error) {
       console.error('Upload failed:', error);
       setIsUploading(false);
@@ -203,21 +207,62 @@ function ReferenceUpload() {
   >([]);
 
   const addMoreImagesMutation = trpc.comics.addReferenceImages.useMutation({
+    onMutate: async ({ referenceId, images: newImages }) => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          references: prev.references.map((ref) => {
+            if (ref.id !== referenceId) return ref;
+            const existingImages = ref.images ?? [];
+            const placeholders = newImages.map((img, i) => ({
+              image: {
+                id: -Date.now() - i,
+                url: img.url,
+                width: img.width,
+                height: img.height,
+              },
+              position: existingImages.length + i,
+            }));
+            return { ...ref, images: [...existingImages, ...placeholders] } as typeof ref;
+          }),
+        };
+      });
+    },
     onSuccess: () => {
       setShowUploadArea(false);
       setUploadedImages([]);
       resetFiles();
       refetchProject();
     },
+    onError: () => refetchProject(),
   });
 
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
   const deleteRefImageMutation = trpc.comics.deleteReferenceImage.useMutation({
+    onMutate: async ({ referenceId, imageId }) => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          references: prev.references.map((ref) =>
+            ref.id === referenceId
+              ? { ...ref, images: (ref.images ?? []).filter((ri) => ri.image.id !== imageId) }
+              : ref
+          ),
+        };
+      });
+    },
     onSuccess: () => {
       setDeletingImageId(null);
       refetchProject();
     },
-    onError: () => setDeletingImageId(null),
+    onError: () => {
+      setDeletingImageId(null);
+      refetchProject();
+    },
   });
 
   const reorderRefImagesMutation = trpc.comics.reorderReferenceImages.useMutation({
@@ -600,6 +645,18 @@ function ReferenceUpload() {
                     <Stack gap="sm">
                       <Dropzone
                         onDrop={handleRefImageDrop}
+                        onDropCapture={async (e: React.DragEvent) => {
+                          const url = e.dataTransfer.getData('text/uri-list');
+                          if (!url) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const blob = await fetchBlob(url);
+                          if (!blob) return;
+                          const file = new File([blob], url.substring(url.lastIndexOf('/')), {
+                            type: blob.type,
+                          });
+                          handleRefImageDrop([file]);
+                        }}
                         accept={IMAGE_MIME_TYPE}
                         maxFiles={10 - uploadedImages.length}
                         disabled={uploadedImages.length >= 10}
@@ -700,7 +757,16 @@ function ReferenceUpload() {
                       )}
 
                       {uploadingFiles.some((f) => f.status === 'uploading') && (
-                        <Progress value={65} animated size="xs" />
+                        <Progress
+                          value={
+                            uploadingFiles.length > 0
+                              ? uploadingFiles.reduce((sum, f) => sum + (f.progress ?? 0), 0) /
+                                uploadingFiles.length
+                              : 0
+                          }
+                          animated
+                          size="xs"
+                        />
                       )}
 
                       <Button
@@ -752,6 +818,18 @@ function ReferenceUpload() {
 
                   <Dropzone
                     onDrop={handleDrop}
+                    onDropCapture={async (e: React.DragEvent) => {
+                      const url = e.dataTransfer.getData('text/uri-list');
+                      if (!url) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const blob = await fetchBlob(url);
+                      if (!blob) return;
+                      const file = new File([blob], url.substring(url.lastIndexOf('/')), {
+                        type: blob.type,
+                      });
+                      handleDrop([file]);
+                    }}
                     accept={IMAGE_MIME_TYPE}
                     maxFiles={10 - images.length}
                     disabled={images.length >= 10 || isUploading}

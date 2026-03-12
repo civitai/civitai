@@ -49,24 +49,29 @@ The prompt enhancer injected characters that weren't @mentioned in the original 
 The Preview button opens a new tab but panels don't appear.
 **Root cause:** Same as the polling/cache issue above. The reader endpoint correctly fetches Ready panels, but the data was stale in the query cache. The `invalidate()` fix resolves this.
 
----
-
-## Open Bugs
-
 ### Reference image upload stuck at 75%
-Often gets stuck during upload. Needs investigation into the CF upload flow and progress tracking.
+Upload progress bar would get stuck and `isUploading` never reset.
+**Root cause:** `handleSubmit` called `addImagesMutation.mutate()` (fire-and-forget) instead of `mutateAsync()`. Progress reached 90% but never 100%, and state was only cleaned up in the `catch` block. Additionally, the "add more images" progress bar was hardcoded to 65%.
+**Fix:** Changed to `await addImagesMutation.mutateAsync()` with proper progress (100%) and state (`isUploading = false`) cleanup on success. Replaced hardcoded 65% progress with real per-file upload progress average.
 
 ### Can't drag from Generator into References
-Drag-and-drop from the generator into references doesn't work. The "Pick from Generator" button works as a workaround.
+Drag-and-drop from the generator into references didn't work. Only the "Pick from Generator" button worked.
+**Root cause:** Dropzones in `character.tsx` only handled `onDrop` (file drops). Generator images set `text/uri-list` on drag, but no `onDropCapture` handler existed to intercept URL drops.
+**Fix:** Added `onDropCapture` handlers to both reference Dropzones (new reference creation + existing reference upload). They extract the URL from `text/uri-list`, fetch the blob, wrap it in a `File`, and pass it to the existing upload handler.
 
 ### Need to refresh page after every action
-Missing optimistic updates across multiple flows: import panels, upload images, etc. The polling fix addresses generation completion, but other actions may still need attention.
+UI felt sluggish because mutations only updated after server round-trip.
+**Root cause:** Out of 20+ mutations, only panel/chapter/ref-image reordering had optimistic updates. Everything else called `refetch()` causing perceived lag.
+**Fix:** Added optimistic `setData` updates to 6 key mutations: `deletePanelMutation` (removes panel from cache), `deleteChapterMutation` (removes chapter), `createChapterMutation` (adds placeholder), `planPanelsMutation` (added missing `onSuccess`), `deleteRefImageMutation` (removes image), `addMoreImagesMutation` (adds placeholder images). All include `onError` rollback via `refetch()`.
 
-### Sketch edit various issues
-- Sketch edit then Regenerate gives an entirely new image (expected: should apply sketch changes)
-- Sketch edit pulls in files from previous generations / unrelated references
-- Confusion between standalone Sketch Edit and the Enhance > Annotate flow
-- **Suggestion from testers:** Rename "Enhance" to "Edit/Enhance Panel" and remove standalone Sketch Edit to reduce confusion
+### Sketch edit flow rewrite
+Sketch Edit saved directly to the panel image, so "Regenerate" afterward ignored the sketch entirely and generated from the original prompt.
+**Root cause:** `handleSketchEdit` called `replacePanelImageMutation` which only updated `imageUrl`/`imageId` — no generation metadata. Regenerate then used the original prompt via `createPanel` (txt2img), completely discarding the annotation.
+**Fix:** Rewrote Sketch Edit to feed into the Enhance pipeline: annotate → "Continue to Enhance" → upload blob to CF → PanelModal opens in Enhance tab with annotated image as source → user adjusts prompt/model → `enhancePanelMutation` generates with the annotation as img2img reference. Removed the standalone direct-replacement flow.
+
+---
+
+## Open Bugs / Needs Investigation
 
 ### Enhance prompt ignores user intent
 Per user: "it doesn't seem to listen to me at all". Even with the reference leak fixed, the prompt enhancer may still deviate significantly from user intent. May need system prompt tuning.

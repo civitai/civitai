@@ -44,7 +44,7 @@ export function DrawingEditorModal({
   onConfirm,
   onCancel,
   initialLines = [],
-  confirmLabel = 'Apply',
+  confirmLabel = 'Continue to Enhance',
 }: DrawingEditorModalProps) {
   const dialog = useDialogContext();
   const stageRef = useRef<Konva.Stage | null>(null);

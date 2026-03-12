@@ -371,11 +371,24 @@ function ProjectWorkspace() {
   });
 
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
+    onMutate: async ({ panelId }) => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          chapters: prev.chapters.map((ch) => ({
+            ...ch,
+            panels: ch.panels.filter((p) => p.id !== panelId),
+          })),
+        };
+      });
+    },
     onSuccess: () => {
       refetch();
       setDetailPanelId(null);
     },
-    onError: handleMutationError,
+    onError: () => refetch(),
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
@@ -386,11 +399,37 @@ function ProjectWorkspace() {
   });
 
   const createChapterMutation = trpc.comics.createChapter.useMutation({
+    onMutate: async () => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        const nextPosition = prev.chapters.length > 0
+          ? Math.max(...prev.chapters.map((ch) => ch.position)) + 1
+          : 0;
+        const placeholder = {
+          id: -Date.now(),
+          name: 'New Chapter',
+          position: nextPosition,
+          status: ComicChapterStatus.Draft,
+          panels: [],
+          earlyAccessConfig: null,
+          scheduledAt: null,
+          availability: 'Public',
+          nsfwLevel: 0,
+          earlyAccessEndsAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          publishedAt: null,
+          projectId,
+        } as unknown as (typeof prev.chapters)[number];
+        return { ...prev, chapters: [...prev.chapters, placeholder] };
+      });
+    },
     onSuccess: (data) => {
       setActiveChapterPosition(data.position);
       refetch();
     },
-    onError: handleMutationError,
+    onError: () => refetch(),
   });
 
   const updateChapterMutation = trpc.comics.updateChapter.useMutation({
@@ -404,8 +443,16 @@ function ProjectWorkspace() {
   });
 
   const deleteChapterMutation = trpc.comics.deleteChapter.useMutation({
+    onMutate: async ({ chapterPosition }) => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        const filtered = prev.chapters.filter((ch) => ch.position !== chapterPosition);
+        return { ...prev, chapters: filtered };
+      });
+    },
     onSuccess: () => refetch(),
-    onError: handleMutationError,
+    onError: () => refetch(),
   });
 
   const updateProjectMutation = trpc.comics.updateProject.useMutation({
@@ -440,6 +487,7 @@ function ProjectWorkspace() {
   });
 
   const planPanelsMutation = trpc.comics.planChapterPanels.useMutation({
+    onSuccess: () => refetch(),
     onError: handleMutationError,
   });
 
@@ -838,11 +886,16 @@ function ProjectWorkspace() {
             try {
               const file = new File([blob], 'sketch-annotation.jpg', { type: 'image/jpeg' });
               const result = await uploadSketchToCF(file);
-              // Save with proper Image record creation and NSFW scanning
-              await replacePanelImageMutation.mutateAsync({
-                panelId: panel.id,
-                imageUrl: result.id,
+              const previewUrl = getEdgeUrl(result.id, { width: 400 }) ?? result.id;
+              // Feed into Enhance pipeline instead of replacing panel image directly
+              setEnhanceExistingSource({
+                url: result.id,
+                previewUrl,
+                width: imgWidth,
+                height: imgHeight,
               });
+              setRegeneratingPanelId(panel.id);
+              openPanelModal();
             } catch (err) {
               console.error('Failed to save sketch edit:', err);
               showErrorNotification({ error: err as Error, title: 'Failed to save sketch edit' });
