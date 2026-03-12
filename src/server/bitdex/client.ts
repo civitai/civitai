@@ -1,7 +1,21 @@
-import { translateFilters, translateSort, type FilterClause, type SortClause } from './filter-translator';
+export type Value = { Integer: number } | { Bool: boolean } | { String: string };
+
+export type FilterClause =
+  | { Eq: [string, Value] }
+  | { NotEq: [string, Value] }
+  | { Gt: [string, Value] }
+  | { Gte: [string, Value] }
+  | { Lt: [string, Value] }
+  | { Lte: [string, Value] }
+  | { In: [string, Value[]] }
+  | { NotIn: [string, Value[]] }
+  | { And: FilterClause[] }
+  | { Or: FilterClause[] }
+  | { Not: FilterClause };
+
+export type SortClause = { field: string; direction: 'Asc' | 'Desc' };
 
 const BITDEX_URL = process.env.BITDEX_URL || '';
-const BITDEX_DEFAULT_INDEX = 'civitai';
 const BITDEX_TIMEOUT_MS = 30000;
 
 export interface BitdexQueryResult {
@@ -9,11 +23,14 @@ export interface BitdexQueryResult {
   total_matched: number;
   cursor?: any;
   elapsed_us: number;
+  docs?: Record<string, unknown>[];
 }
 
 /**
  * Query BitDex with pre-built filter clauses and sort.
  * Returns null on any error (never throws).
+ *
+ * @param includeDocs - true to return all fields, or an array of field names
  */
 export async function queryBitdex(
   indexName: string,
@@ -22,6 +39,7 @@ export async function queryBitdex(
   limit = 100,
   cursor?: any,
   offset?: number,
+  includeDocs?: boolean | string[],
 ): Promise<BitdexQueryResult | null> {
   if (!BITDEX_URL) return null;
   try {
@@ -31,6 +49,7 @@ export async function queryBitdex(
     if (sort) body.sort = sort;
     if (cursor) body.cursor = cursor;
     if (offset != null && offset > 0) body.offset = offset;
+    if (includeDocs != null) body.include_docs = includeDocs;
 
     const res = await fetch(`${BITDEX_URL}/api/indexes/${indexName}/query`, {
       method: 'POST',
@@ -49,65 +68,4 @@ export async function queryBitdex(
     console.error(`[BitDex] Query error:`, err);
     return null;
   }
-}
-
-/**
- * Upsert documents to BitDex. Fails silently (returns 0 on error).
- */
-export async function upsertBitdexDocuments(
-  indexName: string,
-  documents: any[],
-): Promise<number> {
-  if (!BITDEX_URL || documents.length === 0) return 0;
-  try {
-    const res = await fetch(`${BITDEX_URL}/api/indexes/${indexName}/documents/upsert`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ documents }),
-    });
-    if (!res.ok) return 0;
-    const data = await res.json();
-    return data.upserted ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Delete documents from BitDex. Fails silently (returns 0 on error).
- */
-export async function deleteBitdexDocuments(
-  indexName: string,
-  ids: number[],
-): Promise<number> {
-  if (!BITDEX_URL || ids.length === 0) return 0;
-  try {
-    const res = await fetch(`${BITDEX_URL}/api/indexes/${indexName}/documents`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    });
-    if (!res.ok) return 0;
-    const data = await res.json();
-    return data.deleted ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * High-level: query BitDex using the same inputs as Meilisearch.
- * Translates Meilisearch filter strings + sort to BitDex format.
- * Returns the result or null on error (for shadow mode comparison).
- */
-export async function getImagesFromBitdex(
-  meiliFilters: string | string[],
-  meiliSort: string | undefined,
-  limit: number,
-  cursor?: any,
-  offset?: number,
-): Promise<BitdexQueryResult | null> {
-  const filters = translateFilters(meiliFilters);
-  const sort = meiliSort ? translateSort(meiliSort) : undefined;
-  return queryBitdex(BITDEX_DEFAULT_INDEX, filters, sort, limit, cursor, offset);
 }

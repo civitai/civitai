@@ -171,8 +171,8 @@ import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
-import { getImagesFromBitdex, queryBitdex } from '~/server/bitdex/client';
-import type { FilterClause, SortClause, Value } from '~/server/bitdex/filter-translator';
+import { queryBitdex } from '~/server/bitdex/client';
+import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
 import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
@@ -1940,14 +1940,29 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     input.currentUserId?.toString() || 'anonymous'
   );
 
-  // TODO: primary mode — bypass Meili entirely, query BitDex directly
-  // For now, shadow mode fires BitDex async alongside Meili for comparison
+  // Primary mode: bypass Meili entirely, query BitDex directly with full docs
+  if (bitdexMode === 'primary') {
+    try {
+      const bitdexResult = await getImagesFromBitdexPreFilter(input, true);
+      if (bitdexResult?.docs?.length) {
+        const data = bitdexResult.docs.map((doc) => mapBitdexDoc(doc));
+        return { data, nextCursor: undefined };
+      }
+      if (bitdexResult) {
+        // Fallback: docs not returned, use IDs only
+        return { data: bitdexResult.ids.map((id) => ({ id })), nextCursor: undefined };
+      }
+    } catch (err) {
+      recordBitdexError(err);
+    }
+    // Fall through to Meili if BitDex fails
+  }
 
   const meiliStart = Date.now();
   const result = await searchFn(input);
 
-  // Fire BitDex shadow comparison (non-blocking) — uses native filter builder
-  if (bitdexMode === 'shadow' || bitdexMode === 'primary') {
+  // Shadow mode: fire BitDex async alongside Meili for comparison
+  if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
     getImagesFromBitdexPreFilter(input)
       .then((bitdexResult) => {
@@ -1965,9 +1980,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       .catch((err) => recordBitdexError(err));
   }
 
-  // Strip internal metadata before returning
-  const { _meiliFilter, _meiliSort, ...cleanResult } = result as typeof result & { _meiliFilter?: string; _meiliSort?: string };
-  return cleanResult;
+  return result;
 }
 
 export async function getImagesFromFeedSearch(
@@ -2424,9 +2437,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   sorts.push(searchSort);
   //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
-  const meiliFilterStr = filters.join(' AND ');
   const request: SearchParams = {
-    filter: meiliFilterStr,
+    filter: filters.join(' AND '),
     sort: sorts,
     limit: limit + 1,
     offset,
@@ -2435,7 +2447,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
   requestTotal.inc({ route }); // count every request up front
-  const meiliStart = Date.now();
 
   try {
     const { results } = await metricsSearchClient
@@ -2515,7 +2526,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
       endTimer();
 
-      return { data: fullData, nextCursor, _meiliFilter: meiliFilterStr, _meiliSort: sorts[0] };
+      return { data: fullData, nextCursor };
     }
 
     // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
@@ -2625,8 +2636,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     return {
       data: fullData,
       nextCursor,
-      _meiliFilter: meiliFilterStr,
-      _meiliSort: sorts[0],
     };
   } catch (error) {
     const err = error as Error;
@@ -2644,6 +2653,59 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     endTimer();
     return { data: [], nextCursor: undefined };
   }
+}
+
+// --- BitDex document mapping (mapped_string reverse lookup) ---
+const bitdexTypeMap: Record<number, string> = { 1: 'image', 2: 'video', 3: 'audio' };
+const bitdexAvailabilityMap: Record<number, string> = { 1: 'Public', 2: 'Private', 3: 'Unsearchable' };
+const bitdexBaseModelMap: Record<number, string> = {
+  1: 'SD 1.4', 2: 'SD 1.5', 3: 'SD 1.5 LCM', 4: 'SD 2.0', 5: 'SD 2.0 768',
+  6: 'SD 2.1', 7: 'SD 2.1 768', 10: 'SDXL 0.9', 11: 'SDXL 1.0', 12: 'SDXL 1.0 LCM',
+  13: 'SDXL Distilled', 14: 'SDXL Turbo', 15: 'SDXL Lightning', 16: 'SDXL Hyper',
+  20: 'Pony', 30: 'Flux.1 S', 31: 'Flux.1 D', 32: 'Flux.1 D2', 40: 'Illustrious',
+  41: 'NoobAI', 50: 'Stable Cascade', 60: 'SVD', 61: 'SVD XT', 70: 'Stable Audio',
+  80: 'HunyuanDiT', 81: 'HunyuanVideo', 82: 'Mochi', 83: 'LTXV', 84: 'CogVideoX',
+  90: 'Kolors', 91: 'Lumina', 92: 'PixArt a', 93: 'PixArt E',
+};
+const bitdexBlockedForMap: Record<number, string> = { 1: 'tos', 2: 'moderated', 3: 'CSAM', 4: 'AiNotVerified' };
+
+/** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
+function mapBitdexDoc(doc: Record<string, unknown>) {
+  return {
+    id: doc.id as number,
+    url: doc.url as string,
+    hash: doc.hash as string | null,
+    nsfwLevel: doc.nsfwLevel as number,
+    userId: doc.userId as number,
+    type: bitdexTypeMap[doc.type as number] ?? 'image',
+    availability: bitdexAvailabilityMap[doc.availability as number] ?? 'Public',
+    baseModel: bitdexBaseModelMap[doc.baseModel as number] ?? null,
+    postId: doc.postId as number | null,
+    postedToId: doc.postedToId as number | null,
+    remixOfId: doc.remixOfId as number | null,
+    hasMeta: doc.hasMeta as boolean,
+    onSite: doc.onSite as boolean,
+    poi: doc.poi as boolean,
+    minor: doc.minor as boolean,
+    width: doc.width as number | null,
+    height: doc.height as number | null,
+    needsReview: doc.needsReview as string | null,
+    reactionCount: doc.reactionCount as number,
+    commentCount: doc.commentCount as number,
+    collectedCount: doc.collectedCount as number,
+    sortAt: new Date((doc.sortAt as number) * 1000).toISOString(), // BitDex stores unix seconds
+    sortAtUnix: (doc.sortAt as number) * 1000, // Convert to epoch ms to match Meili format
+    publishedAtUnix: doc.publishedAt ? (doc.publishedAt as number) * 1000 : null,
+    tagIds: doc.tagIds as number[] ?? [],
+    modelVersionIds: doc.modelVersionIds as number[] ?? [],
+    toolIds: doc.toolIds as number[] ?? [],
+    techniqueIds: doc.techniqueIds as number[] ?? [],
+    blockedFor: doc.blockedFor != null ? bitdexBlockedForMap[doc.blockedFor as number] : null,
+    // Fields expected by consumer but not stored in BitDex
+    hideMeta: false,
+    index: 0,
+    acceptableMinor: doc.acceptableMinor as boolean ?? false,
+  };
 }
 
 // --- BitDex native filter helpers ---
@@ -2669,9 +2731,14 @@ const _or = (...cs: (FilterClause | null)[]): FilterClause => {
 
 /**
  * Build and execute a BitDex query from the same input as getImagesFromSearchPreFilter.
- * Returns { ids, total_matched, elapsed_us } or null on error.
+ * Returns { ids, total_matched, elapsed_us, docs? } or null on error.
+ *
+ * @param includeDocs - true to return all doc fields, or an array of field names
  */
-export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
+export async function getImagesFromBitdexPreFilter(
+  input: ImageSearchInput,
+  includeDocs?: boolean | string[],
+) {
   let { postIds = [] } = input;
   const {
     sort,
@@ -2698,7 +2765,6 @@ export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
     offset,
     entry,
     postId,
-    useCombinedNsfwLevel,
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
@@ -2715,16 +2781,25 @@ export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
   const filters: FilterClause[] = [];
 
   // --- Access control ---
+  const allBlockedReasons = [
+    BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified,
+  ].map(_str);
+
   if (!isModerator) {
     if (currentUserId) {
       filters.push(_or(
         _not(_eq('availability', _str(Availability.Private))),
         _eq('userId', _int(currentUserId))
       ));
+      // Exclude blocked images unless owned by current user
+      filters.push(_or(
+        _notIn('blockedFor', allBlockedReasons),
+        _eq('userId', _int(currentUserId))
+      ));
     } else {
       filters.push(_not(_eq('availability', _str(Availability.Private))));
+      filters.push(_notIn('blockedFor', allBlockedReasons));
     }
-    // blockedFor: BitDex bitmap semantics handle nulls — no bitmap entry = not matched
   }
 
   if (postId) postIds = [...postIds, postId];
@@ -2805,8 +2880,8 @@ export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
 
   // --- Remix ---
   if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
-  if (remixesOnly && !nonRemixesOnly) filters.push(_gte('remixOfId', _int(0)));
-  // nonRemixesOnly: docs without remixOfId have no bitmap entry → already excluded
+  if (remixesOnly && !nonRemixesOnly) filters.push(_gte('remixOfId', _int(1)));
+  if (nonRemixesOnly) filters.push(_not(_gte('remixOfId', _int(1))));
 
   // --- Tag exclusions ---
   if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
@@ -2817,20 +2892,23 @@ export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
   if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
 
   // --- Published ---
+  // BitDex has isPublished (boolean) derived from publishedAtUnix existence.
+  // Range filters (scheduled, notPublished) aren't expressible — moderator edge cases
+  // will return slightly different results than Meili.
   if (isModerator) {
     if (notPublished) {
-      // NOT EXISTS equivalent — skip for now (moderator-only)
+      filters.push(_eq('isPublished', _bool(false)));
     } else if (scheduled) {
-      filters.push(_gt('publishedAtUnix', _int(Date.now())));
+      // Can't express "publishedAt > now" — isPublished is a static boolean.
+      // For now, just require published (will include scheduled items).
+      filters.push(_eq('isPublished', _bool(true)));
     } else {
-      const pubClauses: FilterClause[] = [_lte('publishedAtUnix', _int(Date.now()))];
+      const pubClauses: FilterClause[] = [_eq('isPublished', _bool(true))];
       if (currentUserId) pubClauses.push(_eq('userId', _int(currentUserId)));
       filters.push(_or(...pubClauses));
     }
   } else {
-    const pubClauses: FilterClause[] = [
-      _lte('publishedAtUnix', _int(snapToInterval(Math.round(Date.now())))),
-    ];
+    const pubClauses: FilterClause[] = [_eq('isPublished', _bool(true))];
     if (currentUserId) pubClauses.push(_eq('userId', _int(currentUserId)));
     filters.push(_or(...pubClauses));
   }
@@ -2847,12 +2925,14 @@ export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
   else if (excludedUserIds?.length) filters.push(_notIn('userId', excludedUserIds.map(_int)));
 
   // --- Period ---
+  // BitDex supports time buckets: Gte on sortAtUnix snaps to pre-computed buckets.
+  // Requires time_buckets config in civitai-index.json (filter_field: sortAtUnix, sort_field: sortAt).
   if (period && period !== 'AllTime') {
     const periodMs: Record<string, number> = {
       Day: 86400000, Week: 604800000, Month: 2592000000, Year: 31536000000,
     };
     const ms = periodMs[period];
-    if (ms) filters.push(_gt('sortAtUnix', _int(snapToInterval(Math.round(Date.now() - ms)))));
+    if (ms) filters.push(_gte('sortAtUnix', _int(Math.round((Date.now() - ms) / 1000))));
   }
 
   // --- Sort ---
@@ -2867,12 +2947,11 @@ export async function getImagesFromBitdexPreFilter(input: ImageSearchInput) {
     bitdexSort = { field: 'sortAt', direction: 'Asc' };
   } else {
     bitdexSort = { field: 'sortAt', direction: 'Desc' };
-    if (entry) {
-      filters.push(_lte('sortAtUnix', _int(snapToInterval(Math.round(entry)))));
-    }
   }
 
-  return queryBitdex('civitai', filters, bitdexSort, limit, undefined, offset);
+  // BitDex native keyset cursor: { sort_value, slot_id }
+  // For now, use offset-based pagination (compatible with Meili behavior).
+  return queryBitdex('civitai', filters, bitdexSort, limit, undefined, offset, includeDocs);
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {

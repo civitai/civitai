@@ -8,7 +8,6 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import type { Availability } from '~/shared/utils/prisma/enums';
-import { upsertBitdexDocuments } from '~/server/bitdex/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
@@ -486,12 +485,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         documents: data,
         batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
         client,
-      });
-
-      // Dual-write to BitDex — always flows, fails silently
-      // Fire-and-forget: don't await, don't block Meilisearch updates
-      upsertBitdexDocuments('civitai', data).catch((err) => {
-        console.error('[BitDex dual-write] upsert failed silently:', err?.message ?? err);
       });
     }
 
