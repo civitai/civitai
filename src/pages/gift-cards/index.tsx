@@ -346,7 +346,7 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
                       onChange={handleTypeChange}
                       data={[
                         { label: 'All', value: 'all' },
-                        { label: 'Buzz Cards', value: 'buzz' },
+                        // { label: 'Buzz Cards', value: 'buzz' },
                         { label: 'Memberships', value: 'memberships' },
                       ]}
                       size="sm"
@@ -475,8 +475,8 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
             />
           ) : (
             <>
-              {/* Buzz Gift Cards Section */}
-              {showBuzzCards && selectedVendor.products.buzzCards.length > 0 && (
+              {/* Buzz Gift Cards Section — hidden now that crypto deposits are live */}
+              {/* {showBuzzCards && selectedVendor.products.buzzCards.length > 0 && (
                 <div>
                   <Title order={2} mb="lg">
                     Buzz Gift Cards
@@ -549,7 +549,7 @@ export default function GiftCardsPage({ enabledVendors }: GiftCardsPageProps) {
                     })}
                   </Grid>
                 </div>
-              )}
+              )} */}
 
               {/* Memberships Section */}
               {showMemberships && selectedVendor.products.memberships.length > 0 && (

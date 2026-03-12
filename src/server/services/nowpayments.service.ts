@@ -6,7 +6,8 @@ import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { signalClient } from '~/utils/signal-client';
-import { SignalMessages } from '~/server/common/enums';
+import { SignalMessages, NotificationCategory } from '~/server/common/enums';
+import { createNotification } from '~/server/services/notification.service';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -218,6 +219,27 @@ export const processDeposit = async (
       outcomeAmount: event.outcome_amount,
     },
   });
+
+  // Send persistent notification for completed deposits
+  if (isDepositComplete(webhookStatus) && buzzAmount > 0) {
+    const notificationType =
+      webhookStatus === 'partially_paid' ? 'partially-paid' : 'deposit-confirmed';
+
+    await createNotification({
+      key: `${notificationType}:np-${paymentId}`,
+      type: notificationType,
+      category: NotificationCategory.Buzz,
+      details: { buzzAmount, bonusBuzz: bonusBuzz ?? 0 },
+      userId,
+    }).catch((e) =>
+      log({
+        message: 'Failed to create deposit notification',
+        paymentId,
+        userId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    );
+  }
 
   return { userId, buzzAmount, transactionId };
 };
