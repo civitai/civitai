@@ -204,7 +204,7 @@ export function GeneratedImage({
       {(isLightbox || inView) && (
         <>
           <div
-            className="relative flex items-center justify-center"
+            className="relative flex max-h-full items-center justify-center"
             style={{ aspectRatio: image.aspect }}
           >
             {
