@@ -267,6 +267,29 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       });
     }
 
+    // Extract Refiner hash
+    if (metadata['Refiner'] && metadata['Refiner hash']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      if (!metadata.hashes['refiner'])
+        metadata.hashes['refiner'] = metadata['Refiner hash'] as string;
+
+      resources.push({
+        type: 'model',
+        name: (metadata['Refiner'] as string).replace(/\.[^/.]+$/, ''),
+        hash: metadata['Refiner hash'] as string,
+      });
+    }
+
+    // Extract Size into width/height
+    if (metadata['Size'] && typeof metadata['Size'] === 'string') {
+      const [w, h] = (metadata['Size'] as string).split('x').map(Number);
+      if (w && h) {
+        metadata.width = w;
+        metadata.height = h;
+      }
+      delete metadata['Size'];
+    }
+
     // Extract hypernetwork details
     if (metadata['Hypernet'] && metadata['Hypernet strength'])
       resources.push({
