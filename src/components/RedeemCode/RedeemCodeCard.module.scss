@@ -1,14 +1,8 @@
 .redeemSection {
-  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
   border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
   border-radius: var(--mantine-radius-md);
-  padding: var(--mantine-spacing-xl);
-  box-shadow: var(--mantine-shadow-sm);
-  transition: box-shadow 0.2s ease;
-
-  &:hover {
-    box-shadow: var(--mantine-shadow-md);
-  }
+  padding: var(--mantine-spacing-lg);
 
   @media (max-width: 768px) {
     padding: var(--mantine-spacing-md);
@@ -80,7 +74,5 @@
 }
 
 .helpText {
-  margin-top: var(--mantine-spacing-xs);
-  text-align: center;
   opacity: 0.8;
 }

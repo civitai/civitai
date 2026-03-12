@@ -1,15 +1,18 @@
 import {
   Center,
+  Divider,
+  Group,
   Loader,
   MultiSelect,
   Paper,
+  Popover,
   Stack,
   Text,
-  Title,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import type { ChartOptions, scales } from 'chart.js';
+import { IconInfoCircle } from '@tabler/icons-react';
+import type { ChartOptions } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -24,8 +27,8 @@ import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import classes from '~/components/Buzz/buzz.module.scss';
+import { abbreviateValue, truncateLabel, chartTooltipDefaults } from '~/components/Buzz/chart-defaults';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { maxDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 ChartJS.register(
@@ -57,22 +60,22 @@ export const GeneratedImagesReward = () => {
       responsive: true,
       scales: {
         y: {
-          title: {
-            display: true,
-            text: 'Images generated',
-            color: labelColor,
-          },
-          suggestedMin: 0,
+          beginAtZero: false,
+          suggestedMin: 1,
           ticks: {
-            stepSize: 1000,
             color: labelColor,
+            callback: abbreviateValue,
           },
+          grid: { color: 'rgba(128, 128, 128, 0.1)' },
         },
         x: {
-          type: 'time',
+          type: 'time' as const,
           ticks: {
             color: labelColor,
+            maxTicksLimit: mobile ? 5 : 8,
+            autoSkip: true,
           },
+          grid: { display: false },
         },
       },
       plugins: {
@@ -84,11 +87,19 @@ export const GeneratedImagesReward = () => {
             borderRadius: 5,
             useBorderRadius: true,
             color: labelColor,
+            generateLabels: (chart) => {
+              const original = ChartJS.defaults.plugins.legend.labels.generateLabels?.(chart) ?? [];
+              return original.map((label) => ({
+                ...label,
+                text: truncateLabel(label.text ?? '', 40),
+              }));
+            },
           },
         },
-        title: {
-          display: false,
-        },
+        title: { display: false },
+        tooltip: chartTooltipDefaults({
+          formatValue: (val) => val.toLocaleString(),
+        }),
       },
     }),
     [labelColor, mobile]
@@ -137,21 +148,41 @@ export const GeneratedImagesReward = () => {
   }
 
   return (
-    <Paper className={classes.tileCard} h="100%">
-      <Stack p="md">
-        <Title order={3}>Images generated with your models</Title>
-        <Stack gap={0}>
-          <Text>
-            This chart shows the number of images generated with your resources over the past 30
-            days.
-          </Text>
-          <Text>
-            You can use this information to gain insight into the popularity of your models and
-            their usage
-          </Text>
-        </Stack>
-        {!isLoading && modelVersions.length > 0 ? (
-          <Stack>
+    <Paper className={classes.tileCard} h="100%" style={{ overflow: 'hidden' }}>
+      {/* Header */}
+      <Stack gap={2} p="md" pb="sm">
+        <Group gap={6} align="center">
+          <h3 className="text-xl font-bold">Model Generation Activity</h3>
+          <Popover width={320} withArrow withinPortal shadow="sm">
+            <Popover.Target>
+              <IconInfoCircle size={18} style={{ cursor: 'pointer', color: 'var(--mantine-color-dimmed)' }} />
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack gap="xs">
+                <Text size="sm">
+                  This chart shows the number of images generated with your published resources over the past 30 days.
+                </Text>
+                <Text size="sm" c="dimmed">
+                  Use this to gain insight into the popularity of your models and their usage trends.
+                </Text>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+        </Group>
+        <Text size="sm" c="dimmed">
+          Generation trends for your top models over the last 30 days
+        </Text>
+      </Stack>
+
+      {/* Filter section */}
+      {!isLoading && modelVersions.length > 0 && (
+        <>
+          <Divider />
+          <Stack gap={4} className="px-[var(--mantine-spacing-md)] py-[var(--mantine-spacing-sm)]">
+            <Group justify="space-between" align="center">
+              <Text size="sm" fw={500}>Filter models</Text>
+              <Text size="xs" c="dimmed">Showing your 10 most popular by default</Text>
+            </Group>
             <MultiSelect
               data={multiselectItems}
               value={filteredVersionIds.map((id) => id.toString())}
@@ -159,32 +190,37 @@ export const GeneratedImagesReward = () => {
               searchable
               placeholder="Search models"
               nothingFoundMessage="No models found..."
-              label="Filter models. "
-              description="By default, we only show you your 10 most performant models. Only models with generated images are shown."
               limit={50}
-            />
-            <Line
-              key={filteredVersionIds.join('-')}
-              options={options}
-              data={{
-                labels,
-                datasets,
-              }}
+              size="sm"
             />
           </Stack>
-        ) : isLoading ? (
-          <Center>
-            <Loader />
-          </Center>
-        ) : (
-          <Center>
-            <Text c="dimmed">
-              Whoops! Looks like we are still collecting data on your models for this month. Come
-              back later
-            </Text>
-          </Center>
-        )}
-      </Stack>
+          <Divider />
+        </>
+      )}
+
+      {/* Chart / Loading / Empty */}
+      {!isLoading && modelVersions.length > 0 ? (
+        <div style={{ padding: 'var(--mantine-spacing-md)' }}>
+          <Line
+            key={filteredVersionIds.join('-')}
+            options={options}
+            data={{
+              labels,
+              datasets,
+            }}
+          />
+        </div>
+      ) : isLoading ? (
+        <Center py="xl">
+          <Loader />
+        </Center>
+      ) : (
+        <Center py="xl">
+          <Text c="dimmed" size="sm">
+            No generation data available yet — check back soon
+          </Text>
+        </Center>
+      )}
     </Paper>
   );
 };

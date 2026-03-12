@@ -205,7 +205,7 @@ export const MembershipUpsell = ({
   );
 };
 
-function BenefitRow({ content }: { content: string }) {
+function BenefitRow({ content }: { content: React.ReactNode }) {
   return (
     <Group gap="sm" wrap="nowrap" align="center">
       <ThemeIcon size={22} radius="xl" color="grape" variant="light" className="shrink-0">
@@ -223,7 +223,7 @@ function BenefitsList({
   multiplier,
   buzzAmount,
 }: {
-  benefits: { content?: string }[];
+  benefits: { content?: React.ReactNode }[];
   multiplier?: number;
   buzzAmount: number;
 }) {

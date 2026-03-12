@@ -1,129 +1,127 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, List, Paper, Stack, Text, Title, Group, Tooltip } from '@mantine/core';
+import { Button, List, Paper, SimpleGrid, Stack, Text, Title, Group, Tooltip } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
-  IconBarcode,
   IconBrush,
   IconCoin,
   IconCoins,
   IconHighlight,
+  IconMessageCircle,
   IconMoneybag,
   IconShoppingBag,
   IconShoppingCart,
   IconInfoCircle,
+  IconTrophy,
 } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import type { MouseEvent } from 'react';
+import Link from 'next/link';
 import dayjs from '~/shared/utils/dayjs';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Currency } from '~/shared/utils/prisma/enums';
-import dynamic from 'next/dynamic';
 import classes from './FeatureCards.module.scss';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
-const RedeemCodeModal = dynamic(() =>
-  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
-);
 
 const getEarnings = (
   accountType: BuzzAccountType,
   buzzConfig?: ReturnType<typeof useBuzzCurrencyConfig>
 ): (FeatureCardProps & { key: string })[] =>
   [
-    // {
-    //   key: 'referrals',
-    //   icon: <IconUsers size={32} />,
-    //   title: 'Referrals',
-    //   description: 'You & your friends can earn more Buzz!',
-    //   btnProps: {
-    //     href: '/user/account#referrals',
-    //     children: 'Invite a friend',
-    //   },
-    // },
-    {
-      key: 'bounties',
-      icon: <IconMoneybag size={32} />,
-      title: 'Bounties',
-      description: 'Submit work to a bounty to win Buzz',
-      btnProps: {
-        href: '/bounties',
-        children: 'Learn more',
-        color: buzzConfig?.color,
-      },
-    },
     {
       key: 'purchase',
       icon: <IconCoin size={32} />,
       title: 'Purchase',
-      description: 'Purchase Buzz directly',
+      description: 'Send crypto to your deposit address or buy Buzz packages via Coinbase Commerce',
       btnProps: {
-        href: '/purchase/buzz',
-        children: 'Buy now',
-        color: buzzConfig?.color,
-      },
-    },
-    {
-      key: 'tips',
-      icon: <IconCoins size={32} />,
-      title: 'Get tipped',
-      description: 'Create awesome content!',
-      btnProps: {
-        href: '/posts/create',
-        children: 'Create post',
-        color: buzzConfig?.color,
-      },
-    },
-    {
-      disabled: accountType !== 'yellow',
-      key: 'redeem',
-      icon: <IconBarcode size={32} />,
-      title: 'Redeem a code',
-      description: 'Purchased a Buzz card? Redeem it to get your Buzz!',
-      btnProps: {
-        onClick: () => {
-          dialogStore.trigger({ component: RedeemCodeModal });
+        onClick: async () => {
+          const BuyBuzzModal = (await import('~/components/Modals/BuyBuzzModal')).default;
+          dialogStore.trigger({ component: BuyBuzzModal });
         },
-        children: 'Redeem code',
+        children: 'Buy Buzz',
         color: buzzConfig?.color,
       },
     },
-  ].filter((item) => !item.disabled);
+    {
+      key: 'challenges',
+      icon: <IconTrophy size={32} />,
+      title: 'Challenges',
+      description: 'Compete in themed contests by generating images with featured models, judged by AI',
+      btnProps: {
+        href: '/challenges',
+        children: 'View challenges',
+        color: buzzConfig?.color,
+      },
+    },
+    {
+      key: 'bounties',
+      icon: <IconMoneybag size={32} />,
+      title: 'Bounties',
+      description: 'Fund or fulfill creative requests from the community and get rewarded with Buzz',
+      btnProps: {
+        href: '/bounties',
+        children: 'View bounties',
+        color: buzzConfig?.color,
+      },
+    },
+    {
+      key: 'beggars-board',
+      icon: <IconMessageCircle size={32} />,
+      title: 'Buzz Beggars Board',
+      description: 'Post your images to get tipped Buzz by the community and featured on the homepage',
+      btnProps: {
+        href: '/collections/3870938',
+        children: 'Visit board',
+        color: buzzConfig?.color,
+      },
+    },
+  ].filter((item) => !(item as FeatureCardProps).disabled);
 
-export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow' }: Props) => {
+export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow', hideHeader, columns }: Props) => {
   const buzzConfig = useBuzzCurrencyConfig(accountType);
   const earnings = getEarnings(accountType, buzzConfig);
   const accountTypeLabel = getAccountTypeLabel(accountType);
 
   return (
-    <Stack gap={20}>
-      <Stack gap={4}>
-        <Group gap="xs" align="center">
-          <Title order={2} style={{ color: buzzConfig.color }}>
-            Earn {accountTypeLabel} Buzz
-          </Title>
-        </Group>
-        <Text c="dimmed" size="md">
-          Multiple ways to get {accountTypeLabel} Buzz and power your creativity
-        </Text>
-      </Stack>
+    <Stack gap="md">
+      {!hideHeader && (
+        <Stack gap={4}>
+          <Group gap="xs" align="center">
+            <Title order={2} style={{ color: buzzConfig.color }}>
+              Get {accountTypeLabel} Buzz
+            </Title>
+          </Group>
+          <Text c="dimmed" size="md">
+            Multiple ways to get {accountTypeLabel} Buzz and power your creativity
+          </Text>
+        </Stack>
+      )}
       {asList ? (
         <FeatureList data={earnings} />
       ) : (
-        <ContainerGrid2 gutter={20}>
-          {earnings.map(({ key, ...item }) => (
-            <ContainerGrid2.Col key={key} span={{ base: 12, sm: 4, md: 3 }}>
-              <FeatureCard {...item} withCTA={item.withCTA ?? withCTA} />
-            </ContainerGrid2.Col>
-          ))}
-        </ContainerGrid2>
+        columns === 2 ? (
+          <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="md">
+            {earnings.map(({ key, ...item }) => (
+              <FeatureCard key={key} {...item} withCTA={item.withCTA ?? withCTA} />
+            ))}
+          </SimpleGrid>
+        ) : (
+          <ContainerGrid2 gutter="md">
+            {earnings.map(({ key, ...item }) => (
+              <ContainerGrid2.Col key={key} span={{ base: 12, sm: 4, md: 3 }}>
+                <FeatureCard {...item} withCTA={item.withCTA ?? withCTA} />
+              </ContainerGrid2.Col>
+            ))}
+          </ContainerGrid2>
+        )
       )}
     </Stack>
   );
@@ -206,7 +204,7 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   const spendings = getSpendings({ userId: currentUser?.id });
 
   return (
-    <Stack gap={20}>
+    <Stack gap="md">
       <Stack gap={4}>
         <Title order={2}>Spend Buzz</Title>
         <Text>Got some Buzz? Here&rsquo;s what you can do with it</Text>
@@ -214,7 +212,7 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
       {asList ? (
         <FeatureList data={spendings} />
       ) : (
-        <ContainerGrid2 gutter={20}>
+        <ContainerGrid2 gutter="md">
           {spendings.map(({ key, ...item }) => (
             <ContainerGrid2.Col key={key} span={{ base: 12, sm: 4, md: 3 }}>
               <FeatureCard {...item} withCTA={item.withCTA ?? withCTA} />
@@ -226,7 +224,7 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   );
 };
 
-type Props = { asList?: boolean; withCTA?: boolean; accountType?: BuzzSpendType };
+type Props = { asList?: boolean; withCTA?: boolean; accountType?: BuzzSpendType; hideHeader?: boolean; columns?: 2 | 4 };
 
 type FeatureCardProps = {
   title: string;
@@ -285,7 +283,7 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
 
           {withCTA && (
             <Button
-              component="a"
+              component={(btnProps.href && !btnProps.target ? Link : btnProps.href ? 'a' : 'button') as 'a'}
               mt="auto"
               w="100%"
               variant="gradient"

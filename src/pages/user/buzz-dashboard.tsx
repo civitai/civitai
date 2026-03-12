@@ -3,6 +3,7 @@ import {
   Anchor,
   Center,
   Container,
+  Grid,
   Group,
   Loader,
   Paper,
@@ -12,7 +13,6 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
@@ -25,10 +25,11 @@ import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImages
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -38,7 +39,6 @@ import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -61,7 +61,6 @@ export default function UserBuzzDashboard() {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
-  const { isFreeTier, meta } = useActiveSubscription();
   const features = useFeatureFlags();
   const [mainBuzztype] = useAvailableBuzz();
 
@@ -94,6 +93,9 @@ export default function UserBuzzDashboard() {
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
 
+  const filteredRewards = rewards.filter((reward) => reward.accountType === selectedAccountType);
+  const hasRewards = filteredRewards.length > 0;
+
   return (
     <>
       <Meta
@@ -101,7 +103,7 @@ export default function UserBuzzDashboard() {
         deIndex
       />
       <Container size="lg">
-        <Stack gap="xl">
+        <Stack gap="md">
           <Stack gap="md">
             <Group justify="space-between" align="center">
               <Title order={1}>My Buzz Dashboard</Title>
@@ -121,69 +123,88 @@ export default function UserBuzzDashboard() {
             selectedAccountType={selectedAccountType}
           />
 
-          {/* Redeem Buzz Code Section */}
-          {selectedAccountType === 'yellow' && <RedeemCodeCard />}
-
+          {/* Get Buzz section */}
           {selectedAccountType !== 'blue' && (
-            <EarningBuzz withCTA accountType={selectedAccountType} />
+            <Stack gap={2} mt="xl">
+              <Title order={2} style={{ color: selectedBuzzConfig.color }}>
+                Get {getAccountTypeLabel(selectedAccountType)} Buzz
+              </Title>
+              <Text c="dimmed" size="sm">
+                Multiple ways to get {getAccountTypeLabel(selectedAccountType)} Buzz and power your
+                creativity
+              </Text>
+            </Stack>
           )}
 
-          <Paper className={classes.tileCard} h="100%">
-            <Stack p="md">
-              <Group justify="space-between">
-                <Title order={3} id="rewards">
-                  Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
-                </Title>
-                {isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
-                  <Tooltip multiline label="Your membership makes rewards worth more!">
-                    <Stack gap={0}>
-                      <Text
-                        size="md"
-                        style={{ fontSize: 20 }}
-                        fw={700}
-                        className={selectedBuzzConfig.classNames?.gradientText}
-                      >
-                        Rewards Multiplier: {rewardsMultiplier}x
+          {/* Feature cards (2x2) + Redeem/Purchased codes sidebar */}
+          {selectedAccountType === 'yellow' ? (
+            <Grid align="stretch">
+              <Grid.Col span={{ base: 12, md: 7 }}>
+                <EarningBuzz withCTA accountType={selectedAccountType} hideHeader columns={2} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, md: 5 }}>
+                <Stack gap="md" h="100%">
+                  <RedeemCodeCard size="md" />
+                  <PurchasedCodesCard compact />
+                </Stack>
+              </Grid.Col>
+            </Grid>
+          ) : selectedAccountType !== 'blue' ? (
+            <EarningBuzz withCTA accountType={selectedAccountType} hideHeader />
+          ) : null}
+
+          {/* Ways to Earn Rewards (hidden when empty) */}
+          {(loadingRewards || multipliersLoading || hasRewards) && (
+            <Paper className={classes.tileCard} p="lg" radius="md">
+              <Stack>
+                <Group justify="space-between">
+                  <h3 className="text-xl font-bold" id="rewards">
+                    Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
+                  </h3>
+                  {isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
+                    <Tooltip multiline label="Your membership makes rewards worth more!">
+                      <Stack gap={0}>
+                        <Text
+                          size="md"
+                          style={{ fontSize: 20 }}
+                          fw={700}
+                          className={selectedBuzzConfig.classNames?.gradientText}
+                        >
+                          Rewards Multiplier: {rewardsMultiplier}x
+                        </Text>
+                      </Stack>
+                    </Tooltip>
+                  ) : (
+                    isMember &&
+                    features.membershipsV2 && (
+                      <Text size="sm" c="dimmed">
+                        Check out the{' '}
+                        <Anchor
+                          component="button"
+                          onClick={() => setSelectedAccountType('blue')}
+                          c="blue.4"
+                        >
+                          Blue Buzz rewards
+                        </Anchor>{' '}
+                        available.
                       </Text>
-                    </Stack>
-                  </Tooltip>
+                    )
+                  )}
+                </Group>
+                {loadingRewards || multipliersLoading ? (
+                  <Center py="xl">
+                    <Loader />
+                  </Center>
                 ) : (
-                  isMember &&
-                  features.membershipsV2 && (
-                    <Text size="sm" c="dimmed">
-                      Check out the{' '}
-                      <Anchor
-                        component="button"
-                        onClick={() => setSelectedAccountType('blue')}
-                        c="blue.4"
-                      >
-                        Blue Buzz rewards
-                      </Anchor>{' '}
-                      available.
-                    </Text>
-                  )
+                  <RewardsList
+                    rewards={filteredRewards}
+                    accountType={selectedAccountType}
+                    onAccountTypeChange={setSelectedAccountType}
+                  />
                 )}
-              </Group>
-              {loadingRewards || multipliersLoading ? (
-                <Center py="xl">
-                  <Loader />
-                </Center>
-              ) : (
-                <RewardsList
-                  rewards={rewards.filter((reward) => reward.accountType === selectedAccountType)}
-                  accountType={selectedAccountType}
-                  onAccountTypeChange={setSelectedAccountType}
-                />
-              )}
-            </Stack>
-          </Paper>
-          <Text mt={-16} size="sm" mb="xs" align="right">
-            Still looking for ways to get more Buzz? Consider posting to the{' '}
-            <Text c="blue.4" td="underline" component={Link} href="/collections/3870938">
-              Buzz Beggars Board
-            </Text>
-            .
-          </Text>
+              </Stack>
+            </Paper>
+          )}
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
           {selectedAccountType === 'green' && (
