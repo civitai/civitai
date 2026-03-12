@@ -154,6 +154,43 @@
   }
 }
 
+// Two-column dashboard grid — stacks on mobile
+.dashboardGrid {
+  display: grid;
+  gap: var(--mantine-spacing-md);
+  grid-template-columns: 1fr;
+
+  @media (min-width: 768px) {
+    grid-template-columns: var(--grid-cols, minmax(0, 7fr) minmax(0, 5fr));
+  }
+}
+
+// Right column that constrains to left column height on desktop
+.dashboardGridConstrained {
+  // Mobile: natural flow
+  position: static;
+  min-height: auto;
+}
+
+.dashboardGridConstrainedInner {
+  // Mobile: normal positioning, explicit height for scroll
+  position: static;
+  height: 400px;
+
+  @media (min-width: 768px) {
+    position: absolute;
+    inset: 0;
+    height: auto;
+  }
+}
+
+@media (min-width: 768px) {
+  .dashboardGridConstrained {
+    position: relative;
+    min-height: 0;
+  }
+}
+
 // Icon styling
 .buzzIcon {
   filter: drop-shadow(0 0 2px rgb(var(--buzz-color)));

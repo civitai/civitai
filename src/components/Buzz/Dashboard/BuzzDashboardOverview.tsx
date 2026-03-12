@@ -11,7 +11,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
+import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -112,7 +112,7 @@ export const BuzzDashboardOverview = ({
 
   const options = React.useMemo(() => {
     return {
-      aspectRatio: 1.4,
+      aspectRatio: mobile ? 1 : 1.4,
       responsive: true,
       plugins: {
         title: { display: false },
@@ -197,19 +197,13 @@ export const BuzzDashboardOverview = ({
   }, [report, viewingHourly, currentAccountType, currentAccountTypeLabel, buzzConfig]);
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 7fr) minmax(0, 5fr)',
-        gap: 'var(--mantine-spacing-md)',
-      }}
-    >
+    <div className={classes.dashboardGrid} style={{ '--grid-cols': 'minmax(0, 7fr) minmax(0, 5fr)' } as React.CSSProperties}>
       <div>
         <Stack h="100%">
           <Paper p="lg" radius="md" className={classes.tileCard} h="100%">
             <Stack gap="sm" h="100%">
               <Stack gap={0} mb="auto">
-                <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm">
+                <Group justify="space-between" align="flex-start" wrap="wrap" mb="sm">
                   <Stack gap={4}>
                     <h3 className="text-xl font-bold" style={{ margin: 0 }}>Current {currentAccountTypeLabel} Buzz</h3>
                     <Group gap="sm" align="center" wrap="nowrap">
@@ -263,15 +257,17 @@ export const BuzzDashboardOverview = ({
                       </Popover>
                     </Group>
                   </Stack>
-                  {/* Top Up Card - Show when buzz is low */}
+                  {/* Top Up Card - hidden on mobile */}
                   {currentAccountType === 'yellow' && !features.isGreen && (
-                    <BuzzTopUpCard
-                      accountId={accountId}
-                      variant="banner"
-                      message={`Need more ${currentAccountTypeLabel} Buzz?`}
-                      showBalance={false}
-                      btnLabel="Top up"
-                    />
+                    <div className="hidden md:block">
+                      <BuzzTopUpCard
+                        accountId={accountId}
+                        variant="banner"
+                        message={`Need more ${currentAccountTypeLabel} Buzz?`}
+                        showBalance={false}
+                        btnLabel="Top up"
+                      />
+                    </div>
                   )}
                 </Group>
 
@@ -330,13 +326,11 @@ export const BuzzDashboardOverview = ({
           </Paper>
         </Stack>
       </div>
-      <div style={{ position: 'relative', minHeight: 0 }}>
+      <div className={classes.dashboardGridConstrained}>
         <Paper
           radius="md"
-          className={classes.tileCard}
+          className={`${classes.tileCard} ${classes.dashboardGridConstrainedInner}`}
           style={{
-            position: 'absolute',
-            inset: 0,
             display: 'grid',
             gridTemplateRows: 'auto 1fr',
             overflow: 'hidden',
@@ -349,11 +343,9 @@ export const BuzzDashboardOverview = ({
               component={Link}
               href={`/user/transactions?accountType=${currentAccountType}`}
               size="xs"
+              style={{ whiteSpace: 'nowrap' }}
             >
-              <Group gap={2}>
-                <IconArrowRight size={18} />
-                <span>View all</span>
-              </Group>
+              View all
             </Anchor>
           </Group>
           {transactionData.isLoading ? (

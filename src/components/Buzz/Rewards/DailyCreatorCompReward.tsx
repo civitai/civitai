@@ -1,3 +1,4 @@
+import React from 'react';
 import {
   Button,
   Center,
@@ -194,17 +195,14 @@ export function DailyCreatorCompReward({
   return (
     <>
       <div
+        className={classes.dashboardGrid}
         style={{
-          display: 'grid',
-          gridTemplateColumns:
-            !isLoading && resources.length > 0
-              ? 'minmax(0, 8fr) minmax(0, 4fr)'
-              : 'minmax(0, 1fr)',
-          gap: 'var(--mantine-spacing-md)',
-        }}
+          '--grid-cols': !isLoading && resources.length > 0
+            ? 'minmax(0, 8fr) minmax(0, 4fr)'
+            : 'minmax(0, 1fr)',
+        } as React.CSSProperties}
       >
-        <div style={{ position: 'relative', minHeight: 0 }}>
-          <Paper className={classes.tileCard} style={{ position: 'absolute', inset: 0, overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto 1fr' }}>
+          <Paper className={classes.tileCard} style={{ overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: 0 }}>
             {/* Header — always padded */}
             <Stack gap={0} p="md" pb={0}>
               <Group gap={8} justify="space-between">
@@ -255,9 +253,7 @@ export function DailyCreatorCompReward({
               />
             )}
           </Paper>
-        </div>
         {!isLoading && resources.length > 0 && (
-          <div>
             <Paper
               className={classes.tileCard}
               h="100%"
@@ -379,7 +375,6 @@ export function DailyCreatorCompReward({
                   </Center>
                 )}
             </Paper>
-          </div>
         )}
       </div>
     </>
