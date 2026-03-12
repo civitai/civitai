@@ -22,12 +22,12 @@ export const royalCdKeysVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/Bronze3.webp',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://royalcdkeys.com/products/civitai-com-3-month-bronze-membership-gift-card-key',
-            image: '/images/gift-cards/Bronze3.webp',
+            image: '/images/gift-cards/bronze_final.webp',
           },
         ],
       },
