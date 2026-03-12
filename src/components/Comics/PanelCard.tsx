@@ -3,6 +3,7 @@ import {
   IconAlertTriangle,
   IconDotsVertical,
   IconEye,
+  IconMessages,
   IconPencil,
   IconPhoto,
   IconPlus,
@@ -55,6 +56,7 @@ export interface PanelCardProps {
   onClick: () => void;
   onSketchEdit?: () => void;
   onEnhance?: () => void;
+  onIterativeEdit?: () => void;
 }
 
 export function PanelCard({
@@ -67,6 +69,7 @@ export function PanelCard({
   onClick,
   onSketchEdit,
   onEnhance,
+  onIterativeEdit,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
   const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
@@ -135,6 +138,17 @@ export function PanelCard({
                         }}
                       >
                         Enhance
+                      </Menu.Item>
+                    )}
+                    {status === 'Ready' && imageUrl && onIterativeEdit && (
+                      <Menu.Item
+                        leftSection={<IconMessages size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onIterativeEdit();
+                        }}
+                      >
+                        Iterative Edit
                       </Menu.Item>
                     )}
                     {(status === 'Ready' || status === 'Failed') && (

@@ -1,6 +1,7 @@
 import { ActionIcon, Badge, Text, Title } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconMessages,
   IconPencil,
   IconPlus,
   IconRefreshDot,
@@ -46,6 +47,7 @@ interface PanelDetailDrawerProps {
   onDelete: (panelId: number) => void;
   onSketchEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
   onEnhance?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
+  onIterativeEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
 }
 
 export function PanelDetailDrawer({
@@ -60,6 +62,7 @@ export function PanelDetailDrawer({
   onDelete,
   onSketchEdit,
   onEnhance,
+  onIterativeEdit,
 }: PanelDetailDrawerProps) {
   const utils = trpc.useUtils();
   // Lock body scroll when drawer is open
@@ -306,6 +309,16 @@ export function PanelDetailDrawer({
                   >
                     <IconWand size={16} />
                     Enhance
+                  </button>
+                )}
+                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onIterativeEdit && (
+                  <button
+                    className={styles.subtleBtn}
+                    onClick={() => onIterativeEdit(detailPanel)}
+                    title="Iterative Edit"
+                  >
+                    <IconMessages size={16} />
+                    Iterative Edit
                   </button>
                 )}
                 {(detailPanel.status === 'Ready' || detailPanel.status === 'Failed') && (

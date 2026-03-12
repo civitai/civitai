@@ -56,6 +56,7 @@ import {
 } from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
 import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
+import { IterativePanelEditor } from '~/components/Comics/IterativePanelEditor';
 import { PanelModal } from '~/components/Comics/PanelModal';
 import { ProjectSettingsModal } from '~/components/Comics/ProjectSettingsModal';
 import { PublishModal } from '~/components/Comics/PublishModal';
@@ -129,6 +130,11 @@ function ProjectWorkspace() {
     name: string;
     status: string;
     earlyAccessConfig: { buzzPrice: number; timeframe: number } | null;
+  } | null>(null);
+  const [iterativeEditorState, setIterativeEditorState] = useState<{
+    panelId: number | null;
+    panelPosition: number;
+    initialSource: { url: string; previewUrl: string; width: number; height: number } | null;
   } | null>(null);
 
   const panelSensors = useSensors(
@@ -1011,6 +1017,30 @@ function ProjectWorkspace() {
     handleEnhanceExisting(panel);
   };
 
+  const handleOpenIterativeEditor = (panel: { id: number; position: number; imageUrl: string | null; image?: { width: number; height: number } | null }) => {
+    const source = panel.imageUrl ? {
+      url: panel.imageUrl,
+      previewUrl: getEdgeUrl(panel.imageUrl, { width: 400 }) ?? panel.imageUrl,
+      width: panel.image?.width ?? 1024,
+      height: panel.image?.height ?? 1024,
+    } : null;
+    setIterativeEditorState({
+      panelId: panel.id,
+      panelPosition: panel.position,
+      initialSource: source,
+    });
+  };
+
+  const handleOpenIterativeEditorNew = () => {
+    if (!activeChapter) return;
+    const nextPosition = activeChapter.panels.length;
+    setIterativeEditorState({
+      panelId: null,
+      panelPosition: nextPosition,
+      initialSource: null,
+    });
+  };
+
   const getStatusDotClass = (status: string, hasRefs: boolean) => {
     if (status === 'Failed') return styles.failed;
     if (status === 'Ready' && !hasRefs) return styles.noRefs;
@@ -1505,6 +1535,7 @@ function ProjectWorkspace() {
                           onClick={() => setDetailPanelId(panel.id)}
                           onSketchEdit={() => handleSketchEdit(panel as any)}
                           onEnhance={() => handleEnhanceExisting(panel as any)}
+                          onIterativeEdit={() => handleOpenIterativeEditor({ ...panel, position: index } as any)}
                         />
                       </SortablePanel>
                     ))}
@@ -1550,6 +1581,13 @@ function ProjectWorkspace() {
         onDelete={(panelId) => deletePanelMutation.mutate({ panelId })}
         onSketchEdit={handleSketchEdit}
         onEnhance={handleDrawerEnhance}
+        onIterativeEdit={(panel) => {
+          setDetailPanelId(null);
+          const panelIndex = activeChapter
+            ? activeChapter.panels.findIndex((p) => p.id === panel.id)
+            : -1;
+          handleOpenIterativeEditor({ ...panel, position: panelIndex >= 0 ? panelIndex : 0 } as any);
+        }}
       />
 
       <PanelModal
@@ -1656,6 +1694,26 @@ function ProjectWorkspace() {
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}
         isSaving={updateProjectMutation.isLoading}
       />
+
+      {iterativeEditorState && (
+        <IterativePanelEditor
+          opened={!!iterativeEditorState}
+          onClose={() => {
+            setIterativeEditorState(null);
+            refetch();
+          }}
+          projectId={projectId}
+          chapterPosition={activeChapterPosition ?? 0}
+          panelId={iterativeEditorState.panelId}
+          panelPosition={iterativeEditorState.panelPosition}
+          initialSource={iterativeEditorState.initialSource}
+          allReferences={allReferences}
+          activeReferences={activeReferences}
+          panelCost={panelCost}
+          enhanceCost={enhanceCost}
+          refetch={refetch}
+        />
+      )}
     </>
   );
 }

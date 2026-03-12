@@ -10,6 +10,44 @@ A chat-bot-like experience for progressively refining comic panel images. Users 
 
 No server changes needed — the existing `enhancePanel`, `createPanel`, and `replacePanelImage` mutations are sufficient.
 
+## Implementation Status
+
+### Completed (Phases 1-6)
+
+- **Component shell** — `IterativePanelEditor.tsx` (~650 lines): fullscreen modal with chat history + controls sidebar
+- **IterationMessage** — `IterationMessage.tsx` (~99 lines): chat entry with image thumbnail, source selection, cost/annotation badges
+- **Styles** — `IterativePanelEditor.module.scss` (~270 lines): split layout, mobile responsive at 768px
+- **Entry points wired** — "Iterative Edit" in PanelCard context menu + PanelDetailDrawer actions
+- **Workspace integration** — `iterativeEditorState` in `index.tsx` with `handleOpenIterativeEditor` / `handleOpenIterativeEditorNew`
+- **Generation flow** — First send → `createPanelMutation` (txt2img), subsequent → `enhancePanelMutation` (img2img with `forceGenerate: true`)
+- **Polling** — 1.5s interval via `utils.comics.pollPanelStatus.fetch`, updates iteration entry on Ready/Failed
+- **Iteration history** — Chat display with auto-scroll, source tracking
+- **Revert** — "Use as source" on any past iteration, purely client-side
+- **Annotations** — `DrawingEditorModal` integration via `dialogStore.trigger`, uploads annotated blob to CF, resets after each generation
+- **Commit** — "Commit to Panel" calls `replacePanelImage` if reverted, else just closes
+- **Controls sidebar** — Model selector (`COMIC_MODEL_OPTIONS`), `AspectRatioSelector`, enhance prompt toggle, referenced characters display, `ImageSelectionSection` for over-budget references
+
+### Remaining (Phase 7: Polish)
+
+- [ ] **Confirmation dialog on close** — Warn user if they have uncommitted iterations and try to close/X the modal
+- [ ] **Keyboard shortcuts** — Enter/Ctrl+Enter to send, possibly Escape to close
+- [ ] **Error retry** — "Retry" button on failed iterations that re-sends the same prompt
+- [ ] **Cost running total** — Show cumulative buzz spent across all iterations in the session
+- [ ] **Empty source placeholder** — Better visual for the "No source image" state in the sidebar (currently just text)
+- [ ] **Generation progress indicator** — More granular than just a spinner (e.g., "Queued → Generating → Almost done")
+- [ ] **Mobile testing** — Verify the collapsed single-column layout works well in practice
+- [ ] **Discard/cancel generation** — Allow canceling a pending generation mid-flight
+- [ ] **Accessibility** — Focus management when modal opens, screen reader labels on iterative messages
+
+### Future Enhancements (Not in scope)
+
+- [ ] **Branching tree view** — When reverting and generating from an earlier iteration, show a tree instead of linear history
+- [ ] **Persist iteration history** — Save history server-side so users can resume sessions across page loads
+- [ ] **Side-by-side compare** — Compare two iterations visually before choosing one
+- [ ] **Prompt templates** — Quick-action buttons like "Add more detail", "Change lighting", "Remove background"
+
+---
+
 ## UI Layout
 
 ```
@@ -82,7 +120,7 @@ const [isGenerating, setIsGenerating] = useState(false);
 2. Clicks BuzzTransactionButton (shows cost per generation)
 3. **If first generation (no source):** calls `createPanelMutation` → creates panel at target position
 4. **If subsequent:** calls `enhancePanelMutation` with current source as `sourceImageUrl`, `forceGenerate: true`
-5. Polls panel status until Ready (reuse existing polling pattern from workspace)
+5. Polls panel status until Ready (1.5s interval via `pollPanelStatus`)
 6. Result image added to iteration history, becomes new `currentSource`
 7. Annotations and `originalSourceUrl` reset to `[]` / `null`
 
@@ -104,7 +142,7 @@ This is purely a client-side state change. No server calls. The iteration histor
 - Annotations **reset after each generation** — they're composited into the source image when generating, producing a new image with annotations "baked in"
 - After generation completes: `annotationElements → []`, `originalSourceUrl → null`
 - User can annotate the NEW result image for the next iteration
-- Uses existing `DrawingEditorModal` component
+- Uses existing `DrawingEditorModal` component, opened via `dialogStore.trigger` with `confirmLabel: 'Apply Annotations'`
 
 ## Commit to Panel
 
@@ -144,21 +182,21 @@ If the latest generation is already the current source, the staging panel alread
 
 ## File Changes
 
-### New Files
+### New Files (Created)
 
-| File | Description | ~Lines |
-|------|-------------|--------|
-| `src/components/Comics/IterativePanelEditor.tsx` | Main modal: chat history, controls sidebar, generation orchestration | 400-500 |
-| `src/components/Comics/IterationMessage.tsx` | Single chat entry: prompt, image thumbnail, "Use as source", cost badge | 80-100 |
-| `src/components/Comics/IterativePanelEditor.module.scss` | Layout styles for chat, sidebar, messages | ~150 |
+| File | Description | Lines |
+|------|-------------|-------|
+| `src/components/Comics/IterativePanelEditor.tsx` | Main modal: chat history, controls sidebar, generation orchestration | ~650 |
+| `src/components/Comics/IterationMessage.tsx` | Single chat entry: prompt, image thumbnail, "Use as source", cost badge | ~99 |
+| `src/components/Comics/IterativePanelEditor.module.scss` | Layout styles for chat, sidebar, messages, mobile responsive | ~270 |
 
-### Modified Files
+### Modified Files (Done)
 
 | File | Changes |
 |------|---------|
-| `src/pages/comics/project/[id]/index.tsx` | Add state + handler for opening/closing editor, render `<IterativePanelEditor>`, pass through props (projectId, chapterPosition, references, cost estimates, model/aspect ratio, mutations) |
-| `src/components/Comics/PanelCard.tsx` | Add "Iterative Edit" option to panel context menu |
-| `src/components/Comics/PanelDetailDrawer.tsx` | Add `onIterativeEdit` prop and button (e.g., `IconMessages` icon) |
+| `src/pages/comics/project/[id]/index.tsx` | Added `iterativeEditorState` state, `handleOpenIterativeEditor`/`handleOpenIterativeEditorNew` handlers, renders `<IterativePanelEditor>` with all props |
+| `src/components/Comics/PanelCard.tsx` | Added `onIterativeEdit` prop, "Iterative Edit" menu item (IconMessages, only on Ready panels with images) |
+| `src/components/Comics/PanelDetailDrawer.tsx` | Added `onIterativeEdit` prop, "Iterative Edit" button in drawer actions |
 
 ### Server — No Changes
 
@@ -168,53 +206,12 @@ Existing mutations are sufficient:
 - `replacePanelImage` — commit a reverted image
 - `getCostEstimate` / `getPromptEnhanceCostEstimate` — cost display
 
-## Implementation Phases
+## Components Reused
 
-### Phase 1: Component Shell
-- Create `IterativePanelEditor.tsx` with modal layout
-- Empty chat area + controls sidebar (model, aspect ratio, enhance toggle, references)
-- Wire open/close in workspace (`index.tsx`)
-- Entry points from PanelCard menu and PanelDetailDrawer
-
-### Phase 2: First Generation
-- Implement "send" flow → `createPanelMutation` (when no source) or `enhancePanelMutation` (when source exists)
-- Poll panel status until Ready
-- Display first iteration result in chat
-
-### Phase 3: Iteration History + Source Tracking
-- Build iteration history display with `IterationMessage` components
-- Each completed generation adds to history and updates `currentSource`
-- Auto-scroll to latest message
-
-### Phase 4: Revert
-- "Use as source" button on each iteration message
-- Updates `currentSource` to that entry's result image
-- Visual indicator showing which image is the current source
-
-### Phase 5: Annotations
-- Integrate `DrawingEditorModal` for annotating current source
-- Follow PanelModal's `handleAnnotateSource` pattern
-- Reset annotations after each generation
-- Show annotation indicator badge near the input area
-
-### Phase 6: Commit and Close
-- "Commit to Panel" button — `replacePanelImage` if reverted, else just close
-- Handle edge cases: no generations yet, generation in progress, error state
-- Confirmation dialog if uncommitted changes
-
-### Phase 7: Polish
-- Cost badge per iteration message
-- Generating spinner / skeleton states
-- Error handling and retry
-- Mobile responsive layout (collapsed sidebar)
-- Keyboard shortcuts (Enter to send, Ctrl+Z to revert?)
-
-## Components to Reuse
-
-These existing components can be imported directly:
+These existing components are imported directly:
 - `MentionTextarea` — prompt input with @mention support
 - `AspectRatioSelector` — aspect ratio picker
 - `BuzzTransactionButton` — cost-aware submit button
-- `DrawingEditorModal` — sketch annotation overlay
-- `ImageSelectionSection` (from PanelModal) — reference image picker
-- `EdgeImage` — optimized image display
+- `DrawingEditorModal` — sketch annotation overlay (via `dialogStore.trigger`)
+- `ImageSelectionSection` (from PanelModal) — reference image picker when over budget
+- `useCFImageUpload` — upload annotated images to CloudFlare
