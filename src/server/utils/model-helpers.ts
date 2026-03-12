@@ -105,7 +105,9 @@ export const getTrainingFileEpochNumberDetails = (
   if (!epoch) return null;
 
   const downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
-  const { jobId, fileName } = getEpochJobAndFileName(downloadUrl)!;
+  const epochDetails = getEpochJobAndFileName(downloadUrl);
+  if (!epochDetails) return null;
+  const { jobId, fileName } = epochDetails;
   const completeDate =
     file.metadata.trainingResults?.version === 2
       ? file.metadata.trainingResults.completedAt
@@ -130,6 +132,7 @@ export type GroupedFileVariants<T> = {
   ggufVariants: T[];
   otherFormatVariants: T[];
   components: Partial<Record<ModelFileComponentType, T[]>>;
+  optionalFiles: T[];
 };
 
 // Quality ranking for fp (higher index = better quality)
@@ -154,9 +157,6 @@ const quantQualityRank: Record<ModelFileQuantType, number> = {
 
 // Model file types (as opposed to component types)
 const modelFileTypes = ['Model', 'Pruned Model'] as const;
-
-// Component file types
-const componentFileTypes = ['VAE', 'Text Encoder', 'Config', 'Archive'] as const;
 
 /**
  * Sorts files by quality (best quality first).
@@ -200,6 +200,7 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
     ggufVariants: [],
     otherFormatVariants: [],
     components: {},
+    optionalFiles: [],
   };
 
   if (!files || files.length === 0) {
@@ -232,6 +233,9 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
           result.components[componentType] = [];
         }
         result.components[componentType]!.push(file);
+      } else {
+        // Files without a component type are optional (workflows, configs, etc.)
+        result.optionalFiles.push(file);
       }
     }
   }

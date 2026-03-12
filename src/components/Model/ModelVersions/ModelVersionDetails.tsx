@@ -1,11 +1,11 @@
 import {
   Accordion,
+  ActionIcon,
   Anchor,
   Badge,
   Box,
   Button,
   Card,
-  Center,
   Group,
   Loader,
   Menu,
@@ -19,13 +19,18 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
-  IconBolt,
+  IconBellCheck,
+  IconBellPlus,
+  IconBookmark,
   IconBrush,
   IconClock,
   IconCloudCheck,
   IconCloudLock,
   IconDownload,
   IconExclamationMark,
+  IconFileSettings,
+  IconFlag,
+  IconGavel,
   IconHeart,
   IconLicense,
   IconLock,
@@ -38,40 +43,38 @@ import {
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
-import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { useCallback, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import {
+  BidModelButton,
+  getEntityDataForBidModelButton,
+} from '~/components/Auction/BidModelButton';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import {
-  DescriptionTable,
-  type Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
 import { AnimatedCount, useLiveMetrics, MetricSubscriptionProvider } from '~/components/Metrics';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
-import { FileInfo } from '~/components/FileInfo/FileInfo';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
-import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
-import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import {
@@ -80,8 +83,6 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
-import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
@@ -100,33 +101,29 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
-import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ModelFileType } from '~/server/common/constants';
 import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { ReportEntity } from '~/server/schema/report.schema';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import {
-  getFileDisplayName,
-  getPrimaryFile,
-  groupFilesByVariant,
-} from '~/server/utils/model-helpers';
+import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
 import {
   Availability,
   CollectionType,
+  ModelEngagementType,
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
-  ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
+import { getFileIconConfig } from '~/utils/file-display-helpers';
+import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
@@ -139,13 +136,7 @@ export function ModelVersionDetails(props: Props) {
   );
 }
 
-function ModelVersionDetailsContent({
-  model,
-  version,
-  image,
-  onBrowseClick,
-  onFavoriteClick,
-}: Props) {
+function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
@@ -202,8 +193,9 @@ function ModelVersionDetailsContent({
 
   const filesCount = version.files?.length;
   const hasFiles = filesCount > 0;
-  const filesVisible = version.files?.filter(
-    (f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod
+  const filesVisible = useMemo(
+    () => version.files?.filter((f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod),
+    [version.files, isOwnerOrMod]
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
@@ -219,9 +211,6 @@ function ModelVersionDetailsContent({
       ...groupedFiles.otherFormatVariants,
     ];
   }, [groupedFiles]);
-
-  // Check if this is a multi-variant model (more than 1 model file)
-  const hasMultipleModelVariants = modelFilesVisible.length > 1;
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -301,38 +290,6 @@ function ModelVersionDetailsContent({
       props: { modelVersionId: version.id, reason },
     });
   };
-  const getDownloadProps = useCallback(
-    (file: { type?: string; metadata?: BasicFileMetadata } | null) => {
-      if (isLoadingAccess) {
-        return {};
-      }
-
-      if (hasDownloadPermissions) {
-        if (!file) {
-          return;
-        }
-
-        const url = createModelFileDownloadUrl({
-          versionId: version.id,
-          type: file.type,
-          meta: file.metadata,
-        });
-
-        return {
-          // This will allow users to right-click save
-          href: url,
-        };
-      } else {
-        return {
-          onClick: () => {
-            onPurchase('download');
-          },
-        };
-      }
-    },
-    [isLoadingAccess, hasDownloadPermissions, version.id, router]
-  );
-
   const { currentUserReview } = useQueryUserResourceReview({
     modelId: model.id,
     modelVersionId: version.id,
@@ -343,6 +300,26 @@ function ModelVersionDetailsContent({
     modelId: model.id,
     versionId: version.id,
   });
+
+  // Notification toggle state
+  const {
+    data: { Notify: watchedModels = [], Mute: mutedModels = [] } = { Notify: [], Mute: [] },
+  } = trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!user });
+  const { data: followingUsers = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
+    enabled: !!user,
+    staleTime: 60 * 1000, // 1 minute - avoid refetching on every model view
+  });
+  const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
+    async onSuccess() {
+      await queryUtils.user.getEngagedModels.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to update notification settings', error });
+    },
+  });
+  const isNotificationOn =
+    (followingUsers.some((f) => model.user.id === f.id) || watchedModels.includes(model.id)) &&
+    !mutedModels.includes(model.id);
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
@@ -407,294 +384,6 @@ function ModelVersionDetailsContent({
   };
 
   const archived = model.mode === ModelModifier.Archived;
-
-  const modelDetails: DescriptionTableProps['items'] = [
-    {
-      label: 'Type',
-      value: (
-        <Group gap={0} wrap="nowrap" justify="space-between">
-          <Badge radius="sm" px={5}>
-            {getDisplayName(model.type)} {model.checkpointType}
-          </Badge>
-          {version.status !== ModelStatus.Published ? (
-            <Badge color="yellow" radius="sm">
-              {version.status}
-            </Badge>
-          ) : (
-            <HowToUseModel type={model.type} />
-          )}
-        </Group>
-      ),
-    },
-    {
-      label: 'Stats',
-      value: (
-        <Group gap={4}>
-          {!downloadsDisabled && (
-            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Unique Downloads">
-              <Text fz={11} fw="bold" inline>
-                <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
-              </Text>
-            </IconBadge>
-          )}
-          {canGenerate ? (
-            <GenerateButton
-              model={model}
-              version={version}
-              versionId={version.id}
-              image={image}
-              canGenerate={canGenerate}
-              data-activity="create:version-stat"
-              disabled={isLoadingAccess}
-              generationPrice={
-                !hasGeneratePermissions &&
-                !isLoadingAccess &&
-                earlyAccessConfig?.chargeForGeneration
-                  ? earlyAccessConfig?.generationPrice
-                  : undefined
-              }
-              onPurchase={() => onPurchase('generation')}
-            >
-              <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
-                <Text fz={11} fw="bold" inline>
-                  <AnimatedCount value={liveMetrics.generationCount} />
-                </Text>
-              </IconBadge>
-            </GenerateButton>
-          ) : (
-            <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
-              <Text fz={11} fw="bold" inline>
-                <AnimatedCount value={liveMetrics.generationCount} abbreviate={false} />
-              </Text>
-            </IconBadge>
-          )}
-          {!!liveMetrics.earnedAmount && (
-            <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text fz={11} fw="bold" title={liveMetrics.earnedAmount.toLocaleString()} inline>
-                <AnimatedCount value={liveMetrics.earnedAmount} />
-              </Text>
-            </IconBadge>
-          )}
-        </Group>
-      ),
-    },
-    {
-      label: 'Generation',
-      value: (
-        <ModelVersionPopularity
-          versionId={version.id}
-          isCheckpoint={model.type === ModelType.Checkpoint}
-          listenForUpdates
-        />
-      ),
-      visible:
-        canGenerate && features.modelVersionPopularity && model.type === ModelType.Checkpoint,
-    },
-    {
-      label: 'Reviews',
-      value: (
-        <ModelVersionReview
-          modelId={model.id}
-          versionId={version.id}
-          thumbsUpCount={liveMetrics.thumbsUpCount}
-          thumbsDownCount={liveMetrics.thumbsDownCount}
-        />
-      ),
-    },
-    version.status === 'Published' && version.publishedAt
-      ? { label: 'Published', value: formatDate(version.publishedAt) }
-      : { label: 'Uploaded', value: formatDate(version.createdAt) },
-    {
-      label: 'Base Model',
-      value:
-        version.baseModel === 'ODOR' ? (
-          <Group gap={8} justify="space-between" wrap="nowrap">
-            <Text component={Link} href="/product/odor" target="_blank">
-              {version.baseModel}{' '}
-            </Text>
-            <HowToButton href="https://youtu.be/7j_sakwGK8M" tooltip="What is this?" />
-          </Group>
-        ) : (
-          <Group gap={8} justify="space-between" wrap="nowrap">
-            <Text size="sm">
-              {version.baseModel}{' '}
-              {version.baseModelType && version.baseModelType === 'Standard'
-                ? ''
-                : version.baseModelType}
-            </Text>
-            <HowToButton
-              href="https://youtu.be/IIy3YwsXtTE?si=YiJDxMODCOTkUUM4&t=417"
-              tooltip="What is this?"
-            />
-          </Group>
-        ),
-    },
-    {
-      label: 'Training',
-      value: (
-        <Group gap={4}>
-          {version.steps && (
-            <Badge size="sm" radius="sm" color="teal">
-              Steps: {version.steps.toLocaleString()}
-            </Badge>
-          )}
-          {version.epochs && (
-            <Badge size="sm" radius="sm" color="teal">
-              Epochs: {version.epochs.toLocaleString()}
-            </Badge>
-          )}
-        </Group>
-      ),
-      visible: !!version.steps || !!version.epochs,
-    },
-    {
-      label: 'Usage Tips',
-      value: (
-        <Group gap={4}>
-          {version.clipSkip && (
-            <Badge size="sm" radius="sm" color="cyan">
-              Clip Skip: {version.clipSkip.toLocaleString()}
-            </Badge>
-          )}
-          {!!version.settings?.strength && (
-            <Badge size="sm" radius="sm" color="cyan">
-              {`Strength: ${version.settings.strength}`}
-            </Badge>
-          )}
-        </Group>
-      ),
-      visible: !!version.clipSkip || !!version.settings?.strength,
-    },
-    {
-      label: 'Trigger Words',
-      visible: !!version.trainedWords?.length,
-      value: (
-        <TrainedWords trainedWords={version.trainedWords} files={version.files} type={model.type} />
-      ),
-    },
-    {
-      label: 'Training Images',
-      value: (
-        <Anchor href={`/api/download/training-data/${version.id}`} target="_blank" inherit download>
-          Download
-        </Anchor>
-      ),
-      visible:
-        !!filesVisible.find((file) => (file.type as ModelFileType) === 'Training Data') &&
-        !archived,
-    },
-    {
-      label: 'Hash',
-      value: <ModelHash hashes={hashes} />,
-      visible: !!hashes.length,
-    },
-    {
-      label: (
-        <Group gap="xs">
-          <Text fw={500}>AIR</Text>
-          <URNExplanation size={20} />
-        </Group>
-      ),
-      value: (
-        <ModelURN
-          baseModel={version.baseModel}
-          type={model.type}
-          modelId={model.id}
-          modelVersionId={version.id}
-        />
-      ),
-      visible: features.air,
-    },
-    {
-      label: (
-        <Group gap="xs">
-          <Text fw={500}>Bounty</Text>
-        </Group>
-      ),
-      value: (
-        <Text component="a" href={`/bounties/${model.meta?.bountyId as number}`} target="_blank">
-          Go to bounty
-        </Text>
-      ),
-      visible: !!model.meta?.bountyId,
-    },
-  ];
-
-  const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
-    <Group justify="space-between" wrap="nowrap" gap={0}>
-      <VerifiedText file={file} />
-      <Group gap={4}>
-        <Text size="xs" c="dimmed">
-          {file.type === 'Pruned Model' ? 'Pruned ' : ''}
-          {file.metadata.format}
-        </Text>
-        <FileInfo file={file} />
-      </Group>
-    </Group>
-  );
-  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
-
-  const downloadMenuItems = filesVisible.map((file) =>
-    !archived ? (
-      <Menu.Item
-        key={file.id}
-        component="a"
-        py={4}
-        leftSection={<VerifiedText file={file} iconOnly />}
-        {...getDownloadProps(file)}
-      >
-        {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
-        {file.visibility !== 'Public' && (
-          <Tooltip label="Only visible to you" position="top" withArrow>
-            <ThemeIcon color="blue" size="xs" style={{ alignSelf: 'center' }} ml="xs">
-              <IconLock />
-            </ThemeIcon>
-          </Tooltip>
-        )}
-      </Menu.Item>
-    ) : (
-      <Menu.Item key={file.id} py={4} leftSection={<VerifiedText file={file} iconOnly />} disabled>
-        {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
-        } (${formatKBytes(file.sizeKB)})`}
-      </Menu.Item>
-    )
-  );
-  const downloadFileItems = filesVisible.map((file) => (
-    <Card
-      key={file.id}
-      radius={0}
-      py="xs"
-      style={{
-        backgroundColor: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      }}
-    >
-      <Stack gap={4}>
-        <Group justify="space-between" wrap="nowrap">
-          <Group gap={4}>
-            <Text size="xs" fw={500} lineClamp={2}>
-              {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
-            </Text>
-            {file.visibility !== 'Public' ? (
-              <Badge size="xs" radius="xl" color="violet">
-                {file.visibility}
-              </Badge>
-            ) : null}
-          </Group>
-          <Button
-            component="a"
-            variant="subtle"
-            {...getDownloadProps(file)}
-            disabled={archived}
-            size="compact-xs"
-          >
-            Download
-          </Button>
-        </Group>
-        {getFileDetails(file)}
-      </Stack>
-    </Card>
-  ));
 
   const cleanDescription = version.description ? removeTags(version.description) : '';
 
@@ -832,7 +521,7 @@ function ModelVersionDetailsContent({
               )}
             </Stack>
           ) : (
-            <Stack gap={4}>
+            <Stack gap="md">
               {showRepublishPrivateButton && (
                 <Button
                   color="green"
@@ -844,8 +533,10 @@ function ModelVersionDetailsContent({
                   Republish (keep private)
                 </Button>
               )}
-              <Group gap="xs" className={classes.ctaContainer}>
-                <Group gap="xs" className="flex-1" wrap="nowrap">
+              {/* Primary Actions Card */}
+              <Card withBorder p="md">
+                <Stack gap="xs">
+                  {/* Generate button - hidden when generation is unavailable */}
                   {couldGenerate && (
                     <GenerateButton
                       model={model}
@@ -853,9 +544,9 @@ function ModelVersionDetailsContent({
                       versionId={version.id}
                       image={image}
                       canGenerate={canGenerate}
+                      hideBidFallback
                       data-tour="model:create"
                       data-activity="create:model"
-                      style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
                         !hasGeneratePermissions &&
@@ -865,31 +556,87 @@ function ModelVersionDetailsContent({
                           : undefined
                       }
                       onPurchase={() => onPurchase('generation')}
+                      fullWidth
                     />
                   )}
-                  {displayCivitaiLink && (
-                    <CivitaiLinkManageButton
-                      modelId={model.id}
-                      modelVersionId={version.id}
-                      modelName={model.name}
-                      modelType={model.type}
-                      hashes={version.hashes}
-                      noTooltip
-                    >
-                      {({ color, onClick, ref, icon, label }) =>
-                        !canGenerate ? (
+                  {/* Action icon buttons row */}
+                  <Group gap={8} wrap="nowrap" grow>
+                    <Tooltip label="Share" position="top" withArrow>
+                      <div style={{ flex: 1 }}>
+                        <ShareButton
+                          url={router.asPath}
+                          title={model.name}
+                          collect={{ modelId: model.id, type: CollectionType.Model }}
+                        >
                           <Button
-                            ref={ref}
-                            color={color}
-                            onClick={onClick}
-                            leftSection={icon}
-                            disabled={!primaryFile}
-                            style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                            color="gray"
                             fullWidth
+                            style={{ paddingLeft: 0, paddingRight: 0 }}
                           >
-                            {label}
+                            <IconShare3 size={18} />
                           </Button>
-                        ) : (
+                        </ShareButton>
+                      </div>
+                    </Tooltip>
+                    {onFavoriteClick && (
+                      <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                        <div style={{ flex: 1 }} data-tour="model:like">
+                          <LoginRedirect reason="favorite-model">
+                            <Button
+                              onClick={() =>
+                                onFavoriteClick({
+                                  versionId: version.id,
+                                  setTo: !isFavorite,
+                                })
+                              }
+                              color={isFavorite ? 'green' : 'gray'}
+                              fullWidth
+                              style={{ paddingLeft: 0, paddingRight: 0 }}
+                            >
+                              <ThumbsUpIcon color="#fff" filled={isFavorite} size={18} />
+                            </Button>
+                          </LoginRedirect>
+                        </div>
+                      </Tooltip>
+                    )}
+                    {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
+                      <ToggleVaultButton modelVersionId={version.id}>
+                        {({ isLoading, isInVault, toggleVaultItem }) => (
+                          <Tooltip
+                            label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                            position="top"
+                            withArrow
+                          >
+                            <Button
+                              color={isInVault ? 'green' : 'gray'}
+                              onClick={toggleVaultItem}
+                              disabled={isLoading}
+                              variant={isInVault ? 'light' : undefined}
+                              fullWidth
+                              style={{ paddingLeft: 0, paddingRight: 0 }}
+                            >
+                              {isLoading ? (
+                                <Loader size="xs" />
+                              ) : isInVault ? (
+                                <IconCloudCheck size={18} />
+                              ) : (
+                                <IconCloudLock size={18} />
+                              )}
+                            </Button>
+                          </Tooltip>
+                        )}
+                      </ToggleVaultButton>
+                    )}
+                    {displayCivitaiLink && (
+                      <CivitaiLinkManageButton
+                        modelId={model.id}
+                        modelVersionId={version.id}
+                        modelName={model.name}
+                        modelType={model.type}
+                        hashes={version.hashes}
+                        noTooltip
+                      >
+                        {({ color, onClick, ref, icon, label }) => (
                           <Tooltip label={label}>
                             <Button
                               ref={ref}
@@ -897,150 +644,109 @@ function ModelVersionDetailsContent({
                               onClick={onClick}
                               disabled={!primaryFile}
                               variant="light"
-                              style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                               fullWidth
+                              style={{ paddingLeft: 0, paddingRight: 0 }}
                             >
                               {icon}
                             </Button>
                           </Tooltip>
-                        )
-                      }
-                    </CivitaiLinkManageButton>
-                  )}
-                  {/* Hide download button for component-only models */}
-                  {hideDownload || isComponentOnlyModel ? null : displayCivitaiLink ||
-                    canGenerate ? (
-                    filesCount === 1 ? (
-                      <DownloadButton
-                        data-tour="model:download"
-                        canDownload={canDownload}
-                        downloadPrice={
-                          !hasDownloadPermissions &&
-                          !isLoadingAccess &&
-                          earlyAccessConfig?.chargeForDownload
-                            ? earlyAccessConfig?.downloadPrice
-                            : undefined
-                        }
-                        component="a"
-                        {...getDownloadProps(primaryFile)}
-                        tooltip="Download"
-                        disabled={!primaryFile || archived || isLoadingAccess}
-                        style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
-                        iconOnly
-                      />
-                    ) : (
-                      <Menu position="bottom-end">
-                        <Menu.Target>
-                          <DownloadButton
-                            data-tour="model:download"
-                            canDownload={canDownload}
-                            downloadPrice={
-                              !hasDownloadPermissions &&
-                              !isLoadingAccess &&
-                              earlyAccessConfig?.chargeForDownload
-                                ? earlyAccessConfig?.downloadPrice
-                                : undefined
-                            }
-                            disabled={!primaryFile || archived || isLoadingAccess}
-                            style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
-                            iconOnly
-                          />
-                        </Menu.Target>
-                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                      </Menu>
-                    )
-                  ) : (
-                    <DownloadButton
-                      data-tour="model:download"
-                      component="a"
-                      {...getDownloadProps(primaryFile)}
-                      canDownload={canDownload}
-                      downloadPrice={
-                        !hasDownloadPermissions &&
-                        !isLoadingAccess &&
-                        earlyAccessConfig?.chargeForDownload
-                          ? earlyAccessConfig?.downloadPrice
-                          : undefined
-                      }
-                      disabled={!primaryFile || archived || isLoadingAccess}
-                      style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
-                    >
-                      <Text align="center">
-                        {primaryFile ? (
-                          <>
-                            Download <Text span>{`(${formatKBytes(primaryFile?.sizeKB)})`}</Text>
-                          </>
-                        ) : !isDownloadable ? (
-                          'Download disabled'
-                        ) : (
-                          'No file'
                         )}
-                      </Text>
-                    </DownloadButton>
-                  )}
-                </Group>
-                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
-                  <Tooltip label="Share" position="top" withArrow>
-                    <div>
-                      <ShareButton
-                        url={router.asPath}
-                        title={model.name}
-                        collect={{ modelId: model.id, type: CollectionType.Model }}
-                      >
-                        <Button style={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
-                          <IconShare3 size={24} />
-                        </Button>
-                      </ShareButton>
-                    </div>
-                  </Tooltip>
-
-                  {onFavoriteClick && (
-                    <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                      <div data-tour="model:like">
-                        <LoginRedirect reason="favorite-model">
+                      </CivitaiLinkManageButton>
+                    )}
+                    <Tooltip
+                      label={
+                        isNotificationOn
+                          ? 'Stop getting notifications for this model'
+                          : 'Get notifications for this model'
+                      }
+                      position="top"
+                      withArrow
+                    >
+                      <div style={{ flex: 1 }}>
+                        <LoginRedirect reason="notify-model">
                           <Button
+                            color={isNotificationOn ? 'green' : 'gray'}
                             onClick={() =>
-                              onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
+                              toggleNotifyModelMutation.mutate({
+                                modelId: model.id,
+                                type: isNotificationOn ? ModelEngagementType.Mute : undefined,
+                              })
                             }
-                            color={isFavorite ? 'green' : 'gray'}
-                            style={{ paddingLeft: 8, paddingRight: 8 }}
+                            loading={toggleNotifyModelMutation.isLoading}
                             fullWidth
+                            style={{ paddingLeft: 0, paddingRight: 0 }}
                           >
-                            <ThumbsUpIcon color="#fff" filled={isFavorite} size={24} />
+                            {isNotificationOn ? (
+                              <IconBellCheck size={18} />
+                            ) : (
+                              <IconBellPlus size={18} />
+                            )}
                           </Button>
                         </LoginRedirect>
                       </div>
                     </Tooltip>
-                  )}
-                  {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
-                    <ToggleVaultButton modelVersionId={version.id}>
-                      {({ isLoading, isInVault, toggleVaultItem }) => (
-                        <Tooltip
-                          label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
-                          position="top"
-                          withArrow
-                        >
+                    <Tooltip label="Add to collection" position="top" withArrow>
+                      <div style={{ flex: 1 }}>
+                        <LoginRedirect reason="add-to-collection">
                           <Button
-                            style={{ paddingLeft: 8, paddingRight: 8 }}
-                            color={isInVault ? 'green' : 'gray'}
-                            onClick={toggleVaultItem}
-                            disabled={isLoading}
-                            variant={isInVault ? 'light' : undefined}
+                            color="gray"
+                            onClick={() =>
+                              openAddToCollectionModal({
+                                props: {
+                                  modelId: model.id,
+                                  type: CollectionType.Model,
+                                },
+                              })
+                            }
+                            fullWidth
+                            style={{ paddingLeft: 0, paddingRight: 0 }}
                           >
-                            {isLoading ? (
-                              <Loader size="xs" />
-                            ) : isInVault ? (
-                              <IconCloudCheck size={24} />
-                            ) : (
-                              <IconCloudLock size={24} />
-                            )}
+                            <IconBookmark size={18} />
                           </Button>
-                        </Tooltip>
-                      )}
-                    </ToggleVaultButton>
-                  )}
-                </Group>
-              </Group>
+                        </LoginRedirect>
+                      </div>
+                    </Tooltip>
+                    {features.auctions && (
+                      <BidModelButton
+                        entityData={getEntityDataForBidModelButton({
+                          version,
+                          model,
+                          image,
+                        })}
+                        asButton
+                        buttonProps={{
+                          color: 'gray',
+                          fullWidth: true,
+                          style: { paddingLeft: 0, paddingRight: 0 },
+                          children: <IconGavel size={18} />,
+                        }}
+                        divProps={{ style: { flex: 1 } }}
+                      />
+                    )}
+                    {(!user || !isOwner || user.isModerator) && (
+                      <Tooltip label="Report" position="top" withArrow>
+                        <div style={{ flex: 1 }}>
+                          <LoginRedirect reason="report-model">
+                            <Button
+                              color="gray"
+                              onClick={() =>
+                                openReportModal({
+                                  entityType: ReportEntity.Model,
+                                  entityId: model.id,
+                                })
+                              }
+                              fullWidth
+                              style={{ paddingLeft: 0, paddingRight: 0 }}
+                            >
+                              <IconFlag size={18} />
+                            </Button>
+                          </LoginRedirect>
+                        </div>
+                      </Tooltip>
+                    )}
+                  </Group>
+                </Stack>
+              </Card>
               {/* Component-only model message */}
               {isComponentOnlyModel && (
                 <AlertWithIcon
@@ -1053,28 +759,47 @@ function ModelVersionDetailsContent({
                   <Text size="sm">This is a modular model - download components below</Text>
                 </AlertWithIcon>
               )}
-              {/* Regular model file details - hide for component-only models */}
-              {!isComponentOnlyModel && primaryFileDetails}
-              {/* Variant dropdown for multiple model files - hide for component-only models */}
-              {!isComponentOnlyModel && hasMultipleModelVariants && !hideDownload && (
-                <Card withBorder p="sm" mt="sm">
-                  <DownloadVariantDropdown
-                    files={filesVisible}
-                    modelType={model.type}
-                    versionId={version.id}
-                    userPreferences={user?.filePreferences}
-                    canDownload={canDownload}
-                    downloadPrice={
-                      !hasDownloadPermissions &&
-                      !isLoadingAccess &&
-                      earlyAccessConfig?.chargeForDownload
-                        ? earlyAccessConfig?.downloadPrice
-                        : undefined
-                    }
-                    isLoadingAccess={isLoadingAccess}
-                    archived={archived}
-                    onPurchase={() => onPurchase('download')}
-                  />
+              {/* Download Section */}
+              {!hideDownload && !isComponentOnlyModel && hasVisibleFiles && (
+                <Card withBorder>
+                  <Card.Section withBorder inheritPadding py="xs" px="sm">
+                    <Group justify="space-between">
+                      <Text size="sm" fw={600}>
+                        Download
+                      </Text>
+                      <Group gap="xs">
+                        {isOwnerOrMod && (
+                          <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
+                            <Text c="blue.4" size="xs">
+                              Manage
+                            </Text>
+                          </RoutedDialogLink>
+                        )}
+                        <Text size="xs" c="dimmed">
+                          {modelFilesVisible.length} variant
+                          {modelFilesVisible.length !== 1 ? 's' : ''} available
+                        </Text>
+                      </Group>
+                    </Group>
+                  </Card.Section>
+                  <Card.Section>
+                    <DownloadVariantDropdown
+                      files={filesVisible}
+                      versionId={version.id}
+                      userPreferences={user?.filePreferences}
+                      canDownload={canDownload}
+                      downloadPrice={
+                        !hasDownloadPermissions &&
+                        !isLoadingAccess &&
+                        earlyAccessConfig?.chargeForDownload
+                          ? earlyAccessConfig?.downloadPrice
+                          : undefined
+                      }
+                      isLoadingAccess={isLoadingAccess}
+                      archived={archived}
+                      onPurchase={() => onPurchase('download')}
+                    />
+                  </Card.Section>
                 </Card>
               )}
             </Stack>
@@ -1317,6 +1042,101 @@ function ModelVersionDetailsContent({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
+            {/* Required Components Section */}
+            {isDownloadable && Object.keys(groupedFiles.components).length > 0 && (
+              <RequiredComponentsSection
+                groupedFiles={groupedFiles}
+                versionId={version.id}
+                userPreferences={user?.filePreferences}
+                canDownload={canDownload}
+                downloadPrice={
+                  !hasDownloadPermissions &&
+                  !isLoadingAccess &&
+                  earlyAccessConfig?.chargeForDownload
+                    ? earlyAccessConfig?.downloadPrice
+                    : undefined
+                }
+                isLoadingAccess={isLoadingAccess}
+                archived={archived}
+                onPurchase={() => onPurchase('download')}
+                isPrimary={isComponentOnlyModel}
+              />
+            )}
+            {/* Optional Files Section */}
+            {isDownloadable && groupedFiles.optionalFiles.length > 0 && (
+              <Accordion.Item value="optional-files">
+                <Accordion.Control>
+                  <Group gap="xs">
+                    <IconFileSettings size={18} style={{ color: theme.colors.dark[2] }} />
+                    <Text fw={500}>Optional Files</Text>
+                    <Badge size="sm" variant="light" color="gray">
+                      {groupedFiles.optionalFiles.length}
+                    </Badge>
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack gap={0}>
+                    {groupedFiles.optionalFiles.map((file) => {
+                      const iconConfig = getFileIconConfig(file.name, file.metadata);
+                      const FileIcon = iconConfig.icon;
+                      const ext = file.name.split('.').pop() ?? '';
+                      const downloadUrl = createModelFileDownloadUrl({
+                        versionId: version.id,
+                        type: file.type,
+                        meta: file.metadata,
+                      });
+
+                      return (
+                        <Box
+                          key={file.id}
+                          p="sm"
+                          style={{
+                            borderBottom: `1px solid ${
+                              colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+                            }`,
+                          }}
+                        >
+                          <Group justify="space-between" wrap="nowrap">
+                            <Group gap="sm" wrap="nowrap">
+                              <ThemeIcon
+                                size={36}
+                                radius="md"
+                                color="gray"
+                                variant="light"
+                                style={{ opacity: 0.6 }}
+                              >
+                                <FileIcon size={20} />
+                              </ThemeIcon>
+                              <Box>
+                                <Text size="sm" fw={500}>
+                                  {file.name}
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  .{ext} &bull; {formatKBytes(file.sizeKB)}
+                                </Text>
+                              </Box>
+                            </Group>
+                            <Tooltip label="Download">
+                              <ActionIcon
+                                component="a"
+                                href={downloadUrl}
+                                variant="light"
+                                color="gray"
+                                size="md"
+                                radius="md"
+                                disabled={archived}
+                              >
+                                <IconDownload size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
                 <Group justify="space-between">
@@ -1350,84 +1170,198 @@ function ModelVersionDetailsContent({
                   )}
                 </Group>
               </Accordion.Control>
-              <Accordion.Panel>
-                <DescriptionTable
-                  items={modelDetails}
-                  labelWidth="30%"
-                  withBorder
-                  paperProps={{
-                    style: {
-                      borderLeft: 0,
-                      borderRight: 0,
-                      borderBottom: 0,
-                    },
-                    radius: 0,
+              <Accordion.Panel p={0}>
+                <Stack
+                  gap={0}
+                  style={{
+                    backgroundColor: colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
                   }}
-                />
+                >
+                  {/* Type */}
+                  <Group
+                    justify="space-between"
+                    px="md"
+                    py={10}
+                    style={{
+                      borderBottom: `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`,
+                    }}
+                  >
+                    <Text size="sm" c="dimmed">
+                      Type
+                    </Text>
+                    <Group gap={6}>
+                      <Badge size="sm" radius="xl" variant="filled" color="gray">
+                        {getDisplayName(model.type)} {model.checkpointType}
+                      </Badge>
+                      {version.status !== ModelStatus.Published ? (
+                        <Badge size="sm" radius="xl" color="yellow" variant="light">
+                          {version.status}
+                        </Badge>
+                      ) : (
+                        <HowToUseModel type={model.type} />
+                      )}
+                    </Group>
+                  </Group>
+                  {/* Stats */}
+                  <Group
+                    justify="space-between"
+                    px="md"
+                    py={10}
+                    style={{
+                      borderBottom: `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`,
+                    }}
+                  >
+                    <Text size="sm" c="dimmed">
+                      Stats
+                    </Text>
+                    <Group gap={12}>
+                      {!downloadsDisabled && (
+                        <Group gap={4}>
+                          <IconDownload size={16} style={{ opacity: 0.5 }} />
+                          <Text size="sm">
+                            <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
+                          </Text>
+                        </Group>
+                      )}
+                      {canGenerate && (
+                        <Group gap={4}>
+                          <IconBrush size={16} style={{ opacity: 0.5 }} />
+                          <Text size="sm">
+                            <AnimatedCount value={liveMetrics.generationCount} />
+                          </Text>
+                        </Group>
+                      )}
+                    </Group>
+                  </Group>
+                  {/* Reviews */}
+                  <Group
+                    justify="space-between"
+                    px="md"
+                    py={10}
+                    style={{
+                      borderBottom: `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`,
+                    }}
+                  >
+                    <Text size="sm" c="dimmed">
+                      Reviews
+                    </Text>
+                    <ResourceReviewThumbActions
+                      modelId={model.id}
+                      modelVersionId={version.id}
+                      withCount
+                    />
+                  </Group>
+                  {/* Published */}
+                  <Group
+                    justify="space-between"
+                    px="md"
+                    py={10}
+                    style={{
+                      borderBottom: `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`,
+                    }}
+                  >
+                    <Text size="sm" c="dimmed">
+                      {version.status === 'Published' && version.publishedAt
+                        ? 'Published'
+                        : 'Uploaded'}
+                    </Text>
+                    <Text size="sm">
+                      {formatDate(
+                        version.status === 'Published' && version.publishedAt
+                          ? version.publishedAt
+                          : version.createdAt
+                      )}
+                    </Text>
+                  </Group>
+                  {/* Base Model */}
+                  <Group
+                    justify="space-between"
+                    px="md"
+                    py={10}
+                    style={{
+                      borderBottom: `1px solid ${
+                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      }`,
+                    }}
+                  >
+                    <Text size="sm" c="dimmed">
+                      Base Model
+                    </Text>
+                    <Text size="sm">
+                      {version.baseModel}{' '}
+                      {version.baseModelType && version.baseModelType !== 'Standard'
+                        ? version.baseModelType
+                        : ''}
+                    </Text>
+                  </Group>
+                  {/* Hash */}
+                  {!!hashes.length && (
+                    <Group justify="space-between" px="md" py={10}>
+                      <Text size="sm" c="dimmed">
+                        Hash
+                      </Text>
+                      <ModelHash hashes={hashes} />
+                    </Group>
+                  )}
+                  {/* Trigger Words */}
+                  {!!version.trainedWords?.length && (
+                    <Group
+                      justify="space-between"
+                      px="md"
+                      py={10}
+                      style={{
+                        borderTop: `1px solid ${
+                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                        }`,
+                      }}
+                    >
+                      <Text size="sm" c="dimmed">
+                        Trigger Words
+                      </Text>
+                      <TrainedWords
+                        trainedWords={version.trainedWords}
+                        files={version.files}
+                        type={model.type}
+                      />
+                    </Group>
+                  )}
+                  {/* AIR */}
+                  {features.air && (
+                    <Group
+                      justify="space-between"
+                      px="md"
+                      py={10}
+                      style={{
+                        borderTop: `1px solid ${
+                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                        }`,
+                      }}
+                    >
+                      <Group gap="xs">
+                        <Text size="sm" c="dimmed">
+                          AIR
+                        </Text>
+                        <URNExplanation size={16} />
+                      </Group>
+                      <ModelURN
+                        baseModel={version.baseModel}
+                        type={model.type}
+                        modelId={model.id}
+                        modelVersionId={version.id}
+                      />
+                    </Group>
+                  )}
+                </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            {/* Required Components Section - shows when there are component files */}
-            {isDownloadable && Object.keys(groupedFiles.components).length > 0 && (
-              <RequiredComponentsSection
-                groupedFiles={groupedFiles}
-                versionId={version.id}
-                userPreferences={user?.filePreferences}
-                canDownload={canDownload}
-                downloadPrice={
-                  !hasDownloadPermissions &&
-                  !isLoadingAccess &&
-                  earlyAccessConfig?.chargeForDownload
-                    ? earlyAccessConfig?.downloadPrice
-                    : undefined
-                }
-                isLoadingAccess={isLoadingAccess}
-                archived={archived}
-                onPurchase={() => onPurchase('download')}
-                isPrimary={isComponentOnlyModel}
-              />
-            )}
-            {isDownloadable && (
-              <Accordion.Item
-                value="version-files"
-                style={{
-                  marginTop: theme.spacing.md,
-                  marginBottom: !model.locked ? theme.spacing.md : undefined,
-                  borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-                }}
-              >
-                <Accordion.Control disabled={archived}>
-                  <Group justify="space-between">
-                    {filesVisibleCount > 0
-                      ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
-                      : 'Files'}
-                    {isOwnerOrMod && (
-                      <RoutedDialogLink
-                        name="filesEdit"
-                        state={{ modelVersionId: version.id }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Text c="blue.4" size="sm">
-                          Manage Files
-                        </Text>
-                      </RoutedDialogLink>
-                    )}
-                  </Group>
-                </Accordion.Control>
-                <Accordion.Panel>
-                  <Stack gap={2}>
-                    {hasVisibleFiles ? (
-                      downloadFileItems
-                    ) : (
-                      <Center p="xl">
-                        <Text size="md" c="dimmed">
-                          This version is missing files
-                        </Text>
-                      </Center>
-                    )}
-                  </Stack>
-                </Accordion.Panel>
-              </Accordion.Item>
-            )}
             {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
@@ -1589,7 +1523,7 @@ function ModelVersionDetailsContent({
                 </Stack>
               </Group>
             )}
-            <PermissionIndicator gap={5} size={28} permissions={model} ml="auto" />
+            <PermissionIndicator permissions={model} ml="auto" />
           </Group>
           {license?.notice && (
             <Text size="xs" c="dimmed">
@@ -1640,7 +1574,6 @@ type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
   image: ImagesInfiniteModel | undefined;
-  onBrowseClick?: VoidFunction;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
 };
 

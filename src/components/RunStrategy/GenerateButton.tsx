@@ -27,6 +27,7 @@ export function GenerateButton({
   model,
   version,
   image,
+  hideBidFallback,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
@@ -93,6 +94,7 @@ export function GenerateButton({
     features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote && !isPoi;
 
   if (!showBid && !canGenerate) return null;
+  if (showBid && !canGenerate && hideBidFallback) return null;
 
   const popButton = showBid ? (
     <BidModelButton
@@ -149,6 +151,8 @@ type PropsBase = Omit<ButtonProps, 'onClick' | 'children'> & {
   epochNumber?: number;
   image?: ImagesInfiniteModel;
   versionId?: number;
+  /** When true, suppress the Bid button fallback (use when bid is shown elsewhere) */
+  hideBidFallback?: boolean;
 };
 
 type Props =

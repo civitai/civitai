@@ -11,6 +11,7 @@ import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
+  LinkedComponentSettings,
   ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
@@ -18,6 +19,7 @@ import type {
   ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
+  RecommendedResourceSettings,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
@@ -168,12 +170,34 @@ export const getModelVersionHandler = async ({
       },
     });
 
-    const recommendedResourceIds = version?.recommendedResources.map((x) => x.id) ?? [];
+    // Separate linked components from regular recommended resources
+    const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
+      (settings as LinkedComponentSettings)?.isLinkedComponent === true;
+
+    const allResources = version?.recommendedResources ?? [];
+    const linkedComponentResources = allResources.filter((r) => isLinkedComponent(r.settings));
+    const regularResources = allResources.filter((r) => !isLinkedComponent(r.settings));
+
+    const linkedComponents = linkedComponentResources.map((r) => {
+      const s = r.settings as LinkedComponentSettings;
+      return {
+        recommendedResourceId: r.id,
+        componentType: s.componentType,
+        modelId: s.modelId,
+        modelName: s.modelName,
+        versionId: r.resource?.id ?? 0,
+        versionName: s.versionName,
+        fileId: s.fileId,
+        fileName: s.fileName,
+      };
+    });
+
+    const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, ctx?.user).then(
       (data) =>
         data.map((item) => {
-          const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
-            ?.settings ?? {}) as RecommendedSettingsSchema;
+          const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
+            {}) as RecommendedSettingsSchema;
           return { ...item, ...removeNulls(settings) };
         })
     );
@@ -198,6 +222,7 @@ export const getModelVersionHandler = async ({
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
+      linkedComponents,
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;

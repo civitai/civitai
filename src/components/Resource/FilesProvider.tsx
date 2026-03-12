@@ -54,10 +54,11 @@ type FilesContextState = {
   files: FileFromContextProps[];
   linkedComponents: LinkedComponent[];
   modelId?: number;
+  baseModel?: string;
   fileExtensions: string[];
   fileTypes: ModelFileType[];
   maxFiles: number;
-  onDrop: (files: File[]) => void;
+  onDrop: (files: File[], defaultType?: ModelFileType) => void;
   startUpload: () => Promise<void>;
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
@@ -69,7 +70,7 @@ type FilesContextState = {
 
 type FilesProviderProps = {
   model?: Partial<ModelUpsertInput>;
-  version?: Pick<Partial<ModelVersionById>, 'id' | 'files'>;
+  version?: Pick<Partial<ModelVersionById>, 'id' | 'files' | 'baseModel' | 'linkedComponents'>;
   children: React.ReactNode;
 };
 
@@ -120,12 +121,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   });
 
   const handleUpdateFile = (uuid: string, file: Partial<FileFromContextProps>) => {
-    setFiles((state) => {
-      const index = state.findIndex((x) => x.uuid === uuid);
-      if (index === -1) throw new Error('out of bounds');
-      state[index] = { ...state[index], ...file };
-      return [...state];
-    });
+    setFiles((state) => state.map((x) => (x.uuid === uuid ? { ...x, ...file } : x)));
   };
 
   const removeFile = (uuid: string) => {
@@ -133,14 +129,56 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   };
 
   // Linked components state (components from other models on Civitai)
-  const [linkedComponents, setLinkedComponents] = useState<LinkedComponent[]>([]);
+  const [linkedComponents, setLinkedComponents] = useState<LinkedComponent[]>(
+    () =>
+      version?.linkedComponents?.map((c) => ({
+        ...c,
+        componentType: c.componentType as ModelFileComponentType,
+      })) ?? []
+  );
+
+  const setLinkedComponentsMutation = trpc.modelVersion.setLinkedComponents.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to save linked component',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const persistLinkedComponents = (components: LinkedComponent[]) => {
+    if (!version?.id) return;
+    setLinkedComponentsMutation.mutate({
+      id: version.id,
+      components: components.map((c) => ({
+        id: c.recommendedResourceId,
+        resourceId: c.versionId,
+        settings: {
+          isLinkedComponent: true as const,
+          componentType: c.componentType,
+          fileId: c.fileId,
+          modelId: c.modelId,
+          modelName: c.modelName,
+          versionName: c.versionName,
+          fileName: c.fileName,
+        },
+      })),
+    });
+  };
 
   const addLinkedComponent = (component: LinkedComponent) => {
-    setLinkedComponents((prev) => [...prev, component]);
+    const updated = [
+      ...linkedComponents.filter((c) => c.componentType !== component.componentType),
+      component,
+    ];
+    setLinkedComponents(updated);
+    persistLinkedComponents(updated);
   };
 
   const removeLinkedComponent = (componentType: ModelFileComponentType) => {
-    setLinkedComponents((prev) => prev.filter((c) => c.componentType !== componentType));
+    const updated = linkedComponents.filter((c) => c.componentType !== componentType);
+    setLinkedComponents(updated);
+    persistLinkedComponents(updated);
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
@@ -215,6 +253,25 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }>;
       setErrors(errors);
       return false;
+    }
+
+    // Check component-only model constraint (needs access to linkedComponents)
+    const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
+    if (modelFiles.length === 0) {
+      const requiredComponentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
+      const uploadedComponents = files.filter(
+        (f) => f.type && requiredComponentTypes.includes(f.type)
+      );
+      const totalComponents = uploadedComponents.length + linkedComponents.length;
+      if (totalComponents < 2) {
+        showErrorNotification({
+          title: 'Insufficient components',
+          error: new Error(
+            'Component-only models (without a main model file) require at least 2 required components'
+          ),
+        });
+        return false;
+      }
     }
 
     const noConflicts = checkConflictingFiles(files);
@@ -326,17 +383,21 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
-  const onDrop = (files: File[]) => {
-    const toUpload = files.map((file) => ({
-      name: file.name,
-      versionId: version?.id,
-      modelType: model?.type,
-      file,
-      status: 'pending',
-      sizeKB: bytesToKB(file.size),
-      uuid: randomId(),
-      isPending: true,
-    })) as FileFromContextProps[];
+  const onDrop = (files: File[], defaultType?: ModelFileType) => {
+    const toUpload = files.map((file) => {
+      const inferredType = defaultType ?? inferFileType(file.name);
+      return {
+        name: file.name,
+        versionId: version?.id,
+        modelType: model?.type,
+        file,
+        status: 'pending',
+        sizeKB: bytesToKB(file.size),
+        uuid: randomId(),
+        isPending: true,
+        type: inferredType,
+      };
+    }) as FileFromContextProps[];
     setFiles((state) => [...state, ...toUpload]);
   };
 
@@ -353,12 +414,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   }: FileFromContextProps) => {
     if (!file || !type) return;
 
-    setFiles((state) => {
-      const index = state.findIndex((x) => x.uuid === uuid);
-      if (index === -1) throw new Error('out of bounds');
-      state[index] = { ...state[index], isPending: false, isUploading: true };
-      return [...state];
-    });
+    setFiles((state) =>
+      state.map((x) => (x.uuid === uuid ? { ...x, isPending: false, isUploading: true } : x))
+    );
 
     try {
       return await upload(
@@ -384,11 +442,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 ...(backend === 'b2' ? { backend, s3Path: result.key } : {}),
               });
               setItems((items) => items.filter((x) => x.uuid !== result.uuid));
-              setFiles((state) => {
-                const index = state.findIndex((x) => x.uuid === uuid);
-                state[index] = { ...state[index], id: saved.id, isUploading: false };
-                return [...state];
-              });
+              setFiles((state) =>
+                state.map((x) => (x.uuid === uuid ? { ...x, id: saved.id, isUploading: false } : x))
+              );
             } catch (e: unknown) {
               showErrorNotification({
                 title: 'Failed to save file',
@@ -404,25 +460,18 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         error: e as Error,
       });
 
-      setFiles((state) => {
-        const index = state.findIndex((x) => x.uuid === uuid);
-        if (index === -1) throw new Error('out of bounds');
-        state[index] = { ...state[index], isPending: true, isUploading: false };
-        return [...state];
-      });
+      setFiles((state) =>
+        state.map((x) => (x.uuid === uuid ? { ...x, isPending: true, isUploading: false } : x))
+      );
     }
   };
 
   const startUpload = async () => {
     const toUpload = files.filter((x) => x.isPending && !!x.file);
 
-    await Promise.all(
-      toUpload.map((file) => {
-        if (!checkValidation()) throw new Error('validation failed');
+    if (!checkValidation()) throw new Error('validation failed');
 
-        handleUpload(file);
-      })
-    );
+    await Promise.all(toUpload.map((file) => handleUpload(file)));
   };
 
   const retry = async (uuid: string) => {
@@ -449,6 +498,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         fileExtensions: acceptedFileTypes,
         fileTypes: acceptedModelFiles,
         modelId: model?.id,
+        baseModel: version?.baseModel ?? undefined,
         maxFiles,
         validationCheck: checkValidation,
         addLinkedComponent,
@@ -462,7 +512,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
 const metadataSchema = modelFileMetadataSchema
   .extend({
-    versionId: z.number(),
+    versionId: z.number().optional(),
     type: z.enum(constants.modelFileTypes),
     modelType: z.enum(ModelType),
     name: z.string(),
@@ -482,25 +532,7 @@ const metadataSchema = modelFileMetadataSchema
     error: 'Quant type is required for GGUF files',
     path: ['quantType'],
   })
-  .array()
-  .refine(
-    (files) => {
-      // Check if this is a component-only model (no Model type files)
-      const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type));
-      const requiredComponentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
-      const requiredComponents = files.filter((f) => requiredComponentTypes.includes(f.type));
-
-      // If no model files, must have at least 2 required components
-      if (modelFiles.length === 0 && requiredComponents.length < 2) {
-        return false;
-      }
-      return true;
-    },
-    {
-      message:
-        'Component-only models (without a main model file) require at least 2 required components',
-    }
-  );
+  .array();
 
 // TODO.manuel: This is a hacky way to check for duplicates
 export const checkConflictingFiles = (files: FileFromContextProps[]) => {
@@ -523,6 +555,28 @@ export const checkConflictingFiles = (files: FileFromContextProps[]) => {
 
   return Object.values(conflictCount).every((count) => count === 1);
 };
+
+/** Infer a default file type from the file extension */
+function inferFileType(fileName: string): ModelFileType | undefined {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'safetensors':
+    case 'ckpt':
+    case 'pt':
+    case 'bin':
+    case 'gguf':
+    case 'sft':
+    case 'onnx':
+      return 'Model';
+    case 'yaml':
+    case 'yml':
+      return 'Config';
+    case 'zip':
+      return 'Archive';
+    default:
+      return undefined;
+  }
+}
 
 type DropzoneOptions = {
   acceptedFileTypes: string[];

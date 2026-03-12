@@ -38,6 +38,7 @@ import type {
   PublishVersionInput,
   QueryModelVersionSchema,
   RecommendedSettingsSchema,
+  SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -75,6 +76,7 @@ import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -783,12 +785,10 @@ export const publishModelVersionById = async ({
       },
     },
   } as const;
-  const currentVersion = await dbRead.modelVersion
-    .findUniqueOrThrow(versionFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
-      return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
-    });
+  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow(versionFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
+    return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
+  });
 
   // Validate NSFW + restricted base model combination
   if (
@@ -1500,12 +1500,10 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion
-    .findFirstOrThrow(donationFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-    });
+  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+  });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
@@ -1686,7 +1684,7 @@ export const createModelVersionPostFromTraining = async ({
         modelVersionId,
         width: image.metadata?.width,
         height: image.metadata?.height,
-        metadata: image.metadata as any,
+        metadata: image.metadata as ImageMetadata,
         meta: image.meta,
         url: image.url as string,
         user,
@@ -1702,6 +1700,39 @@ export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularit
 
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
   return await modelVersionResourceCache.fetch(ids);
+};
+
+export const setLinkedComponents = async ({ id, components }: SetLinkedComponentsInput) => {
+  const existing = await dbWrite.recommendedResource.findMany({
+    where: {
+      sourceId: id,
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { id: true },
+  });
+
+  const existingIds = existing.map((x) => x.id);
+  const inputIds = components.map((c) => c.id).filter(isDefined);
+  const toDelete = existingIds.filter((eid) => !inputIds.includes(eid));
+
+  await dbWrite.$transaction([
+    ...(toDelete.length > 0
+      ? [dbWrite.recommendedResource.deleteMany({ where: { id: { in: toDelete }, sourceId: id } })]
+      : []),
+    ...components.map((component) =>
+      dbWrite.recommendedResource.upsert({
+        where: { id: component.id ?? -1 },
+        create: {
+          resourceId: component.resourceId,
+          sourceId: id,
+          settings: component.settings,
+        },
+        update: {
+          settings: component.settings,
+        },
+      })
+    ),
+  ]);
 };
 
 export async function updateModelVersionTrainingStatus({

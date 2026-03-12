@@ -16,21 +16,22 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconAlertTriangle,
-  IconBrain,
+  IconBolt,
   IconCheck,
   IconChevronDown,
   IconDownload,
   IconPackage,
-  IconPhotoScan,
-  IconTypography,
-  IconSettings,
 } from '@tabler/icons-react';
 import { useMemo, useState, useEffect } from 'react';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, type GroupedFileVariants } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
-import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
-import { formatKBytes } from '~/utils/number-helpers';
+import {
+  componentTypeConfig,
+  getFileDescription,
+  getFileLabel,
+} from '~/utils/file-display-helpers';
+import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -46,20 +47,6 @@ interface RequiredComponentsSectionProps {
   /** When true, this is a component-only model and Download All should be the primary action */
   isPrimary?: boolean;
 }
-
-// Component type display names and icons
-const componentTypeConfig: Record<
-  ModelFileComponentType,
-  { name: string; icon: typeof IconPhotoScan; color: string }
-> = {
-  VAE: { name: 'VAE', icon: IconPhotoScan, color: 'purple' },
-  TextEncoder: { name: 'Text Encoder', icon: IconTypography, color: 'blue' },
-  UNet: { name: 'UNet', icon: IconBrain, color: 'orange' },
-  CLIPVision: { name: 'CLIP Vision', icon: IconPhotoScan, color: 'cyan' },
-  ControlNet: { name: 'ControlNet', icon: IconBrain, color: 'teal' },
-  Config: { name: 'Config', icon: IconSettings, color: 'gray' },
-  Other: { name: 'Other', icon: IconPackage, color: 'gray' },
-};
 
 // Required component types (shown with yellow warning styling)
 const requiredComponentTypes: ModelFileComponentType[] = [
@@ -107,23 +94,26 @@ export function RequiredComponentsSection({
   }, [groupedFiles.components]);
 
   // Track selected file for each component type
-  const [selectedFiles, setSelectedFiles] = useState<Record<ModelFileComponentType, FileType>>(
-    {} as Record<ModelFileComponentType, FileType>
-  );
+  const [selectedFiles, setSelectedFiles] = useState<
+    Partial<Record<ModelFileComponentType, FileType>>
+  >({});
 
-  // Initialize selected files with best matches
+  // Initialize selected files with best matches (only for types not yet selected)
   useEffect(() => {
-    const newSelectedFiles: Record<ModelFileComponentType, FileType> = {} as Record<
-      ModelFileComponentType,
-      FileType
-    >;
-    for (const component of requiredComponents) {
-      const bestMatch = getPrimaryFile(component.files, { metadata: userPreferences });
-      if (bestMatch) {
-        newSelectedFiles[component.type] = bestMatch;
+    setSelectedFiles((prev) => {
+      const updated = { ...prev };
+      let changed = false;
+      for (const component of requiredComponents) {
+        if (!prev[component.type]) {
+          const bestMatch = getPrimaryFile(component.files, { metadata: userPreferences });
+          if (bestMatch) {
+            updated[component.type] = bestMatch;
+            changed = true;
+          }
+        }
       }
-    }
-    setSelectedFiles(newSelectedFiles);
+      return changed ? updated : prev;
+    });
   }, [requiredComponents, userPreferences]);
 
   // Calculate total size of selected components
@@ -138,15 +128,17 @@ export function RequiredComponentsSection({
     return total;
   }, [requiredComponents, selectedFiles]);
 
+  const needsPurchase = !canDownload && !!downloadPrice;
+
   // Handle downloading all components
   const handleDownloadAll = () => {
-    if (!canDownload && onPurchase) {
-      onPurchase();
+    if (!canDownload) {
+      if (onPurchase) onPurchase();
       return;
     }
 
-    // Open each download URL in sequence (or use a batch download API if available)
-    for (const component of requiredComponents) {
+    // Stagger downloads with delays to avoid browser popup blocking
+    requiredComponents.forEach((component, index) => {
       const selectedFile = selectedFiles[component.type] || component.files[0];
       if (selectedFile) {
         const url = createModelFileDownloadUrl({
@@ -154,9 +146,17 @@ export function RequiredComponentsSection({
           type: selectedFile.type,
           meta: selectedFile.metadata,
         });
-        window.open(url, '_blank');
+        setTimeout(() => {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = '';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }, index * 500);
       }
-    }
+    });
   };
 
   if (requiredComponents.length === 0) {
@@ -200,7 +200,6 @@ export function RequiredComponentsSection({
           {requiredComponents.map((component) => (
             <ComponentGroup
               key={component.type}
-              componentType={component.type}
               files={component.files}
               config={component.config}
               versionId={versionId}
@@ -228,14 +227,22 @@ export function RequiredComponentsSection({
           >
             <Button
               fullWidth
+              pos="relative"
+              className="overflow-visible"
               variant={isPrimary ? 'filled' : 'light'}
-              color="blue"
+              color={needsPurchase ? 'yellow' : 'blue'}
               size={isPrimary ? 'md' : 'sm'}
-              leftSection={<IconPackage size={isPrimary ? 20 : 18} />}
+              leftSection={
+                needsPurchase ? (
+                  <IconBolt size={isPrimary ? 20 : 18} />
+                ) : (
+                  <IconPackage size={isPrimary ? 20 : 18} />
+                )
+              }
               onClick={handleDownloadAll}
               disabled={archived || isLoadingAccess}
               style={
-                isPrimary
+                isPrimary || needsPurchase
                   ? undefined
                   : {
                       backgroundColor: 'rgba(34, 139, 230, 0.15)',
@@ -244,10 +251,16 @@ export function RequiredComponentsSection({
               }
             >
               <Group gap={8}>
-                <span>Download All Components</span>
-                <Text span c={isPrimary ? 'blue.2' : 'blue.3'} style={{ opacity: 0.7 }}>
-                  ({formatKBytes(totalSize)})
-                </Text>
+                <span>
+                  {needsPurchase
+                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })})`
+                    : 'Download All Components'}
+                </span>
+                {!needsPurchase && (
+                  <Text span c={isPrimary ? 'blue.2' : 'blue.3'} style={{ opacity: 0.7 }}>
+                    ({formatKBytes(totalSize)})
+                  </Text>
+                )}
               </Group>
             </Button>
             <Text size="xs" c="dimmed" ta="center" mt="xs">
@@ -262,7 +275,6 @@ export function RequiredComponentsSection({
 
 // Individual component group (single or multi-variant)
 interface ComponentGroupProps {
-  componentType: ModelFileComponentType;
   files: FileType[];
   config: (typeof componentTypeConfig)[ModelFileComponentType];
   versionId: number;
@@ -282,6 +294,7 @@ function ComponentGroup({
   versionId,
   userPreferences,
   canDownload,
+  downloadPrice,
   isLoadingAccess,
   archived,
   onPurchase,
@@ -300,6 +313,7 @@ function ComponentGroup({
   const activeFile = selectedFile || bestMatch || files[0];
   const Icon = config.icon;
   const hasMultipleVariants = files.length > 1;
+  const isDownloadDisabled = archived || isLoadingAccess;
 
   const downloadUrl = activeFile
     ? createModelFileDownloadUrl({
@@ -311,8 +325,9 @@ function ComponentGroup({
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!canDownload && onPurchase) {
-      onPurchase();
+    if (!canDownload) {
+      e.preventDefault();
+      if (onPurchase) onPurchase();
     }
   };
 
@@ -342,16 +357,16 @@ function ComponentGroup({
               </Text>
             </Box>
           </Group>
-          <Tooltip label="Download">
+          <Tooltip label={canDownload ? 'Download' : 'Purchase to download'}>
             <ActionIcon
               component="a"
-              href={downloadUrl}
+              href={isDownloadDisabled || !canDownload ? undefined : downloadUrl}
               onClick={handleDownload}
               variant="light"
               color="gray"
               size="md"
               radius="md"
-              disabled={archived || isLoadingAccess}
+              disabled={isDownloadDisabled}
             >
               <IconDownload size={16} />
             </ActionIcon>
@@ -492,16 +507,16 @@ function ComponentGroup({
                     <Text size="xs" c="dimmed">
                       {formatKBytes(file.sizeKB)}
                     </Text>
-                    <Tooltip label="Download">
+                    <Tooltip label={canDownload ? 'Download' : 'Purchase to download'}>
                       <ActionIcon
                         component="a"
-                        href={fileDownloadUrl}
+                        href={isDownloadDisabled || !canDownload ? undefined : fileDownloadUrl}
                         onClick={handleDownload}
                         variant="light"
                         color="gray"
                         size="sm"
                         radius="md"
-                        disabled={archived || isLoadingAccess}
+                        disabled={isDownloadDisabled}
                       >
                         <IconDownload size={14} />
                       </ActionIcon>

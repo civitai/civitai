@@ -8,51 +8,92 @@ import {
   Select,
   Stack,
   Text,
+  ThemeIcon,
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
   Badge,
-  Title,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
-import { useViewportSize } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconBan,
+  IconBulb,
   IconCircleCheck,
   IconCloudUpload,
-  IconFileUpload,
   IconLink,
+  IconPlus,
+  IconPuzzle,
   IconRefresh,
   IconTrash,
   IconX,
   IconFile3d,
-  IconPuzzle,
   IconFileSettings,
 } from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
-import { useContainerPosition, usePositioner } from 'masonic';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { constants, zipModelFileTypes } from '~/server/common/constants';
-// import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-// import { ModelVersionById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { formatBytes, formatSeconds } from '~/utils/number-helpers';
+import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
-import { openLinkComponentModal } from '~/components/Resource/LinkComponentModal';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import { ModelType } from '~/shared/utils/prisma/enums';
+import { getEcosystem, getCompatibleBaseModels } from '~/shared/constants/basemodel.constants';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+
+// Small inline dropzone for adding files within a section
+function InlineDropzone({ label, onDrop }: { label: string; onDrop: (files: File[]) => void }) {
+  return (
+    <Dropzone
+      onDrop={onDrop}
+      styles={{
+        root: {
+          border: '2px dashed var(--mantine-color-dark-4)',
+          borderRadius: 8,
+          padding: 16,
+          backgroundColor: 'transparent',
+          cursor: 'pointer',
+          '&:hover': {
+            borderColor: 'var(--mantine-color-blue-5)',
+            backgroundColor: 'rgba(34, 139, 230, 0.05)',
+          },
+        },
+      }}
+    >
+      <Group justify="center" gap="xs">
+        <IconPlus size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
+        <Text size="sm" c="dimmed">
+          {label}
+        </Text>
+      </Group>
+    </Dropzone>
+  );
+}
+
+function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType {
+  switch (modelType) {
+    case ModelType.VAE:
+      return 'VAE';
+    case ModelType.Controlnet:
+      return 'ControlNet';
+    default:
+      return 'Other';
+  }
+}
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
@@ -60,220 +101,300 @@ export function Files() {
     files,
     linkedComponents,
     onDrop,
-    startUpload,
-    hasPending,
     fileExtensions,
     maxFiles,
+    baseModel,
     addLinkedComponent,
     removeLinkedComponent,
   } = useFilesContext();
-
-  const masonryRef = useRef(null);
-  const { width, height } = useViewportSize();
-  const { width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
-  usePositioner(
-    {
-      width: containerWidth,
-      maxColumnCount: 2,
-      columnGutter: 16,
-    },
-    [files.length]
-  );
-
-  // Get existing component types to avoid duplicates
-  const existingComponentTypes = linkedComponents.map((c) => c.componentType);
+  const queryUtils = trpc.useUtils();
 
   // Categorize files by type
   const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type ?? ''));
-  const requiredComponents = files.filter((f) => ['VAE', 'Text Encoder'].includes(f.type ?? ''));
+  const requiredComponentFileTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
+  const requiredComponents = files.filter((f) => requiredComponentFileTypes.includes(f.type ?? ''));
   const optionalFiles = files.filter(
-    (f) => !['Model', 'Pruned Model', 'VAE', 'Text Encoder'].includes(f.type ?? '')
+    (f) => !['Model', 'Pruned Model', ...requiredComponentFileTypes].includes(f.type ?? '')
   );
+
+  const handleInlineDrop = (droppedFiles: File[], defaultType?: ModelFileType) => {
+    if (files.length + droppedFiles.length > maxFiles) return;
+    onDrop(droppedFiles, defaultType);
+  };
+
+  const handleLinkResource = async (resource: GenerationResource) => {
+    // Map model type to component type
+    const componentType = modelTypeToComponentType(resource.model.type);
+
+    // Fetch version details to get file info
+    try {
+      const versionData = await queryUtils.modelVersion.getById.fetch({
+        id: resource.id,
+        withFiles: true,
+      });
+      const primaryFile = versionData?.files?.[0];
+      if (!primaryFile) {
+        showErrorNotification({ error: new Error('No files found for this model version') });
+        return;
+      }
+
+      addLinkedComponent({
+        componentType,
+        modelId: resource.model.id,
+        modelName: resource.model.name,
+        versionId: resource.id,
+        versionName: resource.name,
+        fileId: primaryFile.id,
+        fileName: primaryFile.name,
+      });
+    } catch {
+      showErrorNotification({ error: new Error('Failed to fetch model version details') });
+    }
+  };
+
+  const handleOpenResourceSelect = () => {
+    // Compute compatible base models from the version's base model
+    const ecosystem = baseModel ? getEcosystem(baseModel) : undefined;
+    const resourceTypes = [
+      ModelType.VAE,
+      ModelType.Controlnet,
+      ModelType.TextualInversion,
+      ModelType.Hypernetwork,
+    ] as const;
+
+    const resources = resourceTypes.map((type) => {
+      if (!ecosystem) return { type };
+      const compat = getCompatibleBaseModels(ecosystem.id, type);
+      const fullNames = compat.full.map((m) => m.name);
+      const partialNames = compat.partial.map((m) => m.name);
+      return {
+        type,
+        ...(fullNames.length > 0 && { baseModels: fullNames }),
+        ...(partialNames.length > 0 && { partialSupport: partialNames }),
+      };
+    });
+
+    openResourceSelectModal({
+      title: 'Link Required Component',
+      onSelect: handleLinkResource,
+      options: {
+        resources,
+        excludeIds: linkedComponents.map((c) => c.versionId),
+      },
+      selectSource: 'modelVersion',
+    });
+  };
+
+  const hasRequiredComponents = requiredComponents.length > 0 || linkedComponents.length > 0;
 
   return (
     <Stack>
-      <Dropzone
-        accept={{ 'mime/type': fileExtensions }}
-        onDrop={(droppedFiles) => {
-          if (files.length + droppedFiles.length > maxFiles) return;
-
-          onDrop(droppedFiles);
-        }}
-        maxFiles={maxFiles}
-        onReject={(files) => {
-          const errors = removeDuplicates(
-            files.flatMap((file) => file.errors),
-            'code'
-          )
-            .map((error) => error.message)
-            .join('\n');
-
-          showErrorNotification({ error: new Error(errors) });
-        }}
-        className={classes.dropzoneReject}
-        useFsAccessApi={!isAndroidDevice()}
-      >
-        <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
-          {/* <Dropzone.Accept>
-            <IconUpload
-              size={50}
-              stroke={1.5}
-              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
-            />
-          </Dropzone.Accept>
-          <Dropzone.Reject>
-            <IconX
-              size={50}
-              stroke={1.5}
-              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
-            />
-          </Dropzone.Reject>
-          <Dropzone.Idle>
-            <IconFileUpload size={50} stroke={1.5} />
-          </Dropzone.Idle> */}
-
-          <IconFileUpload size={50} stroke={1.5} />
-          <Stack gap={8} align="center" justify="center">
-            <Text size="xl" inline>
-              Drop your files here or click to select
-            </Text>
-            <Text size="sm" c="dimmed" inline>
-              {`Attach up to ${maxFiles} files. Accepted file types: ${fileExtensions.join(', ')}`}
-            </Text>
-          </Stack>
-        </Group>
-      </Dropzone>
-      <UploadNotice className="-mt-2" />
-      {files.length > 0 ? (
-        <Button
-          onClick={async () => {
-            // Do nothing on thrown error
-            await startUpload().catch(() => ({}));
-          }}
-          size="lg"
-          disabled={!hasPending}
-          fullWidth
+      {/* Model Files Section - always visible */}
+      <Card withBorder>
+        <Card.Section
+          withBorder
+          inheritPadding
+          py="md"
+          style={{ borderColor: 'var(--mantine-color-dark-4)' }}
         >
-          Start Upload
-        </Button>
-      ) : null}
-
-      {/* Model Files Section */}
-      {modelFiles.length > 0 && (
-        <Stack gap="md">
           <Group gap="xs">
             <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
-            <Title order={4}>Model Files</Title>
+            <Text fw={600} c="white">
+              Model Files
+            </Text>
           </Group>
-          <Text size="sm" c="dimmed">
+          <Text size="sm" c="dimmed" mt={4}>
             The main model files users will download. We&apos;ll show the best match based on their
             preferences.
           </Text>
-          <Stack gap="md">
-            {modelFiles.map((file) => (
-              <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
-            ))}
-          </Stack>
-        </Stack>
-      )}
-
-      {/* Required Components Section */}
-      {(requiredComponents.length > 0 || linkedComponents.length > 0) && (
-        <Card
-          withBorder
-          style={{
-            borderColor: 'var(--mantine-color-yellow-6)',
-            backgroundColor: 'rgba(250, 176, 5, 0.03)',
-          }}
-        >
-          <Stack gap="md">
-            <Group gap="xs" justify="space-between" wrap="nowrap">
-              <Group gap="xs">
-                <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-6)' }} />
-                <Title order={4}>Required Components</Title>
-                <Badge color="yellow" variant="light">
-                  Users must download
-                </Badge>
-              </Group>
-              <Button
-                variant="light"
-                size="xs"
-                leftSection={<IconLink size={14} />}
-                onClick={() =>
-                  openLinkComponentModal({
-                    onSave: addLinkedComponent,
-                    existingComponentTypes,
-                  })
-                }
-              >
-                Link Existing
-              </Button>
-            </Group>
-            <Text size="sm" c="dimmed">
-              Additional files users need to run this model. Upload files or link to existing models
-              on Civitai.
-            </Text>
-            <Stack gap="md">
-              {requiredComponents.map((file) => (
+        </Card.Section>
+        <Stack gap="sm" p="md">
+          {modelFiles.length > 0 ? (
+            <>
+              {modelFiles.map((file) => (
                 <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
               ))}
-              {linkedComponents.map((component) => (
-                <LinkedComponentCard
-                  key={component.componentType}
-                  component={component}
-                  onRemove={removeLinkedComponent}
-                />
-              ))}
-            </Stack>
-          </Stack>
-        </Card>
-      )}
+              <InlineDropzone
+                label="Add another model file variant"
+                onDrop={(files) => handleInlineDrop(files, 'Model')}
+              />
+            </>
+          ) : (
+            <Dropzone
+              accept={{ 'mime/type': fileExtensions }}
+              onDrop={(droppedFiles) => {
+                if (files.length + droppedFiles.length > maxFiles) return;
+                onDrop(droppedFiles, 'Model');
+              }}
+              maxFiles={maxFiles}
+              onReject={(rejectedFiles) => {
+                const errors = removeDuplicates(
+                  rejectedFiles.flatMap((file) => file.errors),
+                  'code'
+                )
+                  .map((error) => error.message)
+                  .join('\n');
+                showErrorNotification({ error: new Error(errors) });
+              }}
+              className={classes.dropzoneReject}
+              useFsAccessApi={!isAndroidDevice()}
+              styles={{
+                root: {
+                  border: '2px dashed var(--mantine-color-dark-4)',
+                  borderRadius: 'var(--mantine-radius-md)',
+                  backgroundColor: 'transparent',
+                  cursor: 'pointer',
+                },
+              }}
+            >
+              <Stack gap="xs" align="center" py="lg" style={{ pointerEvents: 'none' }}>
+                <ThemeIcon size={48} radius="xl" variant="light" color="blue">
+                  <IconCloudUpload size={22} />
+                </ThemeIcon>
+                <Text size="sm" fw={500}>
+                  Drop model files here or click to browse
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {`Supports ${fileExtensions.join(', ')} files`}
+                </Text>
+              </Stack>
+            </Dropzone>
+          )}
+        </Stack>
+      </Card>
 
-      {/* Link Component Button - shown when no required components yet */}
-      {requiredComponents.length === 0 && linkedComponents.length === 0 && (
-        <Button
-          variant="light"
-          color="yellow"
-          leftSection={<IconLink size={16} />}
-          onClick={() =>
-            openLinkComponentModal({
-              onSave: addLinkedComponent,
-              existingComponentTypes,
-            })
-          }
+      {/* Required Components Section - always visible */}
+      <Card
+        withBorder
+        style={{
+          borderColor: 'rgba(250, 176, 5, 0.3)',
+          backgroundColor: 'rgba(250, 176, 5, 0.03)',
+        }}
+      >
+        <Card.Section
+          withBorder
+          inheritPadding
+          py="md"
+          style={{ borderColor: 'rgba(250, 176, 5, 0.2)' }}
         >
-          Link Required Component from Civitai
-        </Button>
-      )}
+          <Group gap="xs">
+            <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-5)' }} />
+            <Text fw={600} c="white">
+              Required Components
+            </Text>
+            <Badge color="yellow" variant="light" size="sm">
+              Users must download
+            </Badge>
+          </Group>
+          <Text size="sm" c="dimmed" mt={4}>
+            Additional files users need to run this model. Add multiple precision variants if
+            available.
+          </Text>
+        </Card.Section>
+        <Stack gap="sm" p="md">
+          {!hasRequiredComponents && (
+            <Stack gap="xs" align="center" py="md">
+              <IconPuzzle size={32} style={{ color: 'rgba(250, 176, 5, 0.25)' }} />
+              <Text size="sm" c="dimmed">
+                No required components added yet
+              </Text>
+              <Text size="xs" c="dimmed" ta="center" maw={400}>
+                Upload component files like VAE, Text Encoder, or UNet, or link to existing models
+                on Civitai.
+              </Text>
+            </Stack>
+          )}
+          {requiredComponents.map((file) => (
+            <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+          ))}
+          {linkedComponents.map((component) => (
+            <LinkedComponentCard
+              key={`${component.componentType}-${component.versionId}`}
+              component={component}
+              onRemove={removeLinkedComponent}
+            />
+          ))}
+          <InlineDropzone
+            label="Upload a required component file"
+            onDrop={(files) => handleInlineDrop(files, 'VAE')}
+          />
+          <Text size="xs" c="dimmed" ta="center">
+            or
+          </Text>
+          <Button
+            variant="default"
+            fullWidth
+            leftSection={<IconLink size={16} />}
+            onClick={handleOpenResourceSelect}
+          >
+            Link to Existing Model on Civitai
+          </Button>
+        </Stack>
+      </Card>
 
-      {/* Optional Files Section */}
-      {optionalFiles.length > 0 && (
-        <Stack gap="md">
+      {/* Optional Files Section - always visible */}
+      <Card withBorder>
+        <Card.Section
+          withBorder
+          inheritPadding
+          py="md"
+          style={{ borderColor: 'var(--mantine-color-dark-4)' }}
+        >
           <Group gap="xs">
             <IconFileSettings size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
-            <Title order={4}>Optional Files</Title>
+            <Text fw={600} c="white">
+              Optional Files
+            </Text>
           </Group>
-          <Text size="sm" c="dimmed">
+          <Text size="sm" c="dimmed" mt={4}>
             Workflows, configs, and other helpful files. Not required to use the model.
           </Text>
-          <Stack gap="md">
-            {optionalFiles.map((file) => (
-              <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
-            ))}
-          </Stack>
+        </Card.Section>
+        <Stack gap="sm" p="md">
+          {optionalFiles.map((file) => (
+            <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+          ))}
+          <InlineDropzone label="Add optional file" onDrop={(files) => handleInlineDrop(files)} />
         </Stack>
-      )}
+      </Card>
+
+      {/* Tips Card */}
+      <Card
+        withBorder
+        style={{
+          borderColor: 'rgba(34, 139, 230, 0.2)',
+          backgroundColor: 'rgba(34, 139, 230, 0.03)',
+        }}
+      >
+        <Group align="flex-start" gap="sm" wrap="nowrap">
+          <IconBulb size={24} style={{ color: 'var(--mantine-color-blue-4)', flexShrink: 0 }} />
+          <Stack gap={4}>
+            <Text fw={500} c="white">
+              Tips for better organization
+            </Text>
+            <Text size="sm" c="dimmed" component="div">
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                <li>
+                  Add <strong>multiple precision variants</strong> (fp16, fp8) for both model files
+                  and components
+                </li>
+                <li>Users&apos; preferences will auto-select the best match for their setup</li>
+                <li>Link to existing models when the component already exists on Civitai</li>
+                <li>
+                  Only create a new <strong>version</strong> when you&apos;ve actually
+                  trained/updated the model
+                </li>
+              </ul>
+            </Text>
+          </Stack>
+        </Group>
+      </Card>
+      <UploadNotice />
     </Stack>
   );
 }
 
-// type Props = {
-//   model?: Partial<ModelUpsertInput>;
-//   version?: Partial<ModelVersionById>;
-//   onStartUploadClick?: VoidFunction;
-// };
-
-// Card for displaying a linked component from another Civitai model
+// Compact horizontal card for linked components
 function LinkedComponentCard({
   component,
   onRemove,
@@ -281,60 +402,76 @@ function LinkedComponentCard({
   component: LinkedComponent;
   onRemove: (componentType: ModelFileComponentType) => void;
 }) {
+  const config = componentTypeConfig[component.componentType] ?? componentTypeConfig.Other;
+  const Icon = config.icon;
+
   return (
-    <Card withBorder style={{ borderColor: 'var(--mantine-color-blue-4)' }}>
-      <Stack gap={4} pb="xs">
-        <Group justify="space-between" gap={4} wrap="nowrap">
-          <Group gap="xs">
-            <IconLink size={16} style={{ color: 'var(--mantine-color-blue-4)' }} />
-            <Text lineClamp={1} style={{ display: 'inline-block' }}>
-              {component.modelName}
+    <Card
+      withBorder
+      p="sm"
+      style={{
+        borderColor: 'rgba(64, 192, 87, 0.2)',
+        backgroundColor: 'rgba(64, 192, 87, 0.05)',
+      }}
+    >
+      <Group gap="md" wrap="nowrap">
+        <ThemeIcon size={40} radius="sm" color={config.color} variant="light">
+          <Icon size={20} />
+        </ThemeIcon>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Text size="sm" fw={500} c="white" truncate>
+            {component.modelName}
+          </Text>
+          <Group gap={4}>
+            <IconLink size={12} style={{ color: 'var(--mantine-color-green-4)' }} />
+            <Text size="xs" c="green.4" truncate>
+              Linked: {component.versionName} &rarr; {component.fileName}
             </Text>
-            <Badge size="xs" color="blue" variant="light">
-              Linked
-            </Badge>
           </Group>
-          <Tooltip label="Remove linked component" position="left">
-            <LegacyActionIcon color="red" onClick={() => onRemove(component.componentType)}>
-              <IconTrash />
-            </LegacyActionIcon>
-          </Tooltip>
+        </div>
+        <Group gap="xs" wrap="nowrap">
+          <div>
+            <Text
+              size="xs"
+              fw={500}
+              c="dimmed"
+              tt="uppercase"
+              style={{ letterSpacing: 0.5, fontSize: 11 }}
+              mb={2}
+            >
+              Type
+            </Text>
+            <Select
+              allowDeselect={false}
+              size="xs"
+              w={110}
+              data={constants.modelFileComponentTypes.map((t) => ({
+                label: componentTypeConfig[t]?.name ?? t,
+                value: t,
+              }))}
+              value={component.componentType}
+              disabled
+            />
+          </div>
+          <LegacyActionIcon
+            color="red"
+            onClick={() => onRemove(component.componentType)}
+            style={{ marginTop: 18 }}
+          >
+            <IconTrash size={16} />
+          </LegacyActionIcon>
         </Group>
-        <Stack gap={0}>
-          <Text size="sm" fw="bold">
-            Component Type
-          </Text>
-          <Text size="sm" c="dimmed">
-            {component.componentType}
-          </Text>
-        </Stack>
-        <Stack gap={0}>
-          <Text size="sm" fw="bold">
-            Version
-          </Text>
-          <Text size="sm" c="dimmed">
-            {component.versionName}
-          </Text>
-        </Stack>
-        <Stack gap={0}>
-          <Text size="sm" fw="bold">
-            File
-          </Text>
-          <Text size="sm" c="dimmed">
-            {component.fileName}
-          </Text>
-        </Stack>
-      </Stack>
+      </Group>
     </Card>
   );
 }
 
+// Compact horizontal file card
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
   const queryUtils = trpc.useUtils();
   const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
 
-  // File card benefits from knowing if a tracked file exist.
   const trackedFiles = useS3UploadStore((state) => state.items);
   const trackedFile = trackedFiles.find((x) => x.meta?.uuid === versionFile.uuid);
 
@@ -353,87 +490,72 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
       });
     },
   });
+
   const handleRemoveFile = async (uuid?: string) => {
     if (versionFile.id) await deleteFileMutation.mutateAsync({ id: versionFile.id });
     else if (uuid) removeFile(uuid);
   };
 
+  const iconConfig = getFileIconConfig(versionFile.name, {
+    format: versionFile.format,
+    componentType: versionFile.componentType,
+  });
+  const FileIcon = iconConfig.icon;
+  const fileSizeStr = versionFile.sizeKB ? formatKBytes(versionFile.sizeKB) : undefined;
+  const extension = getFileExtension(versionFile.name);
+  const formatLabel = versionFile.format ?? (extension ? extension.toUpperCase() : undefined);
+
   return (
-    <Card style={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
-      <Stack gap={4} pb="xs">
-        <Group justify="space-between" gap={4} wrap="nowrap">
-          <Text
-            lineClamp={1}
-            color={failedUpload ? 'red' : undefined}
-            style={{ display: 'inline-block' }}
-          >
-            {versionFile.name}
+    <Card style={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder p="sm">
+      <Group gap="md" wrap="nowrap">
+        <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
+          <FileIcon size={20} />
+        </ThemeIcon>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Group gap={6} wrap="nowrap">
+            <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
+              {versionFile.name}
+            </Text>
+            {!versionFile.type && !versionFile.isUploading && (
+              <Badge color="yellow" variant="light" size="xs">
+                Needs info
+              </Badge>
+            )}
+          </Group>
+          <Text size="xs" c="dimmed">
+            {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
           </Text>
-          {/* Checking for tracked files here is a safeguard for failed uploads that ended up in the air.*/}
-          {(!versionFile.isUploading || !trackedFile) && (
-            <Tooltip label="Remove file" position="left">
+        </div>
+        {!versionFile.isUploading && (
+          <Group gap="xs" wrap="nowrap" align="flex-end">
+            <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
+            {!trackedFile && (
               <LegacyActionIcon
                 color="red"
                 onClick={() => handleRemoveFile(versionFile.uuid)}
                 loading={deleteFileMutation.isLoading}
+                style={{ marginTop: 18 }}
               >
-                <IconTrash />
+                <IconTrash size={16} />
               </LegacyActionIcon>
-            </Tooltip>
-          )}
-        </Group>
-        {versionFile.isUploading ? (
-          <>
-            <Stack gap={0}>
-              <Text size="sm" fw="bold">
-                File Type
-              </Text>
-              <Text size="sm" c="dimmed">
-                {getDisplayName(
-                  versionFile.type === 'Model'
-                    ? versionFile.modelType ?? versionFile.type ?? 'undefined'
-                    : versionFile.type ?? 'undefined'
-                )}
-              </Text>
-            </Stack>
-            {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' ? (
-              <>
-                <Stack gap={0}>
-                  <Text size="sm" fw="bold">
-                    Model size
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    {versionFile.size ?? 'undefined'}
-                  </Text>
-                </Stack>
-                <Stack gap={0}>
-                  <Text size="sm" fw="bold">
-                    Floating point
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    {versionFile.fp ?? 'undefined'}
-                  </Text>
-                </Stack>
-                {versionFile.name.endsWith('.zip') && (
-                  <Stack gap={0}>
-                    <Text size="sm" fw="bold">
-                      Format
-                    </Text>
-                    <Text size="sm" c="dimmed">
-                      {versionFile.format ?? 'undefined'}
-                    </Text>
-                  </Stack>
-                )}
-              </>
-            ) : null}
-          </>
-        ) : (
-          <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
+            )}
+          </Group>
         )}
-      </Stack>
-      <Card.Section>
-        <TrackedFile uuid={versionFile.uuid} />
-      </Card.Section>
+        {versionFile.isUploading && !trackedFile && (
+          <LegacyActionIcon
+            color="red"
+            onClick={() => handleRemoveFile(versionFile.uuid)}
+            loading={deleteFileMutation.isLoading}
+          >
+            <IconTrash size={16} />
+          </LegacyActionIcon>
+        )}
+      </Group>
+      {trackedFile && (
+        <Card.Section>
+          <TrackedFile uuid={versionFile.uuid} />
+        </Card.Section>
+      )}
     </Card>
   );
 }
@@ -574,6 +696,23 @@ function TrackedFileStatus({
   }
 }
 
+// Compact inline label for selects
+function SelectLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <Text
+      size="xs"
+      fw={500}
+      c="dimmed"
+      tt="uppercase"
+      style={{ letterSpacing: 0.5, fontSize: 11 }}
+      mb={2}
+    >
+      {children}
+    </Text>
+  );
+}
+
+// Inline compact edit form with small selects
 function FileEditForm({
   file: versionFile,
   index,
@@ -611,8 +750,6 @@ function FileEditForm({
   };
 
   const filterByFileExtension = (value: ModelFileType) => {
-    // const file = versionFile.file;
-    // if (!file) return false;
     const extension = getFileExtension(versionFile.name);
 
     switch (extension) {
@@ -645,131 +782,153 @@ function FileEditForm({
 
   const canManualSave = !!versionFile.id && !isEqual(versionFile, initialFile);
 
+  const isCheckpoint = versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint';
+  // Component file types that should show precision/quant selects
+  const componentFileTypes = ['VAE', 'Text Encoder', 'Config'] as const;
+  const isComponentFileByType =
+    versionFile.type &&
+    componentFileTypes.includes(versionFile.type as (typeof componentFileTypes)[number]);
+  const isComponentFile = isComponentFileByType || !!versionFile.componentType;
+  const isGguf = versionFile.name.endsWith('.gguf');
+  const isZip = versionFile.name.endsWith('.zip');
+
+  // Show precision/quant/format for model checkpoint files AND component files
+  const showMetadataSelects = isCheckpoint || isComponentFile;
+
   return (
-    <Stack>
-      <Select
-        label="File Type"
-        placeholder="Select a type"
-        error={error?.type?._errors[0]}
-        data={fileTypes.filter(filterByFileExtension).map((x) => ({
-          label: getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
-          value: x,
-        }))}
-        value={versionFile.type ?? null}
-        onChange={(value) => {
-          const newType = value as ModelFileType | null;
-          // Auto-suggest componentType based on file type
-          let suggestedComponentType: ModelFileComponentType | null = null;
-          if (newType === 'VAE') suggestedComponentType = 'VAE';
-          else if (newType === 'Text Encoder') suggestedComponentType = 'TextEncoder';
-          else if (newType === 'Config') suggestedComponentType = 'Config';
+    <Group gap="xs" align="flex-end" wrap="nowrap">
+      <div>
+        <SelectLabel>Type</SelectLabel>
+        <Select
+          allowDeselect={false}
+          size="xs"
+          w={110}
+          placeholder="Type"
+          error={error?.type?._errors[0]}
+          data={fileTypes.filter(filterByFileExtension).map((x) => ({
+            label: getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
+            value: x,
+          }))}
+          value={versionFile.type ?? null}
+          onChange={(value) => {
+            const newType = value as ModelFileType | null;
+            let suggestedComponentType: ModelFileComponentType | null = null;
+            if (newType === 'VAE') suggestedComponentType = 'VAE';
+            else if (newType === 'Text Encoder') suggestedComponentType = 'TextEncoder';
+            else if (newType === 'Config') suggestedComponentType = 'Config';
 
-          updateFile(versionFile.uuid, {
-            type: newType,
-            size: null,
-            fp: null,
-            componentType: suggestedComponentType,
-          });
-        }}
-        withAsterisk
-      />
+            updateFile(versionFile.uuid, {
+              type: newType,
+              size: null,
+              fp: null,
+              componentType: suggestedComponentType,
+            });
+          }}
+        />
+      </div>
 
-      {versionFile.type && !['Model', 'Pruned Model'].includes(versionFile.type) && (
-        <Tooltip
-          label="Specify what type of component this file is for users who need to download it separately."
-          multiline
-          w={300}
-        >
-          <Select
-            label="Component Type"
-            placeholder="VAE, Text Encoder, UNet..."
-            data={constants.modelFileComponentTypes}
-            error={error?.componentType?._errors[0]}
-            value={versionFile.componentType ?? null}
-            onChange={(value) => {
-              updateFile(versionFile.uuid, {
-                componentType: value as ModelFileComponentType | null,
-              });
-            }}
-          />
-        </Tooltip>
-      )}
-
-      {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' && (
+      {showMetadataSelects && (
         <>
-          <Select
-            label="Model Size"
-            placeholder="Pruned or Full"
-            data={constants.modelFileSizes.map((size) => ({
-              label: startCase(size),
-              value: size,
-            }))}
-            error={error?.size?._errors[0]}
-            value={versionFile.size ?? null}
-            onChange={(value) => {
-              updateFile(versionFile.uuid, { size: value as 'full' | 'pruned' | null });
-            }}
-            withAsterisk
-          />
-
-          <Select
-            label="Precision"
-            placeholder="fp16, fp32, bf16, fp8, nf4"
-            data={constants.modelFileFp}
-            error={error?.fp?._errors[0]}
-            value={versionFile.fp ?? null}
-            onChange={(value) => {
-              updateFile(versionFile.uuid, { fp: value as ModelFileFp | null });
-            }}
-            withAsterisk
-          />
-
-          {versionFile.name.endsWith('.gguf') && (
-            <Tooltip
-              label="Quantization level - Q8 offers best quality, Q4/Q2 are smaller. Users with GGUF preference will auto-select their preferred quant."
-              multiline
-              w={300}
-            >
+          {isZip && (
+            <div>
+              <SelectLabel>Format</SelectLabel>
               <Select
-                label="Quant Type"
-                placeholder="Q8_0, Q6_K, Q4_K_M..."
-                data={constants.modelFileQuantTypes}
-                error={error?.quantType?._errors[0]}
-                value={versionFile.quantType ?? null}
+                allowDeselect={false}
+                size="xs"
+                w={90}
+                placeholder="Format"
+                error={error?.format?._errors[0]}
+                data={zipModelFileTypes.map((x) => ({ label: x, value: x }))}
+                value={versionFile.format ?? null}
                 onChange={(value) => {
-                  updateFile(versionFile.uuid, { quantType: value as ModelFileQuantType | null });
+                  updateFile(versionFile.uuid, { format: value as ZipModelFileType | null });
                 }}
-                withAsterisk
               />
-            </Tooltip>
+            </div>
           )}
 
-          {versionFile.name.endsWith('.zip') && (
-            <Select
-              label="Format"
-              placeholder="Diffusers, Core ML, ONNX"
-              data={zipModelFileTypes.map((x) => ({ label: x, value: x }))}
-              error={error?.format?._errors[0]}
-              value={versionFile.format ?? null}
-              onChange={(value) => {
-                updateFile(versionFile.uuid, { format: value as ZipModelFileType | null });
-              }}
-              withAsterisk
-            />
+          {isGguf ? (
+            <div>
+              <SelectLabel>Quant</SelectLabel>
+              <Select
+                allowDeselect={false}
+                size="xs"
+                w={90}
+                placeholder="Quant"
+                error={error?.quantType?._errors[0]}
+                data={constants.modelFileQuantTypes}
+                value={versionFile.quantType ?? null}
+                onChange={(value) => {
+                  updateFile(versionFile.uuid, {
+                    quantType: value as ModelFileQuantType | null,
+                  });
+                }}
+              />
+            </div>
+          ) : (
+            <div>
+              <SelectLabel>Precision</SelectLabel>
+              <Select
+                allowDeselect={false}
+                size="xs"
+                w={85}
+                placeholder="fp16"
+                error={error?.fp?._errors[0]}
+                data={constants.modelFileFp}
+                value={versionFile.fp ?? null}
+                onChange={(value) => {
+                  updateFile(versionFile.uuid, { fp: value as ModelFileFp | null });
+                }}
+              />
+            </div>
+          )}
+
+          {isCheckpoint && (
+            <div>
+              <SelectLabel>Size</SelectLabel>
+              <Select
+                allowDeselect={false}
+                size="xs"
+                w={80}
+                placeholder="Size"
+                error={error?.size?._errors[0]}
+                data={constants.modelFileSizes.map((size) => ({
+                  label: startCase(size),
+                  value: size,
+                }))}
+                value={versionFile.size ?? null}
+                onChange={(value) => {
+                  updateFile(versionFile.uuid, { size: value as 'full' | 'pruned' | null });
+                }}
+              />
+            </div>
           )}
         </>
       )}
+
       {canManualSave && (
-        <Group grow>
-          <Button onClick={handleReset} variant="default" disabled={isLoading}>
+        <>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={handleReset}
+            disabled={isLoading}
+            style={{ marginBottom: 0 }}
+          >
             Reset
           </Button>
-          <Button loading={isLoading} variant="filled" onClick={handleSave}>
+          <Button
+            size="xs"
+            loading={isLoading}
+            variant="filled"
+            onClick={handleSave}
+            style={{ marginBottom: 0 }}
+          >
             Save
           </Button>
-        </Group>
+        </>
       )}
-    </Stack>
+    </Group>
   );
 }
 
