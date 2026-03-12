@@ -42,32 +42,56 @@ export default function GeneratedImageLightbox({
     [requests, markerTags]
   );
 
-  // Close if the initial workflow isn't in the feed data after loading
-  const hasWorkflow = requests?.some((x) => x.id === workflowId);
+  // Close only when there are no images left to display across all workflows.
+  // Guard on `requests !== undefined` to avoid closing during the initial load
+  // before any data has arrived.
   useEffect(() => {
-    if (!isLoading && !hasWorkflow) dialog.onClose();
-  }, [isLoading, hasWorkflow]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!isLoading && requests !== undefined && images.length === 0) dialog.onClose();
+  }, [isLoading, requests, images.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const currentImageIdRef = useRef(imageId);
+  const imageKey = (img: { id: string; workflow: { id: string } }) =>
+    `${img.workflow.id}_${img.id}`;
+  const currentImageKeyRef = useRef(imageKey({ id: imageId, workflow: { id: workflowId } }));
   const initialSlide = images.findIndex(
     (item) => item.id === imageId && item.workflow.id === workflowId
   );
   const [slide, setSlide] = useState(initialSlide > -1 ? initialSlide : 0);
 
+  // Keep a ref so stale closures (EmblaCarouselProvider captures onSlideChange once at mount
+  // via an empty-deps useCallback) always read the current images array.
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+
   const handleSlideChange = (index: number) => {
     setSlide(index);
-    const image = images[index];
+    const image = imagesRef.current[index];
     if (image) {
-      currentImageIdRef.current = image.id;
+      currentImageKeyRef.current = imageKey(image);
     }
   };
 
-  // When images array shifts, re-sync slide index to the tracked image
+  // When images change, manually reInit Embla (since watchSlides is disabled) and
+  // restore position to the tracked image. If the tracked image was deleted,
+  // advance to the next available one instead.
   useEffect(() => {
-    const newIndex = images.findIndex((item) => item.id === currentImageIdRef.current);
-    if (newIndex !== -1 && newIndex !== slide) {
-      embla?.scrollTo(newIndex, true);
-      setSlide(newIndex);
+    if (!embla) return;
+
+    const desiredIndex = images.findIndex((item) => imageKey(item) === currentImageKeyRef.current);
+
+    if (desiredIndex === -1) {
+      // Tracked image was removed (deleted) — navigate to the next available image.
+      // Don't close here; the hasWorkflow effect handles closing when appropriate.
+      if (images.length > 0) {
+        const nextIndex = Math.min(slide, images.length - 1);
+        currentImageKeyRef.current = imageKey(images[nextIndex]);
+        embla.reInit({ startIndex: nextIndex });
+        setSlide(nextIndex);
+      }
+    } else {
+      // New images may have been added — reInit with startIndex so Embla registers
+      // the new slides AND positions itself at the correct image in one step.
+      embla.reInit({ startIndex: desiredIndex });
+      if (desiredIndex !== slide) setSlide(desiredIndex);
     }
   }, [images, embla]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -95,6 +119,7 @@ export default function GeneratedImageLightbox({
           controlSize={40}
           startIndex={slide}
           loop
+          watchSlides={false}
           onSlideChange={handleSlideChange}
           withKeyboardEvents={false}
           setEmbla={setEmbla}

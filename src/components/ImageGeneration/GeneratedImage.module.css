@@ -39,20 +39,11 @@
   padding: 4px;
 }
 
-.footerButton {
+.footerActionIcon {
+  /* Override Mantine's fixed square size so buttons fill the bar equally */
+  --ai-size: auto !important;
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 0;
-  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
-  transition: background-color 0.15s, color 0.15s;
-  cursor: pointer;
-  border-radius: var(--mantine-radius-sm);
-
-  &:hover {
-    background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
-  }
+  align-self: stretch;
 }
 
 .footerDivider {
@@ -95,7 +86,7 @@
 }
 
 .scrollableDropdown {
-  @media (max-height: 700px) {
+  @media (max-height: 900px) {
     max-height: calc(90dvh - 32px);
     overflow-y: auto;
   }

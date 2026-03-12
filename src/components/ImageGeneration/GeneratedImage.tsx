@@ -346,7 +346,7 @@ function GeneratedImageActions({
       <div
         className={clsx(
           classes.actionsWrapper,
-          menuOpen && classes.actionsVisible,
+          (menuOpen || isLightbox) && classes.actionsVisible,
           isOverlay && classes.desktopOnly,
           image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
           'absolute flex flex-wrap items-center gap-1 p-1'
@@ -411,44 +411,42 @@ function GeneratedImageActions({
     <div
       className={clsx(classes.actionsFooter, isMobileFooter && classes.mobileOnly, 'flex w-full')}
     >
-      <button
-        className={clsx(classes.footerButton, state.favorite && 'bg-red-5/20 text-red-5')}
+      <LegacyActionIcon
+        className={classes.footerActionIcon}
+        variant={state.favorite ? 'light' : 'subtle'}
+        color={state.favorite ? 'red' : 'gray'}
         onClick={() => onToggleFavorite(!state.favorite)}
       >
         <IconHeart size={16} />
-      </button>
+      </LegacyActionIcon>
 
       <div className={classes.footerDivider} />
 
-      <button
-        className={clsx(
-          classes.footerButton,
-          state.feedback === 'liked' && 'bg-green-5/20 text-green-5'
-        )}
+      <LegacyActionIcon
+        className={classes.footerActionIcon}
+        variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+        color={state.feedback === 'liked' ? 'green' : 'gray'}
         onClick={() => onToggleFeedback('liked')}
       >
         <IconThumbUp size={16} />
-      </button>
+      </LegacyActionIcon>
 
       <div className={classes.footerDivider} />
 
-      <button
-        className={clsx(
-          classes.footerButton,
-          state.feedback === 'disliked' && 'bg-red-5/20 text-red-5'
-        )}
+      <LegacyActionIcon
+        className={classes.footerActionIcon}
+        variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+        color={state.feedback === 'disliked' ? 'red' : 'gray'}
         onClick={() => onToggleFeedback('disliked')}
       >
         <IconThumbDown size={16} />
-      </button>
+      </LegacyActionIcon>
 
       <div className={classes.footerDivider} />
 
       <Menu
         zIndex={400}
-        trigger="click-hover"
-        openDelay={100}
-        closeDelay={100}
+        trigger="click"
         transitionProps={{ transition: 'fade', duration: 150 }}
         withinPortal
         position="top"
@@ -456,9 +454,9 @@ function GeneratedImageActions({
         withArrow
       >
         <Menu.Target>
-          <button className={classes.footerButton}>
+          <LegacyActionIcon className={classes.footerActionIcon}>
             <IconWand size={16} />
-          </button>
+          </LegacyActionIcon>
         </Menu.Target>
         <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
           <GeneratedItemWorkflowMenu image={image} workflowsOnly />
