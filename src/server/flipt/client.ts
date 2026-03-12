@@ -32,6 +32,7 @@ export enum FLIPT_FEATURE_FLAGS {
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
   COMIC_CREATOR = 'comic-creator',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
+  IMAGE_INDEX_FEED = 'image-index-feed',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
