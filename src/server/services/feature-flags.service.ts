@@ -119,7 +119,7 @@ const featureFlags = createFeatureFlags({
   creatorComp: ['public'],
   experimentalGen: ['mod'],
   imageIndex: ['public'],
-  imageIndexFeed: ['public'],
+  imageIndexFeed: { availability: ['mod'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],

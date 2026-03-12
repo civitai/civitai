@@ -332,8 +332,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // Use getAllImagesIndex (old Meilisearch) when feature flag is enabled
     // Use getAllImages (DB) otherwise
     // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
-    const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
-    type ResultType = typeof features.imageIndex extends true
+    const fetchFn = features.imageIndexFeed ? getAllImagesIndex : getAllImages;
+    type ResultType = typeof features.imageIndexFeed extends true
       ? ImageResultSearchIndex
       : ImageResultDB;
 
