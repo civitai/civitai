@@ -3,19 +3,19 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
 
 export const buzzNotifications = createNotificationProcessor({
-  ‘tip-received’: {
-    displayName: ‘Tip Received’,
+  'tip-received': {
+    displayName: 'Tip Received',
     category: NotificationCategory.Buzz,
     prepareMessage: ({ details }) => {
       const { url, notification } = parseBuzzTransactionDetails(details);
       return {
-        message: `${notification}${details.message ? ` They said: "${details.message}".` : ‘’}`,
+        message: `${notification}${details.message ? ` They said: "${details.message}".` : ''}`,
         url,
       };
     },
   },
-  ‘deposit-confirmed’: {
-    displayName: ‘Crypto Deposit Confirmed’,
+  'deposit-confirmed': {
+    displayName: 'Crypto Deposit Confirmed',
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: ({ details }) => {
@@ -23,21 +23,21 @@ export const buzzNotifications = createNotificationProcessor({
       const bonusText =
         details.bonusBuzz && Number(details.bonusBuzz) > 0
           ? ` (plus ${Number(details.bonusBuzz).toLocaleString()} bonus Buzz)`
-          : ‘’;
+          : '';
       return {
         message: `Your crypto deposit has been confirmed! ${buzzAmount} Buzz${bonusText} has been added to your account.`,
-        url: ‘/user/transactions’,
+        url: '/user/transactions',
       };
     },
   },
-  ‘partially-paid’: {
-    displayName: ‘Partially Paid’,
+  'partially-paid': {
+    displayName: 'Partially Paid',
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => {
       return {
-        message: `Thanks for purchasing Buzz via Crypto! We received a partial payment, likely due to network or conversion fees. You’ve been credited Buzz based on the amount received`,
-        url: ‘/user/transactions’,
+        message: `Thanks for purchasing Buzz via Crypto! We received a partial payment, likely due to network or conversion fees. You've been credited Buzz based on the amount received`,
+        url: '/user/transactions',
       };
     },
   },
