@@ -1207,7 +1207,11 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            images: [],
+            // Include a placeholder image when hasSourceImage so the step gets
+            // process:'img2img' pricing (orchestrator won't fetch URLs during whatIf)
+            images: input.hasSourceImage
+              ? [{ url: 'https://placeholder.test', width: dims.width, height: dims.height }]
+              : [],
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['comics'],

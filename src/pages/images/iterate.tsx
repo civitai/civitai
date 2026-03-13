@@ -69,20 +69,27 @@ function IteratePage() {
     hasSourceImage: false,
   });
 
-  const { data: iterateCostEstimate, isFetching: isCostFetching } =
-    trpc.orchestrator.getIterateCostEstimate.useQuery(
-      {
-        baseModel: costParams.baseModel,
-        aspectRatio: costParams.aspectRatio,
-        quantity: costParams.quantity,
-        hasSourceImage: costParams.hasSourceImage,
-      },
-      { staleTime: 30_000, keepPreviousData: true }
-    );
+  const {
+    data: iterateCostEstimate,
+    isFetching: isCostFetching,
+    refetch: refetchCost,
+  } = trpc.orchestrator.getIterateCostEstimate.useQuery(
+    {
+      baseModel: costParams.baseModel,
+      aspectRatio: costParams.aspectRatio,
+      quantity: costParams.quantity,
+      hasSourceImage: costParams.hasSourceImage,
+    },
+    { staleTime: 30_000, keepPreviousData: true }
+  );
 
   const handleSettingsChange = useCallback((params: CostEstimateParams) => {
     setCostParams(params);
   }, []);
+
+  const handleRetryCost = useCallback(() => {
+    void refetchCost();
+  }, [refetchCost]);
 
   const iterateGenerateMutation = trpc.orchestrator.iterateGenerate.useMutation();
   const utils = trpc.useUtils();
@@ -149,6 +156,7 @@ function IteratePage() {
           costEstimate={iterateCostEstimate ?? null}
           isCostLoading={isCostFetching}
           onSettingsChange={handleSettingsChange}
+          onRetryCost={handleRetryCost}
           mode="page"
         />
       </div>

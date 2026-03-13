@@ -69,16 +69,19 @@ function ComicIteratePage() {
     hasSourceImage: false,
   });
 
-  const { data: iterateCostEstimate, isFetching: isCostFetching } =
-    trpc.comics.getIterateCostEstimate.useQuery(
-      {
-        baseModel: costParams.baseModel,
-        aspectRatio: costParams.aspectRatio,
-        quantity: costParams.quantity,
-        hasSourceImage: costParams.hasSourceImage,
-      },
-      { staleTime: 30_000, enabled: !!project, keepPreviousData: true }
-    );
+  const {
+    data: iterateCostEstimate,
+    isFetching: isCostFetching,
+    refetch: refetchCost,
+  } = trpc.comics.getIterateCostEstimate.useQuery(
+    {
+      baseModel: costParams.baseModel,
+      aspectRatio: costParams.aspectRatio,
+      quantity: costParams.quantity,
+      hasSourceImage: costParams.hasSourceImage,
+    },
+    { staleTime: 30_000, enabled: !!project, keepPreviousData: true }
+  );
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
@@ -88,6 +91,10 @@ function ComicIteratePage() {
   const handleSettingsChange = useCallback((params: CostEstimateParams) => {
     setCostParams(params);
   }, []);
+
+  const handleRetryCost = useCallback(() => {
+    void refetchCost();
+  }, [refetchCost]);
 
   const activeReferences = useMemo(
     () => (project?.references ?? []).filter((c: any) => c.status === 'Ready'),
@@ -349,6 +356,7 @@ function ComicIteratePage() {
           isCostLoading={isCostFetching}
           enhanceCostEstimate={enhanceCostEstimate ?? null}
           onSettingsChange={handleSettingsChange}
+          onRetryCost={handleRetryCost}
           mode="page"
         />
       </div>

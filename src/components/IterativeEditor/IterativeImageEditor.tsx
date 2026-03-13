@@ -14,6 +14,7 @@ import {
   IconMessages,
   IconPencil,
   IconPhotoPlus,
+  IconRefresh,
   IconRestore,
   IconSend,
 } from '@tabler/icons-react';
@@ -77,6 +78,8 @@ export interface IterativeImageEditorProps {
   enhanceCostEstimate?: CostEstimate | null;
   /** Called when editor settings change so the parent can update cost queries. */
   onSettingsChange?: (params: CostEstimateParams) => void;
+  /** Called when user clicks retry after cost estimation failure. */
+  onRetryCost?: () => void;
 
   mode?: 'page' | 'modal';
 }
@@ -94,6 +97,7 @@ export function IterativeImageEditor({
   isCostLoading,
   enhanceCostEstimate,
   onSettingsChange,
+  onRetryCost,
   mode = 'page',
 }: IterativeImageEditorProps) {
   // ── Core state ──
@@ -276,8 +280,9 @@ export function IterativeImageEditor({
     )
   );
 
-  // ── Generation cost (whatIf when available) ──
+  // ── Generation cost (whatIf only — no fallback) ──
   const costLoading = isCostLoading ?? false;
+  const costFailed = !!costEstimate && !costEstimate.ready && !costLoading;
   const estimatedCost = useMemo(() => {
     if (!costEstimate?.ready) return null;
     const base = costEstimate.cost;
@@ -383,12 +388,30 @@ export function IterativeImageEditor({
           try {
             const file = new File([blob], 'annotated-source.jpg', { type: 'image/jpeg' });
             const result = await uploadToCF(file);
-            setCurrentSource({
+            const annotatedImage: SourceImage = {
               url: result.id,
               previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
               width: currentSource.width,
               height: currentSource.height,
-            });
+            };
+            setCurrentSource(annotatedImage);
+
+            // Add an iteration entry so the annotation shows in the chat
+            const iterationId = `annot-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            setIterations((prev) => [
+              ...prev,
+              {
+                id: iterationId,
+                prompt: '(annotated)',
+                annotated: true,
+                sourceImage: currentSource,
+                resultImage: annotatedImage,
+                resultImages: [annotatedImage],
+                cost: 0,
+                timestamp: new Date(),
+                status: 'ready' as const,
+              },
+            ]);
           } catch (err) {
             showErrorNotification({
               error: err as Error,
@@ -617,32 +640,50 @@ export function IterativeImageEditor({
                 </Badge>
               )}
             </div>
-            <Tooltip
-              label={
-                costLoading || estimatedCost == null
-                  ? 'Calculating cost…'
-                  : `~${estimatedCost} Buzz (Ctrl+Enter)`
-              }
-              withArrow
-              position="top"
-            >
-              <div ref={sendButtonRef}>
-                <BuzzTransactionButton
-                  buzzAmount={estimatedCost ?? 0}
-                  label={
-                    <span className="flex items-center gap-1">
-                      <IconSend size={14} />
-                      {currentSource ? 'Refine' : 'Generate'}
-                    </span>
-                  }
-                  loading={isGenerating || costLoading || estimatedCost == null}
-                  disabled={!prompt.trim() || isGenerating || costLoading || estimatedCost == null}
-                  onPerformTransaction={handleSend}
-                  showPurchaseModal
-                  size="compact-sm"
-                />
-              </div>
-            </Tooltip>
+            <div className="flex items-center gap-1">
+              {costFailed && onRetryCost && (
+                <Tooltip label="Retry cost calculation" withArrow position="top">
+                  <Button
+                    variant="light"
+                    color="red"
+                    size="compact-sm"
+                    onClick={onRetryCost}
+                    px={6}
+                  >
+                    <IconRefresh size={14} />
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip
+                label={
+                  costFailed
+                    ? 'Cost estimation failed'
+                    : costLoading || estimatedCost == null
+                      ? 'Calculating cost…'
+                      : `~${estimatedCost} Buzz (Ctrl+Enter)`
+                }
+                withArrow
+                position="top"
+              >
+                <div ref={sendButtonRef}>
+                  <BuzzTransactionButton
+                    buzzAmount={estimatedCost ?? 0}
+                    error={costFailed ? 'Cost estimation failed — click retry' : undefined}
+                    label={
+                      <span className="flex items-center gap-1">
+                        <IconSend size={14} />
+                        {currentSource ? 'Refine' : 'Generate'}
+                      </span>
+                    }
+                    loading={isGenerating || (costLoading && !costFailed)}
+                    disabled={!prompt.trim() || isGenerating || estimatedCost == null}
+                    onPerformTransaction={handleSend}
+                    showPurchaseModal
+                    size="compact-sm"
+                  />
+                </div>
+              </Tooltip>
+            </div>
           </div>
         </div>
       </div>
@@ -728,10 +769,12 @@ export function IterativeImageEditor({
         {renderSidebarExtra?.(slotContext)}
 
         {/* Cost info */}
-        <Text size="xs" c="dimmed">
-          {costLoading || estimatedCost == null
-            ? 'Calculating cost…'
-            : `~${estimatedCost} Buzz per generation`}
+        <Text size="xs" c={costFailed ? 'red' : 'dimmed'}>
+          {costFailed
+            ? 'Cost estimation failed'
+            : costLoading || estimatedCost == null
+              ? 'Calculating cost…'
+              : `~${estimatedCost} Buzz per generation`}
         </Text>
 
         {/* Commit button */}
