@@ -126,7 +126,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disableMinor: true,
           disablePoi: true,
           includeBaseModel: true,
-          useLogicalReplica: features.logicalReplica,
+          useDatapacketRead: features.datapacketRead,
         })
       : await getImagesFromFeedSearch({
           ...data,
