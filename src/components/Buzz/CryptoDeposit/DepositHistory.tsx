@@ -232,7 +232,7 @@ export function DepositHistory() {
       <Group gap="xs" mt="sm" wrap="nowrap" align="flex-start">
         <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
         <Text size="xs" c="dimmed">
-          Deposits can take up to 15 minutes to appear depending on the cryptocurrency and network.
+          Deposits can take up to 1 hour to appear, especially Bitcoin due to network congestion.
         </Text>
       </Group>
     </Paper>
@@ -273,8 +273,8 @@ function EmptyDepositState({
             style={{ flexShrink: 0, marginTop: 2 }}
           />
           <Text size="xs" c="dimmed">
-            Deposits can take up to 15 minutes to appear depending on the cryptocurrency and
-            network.
+            Deposits can take up to 1 hour to appear depending on network congestion. Bitcoin
+            transactions are particularly slow and may take the full hour.
           </Text>
         </Group>
       </Stack>
