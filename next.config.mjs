@@ -62,7 +62,10 @@ export default defineNextConfig(
     //   return config;
     // },
     webpack: (config) => {
-      config.ignoreWarnings = [{ module: /require-in-the-middle/ }];
+      config.ignoreWarnings = [
+        { module: /require-in-the-middle/ },
+        { module: /@opentelemetry\/instrumentation/ },
+      ];
       return config;
     },
     reactStrictMode: true,
@@ -101,12 +104,16 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: ['lodash', 'lodash-es', 'prisma'],
-    serverExternalPackages: ['redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series'],
     experimental: {
       // scrollRestoration: true,
       serverSourceMaps: true,
       instrumentationHook: true, // Enable instrumentation.ts for OTEL
       largePageDataBytes: 512 * 100000,
+      serverComponentsExternalPackages: [
+        'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
+        '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
+        '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      ],
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',

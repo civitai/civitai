@@ -1,11 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { NotificationCategory } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import {
   bustMvCache,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  updateComicChapterNsfwLevels,
+  updateComicProjectNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -64,6 +70,82 @@ export const processScheduledPublishing = createJob(
       AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now}
       AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
     `;
+
+    // Get scheduled comic chapters
+    const scheduledComicChapters = await dbWrite.$queryRaw<
+      { projectId: number; position: number; userId: number; projectName: string; chapterName: string; username: string | null }[]
+    >`
+      SELECT
+        cc."projectId",
+        cc."position",
+        cp."userId",
+        cp."name" AS "projectName",
+        cc."name" AS "chapterName",
+        u."username"
+      FROM "ComicChapter" cc
+      JOIN "ComicProject" cp ON cp.id = cc."projectId"
+      JOIN "User" u ON u.id = cp."userId"
+      WHERE cc.status = 'Scheduled'
+        AND cc."publishedAt" <= ${now}
+    `;
+
+    // Publish scheduled comic chapters
+    if (scheduledComicChapters.length) {
+      await dbWrite.$executeRaw`
+        UPDATE "ComicChapter"
+        SET status = 'Published'
+        WHERE status = 'Scheduled'
+          AND "publishedAt" <= ${now}
+      `;
+
+      // Update project publishedAt for first-time publishing projects
+      const projectIds = [...new Set(scheduledComicChapters.map((ch) => ch.projectId))];
+      for (const projectId of projectIds) {
+        await dbWrite.comicProject.updateMany({
+          where: { id: projectId, publishedAt: null },
+          data: { publishedAt: now },
+        });
+
+        // Update NSFW levels
+        updateComicChapterNsfwLevels([projectId]).catch((e) =>
+          console.error(`Failed to update chapter NSFW for project ${projectId}:`, e)
+        );
+        updateComicProjectNsfwLevels([projectId]).catch((e) =>
+          console.error(`Failed to update project NSFW for project ${projectId}:`, e)
+        );
+      }
+
+      // Batch-fetch all followers for affected projects in a single query
+      const allFollowers = await dbWrite.$queryRaw<{ projectId: number; userId: number }[]>`
+        SELECT "projectId", "userId" FROM "ComicEngagement"
+        WHERE "projectId" IN (${Prisma.join(projectIds)}) AND "type" = 'Notify'
+      `;
+      const followersByProject = new Map<number, number[]>();
+      for (const f of allFollowers) {
+        const list = followersByProject.get(f.projectId) ?? [];
+        list.push(f.userId);
+        followersByProject.set(f.projectId, list);
+      }
+
+      // Send follower notifications
+      for (const ch of scheduledComicChapters) {
+        const followerIds = followersByProject.get(ch.projectId) ?? [];
+        if (followerIds.length > 0) {
+          await createNotification({
+            type: 'new-comic-chapter',
+            key: `new-comic-chapter:${ch.projectId}:${ch.position}`,
+            category: NotificationCategory.Update,
+            userIds: followerIds,
+            details: {
+              comicProjectId: ch.projectId,
+              comicProjectName: ch.projectName,
+              chapterName: ch.chapterName,
+              authorUsername: ch.username ?? 'Unknown',
+            },
+          });
+        }
+      }
+    }
 
     await dbWrite.$transaction(
       async (tx) => {

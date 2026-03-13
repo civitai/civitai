@@ -241,6 +241,10 @@ export const serverSchema = z.object({
   NOW_PAYMENTS_API_URL: z.string().optional(),
   NOW_PAYMENTS_API_KEY: z.string().optional(),
   NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+  NOW_PAYMENTS_EMAIL: z.string().optional(),
+  NOW_PAYMENTS_PASSWORD: z.string().optional(),
+  NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
+  NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
 
   // Coinbase Related:
   COINBASE_API_URL: z.string().optional(),

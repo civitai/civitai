@@ -16,6 +16,7 @@ import {
   allEcosystemDefaultVersionIds,
   ecosystemByKey,
   ecosystemById,
+  getEcosystem,
   getGenerationSupport,
   getBaseModelsByEcosystemId,
   ecosystemGroups,
@@ -428,8 +429,40 @@ function InnerProvider({
 
         const mergedResources = [...compatibleExisting, ...split.resources];
 
+        // If current workflow doesn't support ecosystems (e.g. img2meta),
+        // switch to the user's last used workflow that supports the resource's ecosystem
+        const currentWorkflow = snapshot.workflow as string | undefined;
+        const currentWorkflowConfig = currentWorkflow
+          ? workflowConfigByKey.get(currentWorkflow)
+          : undefined;
+        let targetWorkflow = data.params.workflow as string | undefined;
+        if (
+          !targetWorkflow &&
+          currentWorkflowConfig &&
+          currentWorkflowConfig.ecosystemIds.length === 0
+        ) {
+          // Determine the resource's ecosystem from the checkpoint (or first resource with baseModel)
+          const resourceWithBaseModel =
+            split.resources.find((r) => r.model.type === 'Checkpoint') ??
+            split.resources.find((r) => r.baseModel);
+          const resourceEcosystem = resourceWithBaseModel?.baseModel
+            ? getEcosystem(resourceWithBaseModel.baseModel)
+            : undefined;
+
+          if (resourceEcosystem) {
+            const lastUsed = workflowPreferences.getLastUsedWorkflowForEcosystem(
+              resourceEcosystem.id
+            );
+            targetWorkflow = lastUsed?.workflow ?? 'txt2img';
+          } else {
+            const lastUsed = workflowPreferences.getLastUsedWorkflow();
+            targetWorkflow = lastUsed?.workflow ?? 'txt2img';
+          }
+        }
+
         const values = {
           ...data.params,
+          ...(targetWorkflow && { workflow: targetWorkflow }),
           resources: mergedResources,
           // Only include model/vae when present — otherwise we'd nullify the current value
           ...(split.model && { model: split.model }),

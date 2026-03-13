@@ -12,6 +12,8 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+
+const MAX_ENTRIES = 50;
 import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 
 /** Drawing annotation data for a composite (drawn-on) image */
@@ -31,6 +33,9 @@ export interface SourceMetadata {
   annotation?: SourceAnnotation;
   /** Timestamp when metadata was extracted/stored */
   extractedAt: number;
+  /** Cached image dimensions (set when image loads in input component) */
+  width?: number;
+  height?: number;
   /** Additional flags from the original generation (remixOfId, etc.) */
   [key: string]: unknown;
 }
@@ -67,15 +72,26 @@ export const useSourceMetadataStore = create<SourceMetadataState>()(
       metadataByUrl: {},
 
       setMetadata: (url, metadata) => {
-        set((state) => ({
-          metadataByUrl: {
+        set((state) => {
+          const updated = {
             ...state.metadataByUrl,
             [url]: {
+              ...state.metadataByUrl[url],
               ...metadata,
               extractedAt: Date.now(),
             },
-          },
-        }));
+          };
+
+          // Evict oldest entries (by extractedAt) when over the limit
+          const entries = Object.entries(updated);
+          if (entries.length > MAX_ENTRIES) {
+            entries.sort((a, b) => a[1].extractedAt - b[1].extractedAt);
+            entries.splice(0, entries.length - MAX_ENTRIES);
+            return { metadataByUrl: Object.fromEntries(entries) };
+          }
+
+          return { metadataByUrl: updated };
+        });
       },
 
       getMetadata: (url) => {

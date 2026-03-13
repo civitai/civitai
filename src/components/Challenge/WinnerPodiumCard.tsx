@@ -154,6 +154,7 @@ export function WinnerPodiumCard({
                     <EdgeMedia2
                       src={winner.imageUrl}
                       type={MediaType.image}
+                      imageId={winner.imageId}
                       width={450}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
                     />

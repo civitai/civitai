@@ -2008,4 +2008,13 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
 
   await userSettingsCache.bust([userId]);
 }
+
+export async function setDismissedAlerts(userId: number, alertIds: string[]) {
+  await dbWrite.$executeRawUnsafe(
+    `UPDATE "User" SET settings = jsonb_set(COALESCE(settings, '{}'), '{dismissedAlerts}', $1::jsonb) WHERE id = $2`,
+    JSON.stringify(alertIds),
+    userId
+  );
+  await userSettingsCache.bust([userId]);
+}
 // #endregion

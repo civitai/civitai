@@ -46,7 +46,7 @@
     var(--mantine-color-blue-3),
     var(--mantine-color-blue-7)
   );
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
 
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm) !important;
@@ -212,8 +212,7 @@
 }
 
 .packageSection {
-  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
-  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
+  // background, border, and shadow come from outerCardStyle + withBorder (inline)
 }
 
 .packageCard {
@@ -286,6 +285,7 @@
     linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
   );
   border: 1px solid light-dark(rgba(var(--buzz-color), 0.2), rgba(var(--buzz-color), 0.6));
+  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
 }
 
 .customAmountAccordion {
@@ -300,15 +300,17 @@
     linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
   );
   border: 1px solid light-dark(var(--mantine-color-blue-1), var(--mantine-color-blue-6));
+  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
 }
 
 /* Payment section */
 .paymentSection {
   background: light-dark(
-    linear-gradient(135deg, var(--mantine-color-gray-0) 0%, var(--mantine-color-white) 100%),
+    linear-gradient(135deg, rgba(var(--buzz-color), 0.05) 0%, var(--mantine-color-white) 100%),
     linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
   );
   border: 1px solid light-dark(rgba(var(--buzz-color), 0.2), rgba(var(--buzz-color), 0.6));
+  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
   // Mobile improvements
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm) !important;

@@ -85,7 +85,6 @@ import { Collection } from '~/components/Collection/Collection';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { env } from '~/env/client';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -186,16 +185,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
         title={`Civitai | ${bounty?.name}`}
         images={bounty?.images}
         description={bounty?.description}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
-            rel: 'canonical',
-          },
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}`,
-            rel: 'alternate',
-          },
-        ]}
+        canonical={`/bounties/${bounty.id}/${slugit(bounty.name)}`}
+        alternate={`/bounties/${bounty.id}`}
         deIndex={bounty?.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={bounty.nsfwLevel}>

@@ -42,12 +42,12 @@ export const kinguinVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/Bronze3.webp',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://www.kinguin.net/category/378758/civitai-com-3-month-bronze-membership-gift-card?referrer=civitai.com',
-            image: '/images/gift-cards/Bronze3.webp',
+            image: '/images/gift-cards/bronze_final.webp',
           },
           {
             months: 6,
@@ -63,12 +63,12 @@ export const kinguinVendor: Vendor = {
       },
       {
         tier: 'Silver',
-        image: '/images/gift-cards/Silver3.webp',
+        image: '/images/gift-cards/silver_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://www.kinguin.net/category/378780/civitai-com-3-month-silver-membership-gift-card?referrer=civitai.com',
-            image: '/images/gift-cards/Silver3.webp',
+            image: '/images/gift-cards/silver_final.webp',
           },
           {
             months: 6,
@@ -84,12 +84,12 @@ export const kinguinVendor: Vendor = {
       },
       {
         tier: 'Gold',
-        image: '/images/gift-cards/Gold3.webp',
+        image: '/images/gift-cards/gold_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://www.kinguin.net/category/378786/civitai-com-3-month-gold-membership-gift-card?referrer=civitai.com',
-            image: '/images/gift-cards/Gold3.webp',
+            image: '/images/gift-cards/gold_final.webp',
           },
           {
             months: 6,

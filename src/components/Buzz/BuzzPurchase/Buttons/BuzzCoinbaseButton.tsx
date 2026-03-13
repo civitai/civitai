@@ -1,5 +1,5 @@
-import { Button, Stack } from '@mantine/core';
-import { IconCoinBitcoin } from '@tabler/icons-react';
+import { Button } from '@mantine/core';
+import { IconBrandCoinbase } from '@tabler/icons-react';
 import type { BuzzPurchaseImprovedProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -36,21 +36,18 @@ export const BuzzCoinbaseButton = ({
   };
 
   return (
-    <Stack gap={0}>
-      <Button
-        disabled={disabled || creatingBuzzOrder}
-        loading={creatingBuzzOrder}
-        onClick={handleClick}
-        size="md"
-        radius="md"
-        variant="light"
-        color={buzzConfig.color}
-        leftSection={<IconCoinBitcoin size={18} />}
-        fw={500}
-        fullWidth
-      >
-        Crypto
-      </Button>
-    </Stack>
+    <Button
+      disabled={disabled || creatingBuzzOrder}
+      loading={creatingBuzzOrder}
+      onClick={handleClick}
+      size="md"
+      radius="md"
+      variant="light"
+      color={buzzConfig.color}
+      leftSection={<IconBrandCoinbase size={18} />}
+      fw={500}
+    >
+      Checkout with Coinbase
+    </Button>
   );
 };

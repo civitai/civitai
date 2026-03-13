@@ -17,6 +17,7 @@ import { collectionGameProcessing } from '~/server/jobs/collection-game-processi
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
+import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -158,6 +159,7 @@ export const jobs: Job[] = [
   ...entityModerationJobs,
   expireStrikesJob,
   processTimedUnmutesJob,
+  custodySweepJob,
 ];
 
 const log = createLogger('jobs', 'green');

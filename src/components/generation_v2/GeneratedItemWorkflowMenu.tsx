@@ -9,7 +9,7 @@
 import React from 'react';
 import { Menu, Text } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconArrowsShuffle,
   IconCheck,
@@ -81,26 +81,28 @@ export function GeneratedItemWorkflowMenu({
   }
 
   function handleDeleteImage() {
-    openConfirmModal({
-      title: 'Delete image',
-      children:
-        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
-      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => {
-        updateImages([
-          {
-            workflowId,
-            stepName: image.stepName,
-            images: {
-              [image.id]: { hidden: true },
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Delete image',
+        message:
+          'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+        labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+        confirmProps: { color: 'red' },
+        autoFocusConfirm: true,
+        zIndex: isLightbox ? 401 : imageGenerationDrawerZIndex + 2,
+        onConfirm: () => {
+          updateImages([
+            {
+              workflowId,
+              stepName: image.stepName,
+              images: {
+                [image.id]: { hidden: true },
+              },
             },
-          },
-        ]);
-        dialogStore.closeById('generated-image');
+          ]);
+        },
       },
-      zIndex: imageGenerationDrawerZIndex + 2,
-      centered: true,
     });
   }
 

@@ -92,6 +92,7 @@ export function GenericImageCard({
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         type={image.type}
+                        imageId={image.id}
                         width={
                           originalAspectRatio > 1
                             ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio

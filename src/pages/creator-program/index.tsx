@@ -88,7 +88,7 @@ function CreatorsClubV1() {
 
   return (
     <>
-      <Meta title="Creator Program | Civitai" />
+      <Meta title="Creator Program | Civitai" canonical="/creator-program" />
       <Container>
         <Stack gap="lg">
           <Title fz={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">

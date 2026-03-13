@@ -99,7 +99,7 @@ const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
 });
 
 const cardProps: HTMLProps<HTMLDivElement> = {
-  className: 'light:bg-gray-0 align-center flex flex-col rounded-lg p-4 dark:bg-dark-5',
+  className: 'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
 };
 
 const DATE_FORMAT = 'MMM D, YYYY @ hA z';
@@ -129,8 +129,8 @@ export const CreatorProgramV2 = () => {
   }
 
   return (
-    <div className="flex flex-col gap-5" id="creator-program">
-      <div className="flex flex-col gap-2">
+    <div className="mt-8 flex flex-col gap-5" id="creator-program">
+      <div className="flex flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <h2 className="text-2xl font-bold">Get Paid</h2>
           <CreatorProgramPhase buzzType={activeBuzzType} />
@@ -440,7 +440,7 @@ const BankBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
         <h3 className="text-xl font-bold">Bank Buzz</h3>
         <p className="text-sm">Claim your piece of the pool by banking your Buzz!</p>
 
-        <div className="flex">
+        <div className="flex items-end">
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
@@ -471,7 +471,7 @@ const BankBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
               variant="filled"
               color="lime.7"
               className="rounded-l-none"
-              h="100%"
+              h={36}
               loading={bankingBuzz}
               disabled={!hasActiveMembership}
               onClick={() => {
@@ -894,7 +894,7 @@ const WithdrawCashCard = () => {
 
         {canWithdraw && userPaymentConfiguration?.tipaltiPaymentsEnabled && (
           <div className="flex flex-col gap-2">
-            <div className="flex">
+            <div className="flex items-end">
               <NumberInput
                 label="Cash to Withdraw"
                 labelProps={{ className: '!hidden' }}
@@ -923,7 +923,7 @@ const WithdrawCashCard = () => {
                   variant="filled"
                   color="lime.7"
                   className="rounded-l-none"
-                  h="100%"
+                  h={36}
                   loading={withdrawingCash}
                   disabled={
                     toWithdraw < MIN_WITHDRAWAL_AMOUNT / 100 ||

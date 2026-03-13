@@ -143,6 +143,16 @@ export function useGeneratedItemWorkflows({
 // Apply Workflow Utilities
 // =============================================================================
 
+/**
+ * Resolve image dimensions for a BlobData item.
+ * Priority: sourceMetadataStore cache (set by input component) → BlobData dims → fetch from URL.
+ */
+async function resolveImageDimensions(image: BlobData): Promise<{ width: number; height: number }> {
+  const stored = sourceMetadataStore.getMetadata(image.url);
+  if (stored?.width && stored?.height) return { width: stored.width, height: stored.height };
+  return getImageDimensions(image.url).catch(() => ({ width: 512, height: 512 }));
+}
+
 interface ApplyWorkflowOptions {
   workflowId: string;
   image: BlobData;
@@ -192,11 +202,7 @@ function getTargetEcosystemKey(
 async function appendUpscaleImage(image: BlobData) {
   generationGraphPanel.setViewWithReturn('generate');
 
-  // Verify actual image dimensions
-  const dims = await getImageDimensions(image.url).catch(() => ({
-    width: image.width,
-    height: image.height,
-  }));
+  const dims = await resolveImageDimensions(image);
 
   // Store source metadata for enhancement tracking
   if (image.params || image.resources) {
@@ -249,11 +255,7 @@ async function applyWorkflowToForm({
 
   let images: { url: string; width: number; height: number }[] | undefined;
   if (acceptsImages) {
-    // Verify actual image dimensions — stored metadata may be stale or incorrect
-    const dims = await getImageDimensions(image.url).catch(() => ({
-      width: image.width,
-      height: image.height,
-    }));
+    const dims = await resolveImageDimensions(image);
     images = [{ url: image.url, width: dims.width, height: dims.height }];
   }
 
@@ -424,10 +426,7 @@ export async function applyWorkflowWithCheck({
 
     let images: { url: string; width: number; height: number }[] | undefined;
     if (acceptsImages) {
-      const dims = await getImageDimensions(image.url).catch(() => ({
-        width: image.width,
-        height: image.height,
-      }));
+      const dims = await resolveImageDimensions(image);
       images = [{ url: image.url, width: dims.width, height: dims.height }];
     }
 
@@ -506,13 +505,10 @@ export async function applyBulkWorkflow(workflowId: string, images: BlobData[]) 
     }
   }
 
-  // Verify dimensions for all images in parallel
+  // Resolve dimensions for all images in parallel (uses store cache, then BlobData, then fetch)
   const imagesWithDims = await Promise.all(
     batch.map(async (img) => {
-      const dims = await getImageDimensions(img.url).catch(() => ({
-        width: img.width,
-        height: img.height,
-      }));
+      const dims = await resolveImageDimensions(img);
       return { url: img.url, width: dims.width, height: dims.height };
     })
   );

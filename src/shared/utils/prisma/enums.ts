@@ -903,6 +903,7 @@ export type ComicPanelStatus = (typeof ComicPanelStatus)[keyof typeof ComicPanel
 export const ComicChapterStatus = {
   Draft: 'Draft',
   Published: 'Published',
+  Scheduled: 'Scheduled',
 } as const;
 
 export type ComicChapterStatus = (typeof ComicChapterStatus)[keyof typeof ComicChapterStatus];

@@ -1,13 +1,15 @@
-import { ActionIcon, Badge, Menu, Text } from '@mantine/core';
+import { ActionIcon, Badge, Menu, Text, Tooltip } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconDotsVertical,
   IconEye,
+  IconPencil,
   IconPhoto,
   IconPlus,
   IconRefreshDot,
   IconTrash,
   IconUser,
+  IconWand,
 } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
@@ -51,6 +53,8 @@ export interface PanelCardProps {
   onRegenerate: () => void;
   onInsertAfter: () => void;
   onClick: () => void;
+  onSketchEdit?: () => void;
+  onEnhance?: () => void;
 }
 
 export function PanelCard({
@@ -61,11 +65,16 @@ export function PanelCard({
   onRegenerate,
   onInsertAfter,
   onClick,
+  onSketchEdit,
+  onEnhance,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
   const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
 
+  const promptPreview = prompt?.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+
   return (
+    <Tooltip label={promptPreview} disabled={!prompt} withArrow position="top" multiline maw={300} openDelay={400}>
     <div className={styles.panelCard} onClick={onClick}>
       {imageUrl ? (
         <>
@@ -106,6 +115,28 @@ export function PanelCard({
                     >
                       View Details
                     </Menu.Item>
+                    {status === 'Ready' && imageUrl && onSketchEdit && (
+                      <Menu.Item
+                        leftSection={<IconPencil size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onSketchEdit();
+                        }}
+                      >
+                        Sketch Edit
+                      </Menu.Item>
+                    )}
+                    {status === 'Ready' && imageUrl && onEnhance && (
+                      <Menu.Item
+                        leftSection={<IconWand size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onEnhance();
+                        }}
+                      >
+                        Enhance
+                      </Menu.Item>
+                    )}
                     {(status === 'Ready' || status === 'Failed') && (
                       <Menu.Item
                         leftSection={<IconRefreshDot size={14} />}
@@ -198,6 +229,7 @@ export function PanelCard({
         </>
       )}
     </div>
+    </Tooltip>
   );
 }
 

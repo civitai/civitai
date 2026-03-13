@@ -32,6 +32,8 @@ export type EdgeMediaProps = EdgeUrlProps &
     videoProps?: React.HTMLAttributes<HTMLVideoElement> &
       React.MediaHTMLAttributes<HTMLVideoElement>;
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
+    /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
+    imageId?: number;
   };
 
 export function EdgeMedia({
@@ -68,6 +70,7 @@ export function EdgeMedia({
   videoProps,
   imageProps,
   optimized,
+  imageId,
   ...imgProps
 }: EdgeMediaProps) {
   const imgRef = useRef<HTMLImageElement>(null);
@@ -105,6 +108,7 @@ export function EdgeMedia({
           options={options}
           className={className}
           style={style}
+          imageId={imageId}
           {...imgProps}
           {...imageProps}
         />
@@ -133,6 +137,7 @@ export function EdgeMedia({
           vimeoVideoId={vimeoVideoId}
           disableWebm={disableWebm}
           disablePoster={disablePoster}
+          imageId={imageId}
           {...videoProps}
         />
       );

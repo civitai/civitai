@@ -19,7 +19,6 @@ import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesIn
 import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 import {
   parseStatusQuery,
   parseParticipationQuery,
@@ -61,7 +60,7 @@ function ChallengesPage() {
       <Meta
         title="AI Art Challenges | Civitai"
         description="Participate in AI art challenges, compete for prizes, and showcase your creative skills with the Civitai community"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/challenges`, rel: 'canonical' }]}
+        canonical="/challenges"
       />
 
       {/* Info Modal */}

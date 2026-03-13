@@ -55,6 +55,7 @@
 
 .tileCard {
   background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
+  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
   border-radius: var(--mantine-radius-md);
 }
 
@@ -128,6 +129,65 @@
   &[data-active="true"] {
     border: 1px solid rgb(var(--buzz-color));
     background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  }
+}
+
+// Transactions scroll shadow
+.transactionsScrollWrapper {
+  position: relative;
+  min-height: 0;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    background: linear-gradient(
+      to bottom,
+      light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.15)),
+      transparent
+    );
+    z-index: 1;
+    pointer-events: none;
+  }
+}
+
+// Two-column dashboard grid — stacks on mobile
+.dashboardGrid {
+  display: grid;
+  gap: var(--mantine-spacing-md);
+  grid-template-columns: 1fr;
+
+  @media (min-width: 768px) {
+    grid-template-columns: var(--grid-cols, minmax(0, 7fr) minmax(0, 5fr));
+  }
+}
+
+// Right column that constrains to left column height on desktop
+.dashboardGridConstrained {
+  // Mobile: natural flow
+  position: static;
+  min-height: auto;
+}
+
+.dashboardGridConstrainedInner {
+  // Mobile: normal positioning, explicit height for scroll
+  position: static;
+  height: 400px;
+
+  @media (min-width: 768px) {
+    position: absolute;
+    inset: 0;
+    height: auto;
+  }
+}
+
+@media (min-width: 768px) {
+  .dashboardGridConstrained {
+    position: relative;
+    min-height: 0;
   }
 }
 

@@ -7,7 +7,6 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 
 function VideosPage() {
   const { hidden, ...filters } = useImageFilters('videos');
@@ -17,7 +16,7 @@ function VideosPage() {
       <Meta
         title="Civitai Video Gallery | AI-Generated Art Showcase"
         description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/videos`, rel: 'canonical' }]}
+        canonical="/videos"
       />
       <MasonryContainer>
         {hidden && <Title>Your Hidden Videos</Title>}

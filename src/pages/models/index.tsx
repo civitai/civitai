@@ -6,7 +6,6 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { env } from '~/env/client';
 import type { PeriodMode } from '~/server/schema/base.schema';
 
 function ModelsPage() {
@@ -21,7 +20,7 @@ function ModelsPage() {
       <Meta
         title="AI Models | Civitai"
         description="Browse thousands of free Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings. The largest collection of AI image generation resources."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/models`, rel: 'canonical' }]}
+        canonical="/models"
       />
 
       <MasonryContainer className="flex flex-col gap-2">

@@ -55,7 +55,6 @@ import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { env } from '~/env/client';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -169,7 +168,7 @@ export default function EventPageDetails({
     <>
       <Meta
         title={`${eventData.title} | Civitai`}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events/${event}`, rel: 'canonical' }]}
+        canonical={`/events/${event}`}
       />
       <Container size="md">
         <Stack gap={48}>

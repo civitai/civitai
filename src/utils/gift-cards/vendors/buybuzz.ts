@@ -26,12 +26,12 @@ export const buybuzzVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/Bronze3.webp',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://buybuzz.io/products/bronze-membership-gift-card?variant=46208038142101',
-            image: '/images/gift-cards/Bronze3.webp',
+            image: '/images/gift-cards/bronze_final.webp',
           },
           {
             months: 6,
@@ -47,12 +47,12 @@ export const buybuzzVendor: Vendor = {
       },
       {
         tier: 'Silver',
-        image: '/images/gift-cards/Silver3.webp',
+        image: '/images/gift-cards/silver_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://buybuzz.io/products/silver-membership-gift-card?variant=46208048627861',
-            image: '/images/gift-cards/Silver3.webp',
+            image: '/images/gift-cards/silver_final.webp',
           },
           {
             months: 6,
@@ -68,12 +68,12 @@ export const buybuzzVendor: Vendor = {
       },
       {
         tier: 'Gold',
-        image: '/images/gift-cards/Gold3.webp',
+        image: '/images/gift-cards/gold_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://buybuzz.io/products/gold-membership-gift-card?variant=46208048005269',
-            image: '/images/gift-cards/Gold3.webp',
+            image: '/images/gift-cards/gold_final.webp',
           },
           {
             months: 6,

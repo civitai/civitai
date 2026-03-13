@@ -32,34 +32,34 @@ export const waifuWayVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/Bronze3.webp',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://waifuway.com/products/buzz-membership-bronze?variant=42048243236949',
-            image: '/images/gift-cards/Bronze3.webp',
+            image: '/images/gift-cards/bronze_final.webp',
           },
         ],
       },
       {
         tier: 'Silver',
-        image: '/images/gift-cards/Silver3.webp',
+        image: '/images/gift-cards/silver_final.webp',
         durations: [
           {
             months: 1,
             url: 'https://waifuway.com/products/buzz-membership-silver?variant=42048227573845',
-            image: '/images/gift-cards/Silver3.webp',
+            image: '/images/gift-cards/silver_final.webp',
           },
         ],
       },
       {
         tier: 'Gold',
-        image: '/images/gift-cards/Gold3.webp',
+        image: '/images/gift-cards/gold_final.webp',
         durations: [
           {
             months: 1,
             url: 'https://waifuway.com/products/buzz-membership-gold?variant=42048228687957',
-            image: '/images/gift-cards/Gold3.webp',
+            image: '/images/gift-cards/gold_final.webp',
           },
         ],
       },

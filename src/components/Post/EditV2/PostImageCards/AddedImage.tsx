@@ -616,6 +616,25 @@ function EditDetail() {
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
   const resourcesSorted = sortByModelTypes(resources);
+  const unmatchedResources = useMemo(() => {
+    const metaResources = (meta?.resources ?? []) as {
+      type: string;
+      name?: string;
+      hash?: string;
+      unmatched?: boolean;
+    }[];
+    return metaResources.filter((r) => r.unmatched && r.name);
+  }, [meta?.resources]);
+  const hasLegacyUnmatched = useMemo(() => {
+    if (unmatchedResources.length > 0) return false; // new-style flags take precedence
+    const metaResources = (meta?.resources ?? []) as { hash?: string; unmatched?: boolean }[];
+    const resourcesWithHashes = metaResources.filter((r) => !!r.hash);
+    // If no resources have the unmatched flag at all (legacy image), fall back to count comparison
+    const hasAnyFlags = metaResources.some((r) => r.unmatched !== undefined);
+    if (hasAnyFlags) return false;
+    const detectedCount = resources.filter((r) => r.detected).length;
+    return resourcesWithHashes.length > detectedCount;
+  }, [meta?.resources, resources, unmatchedResources.length]);
   const cannotVerifyAi =
     !isValidAIGeneration({
       id: image.id,
@@ -762,10 +781,9 @@ function EditDetail() {
             {/*
           // #region [resources]
           */}
-            {!!resources?.length && (
+            {(!!resources?.length || unmatchedResources.length > 0 || hasLegacyUnmatched) && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {/* TODO check if these ever dont have modelIds */}
                 {resourcesSorted
                   .filter((x) => !!x.modelName)
                   .slice(0, !showMoreResources ? 3 : resources.length)
@@ -795,14 +813,38 @@ function EditDetail() {
                     </Button>
                   </div>
                 )}
+                {unmatchedResources.length > 0 && (
+                  <Alert color="yellow" radius={0} className="-mx-3 -mb-3">
+                    <Text size="sm">
+                      The following resources could not be matched to models on Civitai:
+                    </Text>
+                    {unmatchedResources.map((r, i) => {
+                      const displayName = r.name?.replace(/.*[/\\]/, '').replace(/\.[^/.]+$/, '');
+                      return (
+                        <Group key={i} gap="xs" wrap="nowrap" mt={4}>
+                          <Text size="sm" lineClamp={1}>
+                            {displayName}
+                          </Text>
+                          <Badge color="gray" size="sm" variant="filled">
+                            {getDisplayName(r.type)}
+                          </Badge>
+                        </Group>
+                      );
+                    })}
+                  </Alert>
+                )}
+                {hasLegacyUnmatched && (
+                  <Alert color="yellow" radius="sm" className="-mx-3 -mb-3">
+                    <Text size="sm">
+                      Some resources detected in this image could not be matched to models on
+                      Civitai. You can add them manually using the + Resource button.
+                    </Text>
+                  </Alert>
+                )}
               </CustomCard>
             )}
-            {/* #endregion */}
 
-            {/*
-          // #region [missing resources]
-          */}
-            {!resources?.length && (
+            {!resources?.length && !unmatchedResources.length && !hasLegacyUnmatched && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
                 <Center>

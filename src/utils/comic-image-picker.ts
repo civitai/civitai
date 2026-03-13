@@ -1,23 +1,21 @@
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { downloadGeneratorImages } from '~/utils/generator-import';
 import { showErrorNotification } from '~/utils/notifications';
 
 /**
- * Fetch a generator image by URL, upload the blob to CF, and return the CF image ID.
- * This is the low-level primitive used by all generator-image-pick flows.
+ * Download a generator image using the standard flow and upload it via the provided upload function.
+ * Uses `downloadGeneratorImages` (same as posts/challenges) for the download step.
  */
 export async function fetchAndUploadGeneratorImage(
   imageUrl: string,
   fileNameBase: string,
   uploadFn: (file: File) => Promise<{ id: string }>
 ): Promise<string> {
-  const edgeUrl = getEdgeUrl(imageUrl, { original: true }) ?? imageUrl;
-  const response = await fetch(edgeUrl);
-  if (!response.ok) throw new Error('Failed to fetch image');
-  const blob = await response.blob();
-  const ext = blob.type.split('/')[1] || 'jpg';
-  const file = new File([blob], `${fileNameBase}_${Date.now()}.${ext}`, { type: blob.type });
-  const result = await uploadFn(file);
+  const files = await downloadGeneratorImages([
+    { url: imageUrl, label: fileNameBase, type: 'image' as const },
+  ]);
+  if (files.length === 0) throw new Error('Failed to download image from generator');
+  const result = await uploadFn(files[0].file);
   return result.id;
 }
 
@@ -31,8 +29,8 @@ type GeneratorPickOptions = {
 };
 
 /**
- * Open the generator image picker, fetch the selected image, upload to CF, and call onSuccess.
- * Convenience wrapper for single-select flows (cover/hero images).
+ * Open the generator image picker, download the selected image via standard flow,
+ * upload to S3, and call onSuccess with the S3 key.
  */
 export function openGeneratorImagePicker({
   title,
@@ -53,8 +51,8 @@ export function openGeneratorImagePicker({
         if (selected.length === 0) return;
         try {
           onLoadingChange?.(true);
-          const cfId = await fetchAndUploadGeneratorImage(selected[0].url, fileNameBase, uploadFn);
-          onSuccess(cfId);
+          const s3Key = await fetchAndUploadGeneratorImage(selected[0].url, fileNameBase, uploadFn);
+          onSuccess(s3Key);
         } catch (err) {
           console.error(`Failed to upload generator image for ${fileNameBase}:`, err);
           showErrorNotification({

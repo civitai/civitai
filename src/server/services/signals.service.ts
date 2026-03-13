@@ -6,6 +6,13 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 export async function getAccessToken({ id }: GetByIdInput) {
   // if (isProd) logToAxiom({ type: 'signals', id }, 'connection-testing').catch();
+  if (!env.SIGNALS_ENDPOINT) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Signals service is not configured',
+    });
+  }
+
   const response = await fetch(`${env.SIGNALS_ENDPOINT}/users/${id}/accessToken`);
   if (!response.ok) {
     switch (response.status) {

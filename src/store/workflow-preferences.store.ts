@@ -8,7 +8,10 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { isEnhancementWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import {
+  isEnhancementWorkflow,
+  getEcosystemsForWorkflow,
+} from '~/shared/data-graph/generation/config/workflows';
 
 interface WorkflowPreferenceEntry {
   ecosystem: string;
@@ -24,6 +27,10 @@ interface WorkflowPreferencesState {
   getPreferredEcosystem: (workflowId: string) => string | undefined;
   /** Get the most recently used non-enhancement workflow + ecosystem */
   getLastUsedWorkflow: () => { workflow: string; ecosystem: string } | undefined;
+  /** Get the most recently used workflow that supports a specific ecosystem */
+  getLastUsedWorkflowForEcosystem: (
+    ecosystemId: number
+  ) => { workflow: string; ecosystem: string } | undefined;
 }
 
 export const useWorkflowPreferencesStore = create<WorkflowPreferencesState>()(
@@ -49,6 +56,21 @@ export const useWorkflowPreferencesStore = create<WorkflowPreferencesState>()(
         let best: { workflow: string; ecosystem: string; timestamp: number } | undefined;
         for (const [workflowId, entry] of entries) {
           if (isEnhancementWorkflow(workflowId)) continue;
+          if (!best || entry.timestamp > best.timestamp) {
+            best = { workflow: workflowId, ecosystem: entry.ecosystem, timestamp: entry.timestamp };
+          }
+        }
+        return best ? { workflow: best.workflow, ecosystem: best.ecosystem } : undefined;
+      },
+
+      getLastUsedWorkflowForEcosystem: (ecosystemId) => {
+        const entries = Object.entries(get().ecosystemByWorkflow);
+        let best: { workflow: string; ecosystem: string; timestamp: number } | undefined;
+        for (const [workflowId, entry] of entries) {
+          if (isEnhancementWorkflow(workflowId)) continue;
+          // Check if this workflow supports the target ecosystem
+          const supportedEcosystems = getEcosystemsForWorkflow(workflowId);
+          if (!supportedEcosystems.includes(ecosystemId)) continue;
           if (!best || entry.timestamp > best.timestamp) {
             best = { workflow: workflowId, ecosystem: entry.ecosystem, timestamp: entry.timestamp };
           }
@@ -90,5 +112,8 @@ export const workflowPreferences = {
   },
   getLastUsedWorkflow: () => {
     return useWorkflowPreferencesStore.getState().getLastUsedWorkflow();
+  },
+  getLastUsedWorkflowForEcosystem: (ecosystemId: number) => {
+    return useWorkflowPreferencesStore.getState().getLastUsedWorkflowForEcosystem(ecosystemId);
   },
 };

@@ -65,8 +65,9 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         if (details.extra) {
           exif.prompt = JSON.stringify(workflow);
           exif.workflow = generationDetails;
+          return true;
         }
-        return true;
+        return false;
       } catch (e) {
         return false;
       }
@@ -243,7 +244,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
     } else {
       const initialSamplerNode =
-        samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ??
+        samplerNodes.find((x) => x.latent_image?.class_type == 'EmptyLatentImage') ??
         samplerNodes[0];
 
       if (initialSamplerNode) {

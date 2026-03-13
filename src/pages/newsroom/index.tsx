@@ -39,7 +39,11 @@ export default function CivitaiNewsroom() {
 
   return (
     <>
-      <Meta title="Civitai Newsroom" description="The latest news and updates from Civitai" />
+      <Meta
+        title="Civitai Newsroom"
+        description="The latest news and updates from Civitai"
+        canonical="/newsroom"
+      />
       <div className={classes.hero}>
         <Container size="md">
           <Stack align="center" gap={0}>

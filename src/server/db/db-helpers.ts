@@ -72,6 +72,15 @@ export function getClient(
     ? 'logical-pg'
     : 'node-pg';
 
+  // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.
+  // For notification instances, we set it per-connection via SET instead.
+  const notifStatementTimeout =
+    instance === 'notificationRead'
+      ? (env.IS_DATAPACKET ? env.DATABASE_READ_TIMEOUT ?? 10000 : undefined)
+      : instance === 'notification'
+      ? env.DATABASE_WRITE_TIMEOUT
+      : undefined;
+
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: env.IS_DATAPACKET
@@ -82,13 +91,23 @@ export function getClient(
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
-      instance === 'notificationRead'
-        ? (env.IS_DATAPACKET ? env.DATABASE_READ_TIMEOUT ?? 10000 : undefined) // standby seems to not support this on DOKS
+      isNotification && env.IS_DATAPACKET
+        ? undefined // DP: set per-connection below (PgBouncer rejects startup param)
+        : instance === 'notificationRead'
+        ? undefined // DOKS: standby doesn't support this
         : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
+
+  // Set statement_timeout per-connection for notification instances on DP
+  // (can't use startup parameter with DO managed PgBouncer)
+  if (env.IS_DATAPACKET && isNotification && notifStatementTimeout) {
+    pool.on('connect', (client) => {
+      client.query(`SET statement_timeout = ${Number(notifStatementTimeout)}`).catch(() => {});
+    });
+  }
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
     sql: Prisma.Sql | string,

@@ -345,7 +345,7 @@ export default function IntentPost() {
 
   return (
     <>
-      <Meta title="Create a Post | Civitai" />
+      <Meta title="Create a Post | Civitai" deIndex={true} />
       <Container my="lg" size="xs">
         <Stack>
           <Title order={2}>Create New Post</Title>

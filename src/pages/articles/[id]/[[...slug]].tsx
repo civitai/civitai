@@ -53,7 +53,6 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -229,22 +228,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         title={`${article.title} | Civitai`}
         description={truncate(removeTags(article.content), { length: 150 })}
         images={article?.coverImage}
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [
-                {
-                  href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(
-                    article.title
-                  )}`,
-                  rel: 'canonical',
-                },
-                {
-                  href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}`,
-                  rel: 'alternate',
-                },
-              ]
-            : []
-        }
+        canonical={`/articles/${article.id}/${slugit(article.title)}`}
+        alternate={`/articles/${article.id}`}
         deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={article.nsfwLevel}>

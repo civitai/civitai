@@ -36,7 +36,7 @@ import {
   updateComicChapterNsfwLevels,
   updateComicProjectNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { ingestImageById } from '~/server/services/image.service';
+import { createImage, ingestImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -52,6 +52,7 @@ import {
   nanoBananaProSizes,
   seedreamSizes,
   qwenSizes,
+  grokSizes,
 } from '~/server/common/constants';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
@@ -60,7 +61,10 @@ import {
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { uploadViaUrl, uploadViaBuffer } from '~/utils/cf-images-utils';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { getS3Client } from '~/utils/s3-utils';
+import { env } from '~/env/server';
+import { randomUUID } from 'crypto';
 
 // Feature flag gate — all procedures require the comicCreator flag
 const comicFlag = isFlagProtected('comicCreator');
@@ -119,6 +123,13 @@ const COMIC_MODEL_CONFIG: Record<
     img2imgVersionId: 2558804,
     maxReferenceImages: 3,
     sizes: qwenSizes,
+  },
+  Grok: {
+    engine: 'grok',
+    baseModel: 'Grok',
+    versionId: 2738377,
+    maxReferenceImages: 7,
+    sizes: grokSizes,
   },
 };
 
@@ -202,7 +213,11 @@ const getProjectSchema = z.object({
 
 // Reference (character/location/item) creation — always global per user
 const createReferenceSchema = z.object({
-  name: z.string().min(1).max(255),
+  name: z
+    .string()
+    .min(1)
+    .max(255)
+    .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
   type: z.nativeEnum(ComicReferenceType).default(ComicReferenceType.Character),
   description: z.string().max(2000).optional(),
 });
@@ -221,7 +236,7 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen']);
+const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen', 'Grok']);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -240,9 +255,9 @@ const createPanelSchema = z.object({
 const updatePanelSchema = z.object({
   panelId: z.number().int(),
   status: z.nativeEnum(ComicPanelStatus).optional(),
-  imageUrl: z.string().url().optional(),
+  imageUrl: z.string().nullish(),
   civitaiJobId: z.string().optional(),
-  errorMessage: z.string().optional(),
+  errorMessage: z.string().nullish(),
 });
 
 const deletePanelSchema = z.object({
@@ -315,6 +330,8 @@ const enhancePanelSchema = z.object({
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
+  // When true, always run AI generation even without a prompt (e.g. aspect ratio change, sketch annotations)
+  forceGenerate: z.boolean().default(false),
 });
 
 const bulkCreatePanelsSchema = z.object({
@@ -355,6 +372,15 @@ const updateProjectSchema = z.object({
 
 const deleteReferenceSchema = z.object({
   referenceId: z.number().int(),
+});
+
+const updateReferenceSchema = z.object({
+  referenceId: z.number().int(),
+  name: z
+    .string()
+    .min(1)
+    .max(255)
+    .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
 });
 
 const chapterEarlyAccessConfigSchema = z
@@ -617,7 +643,7 @@ export const comicsRouter = router({
                   select: { referenceId: true },
                 },
                 image: {
-                  select: { nsfwLevel: true },
+                  select: { nsfwLevel: true, width: true, height: true },
                 },
               },
             },
@@ -707,10 +733,11 @@ export const comicsRouter = router({
         sort: z.enum(['Newest', 'MostFollowed', 'MostChapters']).default('Newest'),
         followed: z.boolean().optional(),
         userId: z.number().optional(),
+        browsingLevel: z.number().int().min(0).optional(),
       })
     )
     .query(async ({ input, ctx }) => {
-      const { limit, cursor, genre, period, sort, followed, userId } = input;
+      const { limit, cursor, genre, period, sort, followed, userId, browsingLevel } = input;
 
       // Build where clause
       const where: any = {
@@ -731,6 +758,15 @@ export const comicsRouter = router({
 
       if (genre) where.genre = genre;
       if (userId) where.userId = userId;
+
+      // NSFW browsing level filter — compute allowed nsfwLevel values using bitwise match
+      if (browsingLevel != null && browsingLevel > 0) {
+        const allowedNsfwLevels = [0]; // Always include unclassified (nsfwLevel=0)
+        for (let i = 1; i <= 63; i++) {
+          if ((i & browsingLevel) !== 0) allowedNsfwLevels.push(i);
+        }
+        where.nsfwLevel = { in: allowedNsfwLevels };
+      }
 
       if (period && period !== 'AllTime') {
         const periodMap: Record<string, number> = {
@@ -1155,42 +1191,28 @@ export const comicsRouter = router({
 
       // Handle cover image
       if (input.coverUrl) {
-        const image = await dbWrite.image.create({
-          data: {
-            url: input.coverUrl,
-            userId: ctx.user.id,
-            width: 0,
-            height: 0,
-            ingestion: 'Pending',
-          },
+        const image = await createImage({
+          url: input.coverUrl,
+          type: 'image',
+          userId: ctx.user.id,
         });
         await dbWrite.comicProject.update({
           where: { id: project.id },
           data: { coverImageId: image.id },
         });
-        ingestImageById({ id: image.id }).catch((e) =>
-          console.error(`Failed to ingest cover image ${image.id}:`, e)
-        );
       }
 
       // Handle hero image
       if (input.heroUrl) {
-        const image = await dbWrite.image.create({
-          data: {
-            url: input.heroUrl,
-            userId: ctx.user.id,
-            width: 0,
-            height: 0,
-            ingestion: 'Pending',
-          },
+        const image = await createImage({
+          url: input.heroUrl,
+          type: 'image',
+          userId: ctx.user.id,
         });
         await dbWrite.comicProject.update({
           where: { id: project.id },
           data: { heroImageId: image.id },
         });
-        ingestImageById({ id: image.id }).catch((e) =>
-          console.error(`Failed to ingest hero image ${image.id}:`, e)
-        );
       }
 
       await comicsSearchIndex.queueUpdate([
@@ -1246,14 +1268,10 @@ export const comicsRouter = router({
         data.coverImageId = input.coverImageId;
       } else if (input.coverUrl !== undefined) {
         if (input.coverUrl) {
-          const image = await dbWrite.image.create({
-            data: {
-              url: input.coverUrl,
-              userId: ctx.user.id,
-              width: 0,
-              height: 0,
-              ingestion: 'Pending',
-            },
+          const image = await createImage({
+            url: input.coverUrl,
+            type: 'image',
+            userId: ctx.user.id,
           });
           data.coverImageId = image.id;
         } else {
@@ -1266,14 +1284,10 @@ export const comicsRouter = router({
         data.heroImageId = input.heroImageId;
       } else if (input.heroUrl !== undefined) {
         if (input.heroUrl) {
-          const image = await dbWrite.image.create({
-            data: {
-              url: input.heroUrl,
-              userId: ctx.user.id,
-              width: 0,
-              height: 0,
-              ingestion: 'Pending',
-            },
+          const image = await createImage({
+            url: input.heroUrl,
+            type: 'image',
+            userId: ctx.user.id,
           });
           data.heroImageId = image.id;
         } else {
@@ -1285,18 +1299,6 @@ export const comicsRouter = router({
         where: { id: input.id },
         data,
       });
-
-      // Trigger ingestion for new images
-      if (data.coverImageId) {
-        ingestImageById({ id: data.coverImageId }).catch((e) =>
-          console.error(`Failed to ingest cover image ${data.coverImageId}:`, e)
-        );
-      }
-      if (data.heroImageId) {
-        ingestImageById({ id: data.heroImageId }).catch((e) =>
-          console.error(`Failed to ingest hero image ${data.heroImageId}:`, e)
-        );
-      }
 
       await comicsSearchIndex.queueUpdate([
         { id: input.id, action: SearchIndexUpdateQueueAction.Update },
@@ -1493,14 +1495,12 @@ export const comicsRouter = router({
       let nextPosition = (lastImage?.position ?? -1) + 1;
 
       for (const img of input.images) {
-        const image = await dbWrite.image.create({
-          data: {
-            url: img.url,
-            userId: ctx.user!.id,
-            width: img.width,
-            height: img.height,
-            ingestion: 'Pending',
-          },
+        const image = await createImage({
+          url: img.url,
+          type: 'image',
+          userId: ctx.user!.id,
+          width: img.width,
+          height: img.height,
         });
 
         await dbWrite.comicReferenceImage.create({
@@ -1510,11 +1510,6 @@ export const comicsRouter = router({
             position: nextPosition++,
           },
         });
-
-        // Trigger ingestion asynchronously
-        ingestImageById({ id: image.id }).catch((e) =>
-          console.error(`Failed to ingest reference image ${image.id}:`, e)
-        );
       }
 
       // Set reference status to Ready
@@ -1857,6 +1852,38 @@ export const comicsRouter = router({
     return updated;
   }),
 
+  replacePanelImage: comicProtectedProcedure
+    .input(z.object({ panelId: z.number().int(), imageUrl: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const panel = await dbRead.comicPanel.findUnique({
+        where: { id: input.panelId },
+        include: { chapter: { include: { project: { select: { userId: true, id: true } } } } },
+      });
+      if (!panel || panel.chapter.project.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+
+      const image = await createImage({
+        url: input.imageUrl,
+        type: 'image',
+        userId: ctx.user.id,
+      });
+
+      const updated = await dbWrite.comicPanel.update({
+        where: { id: input.panelId },
+        data: { imageUrl: input.imageUrl, imageId: image.id },
+      });
+
+      // Trigger NSFW scanning and level recalculation
+      ingestImageById({ id: image.id }).catch((e) =>
+        console.error(`Failed to ingest sketch edit image ${image.id}:`, e)
+      );
+      updateComicChapterNsfwLevels([panel.chapter.project.id]).catch(() => {});
+      updateComicProjectNsfwLevels([panel.chapter.project.id]).catch(() => {});
+
+      return updated;
+    }),
+
   deletePanel: comicProtectedProcedure.input(deletePanelSchema).mutation(async ({ ctx, input }) => {
     // Verify ownership via chapter -> project
     const panel = await dbRead.comicPanel.findUnique({
@@ -2089,59 +2116,54 @@ export const comicsRouter = router({
           const imgHeight =
             genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
-          // Upload to Cloudflare — try URL-based first, fall back to downloading + uploading binary
-          let cfImageId: string;
-          const uploadMeta = {
-            userId: ctx.user!.id,
-            source: 'comic-panel',
-            panelId: panel.id,
-          };
+          // Download from orchestrator and upload to S3 (standard image storage)
+          let s3ImageKey: string;
           try {
-            const result = await uploadViaUrl(imageUrl, uploadMeta);
-            cfImageId = result.id;
+            const imageResponse = await fetch(imageUrl);
+            if (!imageResponse.ok)
+              throw new Error(`Failed to download: ${imageResponse.status}`);
+            const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+
+            s3ImageKey = randomUUID();
+            const s3 = getS3Client('image');
+            await s3.send(
+              new PutObjectCommand({
+                Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                Key: s3ImageKey,
+                Body: imageBuffer,
+                ContentType: imageResponse.headers.get('content-type') || 'image/jpeg',
+              })
+            );
           } catch (e) {
-            console.warn(`uploadViaUrl failed for panel ${panel.id}, trying buffer fallback:`, e);
-            try {
-              const result = await uploadViaBuffer(imageUrl, uploadMeta);
-              cfImageId = result.id;
-            } catch (e2) {
-              console.error(`Failed to upload panel ${panel.id} image to CF (both methods):`, e2);
-              await dbWrite.comicPanel.update({
-                where: { id: panel.id },
-                data: {
-                  status: ComicPanelStatus.Failed,
-                  errorMessage: 'Image upload failed. Please regenerate.',
-                },
-              });
-              return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
-            }
+            console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
+            await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: {
+                status: ComicPanelStatus.Failed,
+                errorMessage: 'Image upload failed. Please regenerate.',
+              },
+            });
+            return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
           }
 
-          // Create Image record for content moderation pipeline
-          const image = await dbWrite.image.create({
-            data: {
-              url: cfImageId,
-              userId: ctx.user!.id,
-              width: imgWidth,
-              height: imgHeight,
-              meta: { prompt: panel.prompt },
-              ingestion: 'Pending',
-            },
+          // Create Image record via standard pipeline (ingestion + flags)
+          const image = await createImage({
+            url: s3ImageKey,
+            type: 'image',
+            userId: ctx.user!.id,
+            width: imgWidth,
+            height: imgHeight,
+            meta: { prompt: panel.prompt } as any,
           });
 
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },
             data: {
               status: ComicPanelStatus.Ready,
-              imageUrl: cfImageId,
+              imageUrl: s3ImageKey,
               imageId: image.id,
             },
           });
-
-          // Trigger image ingestion — scan callback handles NSFW level rollup
-          ingestImageById({ id: image.id }).catch((e) =>
-            console.error(`Failed to ingest comic panel image ${image.id}:`, e)
-          );
 
           return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
         }
@@ -2327,6 +2349,7 @@ export const comicsRouter = router({
         projectId: z.number().int(),
         chapterPosition: z.number().int().min(0),
         earlyAccessConfig: chapterEarlyAccessConfigSchema.optional(),
+        scheduledAt: z.date().optional(),
       })
     )
     .use(isChapterOwner)
@@ -2378,19 +2401,26 @@ export const comicsRouter = router({
       await updateComicChapterNsfwLevels([input.projectId]);
       await updateComicProjectNsfwLevels([input.projectId]);
 
-      const isFirstPublish = !chapter.publishedAt;
+      const isScheduled = input.scheduledAt && input.scheduledAt > new Date();
+      const isFirstPublish = chapter.status === ComicChapterStatus.Draft;
+
       const updated = await dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
         data: {
-          status: ComicChapterStatus.Published,
-          ...(isFirstPublish ? { publishedAt: new Date() } : {}),
+          status: isScheduled ? ComicChapterStatus.Scheduled : ComicChapterStatus.Published,
+          publishedAt: isScheduled ? input.scheduledAt : new Date(),
           ...(input.earlyAccessConfig !== undefined
             ? { earlyAccessConfig: input.earlyAccessConfig ?? undefined }
             : {}),
         },
       });
+
+      // For scheduled chapters, skip notifications and project publish until the scheduled time
+      if (isScheduled) {
+        return updated;
+      }
 
       // Set project publishedAt on first ever chapter publish
       if (!chapter.project.publishedAt) {
@@ -2455,11 +2485,16 @@ export const comicsRouter = router({
         );
       }
 
+      const isScheduled = chapter.status === ComicChapterStatus.Scheduled;
       const updated = await dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
-        data: { status: ComicChapterStatus.Draft },
+        data: {
+          status: ComicChapterStatus.Draft,
+          // Clear publishedAt when canceling a schedule (it was set to the future date)
+          ...(isScheduled ? { publishedAt: null } : {}),
+        },
       });
 
       // Update search index — unpublishing may affect discoverability
@@ -2860,16 +2895,14 @@ export const comicsRouter = router({
         nextPosition = (lastPanel?.position ?? -1) + 1;
       }
 
-      // No prompt → create panel directly from image (free)
-      if (!input.prompt || !input.prompt.trim()) {
-        const image = await dbWrite.image.create({
-          data: {
-            url: input.sourceImageUrl,
-            userId: ctx.user!.id,
-            width: input.sourceImageWidth,
-            height: input.sourceImageHeight,
-            ingestion: 'Pending',
-          },
+      // No prompt and not forced → create panel directly from image (free)
+      if ((!input.prompt || !input.prompt.trim()) && !input.forceGenerate) {
+        const image = await createImage({
+          url: input.sourceImageUrl,
+          type: 'image',
+          userId: ctx.user!.id,
+          width: input.sourceImageWidth,
+          height: input.sourceImageHeight,
         });
 
         const panel = await dbWrite.comicPanel.create({
@@ -2888,11 +2921,6 @@ export const comicsRouter = router({
             },
           },
         });
-
-        // Trigger image ingestion — scan callback handles NSFW level rollup
-        ingestImageById({ id: image.id }).catch((e) =>
-          console.error(`Failed to ingest enhanced panel image ${image.id}:`, e)
-        );
 
         return panel;
       }
@@ -2997,11 +3025,12 @@ export const comicsRouter = router({
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
       // Build prompt — optionally enhance
-      let fullPrompt = input.prompt;
-      if (input.enhance) {
+      const userPrompt = input.prompt?.trim() || '';
+      let fullPrompt = userPrompt;
+      if (input.enhance && userPrompt) {
         fullPrompt = await enhanceComicPrompt({
           token,
-          userPrompt: input.prompt,
+          userPrompt,
           characterName: primaryReferenceName,
           characterNames: allReferenceNames,
           previousPanel: effectiveContext ?? undefined,
@@ -3034,8 +3063,8 @@ export const comicsRouter = router({
         data: {
           projectId: input.projectId,
           chapterPosition: input.chapterPosition,
-          prompt: input.prompt,
-          enhancedPrompt: input.enhance ? fullPrompt : null,
+          prompt: userPrompt,
+          enhancedPrompt: input.enhance && userPrompt ? fullPrompt : null,
           position: nextPosition,
           status: ComicPanelStatus.Pending,
           metadata,
@@ -3052,7 +3081,7 @@ export const comicsRouter = router({
       try {
         const result = await createImageGen({
           params: {
-            prompt: fullPrompt,
+            prompt: fullPrompt || '',
             negativePrompt: '',
             engine: modelConfig.engine,
             baseModel: modelConfig.baseModel as any,
@@ -3219,14 +3248,12 @@ export const comicsRouter = router({
 
         // Mode 2: Source image without prompt — create directly (free)
         if (panelDef.sourceImageUrl && (!panelDef.prompt || !panelDef.prompt.trim())) {
-          const image = await dbWrite.image.create({
-            data: {
-              url: panelDef.sourceImageUrl,
-              userId: ctx.user!.id,
-              width: panelDef.sourceImageWidth ?? 512,
-              height: panelDef.sourceImageHeight ?? 512,
-              ingestion: 'Pending',
-            },
+          const image = await createImage({
+            url: panelDef.sourceImageUrl,
+            type: 'image',
+            userId: ctx.user!.id,
+            width: panelDef.sourceImageWidth ?? 512,
+            height: panelDef.sourceImageHeight ?? 512,
           });
 
           const panel = await dbWrite.comicPanel.create({
@@ -3245,10 +3272,6 @@ export const comicsRouter = router({
               },
             },
           });
-
-          ingestImageById({ id: image.id }).catch((e) =>
-            console.error(`Failed to ingest bulk panel image ${image.id}:`, e)
-          );
 
           createdPanels.push(panel);
           contextPanel = {
@@ -3565,6 +3588,23 @@ export const comicsRouter = router({
         where: { id: input.referenceId },
       });
       return { success: true };
+    }),
+
+  updateReference: comicProtectedProcedure
+    .input(updateReferenceSchema)
+    .mutation(async ({ ctx, input }) => {
+      const reference = await dbRead.comicReference.findUnique({
+        where: { id: input.referenceId },
+        select: { userId: true },
+      });
+      if (!reference || reference.userId !== ctx.user.id) {
+        throw throwAuthorizationError();
+      }
+      const updated = await dbWrite.comicReference.update({
+        where: { id: input.referenceId },
+        data: { name: input.name },
+      });
+      return updated;
     }),
 
   deleteReferenceImage: comicProtectedProcedure

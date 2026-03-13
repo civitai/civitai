@@ -1,6 +1,5 @@
 import type { MantineSize } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Box,
   Button,
@@ -43,6 +42,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -241,6 +241,20 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {currentUser?.isModerator && (
+          <CopyButton value={String(user.id)}>
+            {({ copied, copy, color }) => (
+              <Text
+                c={copied ? color : 'dimmed'}
+                size="sm"
+                className="cursor-pointer"
+                onClick={copy}
+              >
+                {copied ? 'Copied!' : `User ID: ${user.id}`}
+              </Text>
+            )}
+          </CopyButton>
+        )}
         {user?.bannedAt && (
           <Group>
             <Popover withArrow>

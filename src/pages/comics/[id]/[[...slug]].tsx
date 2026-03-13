@@ -190,7 +190,7 @@ function ComicOverview({ project }: { project: Project }) {
 
   return (
     <>
-      <Meta title={`${project.name} - Civitai Comics`} />
+      <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/${project.id}`} />
 
       <div className={styles.overviewRoot}>
         {/* Hero image */}
@@ -851,7 +851,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
 
   return (
     <>
-      <Meta title={`${activeChapter?.name ?? 'Chapter'} - ${project.name} - Civitai Comics`} />
+      <Meta title={`${activeChapter?.name ?? 'Chapter'} - ${project.name} - Civitai Comics`} deIndex={true} />
 
       <div className={styles.readerRoot}>
         {/* Sticky header — hides on scroll down */}

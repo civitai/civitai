@@ -172,6 +172,7 @@ function ImageContent({
               name={image.name ?? image.id.toString()}
               alt={image.name ?? undefined}
               type={image.type}
+              imageId={image.id}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
               wrapperProps={{
                 className: `flex items-center justify-center max-h-full w-auto max-w-full ${

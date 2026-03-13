@@ -1,19 +1,17 @@
 import {
   Anchor,
   Center,
-  Grid,
   Group,
   List,
-  Loader,
   Paper,
   Popover,
   ScrollArea,
   SegmentedControl,
+  Skeleton,
   Stack,
   Text,
-  Title,
 } from '@mantine/core';
-import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
+import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -40,46 +38,10 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { abbreviateValue } from '~/components/Buzz/chart-defaults';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
-
-const options = {
-  aspectRatio: 1.4,
-  responsive: true,
-  plugins: {
-    title: {
-      display: false,
-    },
-    legend: {
-      display: true,
-      position: 'top' as const,
-      labels: {
-        usePointStyle: true,
-        padding: 20,
-      },
-    },
-  },
-  scales: {
-    x: {
-      stacked: false, // Show bars side by side instead of stacked
-      grid: {
-        display: false,
-      },
-    },
-    y: {
-      stacked: false, // Show bars side by side instead of stacked
-      beginAtZero: true,
-      grid: {
-        color: 'rgba(0, 0, 0, 0.1)',
-      },
-    },
-  },
-  elements: {
-    bar: {
-      borderRadius: 4,
-    },
-  },
-};
 
 const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
@@ -127,6 +89,7 @@ export const BuzzDashboardOverview = ({
 
   const transactionData = useBuzzTransactions(accountId, currentAccountType);
   const buzzConfig = useBuzzCurrencyConfig(currentAccountType);
+  const mobile = useIsMobile({ breakpoint: 'sm' });
   const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
     window: 'day',
     accountType: currentAccountType,
@@ -146,6 +109,47 @@ export const BuzzDashboardOverview = ({
 
   const isLoadingReport = isLoading || isRefetching;
   const viewingHourly = reportFilters.window === 'hour';
+
+  const options = React.useMemo(() => {
+    return {
+      aspectRatio: mobile ? 1 : 1.4,
+      responsive: true,
+      plugins: {
+        title: { display: false },
+        legend: {
+          display: true,
+          position: 'top' as const,
+          labels: {
+            usePointStyle: true,
+            padding: 20,
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: false,
+          grid: { display: false },
+          ticks: {
+            color: buzzConfig.color,
+            maxTicksLimit: mobile ? 5 : 8,
+            autoSkip: true,
+          },
+        },
+        y: {
+          stacked: false,
+          beginAtZero: true,
+          ticks: {
+            color: buzzConfig.color,
+            callback: abbreviateValue,
+          },
+          grid: { color: 'rgba(128, 128, 128, 0.1)' },
+        },
+      },
+      elements: {
+        bar: { borderRadius: 4 },
+      },
+    };
+  }, [buzzConfig.color, mobile]);
 
   const labels = useMemo(() => {
     return report.map((d) => formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD'), true);
@@ -193,81 +197,79 @@ export const BuzzDashboardOverview = ({
   }, [report, viewingHourly, currentAccountType, currentAccountTypeLabel, buzzConfig]);
 
   return (
-    <Grid>
-      <Grid.Col
-        span={{
-          base: 12,
-          sm: 6,
-          md: 7,
-        }}
-      >
+    <div className={classes.dashboardGrid} style={{ '--grid-cols': 'minmax(0, 7fr) minmax(0, 5fr)' } as React.CSSProperties}>
+      <div>
         <Stack h="100%">
           <Paper p="lg" radius="md" className={classes.tileCard} h="100%">
-            <Stack gap="xl" h="100%">
+            <Stack gap="sm" h="100%">
               <Stack gap={0} mb="auto">
-                <Title order={3}>Current {currentAccountTypeLabel} Buzz</Title>
-                <Group mb="sm">
-                  <UserBuzz
-                    key={currentAccountType}
-                    accountId={accountId}
-                    textSize="xl"
-                    withAbbreviation={false}
-                    accountTypes={[currentAccountType]}
-                  />
+                <Group justify="space-between" align="flex-start" wrap="wrap" mb="sm">
+                  <Stack gap={4}>
+                    <h3 className="text-xl font-bold" style={{ margin: 0 }}>Current {currentAccountTypeLabel} Buzz</h3>
+                    <Group gap="sm" align="center" wrap="nowrap">
+                      <UserBuzz
+                        key={currentAccountType}
+                        accountId={accountId}
+                        textSize="xl"
+                        withAbbreviation={false}
+                        accountTypes={[currentAccountType]}
+                      />
+                      <Popover width={350} withArrow withinPortal shadow="sm">
+                        <Popover.Target>
+                          <IconInfoCircle size={20} style={{ cursor: 'pointer' }} />
+                        </Popover.Target>
+                        <Popover.Dropdown>
+                          <Stack>
+                            <Group wrap="nowrap">
+                              <Text>
+                                <Text component="span" fw="bold" c={buzzConfig.color}>
+                                  <IconBolt
+                                    color={buzzConfig.color}
+                                    style={{
+                                      fill: buzzConfig.fill,
+                                      display: 'inline',
+                                    }}
+                                    size={16}
+                                  />
+                                  {currentAccountTypeLabel} Buzz:
+                                </Text>{' '}
+                                {getAccountTypeDescription(currentAccountType)}
+                              </Text>
+                            </Group>
+                            {getAccountTypeUsages(currentAccountType).length > 0 && (
+                              <List>
+                                {getAccountTypeUsages(currentAccountType).map((usage, index) => (
+                                  <List.Item key={index}>{usage}</List.Item>
+                                ))}
+                              </List>
+                            )}
 
-                  <Popover width={350} withArrow withinPortal shadow="sm">
-                    <Popover.Target>
-                      <IconInfoCircle size={20} style={{ cursor: 'pointer' }} />
-                    </Popover.Target>
-                    <Popover.Dropdown>
-                      <Stack>
-                        <Group wrap="nowrap">
-                          <Text>
-                            <Text component="span" fw="bold" c={buzzConfig.color}>
-                              <IconBolt
-                                color={buzzConfig.color}
-                                style={{
-                                  fill: buzzConfig.fill,
-                                  display: 'inline',
-                                }}
-                                size={16}
-                              />
-                              {currentAccountTypeLabel} Buzz:
-                            </Text>{' '}
-                            {getAccountTypeDescription(currentAccountType)}
-                          </Text>
-                        </Group>
-                        {getAccountTypeUsages(currentAccountType).length > 0 && (
-                          <List>
-                            {getAccountTypeUsages(currentAccountType).map((usage, index) => (
-                              <List.Item key={index}>{usage}</List.Item>
-                            ))}
-                          </List>
-                        )}
-
-                        <Anchor
-                          target="_blank"
-                          rel="nofollow noreferrer"
-                          href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
-                          size="xs"
-                        >
-                          Learn more
-                        </Anchor>
-                      </Stack>
-                    </Popover.Dropdown>
-                  </Popover>
+                            <Anchor
+                              target="_blank"
+                              rel="nofollow noreferrer"
+                              href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
+                              size="xs"
+                            >
+                              Learn more
+                            </Anchor>
+                          </Stack>
+                        </Popover.Dropdown>
+                      </Popover>
+                    </Group>
+                  </Stack>
+                  {/* Top Up Card - hidden on mobile */}
+                  {currentAccountType === 'yellow' && !features.isGreen && (
+                    <div className="hidden md:block">
+                      <BuzzTopUpCard
+                        accountId={accountId}
+                        variant="banner"
+                        message={`Need more ${currentAccountTypeLabel} Buzz?`}
+                        showBalance={false}
+                        btnLabel="Top up"
+                      />
+                    </div>
+                  )}
                 </Group>
-
-                {/* Top Up Card - Show when buzz is low */}
-                {currentAccountType === 'yellow' && !features.isGreen && (
-                  <BuzzTopUpCard
-                    accountId={accountId}
-                    variant="banner"
-                    message={`Need more ${currentAccountTypeLabel} Buzz?`}
-                    showBalance={false}
-                    btnLabel="Top up"
-                  />
-                )}
 
                 <SegmentedControl
                   value={reportFilters.window}
@@ -283,25 +285,27 @@ export const BuzzDashboardOverview = ({
                     { label: 'Weekly', value: 'week' },
                     { label: '12m', value: 'month' },
                   ]}
-                  mt="md"
-                  mb="md"
+                  mt="xs"
+                  mb={-8}
                 />
-                {isLoadingReport && (
-                  <Center>
-                    <Loader />
-                  </Center>
-                )}
-
-                {!isLoadingReport && !report.length && (
-                  <Center>
-                    <Text c="dimmed" mt="md">
-                      We found no data on the provided timeframe.
-                    </Text>
-                  </Center>
-                )}
               </Stack>
-              {!isLoadingReport && report.length > 0 && (
-                <>
+              {isLoadingReport ? (
+                <Skeleton height={413} mt="sm" radius="sm" />
+              ) : report.length > 0 ? (
+                <div style={{ position: 'relative' }}>
+                  <Text
+                    c={buzzConfig.color}
+                    size="xs"
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      right: 0,
+                      zIndex: 1,
+                      opacity: 0.7,
+                    }}
+                  >
+                    All times are UTC
+                  </Text>
                   <Bar
                     key={reportFilters.window}
                     options={options}
@@ -310,87 +314,119 @@ export const BuzzDashboardOverview = ({
                       datasets,
                     }}
                   />
-                  <Text c={buzzConfig.color} size="xs">
-                    All times are UTC
+                </div>
+              ) : (
+                <Center>
+                  <Text c="dimmed" mt="md">
+                    We found no data on the provided timeframe.
                   </Text>
-                </>
+                </Center>
               )}
             </Stack>
           </Paper>
         </Stack>
-      </Grid.Col>
-      <Grid.Col
-        span={{
-          base: 12,
-          sm: 6,
-          md: 5,
-        }}
-      >
-        <Paper p="lg" radius="md" h="100%" className={classes.tileCard} style={{ flex: 1 }}>
-          <Stack gap="xs">
-            <Title order={3}>Recent {currentAccountTypeLabel} Transactions</Title>
+      </div>
+      <div className={classes.dashboardGridConstrained}>
+        <Paper
+          radius="md"
+          className={`${classes.tileCard} ${classes.dashboardGridConstrainedInner}`}
+          style={{
+            display: 'grid',
+            gridTemplateRows: 'auto 1fr',
+            overflow: 'hidden',
+            padding: 'var(--mantine-spacing-lg) var(--mantine-spacing-lg) 0',
+          }}
+        >
+          <Group justify="space-between" align="center" wrap="nowrap" mb="sm">
+            <h3 className="text-xl font-bold" style={{ margin: 0 }}>Recent {currentAccountTypeLabel} Transactions</h3>
             <Anchor
               component={Link}
               href={`/user/transactions?accountType=${currentAccountType}`}
               size="xs"
+              style={{ whiteSpace: 'nowrap' }}
             >
-              <Group gap={2}>
-                <IconArrowRight size={18} />
-                <span>View all</span>
-              </Group>
+              View all
             </Anchor>
-            {transactions.length ? (
-              <ScrollArea.Autosize mah={480} mt="md" key={currentAccountType}>
-                <Stack gap={8} mr={14}>
-                  {transactions.map((transaction, index) => {
-                    const { amount, date } = transaction;
+          </Group>
+          {transactionData.isLoading ? (
+            <Stack gap={12} pr="lg" pt={4}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Group key={i} justify="space-between" wrap="nowrap">
+                  <Stack gap={4} style={{ flex: 1 }}>
+                    <Skeleton height={14} width="60%" radius="sm" />
+                    <Skeleton height={10} width="30%" radius="sm" />
+                  </Stack>
+                  <Skeleton height={20} width={70} radius="sm" />
+                </Group>
+              ))}
+            </Stack>
+          ) : transactions.length ? (
+            <div
+              className={classes.transactionsScrollWrapper}
+              style={{
+                marginLeft: 'calc(-1 * var(--mantine-spacing-lg))',
+                marginRight: 'calc(-1 * var(--mantine-spacing-lg))',
+                borderTop: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+              }}
+            >
+            <ScrollArea
+              style={{ minHeight: 0, height: '100%' }}
+              key={currentAccountType}
+            >
+              <div style={{ paddingBottom: 'var(--mantine-spacing-lg)' }}>
+                {transactions.map((transaction, index) => {
+                  const { amount, date } = transaction;
 
-                    return (
-                      <Stack key={index + '@' + date.toISOString()} gap={4}>
-                        <Group justify="space-between" wrap="nowrap" align="flex-start">
-                          <Stack gap={0}>
-                            <Text size="sm" fw="500" lh={1.2}>
-                              {INCLUDE_DESCRIPTION.includes(transaction.type) &&
-                              transaction.description ? (
-                                <>{transaction.description}</>
-                              ) : (
-                                <>{getDisplayName(TransactionType[transaction.type])}</>
-                              )}
-                            </Text>
-                            <Text size="xs" c="dimmed">
-                              <DaysFromNow date={date} />
-                            </Text>
-                          </Stack>
-                          <Text c={buzzConfig.color}>
-                            <Group gap={2} wrap="nowrap">
-                              <IconBolt
-                                size={16}
-                                color={buzzConfig.color}
-                                style={{ fill: buzzConfig.fill }}
-                              />
-                              <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
-                                {amount.toLocaleString()}
-                              </Text>
-                            </Group>
+                  return (
+                    <Group
+                      key={index + '@' + date.toISOString()}
+                      justify="space-between"
+                      wrap="nowrap"
+                      align="flex-start"
+                      py="xs"
+                      px="lg"
+                      style={{
+                        borderBottom: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                      }}
+                    >
+                      <Stack gap={0}>
+                        <Text size="sm" fw="500" lh={1.2}>
+                          {INCLUDE_DESCRIPTION.includes(transaction.type) &&
+                          transaction.description ? (
+                            <>{transaction.description}</>
+                          ) : (
+                            <>{getDisplayName(TransactionType[transaction.type])}</>
+                          )}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          <DaysFromNow date={date} />
+                        </Text>
+                      </Stack>
+                      <Text c={buzzConfig.color}>
+                        <Group gap={2} wrap="nowrap">
+                          <IconBolt
+                            size={16}
+                            color={buzzConfig.color}
+                            style={{ fill: buzzConfig.fill }}
+                          />
+                          <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
+                            {amount.toLocaleString()}
                           </Text>
                         </Group>
-                      </Stack>
-                    );
-                  })}
-                </Stack>
-              </ScrollArea.Autosize>
-            ) : transactionData.isLoading ? (
-              <Center>
-                <Loader />
-              </Center>
-            ) : (
-              <Text c="dimmed" mt="md">
-                No transactions yet.
-              </Text>
-            )}
-          </Stack>
+                      </Text>
+                    </Group>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+            </div>
+          ) : (
+            <Text c="dimmed" mt="md">
+              No transactions yet.
+            </Text>
+          )}
         </Paper>
-      </Grid.Col>
-    </Grid>
+      </div>
+    </div>
   );
 };

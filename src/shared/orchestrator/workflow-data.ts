@@ -143,10 +143,19 @@ export class StepData {
   }
 
   get params(): Partial<NormalizedWorkflowMetadata['params']> {
-    return this.metadata.params ?? this.#wfMeta?.params ?? {};
+    const stepParams = this.metadata.params;
+    // Step params are only authoritative when they contain generation context markers
+    // (workflow key or ecosystem). Without those, they're transformation-specific
+    // (e.g. { upscaleWidth, upscaleHeight } for hires-fix) and we fall back to
+    // workflow-level metadata which holds the full generation context.
+    if (stepParams && ('workflow' in stepParams || 'ecosystem' in stepParams)) {
+      return stepParams;
+    }
+    return this.#wfMeta?.params ?? stepParams ?? {};
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
-    return this.metadata.resources ?? this.#wfMeta?.resources ?? [];
+    if (this.metadata.resources?.length) return this.metadata.resources;
+    return this.#wfMeta?.resources ?? [];
   }
   get remixOfId() {
     return this.metadata.remixOfId ?? this.#wfMeta?.remixOfId;

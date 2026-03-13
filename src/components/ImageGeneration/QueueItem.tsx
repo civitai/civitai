@@ -50,6 +50,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
+import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -146,15 +147,24 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const isTxt2Img = request.params?.workflow === 'txt2img';
+    const isEnhancement = workflowDefinition?.enhancement === true;
+
+    // For enhancement workflows, use the first step's params/resources — the StepData getter
+    // resolves the full original generation context (falling back to workflow metadata as needed).
+    // For regular workflows, use workflow-level params/resources directly.
+    const firstStep = isEnhancement ? request.steps[0] : null;
+    const replayParams = firstStep ? firstStep.params : request.params;
+    const replayResources = firstStep ? firstStep.resources : request.resources;
+
+    const isTxt2Img = replayParams?.workflow === 'txt2img';
     generationGraphStore.setData({
       params: {
-        ...request.params,
+        ...replayParams,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
       },
-      resources: request.resources,
+      resources: replayResources,
       runType: 'replay',
       remixOfId: request.remixOfId,
     });
@@ -369,7 +379,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
   const unstable = unstableResources?.includes(id);
 
   return (
-    <Button.Group>
+    <Button.Group className="max-w-full">
       <Button
         size="compact-sm"
         variant="default"
@@ -384,6 +394,8 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
           ) : undefined
         }
         color={unstable ? 'yellow' : undefined}
+        className="min-w-0 flex-1"
+        classNames={{ label: 'truncate' }}
       >
         {model.name} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
@@ -395,7 +407,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
           px={4}
           onClick={() => {
             generationGraphStore.setData({
-              params: { ecosystem: resource.baseModel },
+              params: { ecosystem: getEcosystem(resource.baseModel)?.key },
               resources: [resource],
               runType: 'run',
             });

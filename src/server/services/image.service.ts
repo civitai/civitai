@@ -6215,6 +6215,38 @@ export async function createImageResources({
     `;
   }
 
+  // Flag unmatched resources on image meta
+  const unmatchedHashes = new Set(
+    resources
+      .filter((r) => r.detected && !r.modelversionid && r.hash)
+      .map((r) => r.hash!.toLowerCase())
+  );
+
+  if (unmatchedHashes.size > 0) {
+    const image = await dbClient.image.findUnique({
+      where: { id: imageId },
+      select: { meta: true },
+    });
+
+    const meta = (image?.meta ?? {}) as Record<string, any>;
+    const metaResources = (meta.resources ?? []) as { hash?: string; unmatched?: boolean }[];
+    let updated = false;
+
+    for (const resource of metaResources) {
+      if (resource.hash && unmatchedHashes.has(resource.hash.toLowerCase())) {
+        resource.unmatched = true;
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      await dbClient.image.update({
+        where: { id: imageId },
+        data: { meta: { ...meta, resources: metaResources } },
+      });
+    }
+  }
+
   await imageResourcesCache.bust(imageId);
   return resources;
 }

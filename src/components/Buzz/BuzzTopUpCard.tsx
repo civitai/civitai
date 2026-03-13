@@ -82,24 +82,14 @@ export function BuzzTopUpCard({
         withBorder
       >
         <Group justify="space-between" wrap="nowrap">
-          <Group gap="sm" wrap="nowrap">
-            <ThemeIcon
-              size="lg"
-              variant="gradient"
-              gradient={{ from: 'yellow.4', to: 'orange.5' }}
-              radius="md"
-            >
-              <IconBolt fill="currentColor" size={24} />
-            </ThemeIcon>
-            <div style={{ flex: 1 }}>
-              <Text size="sm" fw={600} className={classes.bannerTitle}>
-                {message || 'Running low on Buzz?'}
-              </Text>
-              <Text size="xs" c="dimmed">
-                Top up now to keep creating and exploring
-              </Text>
-            </div>
-          </Group>
+          <div style={{ flex: 1 }}>
+            <Text size="sm" fw={600} className={classes.bannerTitle}>
+              {message || 'Running low on Buzz?'}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Top up now to keep creating and exploring
+            </Text>
+          </div>
           <Button
             onClick={handleTopUp}
             variant="gradient"

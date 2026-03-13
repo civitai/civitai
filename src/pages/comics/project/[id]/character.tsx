@@ -20,26 +20,37 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowLeft,
+  IconCheck,
   IconGripVertical,
+  IconPencil,
   IconPhoto,
   IconTrash,
   IconUpload,
+  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
+import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
+
+const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
+  ssr: false,
+});
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -210,8 +221,39 @@ function ReferenceUpload() {
   });
 
   const reorderRefImagesMutation = trpc.comics.reorderReferenceImages.useMutation({
-    onSuccess: () => refetchProject(),
+    onError: () => refetchProject(),
   });
+
+  // Inline rename state
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editName, setEditName] = useState('');
+  const updateReferenceMutation = trpc.comics.updateReference.useMutation({
+    onSuccess: () => {
+      setIsEditingName(false);
+      utils.comics.getProject.invalidate({ id: projectId });
+    },
+  });
+
+  const handleStartRename = () => {
+    if (!existingReference) return;
+    setEditName(existingReference.name);
+    setIsEditingName(true);
+  };
+
+  const handleSaveRename = () => {
+    if (!existingReference) return;
+    const trimmed = editName.trim();
+    if (!trimmed || trimmed.length > 255 || trimmed.includes('@')) return;
+    if (trimmed === existingReference.name) {
+      setIsEditingName(false);
+      return;
+    }
+    updateReferenceMutation.mutate({ referenceId: existingReference.id, name: trimmed });
+  };
+
+  const handleCancelRename = () => {
+    setIsEditingName(false);
+  };
 
   const refImageSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -224,11 +266,22 @@ function ReferenceUpload() {
     const oldIndex = refImages.findIndex((ri) => ri.image.id === active.id);
     const newIndex = refImages.findIndex((ri) => ri.image.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-    const newOrder = arrayMove(
-      refImages.map((ri) => ri.image.id),
-      oldIndex,
-      newIndex
-    );
+    const reorderedImages = arrayMove(refImages, oldIndex, newIndex);
+    const newOrder = reorderedImages.map((ri) => ri.image.id);
+
+    // Optimistic update
+    utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        references: prev.references.map((ref) =>
+          ref.id === existingReference.id
+            ? { ...ref, images: reorderedImages.map((ri, i) => ({ ...ri, position: i })) }
+            : ref
+        ),
+      };
+    });
+
     reorderRefImagesMutation.mutate({
       referenceId: existingReference.id,
       imageIds: newOrder,
@@ -276,7 +329,7 @@ function ReferenceUpload() {
   if (characterId && !existingReference && project) {
     return (
       <>
-        <Meta title={`Reference Not Found - ${project?.name} - Civitai Comics`} />
+        <Meta title={`Reference Not Found - ${project?.name} - Civitai Comics`} deIndex={true} />
         <Container size="md" py="xl">
           <Stack gap="xl">
             <Group>
@@ -308,7 +361,7 @@ function ReferenceUpload() {
 
     return (
       <>
-        <Meta title={`Reference - ${project?.name} - Civitai Comics`} />
+        <Meta title={`Reference - ${project?.name} - Civitai Comics`} deIndex={true} />
 
         <Container size="md" py="xl">
           <Stack gap="xl">
@@ -340,9 +393,61 @@ function ReferenceUpload() {
 
                 <div className="text-center">
                   <Group justify="center" gap="xs">
-                    <Text fw={500} size="lg">
-                      {existingReference.name}
-                    </Text>
+                    {isEditingName ? (
+                      <Group gap={4}>
+                        <TextInput
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveRename();
+                            if (e.key === 'Escape') handleCancelRename();
+                          }}
+                          onBlur={handleSaveRename}
+                          size="md"
+                          autoFocus
+                          error={
+                            editName.includes('@')
+                              ? 'Name cannot contain @ character'
+                              : editName.trim().length === 0
+                              ? 'Name is required'
+                              : editName.trim().length > 255
+                              ? 'Name must be 255 characters or less'
+                              : undefined
+                          }
+                          styles={{ input: { textAlign: 'center' } }}
+                        />
+                        <ActionIcon
+                          variant="subtle"
+                          color="green"
+                          onMouseDown={(e: React.MouseEvent) => {
+                            e.preventDefault();
+                            handleSaveRename();
+                          }}
+                          loading={updateReferenceMutation.isPending}
+                        >
+                          <IconCheck size={16} />
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          onMouseDown={(e: React.MouseEvent) => {
+                            e.preventDefault();
+                            handleCancelRename();
+                          }}
+                        >
+                          <IconX size={16} />
+                        </ActionIcon>
+                      </Group>
+                    ) : (
+                      <>
+                        <Text fw={500} size="lg">
+                          {existingReference.name}
+                        </Text>
+                        <ActionIcon variant="subtle" size="sm" onClick={handleStartRename}>
+                          <IconPencil size={14} />
+                        </ActionIcon>
+                      </>
+                    )}
                     {(existingReference as any).type && (
                       <Badge size="sm" variant="light" color={
                         (existingReference as any).type === 'Location' ? 'teal'
@@ -525,6 +630,51 @@ function ReferenceUpload() {
                         </Group>
                       </Dropzone>
 
+                      <Button
+                        variant="light"
+                        size="xs"
+                        leftSection={<IconWand size={14} />}
+                        disabled={uploadedImages.length >= 10}
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: ImageSelectModal,
+                            props: {
+                              title: 'Pick from Generator',
+                              selectSource: 'generation' as const,
+                              videoAllowed: false,
+                              importedUrls: [],
+                              onSelect: async (
+                                selected: { url: string; meta?: Record<string, unknown> }[]
+                              ) => {
+                                if (selected.length === 0) return;
+                                for (const img of selected) {
+                                  if (uploadedImages.length >= 10) break;
+                                  const width = (img.meta?.width as number) ?? 512;
+                                  const height = (img.meta?.height as number) ?? 512;
+                                  try {
+                                    const cfId = await fetchAndUploadGeneratorImage(
+                                      img.url,
+                                      'ref_add',
+                                      uploadToCF
+                                    );
+                                    const previewUrl =
+                                      getEdgeUrl(cfId, { width: 200 }) ?? img.url;
+                                    setUploadedImages((prev) => [
+                                      ...prev,
+                                      { url: cfId, previewUrl, width, height },
+                                    ]);
+                                  } catch (err) {
+                                    console.error('Failed to pick generator image:', err);
+                                  }
+                                }
+                              },
+                            },
+                          });
+                        }}
+                      >
+                        Pick from Generator
+                      </Button>
+
                       {uploadedImages.length > 0 && (
                         <Group>
                           {uploadedImages.map((img, i) => (
@@ -578,7 +728,7 @@ function ReferenceUpload() {
   // New reference creation form — simple upload flow
   return (
     <>
-      <Meta title={`Add Reference - ${project?.name} - Civitai Comics`} />
+      <Meta title={`Add Reference - ${project?.name} - Civitai Comics`} deIndex={true} />
 
       <Container size="md" py="xl">
         <Stack gap="xl">
@@ -627,6 +777,59 @@ function ReferenceUpload() {
                       </div>
                     </Group>
                   </Dropzone>
+
+                  <Button
+                    variant="light"
+                    leftSection={<IconWand size={14} />}
+                    disabled={images.length >= 10 || isUploading}
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: ImageSelectModal,
+                        props: {
+                          title: 'Pick from Generator',
+                          selectSource: 'generation' as const,
+                          videoAllowed: false,
+                          importedUrls: [],
+                          onSelect: async (
+                            selected: { url: string; meta?: Record<string, unknown> }[]
+                          ) => {
+                            if (selected.length === 0) return;
+                            for (const img of selected) {
+                              if (images.length >= 10) break;
+                              const width = (img.meta?.width as number) ?? 512;
+                              const height = (img.meta?.height as number) ?? 512;
+                              try {
+                                const cfId = await fetchAndUploadGeneratorImage(
+                                  img.url,
+                                  'ref_create',
+                                  uploadImageToCF
+                                );
+                                const previewUrl =
+                                  getEdgeUrl(cfId, { width: 200 }) ?? img.url;
+                                // Create a synthetic File-like blob for state consistency
+                                const blob = await fetch(previewUrl).then((r) =>
+                                  r.blob()
+                                );
+                                const file = new File([blob], 'generator-image.jpg', {
+                                  type: 'image/jpeg',
+                                });
+                                setImages((prev) =>
+                                  [
+                                    ...prev,
+                                    { file, preview: previewUrl, width, height },
+                                  ].slice(0, 10)
+                                );
+                              } catch (err) {
+                                console.error('Failed to pick generator image:', err);
+                              }
+                            }
+                          },
+                        },
+                      });
+                    }}
+                  >
+                    Pick from Generator
+                  </Button>
 
                   {images.length > 0 && (
                     <Group>

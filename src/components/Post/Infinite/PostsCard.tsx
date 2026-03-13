@@ -68,6 +68,7 @@ export function PostsCard({
                     alt={image.name ?? undefined}
                     skip={getSkipValue(image)}
                     type={image.type}
+                    imageId={image.id}
                     width={450}
                     placeholder="empty"
                   />

@@ -67,6 +67,7 @@ export function ImagePreview({
           name={name ?? id.toString()}
           alt={name ?? undefined}
           type={type}
+          imageId={id}
           {...edgeImageProps}
           onClick={onClick}
           metadata={metadata}
