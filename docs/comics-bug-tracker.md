@@ -43,7 +43,7 @@ Failed panels (no image) had no context menu - users had to click into the detai
 ### Enhance prompt pulls in unrelated references
 The prompt enhancer injected characters that weren't @mentioned in the original prompt.
 **Root cause:** `enhanceComicPrompt()` received `allReferenceNames` (every reference the user has) instead of only the @mentioned ones. The LLM interpreted the full character list as context to incorporate.
-**Fix:** Now passes only the names of @mentioned references to the enhancer. Falls back to all names only when no references are mentioned at all.
+**Fix:** Now passes only the names of @mentioned references to the enhancer. System prompt tightened with "ONLY reference the characters listed below — never introduce characters not in the list". Context label changed from "Characters in this project" to "Characters referenced in this prompt".
 
 ### Preview button doesn't show panels
 The Preview button opens a new tab but panels don't appear.
@@ -69,12 +69,31 @@ Sketch Edit saved directly to the panel image, so "Regenerate" afterward ignored
 **Root cause:** `handleSketchEdit` called `replacePanelImageMutation` which only updated `imageUrl`/`imageId` — no generation metadata. Regenerate then used the original prompt via `createPanel` (txt2img), completely discarding the annotation.
 **Fix:** Rewrote Sketch Edit to feed into the Enhance pipeline: annotate → "Continue to Enhance" → upload blob to CF → PanelModal opens in Enhance tab with annotated image as source → user adjusts prompt/model → `enhancePanelMutation` generates with the annotation as img2img reference. Removed the standalone direct-replacement flow.
 
+### Enhance prompt ignores user intent
+Per user: "it doesn't seem to listen to me at all". The prompt enhancer deviated significantly from user intent.
+**Root cause:** Even after fixing the reference leak, the system prompt was too permissive and all project character names were still sent as context. The LLM would freely add characters and change meaning.
+**Fix:** Only characters the user `@mentioned` are passed to the enhancement LLM. System prompt reinforced with strict rules against adding unmentioned characters. Enhanced prompt is now shown in the iterative editor chat so users can see exactly what was sent.
+
+### Annotation doesn't respect source image aspect ratio
+Opening the annotation editor on a generated image sometimes showed a square canvas despite the image being portrait/landscape.
+**Root cause:** Stored `width`/`height` on `currentSource` could be stale or default (1024x1024) if the initial source came from query params without explicit dimensions.
+**Fix:** `handleAnnotateSource` now loads the actual image via `getImageDimensions()` to resolve real pixel dimensions before opening the drawing editor. Falls back to stored dimensions if the load fails.
+
+### Buzz price showing fallback during recalculation
+Changing model, quantity, or other settings briefly showed the 25 Buzz fallback cost instead of a loading state.
+**Root cause:** WhatIf cost query refetch caused `costEstimate` to be null, falling back to `config.generationCost * quantity`.
+**Fix:** Shows "Calculating cost…" loading state when cost is being fetched. Shows error state with retry button when estimation fails. `BuzzTransactionButton` receives `loading`/`error` props.
+
+### Buzz price mismatch with real images
+WhatIf cost estimation used placeholder/empty image arrays, producing txt2img pricing even when img2img would be used for actual generation.
+**Root cause:** Cost estimation didn't pass actual source and reference image URLs to the whatIf query.
+**Fix:** Real source image and reference image URLs are now passed to the whatIf endpoint for accurate img2img pricing.
+
 ---
 
 ## Open Bugs / Needs Investigation
 
-### Enhance prompt ignores user intent
-Per user: "it doesn't seem to listen to me at all". Even with the reference leak fixed, the prompt enhancer may still deviate significantly from user intent. May need system prompt tuning.
+(none currently tracked)
 
 ---
 
@@ -122,9 +141,6 @@ Options: Grok (expensive), LTX2.3 (cheap), Kling, Veo 3.1.
 
 ### Export to PDF/CBR
 Allow exporting finished comics. Should be optional per creator (may not want to allow downloads).
-
-### Generate multiple images per panel
-"Dice-rolling" regeneration is slow. Allow generating multiple candidates and picking the best.
 
 ### Reference "about" text
 Allow passing a ~100 character description with reference images for better character/location/item prompting.
