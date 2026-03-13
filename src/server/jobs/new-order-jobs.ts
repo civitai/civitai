@@ -53,63 +53,123 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
     GROUP BY userId
   `;
 
-  if (!judgments.length) {
+  // Step 1: Grant buzz for judgments from 3 days ago
+  if (judgments.length) {
+    log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
+
+    // Get current player data for knights and templars only
+    const players = await dbRead.newOrderPlayer.findMany({
+      where: {
+        userId: { in: judgments.map((j) => j.userId) },
+        rankType: { not: NewOrderRankType.Acolyte },
+      },
+      select: { userId: true },
+    });
+
+    const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
+
+    if (validPlayers.length) {
+      // Create buzz transactions in batches
+      const batches = chunk(validPlayers, 100);
+      let loopCount = 1;
+      for (const batch of batches) {
+        log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
+
+        const transactions = batch
+          .filter((player) => player.balance > 0)
+          .map((validPlayer) => ({
+            fromAccountId: 0,
+            toAccountId: validPlayer.userId,
+            amount: validPlayer.balance,
+            type: TransactionType.Reward,
+            description: 'Content Moderation Correct Judgment',
+            externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
+          }));
+
+        if (transactions.length > 0) await createBuzzTransactionMany(transactions);
+
+        // Deduct the actual EXP from the blessed buzz counter
+        // Counter stores EXP values, not converted buzz, so we deduct totalExp
+        // Reset pending buzz counter so it recalculates the new day on next fetch
+        await Promise.all(
+          batch.map((player) => {
+            return Promise.all([
+              blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
+              pendingBuzzCounter.reset({ id: player.userId }),
+            ]);
+          })
+        );
+        log(
+          `BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`
+        );
+        loopCount++;
+      }
+    } else {
+      log('BlessedBuzz :: No valid players found');
+    }
+  } else {
     log('BlessedBuzz :: No correct judgments found');
-    return;
-  }
-  log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
-
-  // Get current player data for knights and templars only
-  const players = await dbRead.newOrderPlayer.findMany({
-    where: {
-      userId: { in: judgments.map((j) => j.userId) },
-      rankType: { not: NewOrderRankType.Acolyte },
-    },
-    select: { userId: true },
-  });
-
-  const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
-
-  if (!validPlayers.length) {
-    log('BlessedBuzz :: No valid players found');
-    return;
-  }
-
-  // Create buzz transactions in batches
-  const batches = chunk(validPlayers, 100);
-  let loopCount = 1;
-  for (const batch of batches) {
-    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-
-    const transactions = batch
-      .filter((player) => player.balance > 0)
-      .map((validPlayer) => ({
-        fromAccountId: 0,
-        toAccountId: validPlayer.userId,
-        amount: validPlayer.balance,
-        type: TransactionType.Reward,
-        description: 'Content Moderation Correct Judgment',
-        externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-      }));
-
-    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
-
-    // Deduct the actual EXP from the blessed buzz counter
-    // Counter stores EXP values, not converted buzz, so we deduct totalExp
-    // Reset pending buzz counter so it recalculates the new day on next fetch
-    await Promise.all(
-      batch.map((player) => {
-        return Promise.all([
-          blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
-          pendingBuzzCounter.reset({ id: player.userId }),
-        ]);
-      })
-    );
-    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
-    loopCount++;
   }
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
+
+  // Step 2: Reconcile stale blessedBuzz counters for inactive users
+  // Only reset users with no voting activity in the last 3 days,
+  // so we don't interfere with in-flight increments from active voting.
+  // Wrapped in try/catch so a reconciliation failure doesn't mark the grant job as failed.
+  try {
+    log('BlessedBuzz :: Starting stale counter reconciliation');
+
+    const allBlessedBuzzEntries = await blessedBuzzCounter.getAll({ withCount: true });
+    const nonZeroUserIds = allBlessedBuzzEntries
+      .filter((entry) => entry.score > 0)
+      .map((entry) => Number(entry.value));
+
+    if (nonZeroUserIds.length > 0) {
+      log(`BlessedBuzz :: Found ${nonZeroUserIds.length} non-zero counters to check`);
+
+      // Find which of these users have had ANY activity in the last 3 days
+      const recentActivityUserIds = new Set<number>();
+      const userIdBatches = chunk(nonZeroUserIds, 500);
+
+      for (const batch of userIdBatches) {
+        const activeUsers = await clickhouse!.$query<{ userId: number }>`
+          SELECT DISTINCT userId
+          FROM knights_new_order_image_rating
+          WHERE userId IN (${batch.join(',')})
+            AND createdAt >= subtractDays(now(), 3)
+            AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
+          NewOrderImageRatingStatus.Failed
+        }')
+        `;
+        for (const row of activeUsers) recentActivityUserIds.add(row.userId);
+      }
+
+      // Reset counters for users with NO recent activity — their Redis value is stale
+      const staleUserIds = nonZeroUserIds.filter((id) => !recentActivityUserIds.has(id));
+
+      if (staleUserIds.length > 0) {
+        log(
+          `BlessedBuzz :: Resetting ${staleUserIds.length} stale counters (no activity in 3 days)`
+        );
+        // reset() accepts an array of IDs and issues a single hDel call
+        const staleBatches = chunk(staleUserIds, 200);
+        for (const batch of staleBatches) {
+          await Promise.all([
+            blessedBuzzCounter.reset({ id: batch }),
+            pendingBuzzCounter.reset({ id: batch }),
+          ]);
+        }
+        log('BlessedBuzz :: Stale counter reconciliation complete');
+      } else {
+        log('BlessedBuzz :: No stale counters found');
+      }
+    } else {
+      log('BlessedBuzz :: No non-zero counters to reconcile');
+    }
+  } catch (error: unknown) {
+    log(`BlessedBuzz :: Stale counter reconciliation failed, will retry next run: ${error}`);
+  }
 });
 
 type DailyResetQueryResult = {
