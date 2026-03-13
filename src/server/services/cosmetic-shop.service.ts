@@ -661,7 +661,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     periodMode: 'stats',
     types: [MediaType.image],
     withMeta: false,
-    useLogicalReplica: features.logicalReplica,
+    useDatapacketRead: features.datapacketRead,
   });
 
   const images = userImages.items.slice(0, limit);
@@ -693,7 +693,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       sort: ImageSort.Newest,
       types: [MediaType.image],
       withMeta: false,
-      useLogicalReplica: features.logicalReplica,
+      useDatapacketRead: features.datapacketRead,
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);

@@ -5,7 +5,7 @@ import { getClient } from '~/server/db/db-helpers';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
-  var globalLogicalDb: AugmentedPool | undefined;
+  var globalDatapacketDbRead: AugmentedPool | undefined;
 }
 
 // Fix Dates
@@ -13,10 +13,11 @@ types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
   return new Date(stringValue.replace(' ', 'T') + 'Z');
 });
 
-export let logicalDb: AugmentedPool;
+export let datapacketDbRead: AugmentedPool;
 if (isProd) {
-  logicalDb = getClient({ instance: 'logicalReplica' });
+  datapacketDbRead = getClient({ instance: 'datapacketRead' });
 } else {
-  if (!global.globalLogicalDb) global.globalLogicalDb = getClient({ instance: 'logicalReplica' });
-  logicalDb = global.globalLogicalDb;
+  if (!global.globalDatapacketDbRead)
+    global.globalDatapacketDbRead = getClient({ instance: 'datapacketRead' });
+  datapacketDbRead = global.globalDatapacketDbRead;
 }

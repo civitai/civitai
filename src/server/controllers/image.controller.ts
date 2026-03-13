@@ -286,7 +286,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useLogicalReplica: features.logicalReplica,
+        useDatapacketRead: features.datapacketRead,
       });
     } else {
       return await getAllImages({
@@ -295,7 +295,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useLogicalReplica: features.logicalReplica,
+        useDatapacketRead: features.datapacketRead,
       });
     }
   } catch (error) {
@@ -361,7 +361,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useLogicalReplica: features.logicalReplica,
+        useDatapacketRead: features.datapacketRead,
       });
 
       for (const image of pinnedPostsImages) {
@@ -383,7 +383,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useLogicalReplica: features.logicalReplica,
+        useDatapacketRead: features.datapacketRead,
       });
 
       // Merge images by postId
