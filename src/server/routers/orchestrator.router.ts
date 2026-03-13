@@ -45,6 +45,18 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
+import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import {
+  commonAspectRatios,
+  nanoBananaProSizes,
+  seedreamSizes,
+  qwenSizes,
+  grokSizes,
+} from '~/server/common/constants';
+import type { SessionUser } from 'next-auth';
 import {
   getFlagged,
   getReasons,
@@ -123,6 +135,67 @@ const orchestratorGuardedProcedure = guardedProcedure
   .use(experimentalMiddleware)
   .use(enforceGenerationVersion);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
+
+// Model config for generic iterative generation (mirrors comics config)
+const ITERATE_MODEL_CONFIG: Record<
+  string,
+  {
+    engine: string;
+    baseModel: string;
+    versionId: number;
+    img2imgVersionId?: number;
+    maxReferenceImages: number;
+    sizes: { label: string; width: number; height: number }[];
+  }
+> = {
+  NanoBanana: {
+    engine: 'gemini',
+    baseModel: 'NanoBanana',
+    versionId: 2436219,
+    maxReferenceImages: 7,
+    sizes: nanoBananaProSizes,
+  },
+  Flux2: {
+    engine: 'flux2',
+    baseModel: 'Flux.2 D',
+    versionId: 2439067,
+    maxReferenceImages: 7,
+    sizes: commonAspectRatios,
+  },
+  Seedream: {
+    engine: 'seedream',
+    baseModel: 'Seedream',
+    versionId: 2470991,
+    maxReferenceImages: 7,
+    sizes: seedreamSizes,
+  },
+  OpenAI: {
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    versionId: 2512167,
+    maxReferenceImages: 7,
+    sizes: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
+  },
+  Qwen: {
+    engine: 'qwen',
+    baseModel: 'Qwen',
+    versionId: 2552908,
+    img2imgVersionId: 2558804,
+    maxReferenceImages: 3,
+    sizes: qwenSizes,
+  },
+  Grok: {
+    engine: 'grok',
+    baseModel: 'Grok',
+    versionId: 2738377,
+    maxReferenceImages: 7,
+    sizes: grokSizes,
+  },
+};
 
 export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
@@ -364,4 +437,131 @@ export const orchestratorRouter = router({
     .query(({ ctx, input }) =>
       getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
     ),
+
+  // ── Generic iterative image editor endpoints ──
+
+  iterateGenerate: protectedProcedure
+    .input(
+      z.object({
+        prompt: z.string().min(1).max(2000),
+        enhance: z.boolean().default(true),
+        aspectRatio: z.string().default('3:4'),
+        baseModel: z.string().nullish(),
+        quantity: z.number().int().min(1).max(4).default(1),
+        sourceImageUrl: z.string().optional(),
+        sourceImageWidth: z.number().int().positive().optional(),
+        sourceImageHeight: z.number().int().positive().optional(),
+        referenceImages: z
+          .array(
+            z.object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+          )
+          .optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const modelConfig =
+        ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ??
+        ITERATE_MODEL_CONFIG.NanoBanana;
+      const effectiveVersionId =
+        input.sourceImageUrl && modelConfig.img2imgVersionId
+          ? modelConfig.img2imgVersionId
+          : modelConfig.versionId;
+
+      const sizes = modelConfig.sizes;
+      const match =
+        sizes.find((s) => s.label === input.aspectRatio) ??
+        sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
+        sizes[0];
+      const { width: panelWidth, height: panelHeight } = match;
+
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+
+      // Build prompt — optionally enhance
+      let fullPrompt = input.prompt.trim();
+      if (input.enhance && fullPrompt) {
+        fullPrompt = await enhanceComicPrompt({
+          token,
+          userPrompt: fullPrompt,
+          characterName: '',
+          characterNames: [],
+        });
+      }
+
+      // Build images array
+      const allImages: { url: string; width: number; height: number }[] = [];
+      if (input.sourceImageUrl && input.sourceImageWidth && input.sourceImageHeight) {
+        const sourceEdgeUrl = getEdgeUrl(input.sourceImageUrl, { original: true });
+        allImages.push({
+          url: sourceEdgeUrl,
+          width: input.sourceImageWidth,
+          height: input.sourceImageHeight,
+        });
+      }
+      if (input.referenceImages) {
+        allImages.push(...input.referenceImages);
+      }
+
+      const cappedImages =
+        allImages.length <= modelConfig.maxReferenceImages
+          ? allImages
+          : allImages.slice(0, modelConfig.maxReferenceImages);
+
+      const result = await createImageGen({
+        params: {
+          prompt: fullPrompt || '',
+          negativePrompt: '',
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel as any,
+          width: panelWidth,
+          height: panelHeight,
+          aspectRatio: input.aspectRatio,
+          workflow: 'txt2img',
+          sampler: 'Euler',
+          steps: 25,
+          quantity: input.quantity,
+          draft: false,
+          disablePoi: false,
+          priority: 'low',
+          sourceImage: null,
+          images: cappedImages,
+        },
+        resources: [{ id: effectiveVersionId, strength: 1 }],
+        tags: ['iterate'],
+        tips: { creators: 0, civitai: 0 },
+        user: ctx.user! as SessionUser,
+        token,
+        currencies: ['yellow'],
+      });
+
+      return {
+        workflowId: result.id,
+        width: panelWidth,
+        height: panelHeight,
+        cost: result.cost?.total ?? 0,
+      };
+    }),
+
+  pollIterationStatus: protectedProcedure
+    .input(
+      z.object({
+        workflowId: z.string().min(1),
+        width: z.number().int().positive().optional(),
+        height: z.number().int().positive().optional(),
+        prompt: z.string().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      return pollIterationWorkflow({
+        workflowId: input.workflowId,
+        width: input.width,
+        height: input.height,
+        prompt: input.prompt,
+        userId: ctx.user!.id,
+        ctx,
+      });
+    }),
 });

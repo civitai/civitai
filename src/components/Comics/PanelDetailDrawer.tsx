@@ -2,14 +2,12 @@ import { ActionIcon, Badge, Text, Title } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconMessages,
-  IconPencil,
   IconPlus,
   IconRefreshDot,
   IconShield,
   IconSparkles,
   IconTrash,
   IconUser,
-  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -45,8 +43,6 @@ interface PanelDetailDrawerProps {
   onRegenerate: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
   onInsertAfter: (index: number) => void;
   onDelete: (panelId: number) => void;
-  onSketchEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
-  onEnhance?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
   onIterativeEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
 }
 
@@ -60,8 +56,6 @@ export function PanelDetailDrawer({
   onRegenerate,
   onInsertAfter,
   onDelete,
-  onSketchEdit,
-  onEnhance,
   onIterativeEdit,
 }: PanelDetailDrawerProps) {
   const utils = trpc.useUtils();
@@ -293,24 +287,6 @@ export function PanelDetailDrawer({
 
               {/* Actions */}
               <div className={styles.detailActions}>
-                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onSketchEdit && (
-                  <button
-                    className={styles.subtleBtn}
-                    onClick={() => onSketchEdit(detailPanel)}
-                  >
-                    <IconPencil size={16} />
-                    Sketch Edit
-                  </button>
-                )}
-                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onEnhance && (
-                  <button
-                    className={styles.subtleBtn}
-                    onClick={() => onEnhance(detailPanel)}
-                  >
-                    <IconWand size={16} />
-                    Enhance
-                  </button>
-                )}
                 {detailPanel.status === 'Ready' && detailPanel.imageUrl && onIterativeEdit && (
                   <button
                     className={styles.subtleBtn}

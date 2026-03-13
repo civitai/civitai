@@ -1,5 +1,8 @@
-/* ── Iterative Panel Editor ────────────────────────── */
+/* ── Iterative Image Editor ────────────────────────── */
 
+$border-color: light-dark(var(--mantine-color-gray-3), #373a40);
+
+/* ── Mode variants ── */
 .editorContainer {
   display: flex;
   height: calc(100vh - 80px);
@@ -7,17 +10,35 @@
   gap: 0;
 }
 
+.editorContainerPage {
+  composes: editorContainer;
+  max-height: none;
+  height: 100vh;
+}
+
 .chatArea {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-right: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border-right: 1px solid $border-color;
+}
+
+.sessionTotalBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: rgba(250, 176, 5, 0.08);
+  border-bottom: 1px solid rgba(250, 176, 5, 0.2);
+  color: #fab005;
+  flex-shrink: 0;
 }
 
 .chatMessages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -31,13 +52,13 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #909296;
+  color: var(--mantine-color-dimmed);
   text-align: center;
   padding: 32px;
 }
 
 .inputArea {
-  border-top: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border-top: 1px solid $border-color;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -73,7 +94,7 @@
   position: relative;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border: 1px solid $border-color;
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
 
   img {
@@ -93,9 +114,9 @@
   gap: 8px;
   padding: 32px 16px;
   border-radius: 8px;
-  border: 1px dashed light-dark(var(--mantine-color-gray-3), #373a40);
+  border: 1px dashed $border-color;
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
-  color: #909296;
+  color: var(--mantine-color-dimmed);
 }
 
 .sidebarSection {
@@ -107,7 +128,7 @@
 .sidebarSectionTitle {
   font-size: 11px;
   font-weight: 700;
-  color: #909296;
+  color: var(--mantine-color-dimmed);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -127,7 +148,7 @@
 .commitSection {
   margin-top: auto;
   padding-top: 16px;
-  border-top: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border-top: 1px solid $border-color;
 }
 
 .commitButton {
@@ -140,7 +161,7 @@
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -164,7 +185,7 @@
 
 .iterationMessage {
   background: light-dark(var(--mantine-color-gray-0), #25262b);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border: 1px solid $border-color;
   border-radius: 8px;
   padding: 12px;
   display: flex;
@@ -196,16 +217,10 @@
 .iterationImage {
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+  border: 1px solid $border-color;
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
-  cursor: pointer;
-  transition: border-color 0.2s ease;
   display: inline-block;
   max-width: 280px;
-
-  &:hover {
-    border-color: #fab005;
-  }
 
   img {
     display: block;
@@ -223,40 +238,32 @@
   flex-wrap: wrap;
 }
 
-.costBadge {
+.badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: rgba(250, 176, 5, 0.15);
-  color: #fab005;
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
+}
+
+.costBadge {
+  composes: badge;
+  background: rgba(250, 176, 5, 0.15);
+  color: #fab005;
 }
 
 .annotatedBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  composes: badge;
   background: rgba(51, 154, 240, 0.15);
   color: #339af0;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
 }
 
 .currentSourceBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(250, 176, 5, 0.15);
-  color: #fab005;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
+  composes: badge;
+  background: rgba(51, 154, 240, 0.15);
+  color: #339af0;
 }
 
 .errorBox {
@@ -266,6 +273,10 @@
   padding: 8px 12px;
   font-size: 12px;
   color: #fa5252;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .generatingSkeleton {
@@ -277,39 +288,103 @@
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
   max-width: 280px;
   aspect-ratio: 3 / 4;
+  animation: skeletonPulse 2s ease-in-out infinite;
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
+.generatingContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+@keyframes skeletonPulse {
+  0%, 100% {
+    opacity: 1;
   }
-  to {
-    transform: rotate(360deg);
+  50% {
+    opacity: 0.6;
   }
 }
 
-.spinner {
-  display: inline-block;
-  width: 24px;
-  height: 24px;
-  border: 2px solid #373a40;
-  border-top-color: #fab005;
+.generatingText {
+  animation: textPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes textPulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── Multi-image grid (quantity > 1) ─────────────── */
+
+.multiImageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  max-width: 320px;
+}
+
+.multiImageThumb {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: light-dark(var(--mantine-color-gray-1), #2c2e33);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    border-color: rgba(250, 176, 5, 0.5);
+  }
+
+  img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 160px;
+    object-fit: contain;
+  }
+}
+
+.multiImageThumbSelected {
+  border-color: #fab005;
+  box-shadow: 0 0 0 1px rgba(250, 176, 5, 0.3);
+}
+
+.multiImageCheck {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+  background: #fab005;
+  color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ── Mobile responsive ────────────────────────────── */
 
 @media (max-width: 768px) {
-  .editorContainer {
+  .editorContainer,
+  .editorContainerPage {
     flex-direction: column;
     height: auto;
-    max-height: none;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
   }
 
   .chatArea {
     border-right: none;
-    border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
+    border-bottom: 1px solid $border-color;
     min-height: 400px;
     max-height: 60vh;
   }

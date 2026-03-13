@@ -1,0 +1,714 @@
+import {
+  Badge,
+  Button,
+  NumberInput,
+  Select,
+  Switch,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import {
+  IconBolt,
+  IconCheck,
+  IconMessages,
+  IconPencil,
+  IconPhotoPlus,
+  IconRestore,
+  IconSend,
+} from '@tabler/icons-react';
+import type { WorkflowStepEvent } from '@civitai/client';
+import dynamic from 'next/dynamic';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { SignalMessages } from '~/server/common/enums';
+import { showErrorNotification } from '~/utils/notifications';
+
+import { AspectRatioSelector } from './AspectRatioSelector';
+import { IterationMessage } from './IterationMessage';
+import type {
+  IterativeEditorConfig,
+  SourceImage,
+  IterationEntry,
+  GenerateParams,
+  GenerateResult,
+  PollParams,
+  PollResult,
+  InputSlotProps,
+  SidebarSlotProps,
+} from './iterative-editor.types';
+import styles from './IterativeImageEditor.module.scss';
+
+const DrawingEditorModal = dynamic(
+  () =>
+    import('~/components/Generation/Input/DrawingEditor/DrawingEditorModal').then(
+      (mod) => mod.DrawingEditorModal
+    ),
+  { ssr: false }
+);
+
+export interface IterativeImageEditorProps {
+  initialSource?: SourceImage | null;
+  config: IterativeEditorConfig;
+
+  onGenerate: (params: GenerateParams) => Promise<GenerateResult>;
+  onPollStatus: (params: PollParams) => Promise<PollResult>;
+  onCommit?: (source: SourceImage) => Promise<void> | void;
+  onClose?: () => void;
+
+  /** Custom input area. Receives editor state + keyboard handler. Default: plain textarea. */
+  renderInput?: (props: InputSlotProps) => React.ReactNode;
+  /** Extra sidebar sections injected below the enhance toggle. */
+  renderSidebarExtra?: (props: SidebarSlotProps) => React.ReactNode;
+
+  mode?: 'page' | 'modal';
+}
+
+export function IterativeImageEditor({
+  initialSource,
+  config,
+  onGenerate,
+  onPollStatus,
+  onCommit,
+  onClose,
+  renderInput,
+  renderSidebarExtra,
+  mode = 'page',
+}: IterativeImageEditorProps) {
+  // ── Core state ──
+  const [iterations, setIterations] = useState<IterationEntry[]>([]);
+  const [currentSource, setCurrentSource] = useState<SourceImage | null>(
+    initialSource ?? null
+  );
+  const [annotationElements, setAnnotationElements] = useState<DrawingElement[]>([]);
+  const [originalSourceUrl, setOriginalSourceUrl] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const isGeneratingRef = useRef(false);
+
+  // Keep stable reference to initialSource for "Reset to original"
+  const stableInitialSource = useRef(initialSource ?? null);
+
+  // ── Controls state ──
+  const [prompt, setPrompt] = useState('');
+  const [enhancePrompt, setEnhancePrompt] = useState(true);
+  const [aspectRatio, setAspectRatio] = useState(config.defaultAspectRatio);
+  const [generationModel, setGenerationModel] = useState<string | null>(null);
+  const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
+  const [quantity, setQuantity] = useState(1);
+
+  const { uploadToCF } = useCFImageUpload();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const effectiveModel = generationModel ?? config.defaultModel;
+  const activeAspectRatios =
+    config.modelSizes[effectiveModel] ?? config.modelSizes[config.defaultModel] ?? [];
+  const maxReferenceImages = config.modelMaxImages[effectiveModel] ?? 7;
+
+  // ── Auto-scroll to bottom on new messages ──
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [iterations.length]);
+
+  // ── Model change handler ──
+  const handleModelChange = (value: string | null) => {
+    setGenerationModel(value);
+    const newSizes =
+      config.modelSizes[value ?? config.defaultModel] ??
+      config.modelSizes[config.defaultModel] ??
+      [];
+    if (!newSizes.some((s) => s.label === aspectRatio)) {
+      const defaultLabel =
+        newSizes.find(
+          (s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3'
+        )?.label ?? newSizes[0]?.label;
+      if (defaultLabel) setAspectRatio(defaultLabel);
+    }
+  };
+
+  // ── Workflow tracking for signal-based updates ──
+  const activeWorkflowIdRef = useRef<string | null>(null);
+  const activeIterationIdRef = useRef<string | null>(null);
+  const activeDimsRef = useRef<{ width: number; height: number }>({ width: 512, height: 512 });
+  const activePromptRef = useRef<string>('');
+
+  const clearActiveWorkflow = useCallback(() => {
+    activeWorkflowIdRef.current = null;
+    activeIterationIdRef.current = null;
+  }, []);
+
+  const handlePollResult = useCallback(
+    (result: PollResult, iterationId: string) => {
+      if (result.status === 'succeeded' && result.imageUrl) {
+        clearActiveWorkflow();
+        const w = activeDimsRef.current.width;
+        const h = activeDimsRef.current.height;
+
+        // Build all result images
+        const allImages: SourceImage[] = (result.images ?? []).map((img) => ({
+          url: img.url,
+          previewUrl: getEdgeUrl(img.url, { width: 400 }) ?? img.url,
+          width: w,
+          height: h,
+        }));
+
+        // Fallback: if images array is empty, use the single imageUrl
+        if (allImages.length === 0) {
+          allImages.push({
+            url: result.imageUrl,
+            previewUrl: getEdgeUrl(result.imageUrl, { width: 400 }) ?? result.imageUrl,
+            width: w,
+            height: h,
+          });
+        }
+
+        const firstImage = allImages[0];
+        setIterations((prev) =>
+          prev.map((it) =>
+            it.id === iterationId
+              ? {
+                  ...it,
+                  status: 'ready' as const,
+                  resultImage: firstImage,
+                  resultImages: allImages,
+                }
+              : it
+          )
+        );
+        setCurrentSource(firstImage);
+        setAnnotationElements([]);
+        setOriginalSourceUrl(null);
+        setIsGenerating(false);
+        isGeneratingRef.current = false;
+      } else if (result.status === 'failed') {
+        clearActiveWorkflow();
+        setIterations((prev) =>
+          prev.map((it) =>
+            it.id === iterationId
+              ? {
+                  ...it,
+                  status: 'error' as const,
+                  errorMessage: 'Generation failed. Buzz has been refunded.',
+                }
+              : it
+          )
+        );
+        setIsGenerating(false);
+        isGeneratingRef.current = false;
+      }
+    },
+    [clearActiveWorkflow]
+  );
+
+  const doPollOnce = useCallback(async () => {
+    const workflowId = activeWorkflowIdRef.current;
+    const iterationId = activeIterationIdRef.current;
+    if (!workflowId || !iterationId) return;
+
+    try {
+      const result = await onPollStatus({
+        workflowId,
+        width: activeDimsRef.current.width,
+        height: activeDimsRef.current.height,
+        prompt: activePromptRef.current || undefined,
+      });
+      handlePollResult(result, iterationId);
+    } catch {
+      // Ignore poll errors — signal will retry
+    }
+  }, [onPollStatus, handlePollResult]);
+
+  const startWorkflow = useCallback(
+    (workflowId: string, iterationId: string, width: number, height: number, prompt: string) => {
+      activeWorkflowIdRef.current = workflowId;
+      activeIterationIdRef.current = iterationId;
+      activeDimsRef.current = { width, height };
+      activePromptRef.current = prompt;
+    },
+    []
+  );
+
+  // Signal-based updates: when orchestrator signals completion, poll to download image
+  useSignalConnection(
+    SignalMessages.TextToImageUpdate,
+    useCallback(
+      (data: Omit<WorkflowStepEvent, '$type'> & { $type: string }) => {
+        if (data.$type !== 'step') return;
+        if (!activeWorkflowIdRef.current || data.workflowId !== activeWorkflowIdRef.current)
+          return;
+        if (data.status === 'succeeded' || data.status === 'failed') {
+          void doPollOnce();
+        }
+      },
+      [doPollOnce]
+    )
+  );
+
+  // ── Generation cost (estimated — actual cost comes from server) ──
+  const estimatedCost = useMemo(() => {
+    const base = config.generationCost * quantity;
+    const enhance = enhancePrompt && prompt.trim() ? config.enhanceCost : 0;
+    return base + enhance;
+  }, [config.generationCost, config.enhanceCost, quantity, enhancePrompt, prompt]);
+
+  // ── Send / Generate handler ──
+  const handleSend = async () => {
+    if (!prompt.trim() || isGeneratingRef.current) return;
+
+    isGeneratingRef.current = true;
+
+    const iterationId = `iter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const hasAnnotations = annotationElements.length > 0;
+
+    const newIteration: IterationEntry = {
+      id: iterationId,
+      prompt: prompt.trim(),
+      annotated: hasAnnotations,
+      sourceImage: currentSource,
+      resultImage: null,
+      resultImages: [],
+      cost: estimatedCost,
+      timestamp: new Date(),
+      status: 'generating',
+    };
+
+    setIterations((prev) => [...prev, newIteration]);
+    setIsGenerating(true);
+
+    const currentPrompt = prompt.trim();
+    setPrompt('');
+
+    try {
+      const generateParams: GenerateParams = {
+        prompt: currentPrompt,
+        enhance: enhancePrompt,
+        aspectRatio,
+        baseModel: generationModel,
+        quantity,
+        ...(currentSource
+          ? {
+              sourceImageUrl: currentSource.url,
+              sourceImageWidth: currentSource.width,
+              sourceImageHeight: currentSource.height,
+            }
+          : {}),
+        ...(selectedImageIds ? { selectedImageIds } : {}),
+      };
+
+      const result = await onGenerate(generateParams);
+
+      // Update iteration with actual cost from server if available
+      if (result.cost != null && result.cost !== estimatedCost) {
+        setIterations((prev) =>
+          prev.map((it) => (it.id === iterationId ? { ...it, cost: result.cost! } : it))
+        );
+      }
+
+      startWorkflow(result.workflowId, iterationId, result.width, result.height, currentPrompt);
+    } catch (error) {
+      showErrorNotification({ error: error as Error, title: 'Failed to generate' });
+      setIsGenerating(false);
+      isGeneratingRef.current = false;
+      setIterations((prev) =>
+        prev.map((it) =>
+          it.status === 'generating'
+            ? { ...it, status: 'error' as const, errorMessage: (error as Error).message }
+            : it
+        )
+      );
+    }
+  };
+
+  // ── Annotation handler ──
+  const handleAnnotateSource = () => {
+    if (!currentSource) return;
+
+    const cleanUrl = originalSourceUrl ?? currentSource.url;
+    if (!originalSourceUrl) setOriginalSourceUrl(currentSource.url);
+
+    const sourceUrl = cleanUrl.startsWith('http')
+      ? cleanUrl
+      : getEdgeUrl(cleanUrl, { original: true }) ?? cleanUrl;
+
+    dialogStore.trigger({
+      component: DrawingEditorModal,
+      props: {
+        sourceImage: {
+          url: sourceUrl,
+          width: currentSource.width,
+          height: currentSource.height,
+        },
+        initialLines: annotationElements,
+        confirmLabel: 'Apply Annotations',
+        onConfirm: async (blob: Blob, elements: DrawingElement[]) => {
+          setAnnotationElements(elements);
+          try {
+            const file = new File([blob], 'annotated-source.jpg', { type: 'image/jpeg' });
+            const result = await uploadToCF(file);
+            setCurrentSource({
+              url: result.id,
+              previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+              width: currentSource.width,
+              height: currentSource.height,
+            });
+          } catch (err) {
+            showErrorNotification({
+              error: err as Error,
+              title: 'Failed to save annotation',
+            });
+          }
+        },
+      },
+    });
+  };
+
+  // ── Revert: use a previous iteration as source ──
+  const handleUseAsSource = (iteration: IterationEntry) => {
+    if (!iteration.resultImage) return;
+    setCurrentSource(iteration.resultImage);
+    setAnnotationElements([]);
+    setOriginalSourceUrl(null);
+  };
+
+  // ── Pick a specific image from multi-image results ──
+  const handleSelectImage = useCallback(
+    (iterationId: string, image: SourceImage) => {
+      setIterations((prev) =>
+        prev.map((it) => (it.id === iterationId ? { ...it, resultImage: image } : it))
+      );
+      // If this iteration is the current source, update it
+      setCurrentSource((prev) => {
+        const iteration = iterations.find((it) => it.id === iterationId);
+        if (!iteration) return prev;
+        // Only auto-update if this iteration was already the current source
+        if (prev && iteration.resultImage && prev.url === iteration.resultImage.url) {
+          return image;
+        }
+        return prev;
+      });
+    },
+    [iterations]
+  );
+
+  // ── Reset to original source ──
+  const handleResetToOriginal = useCallback(() => {
+    setCurrentSource(stableInitialSource.current);
+    setAnnotationElements([]);
+    setOriginalSourceUrl(null);
+  }, []);
+
+  const canResetToOriginal = useMemo(() => {
+    if (!stableInitialSource.current) return false;
+    if (!currentSource) return true;
+    return currentSource.url !== stableInitialSource.current.url;
+  }, [currentSource]);
+
+  // ── Commit ──
+  const handleCommit = async () => {
+    if (isGenerating || !currentSource) return;
+
+    if (iterations.length === 0) {
+      onClose?.();
+      return;
+    }
+
+    try {
+      await onCommit?.(currentSource);
+    } catch {
+      return;
+    }
+
+    onClose?.();
+  };
+
+  // ── Current source preview URL ──
+  const currentSourcePreviewUrl = currentSource
+    ? currentSource.previewUrl.startsWith('http')
+      ? currentSource.previewUrl
+      : getEdgeUrl(currentSource.previewUrl, { width: 400 }) ?? currentSource.previewUrl
+    : null;
+
+  // ── Close with confirmation ──
+  const handleClose = useCallback(() => {
+    if (iterations.length > 0) {
+      openConfirmModal({
+        title: 'Discard changes?',
+        children: (
+          <Text size="sm">You have uncommitted changes. Close without committing?</Text>
+        ),
+        labels: { confirm: 'Discard', cancel: 'Keep editing' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => onClose?.(),
+      });
+    } else {
+      onClose?.();
+    }
+  }, [iterations.length, onClose]);
+
+  // ── Retry failed iteration ──
+  const handleRetry = useCallback((iteration: IterationEntry) => {
+    setCurrentSource(iteration.sourceImage);
+    setPrompt(iteration.prompt);
+    setIterations((prev) => prev.filter((it) => it.id !== iteration.id));
+  }, []);
+
+  // ── Keyboard shortcut: Ctrl/Cmd+Enter to send ──
+  const sendButtonRef = useRef<HTMLDivElement>(null);
+  const handleTextareaKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const btn = sendButtonRef.current?.querySelector('button');
+        if (btn && !btn.disabled) btn.click();
+      }
+    },
+    []
+  );
+
+  // ── Running total buzz spent ──
+  const totalSpent = useMemo(
+    () => iterations.reduce((sum, it) => sum + (it.status !== 'error' ? it.cost : 0), 0),
+    [iterations]
+  );
+
+  const containerClass =
+    mode === 'page' ? styles.editorContainerPage : styles.editorContainer;
+
+  // ── Shared slot context ──
+  const slotContext = useMemo(
+    () => ({
+      prompt,
+      setPrompt,
+      isGenerating,
+      selectedImageIds,
+      setSelectedImageIds,
+      effectiveModel,
+      maxReferenceImages,
+    }),
+    [prompt, isGenerating, selectedImageIds, effectiveModel, maxReferenceImages]
+  );
+
+  return (
+    <div className={containerClass}>
+      {/* ── Chat area (left) ── */}
+      <div className={styles.chatArea}>
+        {totalSpent > 0 && (
+          <div className={styles.sessionTotalBar}>
+            <IconBolt size={14} />
+            <Text size="xs" fw={600}>
+              Session total: {totalSpent} Buzz
+            </Text>
+          </div>
+        )}
+        <div className={styles.chatMessages} ref={scrollRef}>
+          {iterations.length === 0 ? (
+            <div className={styles.emptyState}>
+              <IconMessages size={32} />
+              <Text size="sm" c="dimmed">
+                Describe your image to start generating.
+              </Text>
+              <Text size="xs" c="dimmed">
+                Each send produces a new image. You can refine iteratively.
+              </Text>
+            </div>
+          ) : (
+            iterations.map((iteration) => (
+              <IterationMessage
+                key={iteration.id}
+                iteration={iteration}
+                isCurrentSource={
+                  iteration.status === 'ready' &&
+                  !!iteration.resultImage &&
+                  !!currentSource &&
+                  iteration.resultImage.url === currentSource.url
+                }
+                onUseAsSource={() => handleUseAsSource(iteration)}
+                onSelectImage={(image) => handleSelectImage(iteration.id, image)}
+                onRetry={
+                  iteration.status === 'error' ? () => handleRetry(iteration) : undefined
+                }
+              />
+            ))
+          )}
+        </div>
+
+        {/* ── Input area ── */}
+        <div className={styles.inputArea}>
+          {renderInput ? (
+            renderInput({ ...slotContext, onKeyDown: handleTextareaKeyDown })
+          ) : (
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleTextareaKeyDown}
+              placeholder="Describe your image or changes..."
+              rows={2}
+              style={{
+                width: '100%',
+                background: 'var(--mantine-color-body)',
+                border: '1px solid var(--mantine-color-default-border)',
+                borderRadius: 'var(--mantine-radius-sm)',
+                padding: '8px 12px',
+                fontSize: 14,
+                color: 'var(--mantine-color-text)',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                outline: 'none',
+              }}
+            />
+          )}
+          <div className={styles.inputActions}>
+            <div className={styles.inputActionsLeft}>
+              {currentSource && (
+                <Tooltip label="Annotate current source image">
+                  <Button
+                    variant="light"
+                    size="compact-sm"
+                    leftSection={<IconPencil size={14} />}
+                    onClick={handleAnnotateSource}
+                    disabled={isGenerating}
+                  >
+                    Annotate
+                  </Button>
+                </Tooltip>
+              )}
+              {annotationElements.length > 0 && (
+                <Badge size="sm" color="blue" variant="light">
+                  <IconPencil size={10} style={{ marginRight: 4 }} />
+                  Annotated
+                </Badge>
+              )}
+            </div>
+            <Tooltip
+              label={`~${estimatedCost} Buzz (Ctrl+Enter)`}
+              withArrow
+              position="top"
+            >
+              <div ref={sendButtonRef}>
+                <BuzzTransactionButton
+                  buzzAmount={estimatedCost}
+                  label={
+                    <span className="flex items-center gap-1">
+                      <IconSend size={14} />
+                      {currentSource ? 'Refine' : 'Generate'}
+                    </span>
+                  }
+                  loading={isGenerating}
+                  disabled={!prompt.trim() || isGenerating}
+                  onPerformTransaction={handleSend}
+                  showPurchaseModal
+                  size="compact-sm"
+                />
+              </div>
+            </Tooltip>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Controls sidebar (right) ── */}
+      <div className={styles.controlsSidebar}>
+        {/* Current source preview */}
+        <div className={styles.sidebarSection}>
+          <div className={styles.sidebarSectionTitle}>Current Source</div>
+          {currentSourcePreviewUrl ? (
+            <div className={styles.currentSourcePreview}>
+              <img src={currentSourcePreviewUrl} alt="Current source" />
+            </div>
+          ) : (
+            <div className={styles.noSourcePlaceholder}>
+              <IconPhotoPlus size={28} style={{ opacity: 0.5 }} />
+              <Text size="xs" c="dimmed" ta="center">
+                No source image
+              </Text>
+              <Text size="xs" c="dimmed" ta="center" style={{ opacity: 0.6 }}>
+                First generation will create from prompt
+              </Text>
+            </div>
+          )}
+          {canResetToOriginal && (
+            <Button
+              variant="subtle"
+              size="compact-xs"
+              leftSection={<IconRestore size={14} />}
+              onClick={handleResetToOriginal}
+              disabled={isGenerating}
+              mt={4}
+              fullWidth
+            >
+              Reset to original
+            </Button>
+          )}
+        </div>
+
+        {/* Model selector */}
+        <div className={styles.sidebarSection}>
+          <Select
+            label="Model"
+            data={config.modelOptions}
+            value={effectiveModel}
+            onChange={handleModelChange}
+            size="xs"
+          />
+        </div>
+
+        {/* Aspect ratio */}
+        <div className={styles.sidebarSection}>
+          <AspectRatioSelector
+            value={aspectRatio}
+            onChange={setAspectRatio}
+            aspectRatios={activeAspectRatios}
+          />
+        </div>
+
+        {/* Quantity selector */}
+        <div className={styles.sidebarSection}>
+          <NumberInput
+            label="Images per generation"
+            value={quantity}
+            onChange={(val) => setQuantity(typeof val === 'number' ? Math.max(1, Math.min(4, val)) : 1)}
+            min={1}
+            max={4}
+            size="xs"
+          />
+        </div>
+
+        {/* Enhance prompt toggle */}
+        <Switch
+          label="Enhance prompt"
+          description="AI adds detail and composition"
+          checked={enhancePrompt}
+          onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
+          color="yellow"
+          size="sm"
+        />
+
+        {/* Plugin sidebar sections */}
+        {renderSidebarExtra?.(slotContext)}
+
+        {/* Cost info */}
+        <Text size="xs" c="dimmed">
+          ~{estimatedCost} Buzz per generation
+        </Text>
+
+        {/* Commit button */}
+        <div className={styles.commitSection}>
+          <button
+            className={styles.commitButton}
+            disabled={isGenerating || !iterations.some((it) => it.status === 'ready')}
+            onClick={handleCommit}
+          >
+            <IconCheck size={16} />
+            {config.commitLabel ?? 'Save Image'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

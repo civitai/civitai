@@ -27,14 +27,17 @@ No server changes needed — the existing `enhancePanel`, `createPanel`, and `re
 - **Commit** — "Commit to Panel" calls `replacePanelImage` if reverted, else just closes
 - **Controls sidebar** — Model selector (`COMIC_MODEL_OPTIONS`), `AspectRatioSelector`, enhance prompt toggle, referenced characters display, `ImageSelectionSection` for over-budget references
 
-### Remaining (Phase 7: Polish)
+### Completed (Phase 7: Polish)
 
-- [ ] **Confirmation dialog on close** — Warn user if they have uncommitted iterations and try to close/X the modal
-- [ ] **Keyboard shortcuts** — Enter/Ctrl+Enter to send, possibly Escape to close
-- [ ] **Error retry** — "Retry" button on failed iterations that re-sends the same prompt
-- [ ] **Cost running total** — Show cumulative buzz spent across all iterations in the session
-- [ ] **Empty source placeholder** — Better visual for the "No source image" state in the sidebar (currently just text)
-- [ ] **Generation progress indicator** — More granular than just a spinner (e.g., "Queued → Generating → Almost done")
+- [x] **Confirmation dialog on close** — `openConfirmModal` warns when iterations exist and user tries to close
+- [x] **Keyboard shortcuts** — Ctrl/Cmd+Enter to send via `sendButtonRef` wrapper
+- [x] **Error retry** — "Retry" button on failed iterations restores prompt/source and removes failed entry
+- [x] **Cost running total** — Session total buzz bar at top of chat area
+- [x] **Empty source placeholder** — Improved visual with `IconPhotoPlus` and clearer copy
+- [x] **Generation progress indicator** — Mantine `Loader` with pulsing "Generating..." text and skeleton pulse animation
+
+### Remaining (Phase 7: Polish — Deferred)
+
 - [ ] **Mobile testing** — Verify the collapsed single-column layout works well in practice
 - [ ] **Discard/cancel generation** — Allow canceling a pending generation mid-flight
 - [ ] **Accessibility** — Focus management when modal opens, screen reader labels on iterative messages
