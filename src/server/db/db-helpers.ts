@@ -72,13 +72,15 @@ export function getClient(
     ? 'dp-read-pg'
     : 'node-pg';
 
-  // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.
-  // For notification instances, we set it per-connection via SET instead.
-  const notifStatementTimeout =
+  // PgBouncer rejects statement_timeout as a startup parameter.
+  // For notification instances on DP and the datapacketRead pool, we set it per-connection via SET.
+  const perConnectionTimeout =
     instance === 'notificationRead'
       ? (env.IS_DATAPACKET ? env.DATABASE_READ_TIMEOUT ?? 10000 : undefined)
       : instance === 'notification'
       ? env.DATABASE_WRITE_TIMEOUT
+      : instance === 'datapacketRead'
+      ? env.DATABASE_READ_TIMEOUT ?? 30000
       : undefined;
 
   const pool = new Pool({
@@ -95,17 +97,19 @@ export function getClient(
         ? undefined // DP: set per-connection below (PgBouncer rejects startup param)
         : instance === 'notificationRead'
         ? undefined // DOKS: standby doesn't support this
+        : instance === 'datapacketRead'
+        ? undefined // DP: set per-connection below (PgBouncer rejects startup param)
         : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
 
-  // Set statement_timeout per-connection for notification instances on DP
-  // (can't use startup parameter with DO managed PgBouncer)
-  if (env.IS_DATAPACKET && isNotification && notifStatementTimeout) {
+  // Set statement_timeout per-connection for pools behind PgBouncer
+  // (can't use startup parameter with PgBouncer)
+  if (perConnectionTimeout && (instance === 'datapacketRead' || (env.IS_DATAPACKET && isNotification))) {
     pool.on('connect', (client) => {
-      client.query(`SET statement_timeout = ${Number(notifStatementTimeout)}`).catch(() => {});
+      client.query(`SET statement_timeout = ${Number(perConnectionTimeout)}`).catch(() => {});
     });
   }
 
