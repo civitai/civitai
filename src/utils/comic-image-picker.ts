@@ -51,12 +51,16 @@ export function openGeneratorImagePicker({
         if (selected.length === 0) return;
         try {
           onLoadingChange?.(true);
-          const s3Key = await fetchAndUploadGeneratorImage(selected[0].url, fileNameBase, uploadFn);
-          onSuccess(s3Key);
+          await Promise.all(
+            selected.map(async (item) => {
+              const s3Key = await fetchAndUploadGeneratorImage(item.url, fileNameBase, uploadFn);
+              onSuccess(s3Key);
+            })
+          );
         } catch (err) {
-          console.error(`Failed to upload generator image for ${fileNameBase}:`, err);
+          console.error(`Failed to upload generator image(s) for ${fileNameBase}:`, err);
           showErrorNotification({
-            error: new Error(`Could not upload ${fileNameBase} image. Please try again.`),
+            error: new Error(`Could not upload ${fileNameBase} image(s). Please try again.`),
             title: 'Upload Failed',
           });
         } finally {

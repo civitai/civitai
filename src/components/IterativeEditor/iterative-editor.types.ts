@@ -8,6 +8,8 @@ export interface SourceImage {
 export interface IterationEntry {
   id: string;
   prompt: string;
+  /** The enhanced prompt if enhancement was used */
+  enhancedPrompt?: string | null;
   annotated: boolean;
   sourceImage: SourceImage | null;
   /** The selected/current result image */
@@ -42,7 +44,17 @@ export interface CostEstimateParams {
   baseModel: string | null;
   aspectRatio: string;
   quantity: number;
-  hasSourceImage: boolean;
+  /** Source image for img2img pricing */
+  sourceImage?: { url: string; width: number; height: number } | null;
+  /** User-imported reference images */
+  referenceImages?: { url: string; width: number; height: number }[];
+}
+
+export interface ReferenceImage {
+  url: string;
+  previewUrl: string;
+  width: number;
+  height: number;
 }
 
 export interface GenerateParams {
@@ -55,6 +67,8 @@ export interface GenerateParams {
   sourceImageWidth?: number;
   sourceImageHeight?: number;
   selectedImageIds?: number[];
+  /** User-imported reference images (from PC or generator) */
+  referenceImages?: ReferenceImage[];
 }
 
 export interface PollParams {
@@ -69,6 +83,8 @@ export interface GenerateResult {
   width: number;
   height: number;
   cost?: number;
+  /** The enhanced prompt if enhancement was used, null/undefined otherwise */
+  enhancedPrompt?: string | null;
 }
 
 export interface PollResult {
@@ -95,3 +111,11 @@ export interface InputSlotProps extends EditorSlotContext {
 }
 
 export interface SidebarSlotProps extends EditorSlotContext {}
+
+/** A character/concept reference from the comic project (resolved from @mentions) */
+export interface CharacterReference {
+  id: number;
+  name: string;
+  type?: string;
+  images?: { image: { id: number; url: string } }[];
+}

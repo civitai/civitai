@@ -351,6 +351,16 @@ const iterateGenerateSchema = z.object({
   sourceImageUrl: z.string().optional(),
   sourceImageWidth: z.number().int().positive().optional(),
   sourceImageHeight: z.number().int().positive().optional(),
+  // User-imported reference images (from PC or generator)
+  userReferenceImages: z
+    .array(
+      z.object({
+        url: z.string(),
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+      })
+    )
+    .optional(),
 });
 
 const bulkCreatePanelsSchema = z.object({
@@ -1177,18 +1187,51 @@ export const comicsRouter = router({
         baseModel: z.string().nullish(),
         aspectRatio: z.string().default('3:4'),
         quantity: z.number().int().min(1).max(4).default(1),
-        hasSourceImage: z.boolean().default(false),
+        sourceImage: z
+          .object({
+            url: z.string(),
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          })
+          .nullish(),
+        referenceImages: z
+          .array(
+            z.object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+          )
+          .optional(),
       })
     )
     .query(async ({ ctx, input }) => {
       try {
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         const modelConfig = getComicModelConfig(input.baseModel);
+        const hasSourceImage = !!input.sourceImage;
         const effectiveVersionId =
-          input.hasSourceImage && modelConfig.img2imgVersionId
+          hasSourceImage && modelConfig.img2imgVersionId
             ? modelConfig.img2imgVersionId
             : modelConfig.versionId;
         const dims = getAspectRatioDimensions(input.aspectRatio, modelConfig);
+
+        // Build real images array for accurate pricing
+        const images: { url: string; width: number; height: number }[] = [];
+        if (input.sourceImage) {
+          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
+          images.push({
+            url: sourceEdgeUrl,
+            width: input.sourceImage.width,
+            height: input.sourceImage.height,
+          });
+        }
+        if (input.referenceImages) {
+          for (const ref of input.referenceImages) {
+            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+            images.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+          }
+        }
 
         const step = await createImageGenStep({
           params: {
@@ -1207,11 +1250,7 @@ export const comicsRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            // Include a placeholder image when hasSourceImage so the step gets
-            // process:'img2img' pricing (orchestrator won't fetch URLs during whatIf)
-            images: input.hasSourceImage
-              ? [{ url: 'https://placeholder.test', width: dims.width, height: dims.height }]
-              : [],
+            images: capReferenceImages(images, modelConfig.maxReferenceImages),
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['comics'],
@@ -2368,6 +2407,14 @@ export const comicsRouter = router({
       }
       allImages.push(...combinedRefImages);
 
+      // Add user-imported reference images (from PC or generator)
+      if (input.userReferenceImages) {
+        for (const ref of input.userReferenceImages) {
+          const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+          allImages.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+        }
+      }
+
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
       // Build prompt — optionally enhance
@@ -2419,6 +2466,7 @@ export const comicsRouter = router({
         width: panelWidth,
         height: panelHeight,
         cost: result.cost?.total ?? 0,
+        enhancedPrompt: input.enhance && fullPrompt !== userPrompt ? fullPrompt : null,
       };
     }),
 

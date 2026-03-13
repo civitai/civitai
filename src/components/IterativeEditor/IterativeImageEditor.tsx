@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Loader,
   NumberInput,
   Select,
   Switch,
@@ -17,6 +18,10 @@ import {
   IconRefresh,
   IconRestore,
   IconSend,
+  IconUpload,
+  IconUser,
+  IconWand,
+  IconZoomIn,
 } from '@tabler/icons-react';
 import type { WorkflowStepEvent } from '@civitai/client';
 import dynamic from 'next/dynamic';
@@ -30,12 +35,16 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { SignalMessages } from '~/server/common/enums';
 import { showErrorNotification } from '~/utils/notifications';
+import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
+import { getImageDimensions } from '~/utils/image-utils';
 
 import { AspectRatioSelector } from './AspectRatioSelector';
 import { IterationMessage } from './IterationMessage';
 import type {
+  CharacterReference,
   CostEstimate,
   CostEstimateParams,
+  ReferenceImage,
   IterativeEditorConfig,
   SourceImage,
   IterationEntry,
@@ -56,6 +65,11 @@ const DrawingEditorModal = dynamic(
   { ssr: false }
 );
 
+const ImageSelectModal = dynamic(
+  () => import('~/components/Training/Form/ImageSelectModal'),
+  { ssr: false }
+);
+
 export interface IterativeImageEditorProps {
   initialSource?: SourceImage | null;
   config: IterativeEditorConfig;
@@ -69,6 +83,9 @@ export interface IterativeImageEditorProps {
   renderInput?: (props: InputSlotProps) => React.ReactNode;
   /** Extra sidebar sections injected below the enhance toggle. */
   renderSidebarExtra?: (props: SidebarSlotProps) => React.ReactNode;
+
+  /** All project references (characters/concepts). Editor computes which are @mentioned from the prompt. */
+  projectReferences?: CharacterReference[];
 
   /** Dynamic generation cost from whatIf query. Overrides config.generationCost when ready. */
   costEstimate?: CostEstimate | null;
@@ -93,6 +110,7 @@ export function IterativeImageEditor({
   onClose,
   renderInput,
   renderSidebarExtra,
+  projectReferences,
   costEstimate,
   isCostLoading,
   enhanceCostEstimate,
@@ -120,6 +138,29 @@ export function IterativeImageEditor({
   const [generationModel, setGenerationModel] = useState<string | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [userReferences, setUserReferences] = useState<ReferenceImage[]>([]);
+  const [disabledRefUrls, setDisabledRefUrls] = useState<Set<string>>(new Set());
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  // Active (enabled) references only
+  const activeUserReferences = useMemo(
+    () => userReferences.filter((r) => !disabledRefUrls.has(r.url)),
+    [userReferences, disabledRefUrls]
+  );
+
+  // Compute mentioned character references from prompt
+  const mentionedCharacterRefs = useMemo(() => {
+    if (!projectReferences?.length || !prompt.trim()) return [];
+    const sorted = [...projectReferences].sort((a, b) => b.name.length - a.name.length);
+    const mentioned = new Set<number>();
+    for (const ref of sorted) {
+      const escaped = ref.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`@${escaped}(?=$|[\\s.,!?;:'")])`, 'gi');
+      if (pattern.test(prompt)) mentioned.add(ref.id);
+    }
+    return projectReferences.filter((r) => mentioned.has(r.id));
+  }, [projectReferences, prompt]);
 
   const { uploadToCF } = useCFImageUpload();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -130,14 +171,40 @@ export function IterativeImageEditor({
       baseModel: generationModel,
       aspectRatio,
       quantity,
-      hasSourceImage: !!currentSource,
+      sourceImage: currentSource
+        ? { url: currentSource.url, width: currentSource.width, height: currentSource.height }
+        : null,
+      referenceImages: activeUserReferences.map((r) => ({
+        url: r.url,
+        width: r.width,
+        height: r.height,
+      })),
     });
-  }, [generationModel, aspectRatio, quantity, currentSource, onSettingsChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationModel, aspectRatio, quantity, currentSource, activeUserReferences, onSettingsChange]);
 
   const effectiveModel = generationModel ?? config.defaultModel;
   const activeAspectRatios =
     config.modelSizes[effectiveModel] ?? config.modelSizes[config.defaultModel] ?? [];
   const maxReferenceImages = config.modelMaxImages[effectiveModel] ?? 7;
+
+  // Count effective character images (selected or all if no selection)
+  const allCharacterImageIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const ref of mentionedCharacterRefs) {
+      for (const ri of ref.images ?? []) {
+        if (ri.image?.id) ids.push(ri.image.id);
+      }
+    }
+    return ids;
+  }, [mentionedCharacterRefs]);
+  const effectiveCharacterImageCount = selectedImageIds
+    ? selectedImageIds.length
+    : allCharacterImageIds.length;
+
+  const usedImageSlots =
+    (currentSource ? 1 : 0) + activeUserReferences.length + effectiveCharacterImageCount;
+  const remainingImageSlots = Math.max(0, maxReferenceImages - usedImageSlots);
 
   // ── Auto-scroll to bottom on new messages ──
   useEffect(() => {
@@ -336,14 +403,23 @@ export function IterativeImageEditor({
             }
           : {}),
         ...(selectedImageIds ? { selectedImageIds } : {}),
+        ...(activeUserReferences.length > 0 ? { referenceImages: activeUserReferences } : {}),
       };
 
       const result = await onGenerate(generateParams);
 
-      // Update iteration with actual cost from server if available
-      if (result.cost != null && result.cost !== estimatedCost) {
+      // Update iteration with actual cost and enhanced prompt from server
+      if ((result.cost != null && result.cost !== estimatedCost) || result.enhancedPrompt) {
         setIterations((prev) =>
-          prev.map((it) => (it.id === iterationId ? { ...it, cost: result.cost! } : it))
+          prev.map((it) =>
+            it.id === iterationId
+              ? {
+                  ...it,
+                  ...(result.cost != null ? { cost: result.cost } : {}),
+                  ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}),
+                }
+              : it
+          )
         );
       }
 
@@ -363,7 +439,7 @@ export function IterativeImageEditor({
   };
 
   // ── Annotation handler ──
-  const handleAnnotateSource = () => {
+  const handleAnnotateSource = async () => {
     if (!currentSource) return;
 
     const cleanUrl = originalSourceUrl ?? currentSource.url;
@@ -373,13 +449,24 @@ export function IterativeImageEditor({
       ? cleanUrl
       : getEdgeUrl(cleanUrl, { original: true }) ?? cleanUrl;
 
+    // Resolve actual image dimensions to ensure correct aspect ratio
+    let imgWidth = currentSource.width;
+    let imgHeight = currentSource.height;
+    try {
+      const dims = await getImageDimensions(sourceUrl);
+      imgWidth = dims.width;
+      imgHeight = dims.height;
+    } catch {
+      // Fall back to stored dimensions
+    }
+
     dialogStore.trigger({
       component: DrawingEditorModal,
       props: {
         sourceImage: {
           url: sourceUrl,
-          width: currentSource.width,
-          height: currentSource.height,
+          width: imgWidth,
+          height: imgHeight,
         },
         initialLines: annotationElements,
         confirmLabel: 'Apply Annotations',
@@ -391,8 +478,8 @@ export function IterativeImageEditor({
             const annotatedImage: SourceImage = {
               url: result.id,
               previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
-              width: currentSource.width,
-              height: currentSource.height,
+              width: imgWidth,
+              height: imgHeight,
             };
             setCurrentSource(annotatedImage);
 
@@ -463,6 +550,99 @@ export function IterativeImageEditor({
     if (!currentSource) return true;
     return currentSource.url !== stableInitialSource.current.url;
   }, [currentSource]);
+
+  // ── User-imported reference images ──
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const addUserReference = useCallback((ref: ReferenceImage) => {
+    setUserReferences((prev) => [...prev, ref]);
+  }, []);
+
+  const removeUserReference = useCallback((url: string) => {
+    setUserReferences((prev) => prev.filter((r) => r.url !== url));
+    setDisabledRefUrls((prev) => {
+      const next = new Set(prev);
+      next.delete(url);
+      return next;
+    });
+  }, []);
+
+  const toggleUserReference = useCallback((url: string) => {
+    setDisabledRefUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }, []);
+
+  // Upload reference image from PC
+  const handleUploadReference = useCallback(
+    async (file: File) => {
+      setUploadingCount((c) => c + 1);
+      try {
+        const result = await uploadToCF(file);
+        const objectUrl = URL.createObjectURL(file);
+        const dims = await getImageDimensions(objectUrl);
+        URL.revokeObjectURL(objectUrl);
+        addUserReference({
+          url: result.id,
+          previewUrl: getEdgeUrl(result.id, { width: 100 }) ?? result.id,
+          width: dims.width,
+          height: dims.height,
+        });
+      } catch (err) {
+        showErrorNotification({ error: err as Error, title: 'Failed to upload reference' });
+      } finally {
+        setUploadingCount((c) => Math.max(0, c - 1));
+      }
+    },
+    [uploadToCF, addUserReference]
+  );
+
+  const handleFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files) {
+        for (const file of Array.from(files)) {
+          void handleUploadReference(file);
+        }
+      }
+      e.target.value = '';
+    },
+    [handleUploadReference]
+  );
+
+  // Import reference from generator history
+  const handleImportFromGenerator = useCallback(() => {
+    openGeneratorImagePicker({
+      title: 'Import Reference Images',
+      fileNameBase: 'iterate-ref',
+      uploadFn: uploadToCF,
+      ImageSelectModal,
+      onLoadingChange: (loading) => setUploadingCount((c) => loading ? c + 1 : Math.max(0, c - 1)),
+      onSuccess: async (cfId: string) => {
+        const edgeUrl = getEdgeUrl(cfId, { width: 100 }) ?? cfId;
+        const fullUrl = getEdgeUrl(cfId, { original: true }) ?? cfId;
+        try {
+          const dims = await getImageDimensions(fullUrl);
+          addUserReference({
+            url: cfId,
+            previewUrl: edgeUrl,
+            width: dims.width,
+            height: dims.height,
+          });
+        } catch {
+          addUserReference({
+            url: cfId,
+            previewUrl: edgeUrl,
+            width: 1024,
+            height: 1024,
+          });
+        }
+      },
+    });
+  }, [uploadToCF, addUserReference]);
 
   // ── Commit ──
   const handleCommit = async () => {
@@ -588,6 +768,7 @@ export function IterativeImageEditor({
                 onRetry={
                   iteration.status === 'error' ? () => handleRetry(iteration) : undefined
                 }
+                onZoomImage={setLightboxUrl}
               />
             ))
           )}
@@ -690,11 +871,24 @@ export function IterativeImageEditor({
 
       {/* ── Controls sidebar (right) ── */}
       <div className={styles.controlsSidebar}>
+        <div className={styles.sidebarScrollable}>
         {/* Current source preview */}
         <div className={styles.sidebarSection}>
           <div className={styles.sidebarSectionTitle}>Current Source</div>
           {currentSourcePreviewUrl ? (
-            <div className={styles.currentSourcePreview}>
+            <div
+              className={styles.currentSourcePreview}
+              style={{ cursor: 'pointer' }}
+              onClick={() =>
+                setLightboxUrl(
+                  currentSource
+                    ? getEdgeUrl(currentSource.url, { width: 1200 }) ?? currentSourcePreviewUrl
+                    : currentSourcePreviewUrl
+                )
+              }
+              role="button"
+              tabIndex={0}
+            >
               <img src={currentSourcePreviewUrl} alt="Current source" />
             </div>
           ) : (
@@ -732,6 +926,10 @@ export function IterativeImageEditor({
             onChange={handleModelChange}
             size="xs"
           />
+          <Text size="xs" c={remainingImageSlots === 0 ? 'yellow' : 'dimmed'}>
+            {usedImageSlots}/{maxReferenceImages} image slots used
+            {remainingImageSlots === 0 ? ' (max)' : ''}
+          </Text>
         </div>
 
         {/* Aspect ratio */}
@@ -740,6 +938,214 @@ export function IterativeImageEditor({
             value={aspectRatio}
             onChange={setAspectRatio}
             aspectRatios={activeAspectRatios}
+          />
+        </div>
+
+        {/* Reference images — unified section for characters + uploads */}
+        <div className={styles.sidebarSection}>
+          <div className={styles.sidebarSectionTitle}>
+            References
+          </div>
+
+          {/* Character reference images from @mentions — grouped by character */}
+          {mentionedCharacterRefs.map((charRef) => {
+            const images = (charRef.images ?? []) as { image: { id: number; url: string } }[];
+            if (images.length === 0) return null;
+            const effectiveIds = selectedImageIds ?? allCharacterImageIds;
+            return (
+              <div key={charRef.id}>
+                <Text size="xs" fw={600} c="dimmed" mb={2}>
+                  <IconUser size={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />
+                  {charRef.name}
+                </Text>
+                <div className="flex flex-wrap gap-1">
+                  {images.map((ri) => {
+                    const checked = effectiveIds.includes(ri.image.id);
+                    return (
+                      <div
+                        key={ri.image.id}
+                        className={styles.refThumb}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          const current = selectedImageIds ?? [...allCharacterImageIds];
+                          if (checked) {
+                            if (current.length <= 1) return;
+                            setSelectedImageIds(current.filter((id) => id !== ri.image.id));
+                          } else {
+                            setSelectedImageIds([...current, ri.image.id]);
+                          }
+                        }}
+                        style={{
+                          position: 'relative',
+                          width: 48,
+                          height: 48,
+                          borderRadius: 6,
+                          overflow: 'hidden',
+                          border: checked
+                            ? '2px solid var(--mantine-color-yellow-5)'
+                            : '1px solid var(--mantine-color-default-border)',
+                          opacity: checked ? 1 : 0.4,
+                          cursor: 'pointer',
+                          transition: 'opacity 0.15s, border 0.15s',
+                        }}
+                      >
+                        <img
+                          src={getEdgeUrl(ri.image.url, { width: 100 }) ?? ri.image.url}
+                          alt={charRef.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                        <button
+                          type="button"
+                          className={styles.zoomButton}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLightboxUrl(getEdgeUrl(ri.image.url, { width: 1200 }) ?? ri.image.url);
+                          }}
+                        >
+                          <IconZoomIn size={12} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* User-uploaded references */}
+          {(userReferences.length > 0 || uploadingCount > 0) && (
+            <>
+              {mentionedCharacterRefs.length > 0 && (
+                <Text size="xs" fw={600} c="dimmed" mb={2}>
+                  <IconUpload size={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />
+                  Uploaded
+                </Text>
+              )}
+              <div className="flex flex-wrap gap-1">
+                {userReferences.map((ref) => {
+                  const isDisabled = disabledRefUrls.has(ref.url);
+                  return (
+                    <div
+                      key={ref.url}
+                      className={styles.refThumb}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleUserReference(ref.url)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleUserReference(ref.url);
+                        }
+                      }}
+                      style={{
+                        position: 'relative',
+                        width: 48,
+                        height: 48,
+                        borderRadius: 6,
+                        overflow: 'hidden',
+                        border: isDisabled
+                          ? '1px solid var(--mantine-color-default-border)'
+                          : '2px solid var(--mantine-color-blue-filled)',
+                        opacity: isDisabled ? 0.4 : 1,
+                        cursor: 'pointer',
+                        transition: 'opacity 0.15s, border 0.15s',
+                      }}
+                    >
+                      <img
+                        src={ref.previewUrl}
+                        alt="Reference"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                      <button
+                        type="button"
+                        className={styles.zoomButton}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLightboxUrl(getEdgeUrl(ref.url, { width: 1200 }) ?? ref.previewUrl);
+                        }}
+                      >
+                        <IconZoomIn size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeUserReference(ref.url);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: 1,
+                          right: 1,
+                          width: 16,
+                          height: 16,
+                          borderRadius: '50%',
+                          background: 'rgba(0,0,0,0.7)',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 10,
+                          lineHeight: 1,
+                          padding: 0,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                {/* Upload loading placeholders */}
+                {Array.from({ length: uploadingCount }).map((_, i) => (
+                  <div
+                    key={`uploading-${i}`}
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 6,
+                      border: '1px dashed var(--mantine-color-default-border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'var(--mantine-color-dark-6)',
+                    }}
+                  >
+                    <Loader size={16} color="gray" />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="flex gap-1">
+            <Button
+              variant="light"
+              size="compact-xs"
+              leftSection={<IconUpload size={12} />}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isGenerating}
+            >
+              Upload
+            </Button>
+            <Button
+              variant="light"
+              size="compact-xs"
+              leftSection={<IconWand size={12} />}
+              onClick={handleImportFromGenerator}
+              disabled={isGenerating}
+            >
+              Generator
+            </Button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFileInputChange}
           />
         </div>
 
@@ -777,6 +1183,8 @@ export function IterativeImageEditor({
               : `~${estimatedCost} Buzz per generation`}
         </Text>
 
+        </div>{/* end sidebarScrollable */}
+
         {/* Commit button */}
         <div className={styles.commitSection}>
           <button
@@ -789,6 +1197,26 @@ export function IterativeImageEditor({
           </button>
         </div>
       </div>
+
+      {/* Lightbox overlay */}
+      {lightboxUrl && (
+        <div
+          className={styles.lightboxOverlay}
+          onClick={() => setLightboxUrl(null)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setLightboxUrl(null);
+          }}
+        >
+          <img
+            src={lightboxUrl}
+            alt="Preview"
+            className={styles.lightboxImage}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

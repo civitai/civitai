@@ -1,5 +1,5 @@
 import { ActionIcon, Text, Title, Tooltip } from '@mantine/core';
-import { IconArrowLeft, IconMessages, IconUser } from '@tabler/icons-react';
+import { IconArrowLeft, IconMessages } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
@@ -10,7 +10,6 @@ import {
   COMIC_MODEL_OPTIONS,
   COMIC_MODEL_SIZES,
 } from '~/components/Comics/comic-project-constants';
-import { ImageSelectionSection } from '~/components/Comics/ImageSelectionSection';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
 import type {
@@ -19,15 +18,12 @@ import type {
   InputSlotProps,
   IterativeEditorConfig,
   PollParams,
-  SidebarSlotProps,
   SourceImage,
 } from '~/components/IterativeEditor/iterative-editor.types';
 import { Page } from '~/components/AppLayout/Page';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import styles from './ProjectWorkspace.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -48,7 +44,6 @@ const DEFAULT_MODEL = 'NanoBanana';
 
 function ComicIteratePage() {
   const router = useRouter();
-  const currentUser = useCurrentUser();
   const { id, panelId, panelPosition, imageUrl, width, height, chapter } = router.query;
   const projectId = Number(id);
   const chapterPosition = Number(chapter) || 0;
@@ -66,7 +61,6 @@ function ComicIteratePage() {
     baseModel: project?.baseModel ?? DEFAULT_MODEL,
     aspectRatio: '3:4',
     quantity: 1,
-    hasSourceImage: false,
   });
 
   const {
@@ -78,7 +72,8 @@ function ComicIteratePage() {
       baseModel: costParams.baseModel,
       aspectRatio: costParams.aspectRatio,
       quantity: costParams.quantity,
-      hasSourceImage: costParams.hasSourceImage,
+      sourceImage: costParams.sourceImage ?? undefined,
+      referenceImages: costParams.referenceImages,
     },
     { staleTime: 30_000, enabled: !!project, keepPreviousData: true }
   );
@@ -165,6 +160,9 @@ function ComicIteratePage() {
             }
           : {}),
         ...(params.selectedImageIds ? { selectedImageIds: params.selectedImageIds } : {}),
+        ...(params.referenceImages?.length
+          ? { userReferenceImages: params.referenceImages }
+          : {}),
       });
     },
     [iterateGenerateMutation, projectId, chapterPosition]
@@ -228,70 +226,6 @@ function ComicIteratePage() {
     [mentions]
   );
 
-  const renderSidebarExtra = useCallback(
-    (props: SidebarSlotProps) => {
-      // Detect mentioned references from prompt
-      const mentionedRefs = getMentionedReferences(props.prompt, activeReferences);
-      const refImageCount = mentionedRefs.reduce(
-        (sum: number, c: any) => sum + (c.images?.length ?? 0),
-        0
-      );
-      const needsSelection = mentionedRefs.length > 0 && refImageCount > props.maxReferenceImages;
-
-      return (
-        <>
-          {needsSelection && (
-            <div className={styles.sidebarSection ?? ''}>
-              <ImageSelectionSection
-                mentionedReferences={mentionedRefs}
-                selectedImageIds={props.selectedImageIds}
-                setSelectedImageIds={props.setSelectedImageIds}
-                refImageBudget={props.maxReferenceImages}
-              />
-            </div>
-          )}
-          {mentionedRefs.length > 0 && (
-            <div className={styles.sidebarSection ?? ''}>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--mantine-color-dimmed)',
-                  textTransform: 'uppercase',
-                  letterSpacing: 0.5,
-                }}
-              >
-                References
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {mentionedRefs.map((ref: any) => (
-                  <span
-                    key={ref.id}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      background: '#339af0',
-                      color: '#fff',
-                      padding: '3px 10px',
-                      borderRadius: 12,
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  >
-                    <IconUser size={12} />
-                    {ref.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      );
-    },
-    [activeReferences]
-  );
-
   if (!project) {
     return (
       <div
@@ -351,7 +285,7 @@ function ComicIteratePage() {
           onCommit={handleCommit}
           onClose={handleClose}
           renderInput={renderInput}
-          renderSidebarExtra={renderSidebarExtra}
+          projectReferences={activeReferences}
           costEstimate={iterateCostEstimate ?? null}
           isCostLoading={isCostFetching}
           enhanceCostEstimate={enhanceCostEstimate ?? null}
@@ -362,21 +296,6 @@ function ComicIteratePage() {
       </div>
     </div>
   );
-}
-
-/** Extract mentioned references from prompt text */
-function getMentionedReferences(prompt: string, references: any[]): any[] {
-  if (!prompt.trim() || references.length === 0) return [];
-  const sorted = [...references].sort((a: any, b: any) => b.name.length - a.name.length);
-  const mentioned = new Set<number>();
-  for (const ref of sorted) {
-    const escaped = ref.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`@${escaped}(?=$|[\\s.,!?;:'")])`, 'gi');
-    if (pattern.test(prompt)) {
-      mentioned.add(ref.id);
-    }
-  }
-  return references.filter((r: any) => mentioned.has(r.id));
 }
 
 export default Page(ComicIteratePage, {

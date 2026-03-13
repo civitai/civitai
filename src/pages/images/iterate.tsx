@@ -66,7 +66,6 @@ function IteratePage() {
     baseModel: DEFAULT_MODEL,
     aspectRatio: '3:4',
     quantity: 1,
-    hasSourceImage: false,
   });
 
   const {
@@ -78,7 +77,8 @@ function IteratePage() {
       baseModel: costParams.baseModel,
       aspectRatio: costParams.aspectRatio,
       quantity: costParams.quantity,
-      hasSourceImage: costParams.hasSourceImage,
+      sourceImage: costParams.sourceImage ?? undefined,
+      referenceImages: costParams.referenceImages,
     },
     { staleTime: 30_000, keepPreviousData: true }
   );
@@ -109,6 +109,7 @@ function IteratePage() {
               sourceImageHeight: params.sourceImageHeight,
             }
           : {}),
+        ...(params.referenceImages?.length ? { referenceImages: params.referenceImages } : {}),
       });
     },
     [iterateGenerateMutation]

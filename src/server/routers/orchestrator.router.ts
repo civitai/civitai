@@ -481,7 +481,8 @@ export const orchestratorRouter = router({
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
       // Build prompt — optionally enhance
-      let fullPrompt = input.prompt.trim();
+      const originalPrompt = input.prompt.trim();
+      let fullPrompt = originalPrompt;
       if (input.enhance && fullPrompt) {
         fullPrompt = await enhanceComicPrompt({
           token,
@@ -542,6 +543,7 @@ export const orchestratorRouter = router({
         width: panelWidth,
         height: panelHeight,
         cost: result.cost?.total ?? 0,
+        enhancedPrompt: input.enhance && fullPrompt !== originalPrompt ? fullPrompt : null,
       };
     }),
 
@@ -551,7 +553,22 @@ export const orchestratorRouter = router({
         baseModel: z.string().nullish(),
         aspectRatio: z.string().default('3:4'),
         quantity: z.number().int().min(1).max(4).default(1),
-        hasSourceImage: z.boolean().default(false),
+        sourceImage: z
+          .object({
+            url: z.string(),
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          })
+          .nullish(),
+        referenceImages: z
+          .array(
+            z.object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+          )
+          .optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -560,8 +577,9 @@ export const orchestratorRouter = router({
         const modelConfig =
           ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ??
           ITERATE_MODEL_CONFIG.NanoBanana;
+        const hasSourceImage = !!input.sourceImage;
         const effectiveVersionId =
-          input.hasSourceImage && modelConfig.img2imgVersionId
+          hasSourceImage && modelConfig.img2imgVersionId
             ? modelConfig.img2imgVersionId
             : modelConfig.versionId;
         const sizes = modelConfig.sizes;
@@ -570,6 +588,27 @@ export const orchestratorRouter = router({
           sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
           sizes[0];
         const { width, height } = match;
+
+        // Build real images array for accurate pricing
+        const images: { url: string; width: number; height: number }[] = [];
+        if (input.sourceImage) {
+          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
+          images.push({
+            url: sourceEdgeUrl,
+            width: input.sourceImage.width,
+            height: input.sourceImage.height,
+          });
+        }
+        if (input.referenceImages) {
+          for (const ref of input.referenceImages) {
+            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+            images.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+          }
+        }
+        const cappedImages =
+          images.length <= modelConfig.maxReferenceImages
+            ? images
+            : images.slice(0, modelConfig.maxReferenceImages);
 
         const step = await createImageGenStep({
           params: {
@@ -588,11 +627,7 @@ export const orchestratorRouter = router({
             disablePoi: false,
             priority: 'low',
             sourceImage: null,
-            // Include a placeholder image when hasSourceImage so the step gets
-            // process:'img2img' pricing (orchestrator won't fetch URLs during whatIf)
-            images: input.hasSourceImage
-              ? [{ url: 'https://placeholder.test', width, height }]
-              : [],
+            images: cappedImages,
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
           tags: ['iterate'],

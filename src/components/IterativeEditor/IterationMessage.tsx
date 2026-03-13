@@ -1,5 +1,12 @@
 import { Button, Loader, Text } from '@mantine/core';
-import { IconBolt, IconCheck, IconPencil, IconRefresh } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconCheck,
+  IconPencil,
+  IconRefresh,
+  IconWand,
+  IconZoomIn,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -12,6 +19,7 @@ interface IterationMessageProps {
   onUseAsSource: () => void;
   onSelectImage?: (image: SourceImage) => void;
   onRetry?: () => void;
+  onZoomImage?: (url: string) => void;
 }
 
 export function IterationMessage({
@@ -20,6 +28,7 @@ export function IterationMessage({
   onUseAsSource,
   onSelectImage,
   onRetry,
+  onZoomImage,
 }: IterationMessageProps) {
   const hasMultipleImages = iteration.resultImages.length > 1;
   const selectedUrl = iteration.resultImage?.url;
@@ -38,6 +47,17 @@ export function IterationMessage({
     >
       {/* Prompt text */}
       <div className={styles.iterationPrompt}>{iteration.prompt || '(no prompt)'}</div>
+
+      {/* Enhanced prompt (when AI enhancement was used) */}
+      {iteration.enhancedPrompt && (
+        <div className={styles.enhancedPrompt}>
+          <div className={styles.enhancedPromptHeader}>
+            <IconWand size={12} />
+            Enhanced
+          </div>
+          <div className={styles.enhancedPromptText}>{iteration.enhancedPrompt}</div>
+        </div>
+      )}
 
       {/* Result image or loading/error state */}
       {iteration.status === 'generating' ? (
@@ -88,6 +108,18 @@ export function IterationMessage({
                     <IconCheck size={14} />
                   </div>
                 )}
+                {onZoomImage && (
+                  <button
+                    type="button"
+                    className={styles.zoomButton}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onZoomImage(getEdgeUrl(img.previewUrl, { width: 1200 }) ?? img.previewUrl);
+                    }}
+                  >
+                    <IconZoomIn size={12} />
+                  </button>
+                )}
               </button>
             );
           })}
@@ -95,6 +127,20 @@ export function IterationMessage({
       ) : iteration.resultImage && imageUrl ? (
         <div className={styles.iterationImage}>
           <img src={imageUrl} alt={`Result: ${iteration.prompt.slice(0, 80)}`} />
+          {onZoomImage && (
+            <button
+              type="button"
+              className={styles.zoomButton}
+              onClick={() =>
+                onZoomImage(
+                  getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200 }) ??
+                    iteration.resultImage!.previewUrl
+                )
+              }
+            >
+              <IconZoomIn size={12} />
+            </button>
+          )}
         </div>
       ) : null}
 
