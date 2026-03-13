@@ -1090,6 +1090,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 <ChapterComments
                   projectId={project.id}
                   chapterPosition={activeChapter.position}
+                  userId={project.user.id}
                 />
               </Container>
             )}

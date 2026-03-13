@@ -321,7 +321,8 @@
 
   @media (max-width: 860px) {
     position: static;
-    max-height: none;
+    max-height: 360px;
+    overflow-y: auto;
   }
 }
 
@@ -726,6 +727,12 @@
     color: light-dark(var(--mantine-color-dark-9), #f9fafb);
     border-color: #fab005;
   }
+}
+
+.subtleBtnSm {
+  composes: subtleBtn;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .dangerBtn {

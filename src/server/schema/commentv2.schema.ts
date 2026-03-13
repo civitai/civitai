@@ -19,6 +19,7 @@ export const commentConnectorSchema = z.object({
     'bountyEntry',
     'clubPost',
     'challenge',
+    'comicChapter',
   ]),
   hidden: z.boolean().nullish(),
   parentThreadId: z.number().optional(),
@@ -56,6 +57,7 @@ export const toggleHideCommentSchema = z.object({
     'bountyEntry',
     'clubPost',
     'challenge',
+    'comicChapter',
   ]),
 });
 
