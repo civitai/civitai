@@ -476,6 +476,10 @@ export const getBuzzConversionRate = async (fiat: string) => {
   );
 };
 
+/** Add a 20% buffer to the minimum payment amount with a $0.05 floor */
+const MIN_AMOUNT_BUFFER = 0.2;
+const MIN_AMOUNT_FLOOR_USD = 0.05;
+
 export const getMinAmount = async (currencyCode: string, fiat: string) => {
   const cacheKey =
     `${REDIS_KEYS.CACHES.CRYPTO_MIN_AMOUNT}:${currencyCode}:${fiat}` as RedisKeyTemplateCache;
@@ -488,11 +492,15 @@ export const getMinAmount = async (currencyCode: string, fiat: string) => {
         fiat_equivalent: fiat,
       });
 
+      const rawMin = result?.min_amount ?? null;
+      const rawFiat = result?.fiat_equivalent ?? null;
+
       return {
-        minAmount: result?.min_amount ?? null,
-        fiatEquivalent: result?.fiat_equivalent ?? null,
+        minAmount: rawMin != null ? rawMin * (1 + MIN_AMOUNT_BUFFER) : null,
+        fiatEquivalent:
+          rawFiat != null ? Math.max(rawFiat * (1 + MIN_AMOUNT_BUFFER), MIN_AMOUNT_FLOOR_USD) : null,
       };
     },
-    { ttl: CacheTTL.hour * 3 }
+    { ttl: CacheTTL.md }
   );
 };
