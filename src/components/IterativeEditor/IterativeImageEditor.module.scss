@@ -8,12 +8,13 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   height: calc(100vh - 80px);
   max-height: 800px;
   gap: 0;
+  overflow: hidden;
 }
 
 .editorContainerPage {
   composes: editorContainer;
   max-height: none;
-  height: 100vh;
+  height: 100%;
 }
 
 .chatArea {
@@ -21,6 +22,8 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid $border-color;
 }
 
@@ -63,6 +66,7 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex-shrink: 0;
   background: light-dark(var(--mantine-color-gray-0), #1a1b1e);
 }
 
@@ -80,19 +84,19 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 }
 
 .controlsSidebar {
-  width: 320px;
+  width: 280px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  padding: 16px;
-  gap: 16px;
+  overflow: hidden;
+  padding: 12px;
+  gap: 10px;
   background: light-dark(var(--mantine-color-gray-0), #1a1b1e);
 }
 
 .currentSourcePreview {
   position: relative;
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
   border: 1px solid $border-color;
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
@@ -101,7 +105,7 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
     display: block;
     width: 100%;
     height: auto;
-    max-height: 220px;
+    max-height: 160px;
     object-fit: contain;
   }
 }
@@ -111,9 +115,9 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 32px 16px;
-  border-radius: 8px;
+  gap: 4px;
+  padding: 16px 12px;
+  border-radius: 6px;
   border: 1px dashed $border-color;
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
   color: var(--mantine-color-dimmed);
@@ -122,7 +126,7 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 .sidebarSection {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .sidebarSectionTitle {
@@ -147,7 +151,7 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 
 .commitSection {
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: 10px;
   border-top: 1px solid $border-color;
 }
 
@@ -391,7 +395,8 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 
   .controlsSidebar {
     width: 100%;
-    max-height: 300px;
+    max-height: none;
+    overflow-y: auto;
   }
 
   .iterationImage {

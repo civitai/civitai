@@ -2,7 +2,7 @@ import { ActionIcon, Text, Title, Tooltip } from '@mantine/core';
 import { IconArrowLeft, IconMessages, IconUser } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
@@ -14,6 +14,7 @@ import { ImageSelectionSection } from '~/components/Comics/ImageSelectionSection
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
 import type {
+  CostEstimateParams,
   GenerateParams,
   InputSlotProps,
   IterativeEditorConfig,
@@ -21,6 +22,7 @@ import type {
   SidebarSlotProps,
   SourceImage,
 } from '~/components/IterativeEditor/iterative-editor.types';
+import { Page } from '~/components/AppLayout/Page';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -44,7 +46,7 @@ export const getServerSideProps = createServerSideProps({
 
 const DEFAULT_MODEL = 'NanoBanana';
 
-export default function ComicIteratePage() {
+function ComicIteratePage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { id, panelId, panelPosition, imageUrl, width, height, chapter } = router.query;
@@ -59,17 +61,33 @@ export default function ComicIteratePage() {
     { enabled: !!projectId && !isNaN(projectId) }
   );
 
-  const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(
-    { baseModel: project?.baseModel ?? DEFAULT_MODEL },
-    { staleTime: 5 * 60 * 1000, enabled: !!project }
-  );
-  const panelCost = costEstimate?.cost ?? 25;
+  // ── Dynamic whatIf cost estimation ──
+  const [costParams, setCostParams] = useState<CostEstimateParams>({
+    baseModel: project?.baseModel ?? DEFAULT_MODEL,
+    aspectRatio: '3:4',
+    quantity: 1,
+    hasSourceImage: false,
+  });
+
+  const { data: iterateCostEstimate, isFetching: isCostFetching } =
+    trpc.comics.getIterateCostEstimate.useQuery(
+      {
+        baseModel: costParams.baseModel,
+        aspectRatio: costParams.aspectRatio,
+        quantity: costParams.quantity,
+        hasSourceImage: costParams.hasSourceImage,
+      },
+      { staleTime: 30_000, enabled: !!project, keepPreviousData: true }
+    );
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
     { staleTime: 5 * 60 * 1000 }
   );
-  const enhanceCost = enhanceCostEstimate?.cost ?? 0;
+
+  const handleSettingsChange = useCallback((params: CostEstimateParams) => {
+    setCostParams(params);
+  }, []);
 
   const activeReferences = useMemo(
     () => (project?.references ?? []).filter((c: any) => c.status === 'Ready'),
@@ -100,11 +118,11 @@ export default function ComicIteratePage() {
       modelMaxImages: COMIC_MODEL_MAX_IMAGES,
       defaultModel: project?.baseModel ?? DEFAULT_MODEL,
       defaultAspectRatio: '3:4',
-      generationCost: panelCost,
-      enhanceCost,
+      generationCost: 25, // fallback if whatIf unavailable
+      enhanceCost: 0,
       commitLabel: 'Commit to Panel',
     }),
-    [project?.baseModel, panelCost, enhanceCost]
+    [project?.baseModel]
   );
 
   // ── Mutations ──
@@ -283,7 +301,7 @@ export default function ComicIteratePage() {
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
       <div
         style={{
@@ -293,6 +311,7 @@ export default function ComicIteratePage() {
           display: 'flex',
           alignItems: 'center',
           gap: 12,
+          flexShrink: 0,
         }}
       >
         <Tooltip label="Back to project">
@@ -326,6 +345,10 @@ export default function ComicIteratePage() {
           onClose={handleClose}
           renderInput={renderInput}
           renderSidebarExtra={renderSidebarExtra}
+          costEstimate={iterateCostEstimate ?? null}
+          isCostLoading={isCostFetching}
+          enhanceCostEstimate={enhanceCostEstimate ?? null}
+          onSettingsChange={handleSettingsChange}
           mode="page"
         />
       </div>
@@ -347,3 +370,9 @@ function getMentionedReferences(prompt: string, references: any[]): any[] {
   }
   return references.filter((r: any) => mentioned.has(r.id));
 }
+
+export default Page(ComicIteratePage, {
+  scrollable: false,
+  header: null,
+  footer: null,
+});

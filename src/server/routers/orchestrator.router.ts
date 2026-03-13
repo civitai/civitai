@@ -46,7 +46,7 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
-import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
+import { createImageGen, createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import {
@@ -543,6 +543,71 @@ export const orchestratorRouter = router({
         height: panelHeight,
         cost: result.cost?.total ?? 0,
       };
+    }),
+
+  getIterateCostEstimate: protectedProcedure
+    .input(
+      z.object({
+        baseModel: z.string().nullish(),
+        aspectRatio: z.string().default('3:4'),
+        quantity: z.number().int().min(1).max(4).default(1),
+        hasSourceImage: z.boolean().default(false),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      try {
+        const token = await getOrchestratorToken(ctx.user!.id, ctx);
+        const modelConfig =
+          ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ??
+          ITERATE_MODEL_CONFIG.NanoBanana;
+        const effectiveVersionId =
+          input.hasSourceImage && modelConfig.img2imgVersionId
+            ? modelConfig.img2imgVersionId
+            : modelConfig.versionId;
+        const sizes = modelConfig.sizes;
+        const match =
+          sizes.find((s) => s.label === input.aspectRatio) ??
+          sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
+          sizes[0];
+        const { width, height } = match;
+
+        const step = await createImageGenStep({
+          params: {
+            prompt: '',
+            negativePrompt: '',
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
+            width,
+            height,
+            aspectRatio: input.aspectRatio,
+            workflow: 'txt2img',
+            sampler: 'Euler',
+            steps: 25,
+            quantity: input.quantity,
+            draft: false,
+            disablePoi: false,
+            priority: 'low',
+            sourceImage: null,
+            images: [],
+          },
+          resources: [{ id: effectiveVersionId, strength: 1 }],
+          tags: ['iterate'],
+          tips: { creators: 0, civitai: 0 },
+          whatIf: true,
+          user: ctx.user! as SessionUser,
+        });
+
+        const workflow = await submitWorkflow({
+          token,
+          body: { steps: [step], currencies: ['yellow'] },
+          query: { whatif: true },
+        });
+
+        return { cost: workflow.cost?.total ?? 0, ready: true };
+      } catch (error) {
+        console.error('Orchestrator getIterateCostEstimate failed:', error);
+        return { cost: 0, ready: false };
+      }
     }),
 
   pollIterationStatus: protectedProcedure

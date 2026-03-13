@@ -26,9 +26,23 @@ export interface IterativeEditorConfig {
   modelMaxImages: Record<string, number>;
   defaultModel: string;
   defaultAspectRatio: string;
+  /** Fallback cost if whatIf query is unavailable */
   generationCost: number;
+  /** Fallback enhance cost if whatIf query is unavailable */
   enhanceCost: number;
   commitLabel?: string;
+}
+
+export interface CostEstimate {
+  cost: number;
+  ready: boolean;
+}
+
+export interface CostEstimateParams {
+  baseModel: string | null;
+  aspectRatio: string;
+  quantity: number;
+  hasSourceImage: boolean;
 }
 
 export interface GenerateParams {

@@ -1,10 +1,12 @@
 import { Title } from '@mantine/core';
 import { IconMessages } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
+import { Page } from '~/components/AppLayout/Page';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
 import type {
+  CostEstimateParams,
   GenerateParams,
   PollParams,
   SourceImage,
@@ -31,8 +33,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 const DEFAULT_MODEL = 'NanoBanana';
-const GENERATION_COST = 2;
-const ENHANCE_COST = 1;
 
 const config: IterativeEditorConfig = {
   modelOptions: COMIC_MODEL_OPTIONS,
@@ -40,12 +40,12 @@ const config: IterativeEditorConfig = {
   modelMaxImages: COMIC_MODEL_MAX_IMAGES,
   defaultModel: DEFAULT_MODEL,
   defaultAspectRatio: '3:4',
-  generationCost: GENERATION_COST,
-  enhanceCost: ENHANCE_COST,
+  generationCost: 25, // fallback if whatIf unavailable
+  enhanceCost: 0,
   commitLabel: 'Save Image',
 };
 
-export default function IteratePage() {
+function IteratePage() {
   const router = useRouter();
   const { imageUrl, width, height } = router.query;
 
@@ -60,6 +60,29 @@ export default function IteratePage() {
       height: h,
     };
   }, [imageUrl, width, height]);
+
+  // ── Dynamic whatIf cost estimation ──
+  const [costParams, setCostParams] = useState<CostEstimateParams>({
+    baseModel: DEFAULT_MODEL,
+    aspectRatio: '3:4',
+    quantity: 1,
+    hasSourceImage: false,
+  });
+
+  const { data: iterateCostEstimate, isFetching: isCostFetching } =
+    trpc.orchestrator.getIterateCostEstimate.useQuery(
+      {
+        baseModel: costParams.baseModel,
+        aspectRatio: costParams.aspectRatio,
+        quantity: costParams.quantity,
+        hasSourceImage: costParams.hasSourceImage,
+      },
+      { staleTime: 30_000, keepPreviousData: true }
+    );
+
+  const handleSettingsChange = useCallback((params: CostEstimateParams) => {
+    setCostParams(params);
+  }, []);
 
   const iterateGenerateMutation = trpc.orchestrator.iterateGenerate.useMutation();
   const utils = trpc.useUtils();
@@ -100,7 +123,7 @@ export default function IteratePage() {
   }, [router]);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div
         style={{
           padding: '12px 24px',
@@ -109,6 +132,7 @@ export default function IteratePage() {
           display: 'flex',
           alignItems: 'center',
           gap: 8,
+          flexShrink: 0,
         }}
       >
         <IconMessages size={20} />
@@ -122,9 +146,18 @@ export default function IteratePage() {
           onPollStatus={handlePollStatus}
           onCommit={handleCommit}
           onClose={handleClose}
+          costEstimate={iterateCostEstimate ?? null}
+          isCostLoading={isCostFetching}
+          onSettingsChange={handleSettingsChange}
           mode="page"
         />
       </div>
     </div>
   );
 }
+
+export default Page(IteratePage, {
+  scrollable: false,
+  header: null,
+  footer: null,
+});

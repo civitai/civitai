@@ -3,6 +3,8 @@ export type {
   SourceImage,
   IterationEntry,
   IterativeEditorConfig,
+  CostEstimate,
+  CostEstimateParams,
   GenerateParams,
   PollParams,
   GenerateResult,

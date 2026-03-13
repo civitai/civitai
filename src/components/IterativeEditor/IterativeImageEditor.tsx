@@ -33,6 +33,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { AspectRatioSelector } from './AspectRatioSelector';
 import { IterationMessage } from './IterationMessage';
 import type {
+  CostEstimate,
+  CostEstimateParams,
   IterativeEditorConfig,
   SourceImage,
   IterationEntry,
@@ -67,6 +69,15 @@ export interface IterativeImageEditorProps {
   /** Extra sidebar sections injected below the enhance toggle. */
   renderSidebarExtra?: (props: SidebarSlotProps) => React.ReactNode;
 
+  /** Dynamic generation cost from whatIf query. Overrides config.generationCost when ready. */
+  costEstimate?: CostEstimate | null;
+  /** True while the cost estimate query is fetching */
+  isCostLoading?: boolean;
+  /** Dynamic enhance cost from whatIf query. Overrides config.enhanceCost when ready. */
+  enhanceCostEstimate?: CostEstimate | null;
+  /** Called when editor settings change so the parent can update cost queries. */
+  onSettingsChange?: (params: CostEstimateParams) => void;
+
   mode?: 'page' | 'modal';
 }
 
@@ -79,6 +90,10 @@ export function IterativeImageEditor({
   onClose,
   renderInput,
   renderSidebarExtra,
+  costEstimate,
+  isCostLoading,
+  enhanceCostEstimate,
+  onSettingsChange,
   mode = 'page',
 }: IterativeImageEditorProps) {
   // ── Core state ──
@@ -104,6 +119,16 @@ export function IterativeImageEditor({
 
   const { uploadToCF } = useCFImageUpload();
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Notify parent when settings change so it can update cost queries
+  useEffect(() => {
+    onSettingsChange?.({
+      baseModel: generationModel,
+      aspectRatio,
+      quantity,
+      hasSourceImage: !!currentSource,
+    });
+  }, [generationModel, aspectRatio, quantity, currentSource, onSettingsChange]);
 
   const effectiveModel = generationModel ?? config.defaultModel;
   const activeAspectRatios =
@@ -251,12 +276,18 @@ export function IterativeImageEditor({
     )
   );
 
-  // ── Generation cost (estimated — actual cost comes from server) ──
+  // ── Generation cost (whatIf when available) ──
+  const costLoading = isCostLoading ?? false;
   const estimatedCost = useMemo(() => {
-    const base = config.generationCost * quantity;
-    const enhance = enhancePrompt && prompt.trim() ? config.enhanceCost : 0;
+    if (!costEstimate?.ready) return null;
+    const base = costEstimate.cost;
+    const enhanceCost =
+      enhanceCostEstimate?.ready && enhanceCostEstimate.cost > 0
+        ? enhanceCostEstimate.cost
+        : config.enhanceCost;
+    const enhance = enhancePrompt && prompt.trim() ? enhanceCost : 0;
     return base + enhance;
-  }, [config.generationCost, config.enhanceCost, quantity, enhancePrompt, prompt]);
+  }, [costEstimate, enhanceCostEstimate, config.enhanceCost, enhancePrompt, prompt]);
 
   // ── Send / Generate handler ──
   const handleSend = async () => {
@@ -274,7 +305,7 @@ export function IterativeImageEditor({
       sourceImage: currentSource,
       resultImage: null,
       resultImages: [],
-      cost: estimatedCost,
+      cost: estimatedCost ?? 0,
       timestamp: new Date(),
       status: 'generating',
     };
@@ -587,21 +618,25 @@ export function IterativeImageEditor({
               )}
             </div>
             <Tooltip
-              label={`~${estimatedCost} Buzz (Ctrl+Enter)`}
+              label={
+                costLoading || estimatedCost == null
+                  ? 'Calculating cost…'
+                  : `~${estimatedCost} Buzz (Ctrl+Enter)`
+              }
               withArrow
               position="top"
             >
               <div ref={sendButtonRef}>
                 <BuzzTransactionButton
-                  buzzAmount={estimatedCost}
+                  buzzAmount={estimatedCost ?? 0}
                   label={
                     <span className="flex items-center gap-1">
                       <IconSend size={14} />
                       {currentSource ? 'Refine' : 'Generate'}
                     </span>
                   }
-                  loading={isGenerating}
-                  disabled={!prompt.trim() || isGenerating}
+                  loading={isGenerating || costLoading || estimatedCost == null}
+                  disabled={!prompt.trim() || isGenerating || costLoading || estimatedCost == null}
                   onPerformTransaction={handleSend}
                   showPurchaseModal
                   size="compact-sm"
@@ -694,7 +729,9 @@ export function IterativeImageEditor({
 
         {/* Cost info */}
         <Text size="xs" c="dimmed">
-          ~{estimatedCost} Buzz per generation
+          {costLoading || estimatedCost == null
+            ? 'Calculating cost…'
+            : `~${estimatedCost} Buzz per generation`}
         </Text>
 
         {/* Commit button */}
