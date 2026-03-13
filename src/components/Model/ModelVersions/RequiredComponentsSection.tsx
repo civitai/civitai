@@ -31,6 +31,7 @@ import {
   getFileDescription,
   getFileLabel,
 } from '~/utils/file-display-helpers';
+import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
@@ -355,6 +356,7 @@ function ComponentGroup({
               <Text size="xs" c="dimmed">
                 {file.name || getFileLabel(file)} &bull; {formatKBytes(file.sizeKB)}
               </Text>
+              <VerifiedText file={file} />
             </Box>
           </Group>
           <Tooltip label={canDownload ? 'Download' : 'Purchase to download'}>
@@ -402,7 +404,7 @@ function ComponentGroup({
             toggle();
           }
         }}
-        className="hover:bg-dark-6/50 dark:hover:bg-dark-6/50"
+        className="hover:bg-gray-1 dark:hover:bg-dark-6/50"
       >
         <Group justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
@@ -482,7 +484,7 @@ function ComponentGroup({
                     onSelectFile(file);
                   }
                 }}
-                className="hover:bg-dark-6/30 dark:hover:bg-dark-6/30"
+                className="hover:bg-gray-1 dark:hover:bg-dark-6/30"
               >
                 <Group justify="space-between" wrap="nowrap">
                   <Group gap={8}>
@@ -501,6 +503,7 @@ function ComponentGroup({
                       <Text size="xs" c="dimmed">
                         {getFileDescription(file)}
                       </Text>
+                      <VerifiedText file={file} />
                     </Box>
                   </Group>
                   <Group gap="xs" wrap="nowrap">

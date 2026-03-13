@@ -76,7 +76,9 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
+import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
@@ -706,7 +708,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         </LoginRedirect>
                       </div>
                     </Tooltip>
-                    {features.auctions && (
+                    {features.auctions && !deleted && !isModelUnpublished && (
                       <BidModelButton
                         entityData={getEntityDataForBidModelButton({
                           version,
@@ -1114,6 +1116,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 <Text size="xs" c="dimmed">
                                   .{ext} &bull; {formatKBytes(file.sizeKB)}
                                 </Text>
+                                <VerifiedText file={file} />
                               </Box>
                             </Group>
                             <Tooltip label="Download">
@@ -1251,10 +1254,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                     <Text size="sm" c="dimmed">
                       Reviews
                     </Text>
-                    <ResourceReviewThumbActions
+                    <ModelVersionReview
                       modelId={model.id}
-                      modelVersionId={version.id}
-                      withCount
+                      versionId={version.id}
+                      thumbsUpCount={liveMetrics.thumbsUpCount}
+                      thumbsDownCount={liveMetrics.thumbsDownCount}
                     />
                   </Group>
                   {/* Published */}
@@ -1460,68 +1464,68 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
 
           <Group justify="space-between" align="flex-start" wrap="nowrap">
             {model.type === 'Checkpoint' && (
-              <Group
-                gap={4}
-                wrap="nowrap"
-                style={{ flex: 1, overflow: 'hidden' }}
-                align="flex-start"
-              >
-                <IconLicense size={16} />
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  style={{
-                    whiteSpace: 'nowrap',
-                    lineHeight: 1.1,
-                  }}
+              <Stack gap={4}>
+                <Group
+                  gap={4}
+                  wrap="nowrap"
+                  style={{ flex: 1, overflow: 'hidden' }}
+                  align="flex-start"
                 >
-                  License{model.licenses.length > 0 ? 's' : ''}:
-                </Text>
-                <Stack gap={0}>
-                  {license && (
-                    <Text
-                      component="a"
-                      href={license.url}
-                      rel="nofollow noreferrer"
+                  <IconLicense size={16} />
+                  <Text
+                    size="xs"
+                    c="dimmed"
+                    style={{
+                      whiteSpace: 'nowrap',
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    License{model.licenses.length > 0 ? 's' : ''}:
+                  </Text>
+                </Group>
+                {license && (
+                  <Text
+                    component="a"
+                    href={license.url}
+                    rel="nofollow noreferrer"
+                    td="underline"
+                    target="_blank"
+                    size="xs"
+                    c="dimmed"
+                    style={{ lineHeight: 1.1 }}
+                  >
+                    {license.name}
+                  </Text>
+                )}
+                {showAddendumLicense && (
+                  <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
+                    <Anchor
+                      variant="text"
                       td="underline"
-                      target="_blank"
                       size="xs"
                       c="dimmed"
                       style={{ lineHeight: 1.1 }}
                     >
-                      {license.name}
-                    </Text>
-                  )}
-                  {showAddendumLicense && (
-                    <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
-                      <Anchor
-                        variant="text"
-                        td="underline"
-                        size="xs"
-                        c="dimmed"
-                        style={{ lineHeight: 1.1 }}
-                      >
-                        Addendum
-                      </Anchor>
-                    </Link>
-                  )}
-                  {model.licenses.map(({ url, name }) => (
-                    <Text
-                      key={name}
-                      component="a"
-                      rel="nofollow"
-                      href={url}
-                      td="underline"
-                      size="xs"
-                      c="dimmed"
-                      target="_blank"
-                      style={{ lineHeight: 1.1 }}
-                    >
-                      {name}
-                    </Text>
-                  ))}
-                </Stack>
-              </Group>
+                      Addendum
+                    </Anchor>
+                  </Link>
+                )}
+                {model.licenses.map(({ url, name }) => (
+                  <Text
+                    key={name}
+                    component="a"
+                    rel="nofollow"
+                    href={url}
+                    td="underline"
+                    size="xs"
+                    c="dimmed"
+                    target="_blank"
+                    style={{ lineHeight: 1.1 }}
+                  >
+                    {name}
+                  </Text>
+                ))}
+              </Stack>
             )}
             <PermissionIndicator permissions={model} ml="auto" />
           </Group>

@@ -87,7 +87,8 @@ export function GenerateButton({
 
   const cannotPromote = model?.meta?.cannotPromote ?? false;
   const isAvailable = model?.availability !== Availability.Private;
-  const isPublished = model?.status === ModelStatus.Published;
+  const isPublished =
+    model?.status === ModelStatus.Published && version?.status === ModelStatus.Published;
   const isPoi = model?.poi ?? false;
 
   const showBid =
@@ -115,18 +116,28 @@ export function GenerateButton({
     <Button
       variant="filled"
       className="overflow-visible"
-      style={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-      onClick={onClickHandler}
       {...buttonProps}
+      onClick={onClickHandler}
+      style={
+        iconOnly
+          ? { paddingRight: 0, paddingLeft: 0, width: 36, ...buttonProps.style }
+          : {
+              flex: 1,
+              padding: '12px 20px',
+              background:
+                'linear-gradient(135deg, var(--mantine-color-blue-6), var(--mantine-color-blue-7))',
+              ...buttonProps.style,
+            }
+      }
     >
       {generationPrice && <>{purchaseIcon}</>}
       {iconOnly ? (
         <IconBrush size={24} />
       ) : (
         <Group gap={8} wrap="nowrap">
-          <IconBrush size={20} />
-          <Text inherit inline className="hide-mobile">
-            Create
+          <IconBrush size={18} />
+          <Text inherit inline fw={600} className="hide-mobile">
+            Generate
           </Text>
         </Group>
       )}

@@ -1,5 +1,5 @@
 import type { ButtonProps, DefaultMantineColor } from '@mantine/core';
-import { Popover, Text, Group, ThemeIcon } from '@mantine/core';
+import { Popover, Text, Group } from '@mantine/core';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -20,10 +20,10 @@ const statusColors: Record<ScanResultCode, DefaultMantineColor> = {
   Error: 'orange',
 };
 const statusIcon: Record<ScanResultCode, JSX.Element> = {
-  Pending: <IconShieldOff size={16} />,
-  Success: <IconShieldCheck size={16} />,
-  Danger: <IconShieldX size={16} />,
-  Error: <IconShieldOff size={16} />,
+  Pending: <IconShieldOff size={12} />,
+  Success: <IconShieldCheck size={12} />,
+  Danger: <IconShieldX size={12} />,
+  Error: <IconShieldOff size={12} />,
 };
 const statusMessage: Record<ScanResultCode, string> = {
   Pending: "This file hasn't been scanned yet, check back soon.",
@@ -50,18 +50,26 @@ export function VerifiedText({ file, iconOnly }: Props) {
   const scannedDate = !scannedAt ? null : dayjs(scannedAt);
 
   return (
-    <Group gap={4} wrap="nowrap">
-      <ThemeIcon color={color} size="xs">
+    <Group gap={4} wrap="nowrap" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+      <Text c={`${color}.6`} lh={1} style={{ display: 'flex' }}>
         {icon}
-      </ThemeIcon>
+      </Text>
       {!iconOnly ? (
-        <Text c="dimmed" size="xs">
+        <Text c={`${color}.6`} fz={10}>
           <Text span inherit>
             {verified ? 'Verified' : 'Unverified'}:{' '}
           </Text>
           <Popover withArrow width={350} position="bottom" withinPortal>
             <Popover.Target>
-              <Text component="a" style={{ cursor: 'pointer' }} inherit>
+              <Text
+                component="a"
+                style={{ cursor: 'pointer' }}
+                onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                inherit
+              >
                 {scannedDate ? (
                   <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
                 ) : (

@@ -129,6 +129,12 @@ export function DownloadVariantDropdown({
             downloadPrice={downloadPrice}
             disabled={archived || isLoadingAccess}
             fullWidth
+            variant="light"
+            color="blue"
+            style={{
+              backgroundColor: 'rgba(34, 139, 230, 0.15)',
+              borderColor: 'rgba(34, 139, 230, 0.3)',
+            }}
           >
             <Text ta="center">
               Download <Text span>({formatKBytes(file.sizeKB)})</Text>
@@ -208,7 +214,7 @@ export function DownloadVariantDropdown({
                   handleSelectFile(file);
                 }
               }}
-              className="hover:bg-dark-6/30 dark:hover:bg-dark-6/30"
+              className="hover:bg-gray-1 dark:hover:bg-dark-6/30"
             >
               <Group justify="space-between" wrap="nowrap">
                 <Group gap={8}>
@@ -227,6 +233,7 @@ export function DownloadVariantDropdown({
                     <Text size="xs" c="dimmed">
                       {getFileDescription(file)}
                     </Text>
+                    <VerifiedText file={file} />
                   </Box>
                 </Group>
                 <Group gap="xs" wrap="nowrap">
@@ -279,7 +286,7 @@ export function DownloadVariantDropdown({
             toggle();
           }
         }}
-        className="hover:bg-dark-6/50 dark:hover:bg-dark-6/50"
+        className="hover:bg-gray-1 dark:hover:bg-dark-6/50"
       >
         <Group justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
@@ -300,6 +307,7 @@ export function DownloadVariantDropdown({
               <Text size="xs" c="dimmed">
                 {getFileDescription(activeFile)} &bull; {formatKBytes(activeFile.sizeKB)}
               </Text>
+              <VerifiedText file={activeFile} />
             </Box>
           </Group>
           <IconChevronDown
