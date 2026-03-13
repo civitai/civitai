@@ -61,6 +61,7 @@ import {
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
+import { Flags } from '~/shared/utils/flags';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
@@ -477,23 +478,59 @@ async function processImageRating({
     const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
-      // Apply the consensus decision
-      if (consensus) {
-        currentNsfwLevel = await updateImageNsfwLevel({
-          id: imageId,
-          nsfwLevel: consensus,
-          userId: playerId,
-          isModerator: true,
-          activity: 'setNsfwLevelKono',
-          status: 'Actioned',
+      // Guard against excessive down-rating: allow down-rating by at most 1 level,
+      // escalate to Inquisitor (mod) queue if the distance is greater
+      const isExcessiveDownRating =
+        consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+
+      if (isExcessiveDownRating) {
+        // Remove from Knight queue and escalate to Inquisitor queue for mod review
+        await removeImageFromQueue({ imageId, valueInQueue });
+        await addImageToQueue({
+          imageIds: imageId,
+          rankType: 'Inquisitor' as NewOrderHighRankType,
+          priority: 1,
         });
+
+        logToAxiom(
+          {
+            type: 'info',
+            name: 'new-order-down-rating-escalated',
+            details: {
+              imageId,
+              currentLevel: image.nsfwLevel,
+              consensusLevel: consensus,
+              distance: Flags.distance(image.nsfwLevel, consensus),
+              voteCount: newVoteCount,
+            },
+            message: `Image ${imageId} down-rating consensus (${
+              image.nsfwLevel
+            } → ${consensus}, distance ${Flags.distance(
+              image.nsfwLevel,
+              consensus
+            )}) escalated to Inquisitor queue`,
+          },
+          'new-order'
+        ).catch(() => null);
+      } else {
+        // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
+        if (consensus) {
+          currentNsfwLevel = await updateImageNsfwLevel({
+            id: imageId,
+            nsfwLevel: consensus,
+            userId: playerId,
+            isModerator: true,
+            activity: 'setNsfwLevelKono',
+            status: 'Actioned',
+          });
+        }
+
+        // Update pending ratings
+        await updatePendingImageRatings({ imageId, rating: consensus });
+
+        // Clear image from the pool
+        await removeImageFromQueue({ imageId, valueInQueue });
       }
-
-      // Update pending ratings
-      await updatePendingImageRatings({ imageId, rating: consensus });
-
-      // Clear image from the pool
-      await removeImageFromQueue({ imageId, valueInQueue });
     }
   }
 
@@ -1983,17 +2020,31 @@ export async function submitTestVote({
       // Check for consensus
       const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
       if (consensus !== undefined) {
-        // Consensus reached - update image and remove from queue
-        await updateImageNsfwLevel({
-          id: imageId,
-          nsfwLevel: consensus,
-          userId: votingUserId,
-          isModerator: false,
-          status: 'Actioned',
-        });
-        await updatePendingImageRatings({ imageId, rating: consensus });
-        await valueInQueue!.pool.reset({ id: imageId });
-        await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
+        const isExcessiveDownRating =
+          consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+
+        if (isExcessiveDownRating) {
+          // Excessive down-rating: escalate to Inquisitor queue instead of applying
+          await valueInQueue!.pool.reset({ id: imageId });
+          await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
+          await addImageToQueue({
+            imageIds: imageId,
+            rankType: 'Inquisitor' as NewOrderHighRankType,
+            priority: 1,
+          });
+        } else {
+          // Same level, up-rating, or down-rating by 1 level: apply consensus
+          await updateImageNsfwLevel({
+            id: imageId,
+            nsfwLevel: consensus,
+            userId: votingUserId,
+            isModerator: false,
+            status: 'Actioned',
+          });
+          await updatePendingImageRatings({ imageId, rating: consensus });
+          await valueInQueue!.pool.reset({ id: imageId });
+          await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
+        }
       } else if (newVoteCount >= newOrderConfig.limits.knightVotes) {
         // Max votes reached without consensus - remove from queue
         await valueInQueue!.pool.reset({ id: imageId });
