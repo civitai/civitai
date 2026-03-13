@@ -1,5 +1,7 @@
 import { isProd } from '~/env/other';
+import { samplerMap } from '~/server/common/constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { findKeyForValue } from '~/utils/map-helpers';
 
 export type MetadataProcessor = {
   canParse: (exif: Record<string, any>) => boolean;
@@ -23,3 +25,24 @@ export type SDResource = {
   weight?: number;
   hash?: string;
 };
+
+/** Maps sampler names to A1111-compatible names for cross-format consistency. */
+export function a1111Compatibility(
+  metadata: ImageMetaProps,
+  options?: { preserveOriginal?: boolean }
+) {
+  const samplerName = metadata.sampler;
+  if (options?.preserveOriginal) metadata.originalSampler = samplerName;
+  let a1111sampler: string | undefined;
+  if (metadata.scheduler == 'karras') {
+    a1111sampler = findKeyForValue(samplerMap, samplerName + '_karras');
+  }
+  if (!a1111sampler) a1111sampler = findKeyForValue(samplerMap, samplerName);
+  if (a1111sampler) metadata.sampler = a1111sampler;
+
+  // Model name cleanup
+  const models = metadata.models as string[] | undefined;
+  if (models && models.length > 0) {
+    metadata.Model = models[0].replace(/\.[^/.]+$/, '');
+  }
+}

@@ -1,13 +1,5 @@
-import { samplerMap } from '~/server/common/constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { findKeyForValue } from '~/utils/map-helpers';
-import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
-
-const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
-
-function cleanBadJson(str: string) {
-  return str.replace(/\[NaN\]/g, '[]').replace(/\[Infinity\]/g, '[]');
-}
+import { a1111Compatibility, createMetadataProcessor } from '~/utils/metadata/base.metadata';
 
 export const rfooocusMetadataProcessor = createMetadataProcessor({
   canParse(exif) {
@@ -48,7 +40,7 @@ export const rfooocusMetadataProcessor = createMetadataProcessor({
     if (scheduler !== 'simple') metadata.scheduler = scheduler;
 
     // Map to automatic1111 terms for compatibility
-    a1111Compatability(metadata);
+    a1111Compatibility(metadata);
 
     return metadata;
   },
@@ -70,13 +62,4 @@ export const rfooocusMetadataProcessor = createMetadataProcessor({
   },
 });
 
-function a1111Compatability(metadata: ImageMetaProps) {
-  // Sampler name
-  const samplerName = metadata.sampler;
-  let a1111sampler: string | undefined;
-  if (metadata.scheduler == 'karras') {
-    a1111sampler = findKeyForValue(samplerMap, samplerName + '_karras');
-  }
-  if (!a1111sampler) a1111sampler = findKeyForValue(samplerMap, samplerName);
-  if (a1111sampler) metadata.sampler = a1111sampler;
-}
+

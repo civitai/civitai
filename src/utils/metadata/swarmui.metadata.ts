@@ -1,13 +1,15 @@
-import { samplerMap } from '~/server/common/constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { findKeyForValue } from '~/utils/map-helpers';
-import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
+import {
+  a1111Compatibility,
+  createMetadataProcessor,
+  setGlobalValue,
+} from '~/utils/metadata/base.metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 
 function cleanBadJson(str: string) {
   return str
     .replace(/\[NaN\]/g, '[]')
-    .replace(/NaN/g, '0')
+    .replace(/\bNaN\b/g, '0')
     .replace(/\[Infinity\]/g, '[]');
 }
 
@@ -47,7 +49,7 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
       resources: getResources(parsed),
     });
 
-    a1111Compatability(metadata);
+    a1111Compatibility(metadata, { preserveOriginal: true });
 
     return metadata;
   },
@@ -76,18 +78,6 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
     } satisfies SwarmUiMetadata);
   },
 });
-
-function a1111Compatability(metadata: ImageMetaProps) {
-  // Sampler name
-  const samplerName = metadata.sampler;
-  metadata.originalSampler = metadata.sampler;
-  let a1111sampler: string | undefined;
-  if (metadata.scheduler == 'karras') {
-    a1111sampler = findKeyForValue(samplerMap, samplerName + '_karras');
-  }
-  if (!a1111sampler) a1111sampler = findKeyForValue(samplerMap, samplerName);
-  if (a1111sampler) metadata.sampler = a1111sampler;
-}
 
 function getResources({ sui_image_params = {}, sui_models = [] }: SwarmUiMetadata) {
   const loras: string[] = sui_image_params.loras ?? [];
