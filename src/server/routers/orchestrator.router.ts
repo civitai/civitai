@@ -503,7 +503,10 @@ export const orchestratorRouter = router({
         });
       }
       if (input.referenceImages) {
-        allImages.push(...input.referenceImages);
+        for (const ref of input.referenceImages) {
+          const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+          allImages.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+        }
       }
 
       const cappedImages =

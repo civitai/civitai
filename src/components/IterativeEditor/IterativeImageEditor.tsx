@@ -620,6 +620,7 @@ export function IterativeImageEditor({
       fileNameBase: 'iterate-ref',
       uploadFn: uploadToCF,
       ImageSelectModal,
+      maxSelections: 20,
       onLoadingChange: (loading) => setUploadingCount((c) => loading ? c + 1 : Math.max(0, c - 1)),
       onSuccess: async (cfId: string) => {
         const edgeUrl = getEdgeUrl(cfId, { width: 100 }) ?? cfId;
