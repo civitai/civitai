@@ -40,6 +40,7 @@ import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 import { extractSourceMetadataFromUrl } from '~/utils/metadata/extract-source-metadata';
+import { isDefined } from '~/utils/type-guards';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -180,6 +181,9 @@ export function SourceImageUploadMultiple({
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
   const verifiedDimsRef = useRef(new Set<string>());
+  // Always-current value ref for use in async callbacks to avoid stale closures
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   const previewImages = useMemo(() => {
     if (!value) return [];
@@ -476,16 +480,21 @@ export function SourceImageUploadMultiple({
     }
   }
 
-  // Open crop modal with already-dimensioned images. pendingUrls are URLs that still
-  // need orchestrator upload (from uploads state, not yet in value).
+  // Open crop modal with already-dimensioned images. pendingUrls are URLs that
+  // need orchestrator upload. Images should already be in value (eagerly set).
   function openCropModal(
     images: { url: string; width: number; height: number; aspectRatio: number }[],
     pendingUrls: string[]
   ) {
     isCroppingRef.current = true;
+    const pendingUrlSet = new Set(pendingUrls);
 
-    // Track which URLs are existing (in value) vs new (need upload)
-    const existingUrls = new Set(value?.map((v) => v.url) ?? []);
+    // Capture upload IDs for pending URLs so we can clear their uploading markers
+    // when the crop modal confirms/cancels (they were set early by handleSlotUpload)
+    const earlyUploadIds = uploads
+      .filter((u) => pendingUrlSet.has(u.url))
+      .map((u) => u.id)
+      .filter(isDefined);
 
     dialogStore.trigger({
       id: 'image-crop-modal',
@@ -493,86 +502,81 @@ export function SourceImageUploadMultiple({
       props: {
         images,
         onConfirm: async (output) => {
+          // Clear early uploading markers — new upload IDs take over below
+          for (const id of earlyUploadIds) setImageUploading(id, false);
+
           // Determine what needs uploading:
-          // - Cropped images always need upload (existing or new)
-          // - New images that weren't cropped still need upload
-          // - Existing images that weren't cropped stay as-is
-          const toUpload: { index: number; src: Blob | string; id: string }[] = [];
+          // - Cropped images always need upload
+          // - Uncropped images that aren't orchestrator URLs need upload
+          // - Uncropped orchestrator URLs stay as-is
+          const toUpload: {
+            index: number;
+            src: Blob | string;
+            originalUrl: string;
+            id: string;
+          }[] = [];
 
           for (let i = 0; i < output.length; i++) {
             const { cropped, src } = output[i];
             if (cropped) {
-              toUpload.push({ index: i, src: cropped, id: getRandomId() });
-            } else if (!existingUrls.has(src)) {
-              toUpload.push({ index: i, src, id: getRandomId() });
+              toUpload.push({ index: i, src: cropped, originalUrl: src, id: getRandomId() });
+            } else if (!isOrchestratorUrl(src)) {
+              toUpload.push({ index: i, src, originalUrl: src, id: getRandomId() });
             }
           }
 
           if (toUpload.length) {
-            // Show uploading indicators
-            setUploads(
-              toUpload.map(({ src, id }) => ({
+            // Show uploading indicators, preserving any unrelated uploads
+            setUploads((prev) => [
+              ...prev.filter((x) => !pendingUrlSet.has(x.url)),
+              ...toUpload.map(({ id, index, originalUrl }) => ({
                 status: 'uploading' as const,
-                url: typeof src === 'string' ? src : URL.createObjectURL(src),
+                url: originalUrl,
                 id,
-              }))
-            );
+                slotIndex: isSlotsMode ? index : undefined,
+              })),
+            ]);
 
-            const uploadResults = await Promise.all(
-              toUpload.map(async ({ src, id }) => {
-                const response = await uploadOrchestratorImage(src, id);
-                if (response.url && response.available) {
-                  return {
-                    url: response.url,
-                    width: response.width,
-                    height: response.height,
-                  } as SourceImageProps;
+            // Upload each and swap URL in value as each completes
+            await Promise.all(
+              toUpload.map(async ({ src, id, originalUrl }) => {
+                try {
+                  const response = await uploadOrchestratorImage(src, id);
+                  if (response.url && response.available) {
+                    const result = {
+                      url: response.url,
+                      width: response.width,
+                      height: response.height,
+                    };
+                    // Swap the preview/original URL with the orchestrator URL in value
+                    const latest = valueRef.current;
+                    if (latest) {
+                      onChange?.(latest.map((img) => (img.url === originalUrl ? result : img)));
+                    }
+                  }
+                } finally {
+                  setUploads((prev) => prev.filter((x) => x.id !== id));
                 }
-                return null;
               })
             );
 
-            // Build final value: start from current value, replace/insert at indices
-            const finalValue: SourceImageProps[] = [];
-            for (let i = 0; i < images.length; i++) {
-              const uploadEntry = toUpload.findIndex((u) => u.index === i);
-              if (uploadEntry > -1 && uploadResults[uploadEntry]) {
-                finalValue[i] = uploadResults[uploadEntry]!;
-              } else {
-                // Keep existing image as-is
-                const img = images[i];
-                finalValue[i] = { url: img.url, width: img.width, height: img.height };
-              }
-            }
-
-            setUploads([]);
             isCroppingRef.current = false;
-            onChange?.(finalValue.filter(Boolean) as SourceImageProps[]);
           } else {
             isCroppingRef.current = false;
           }
         },
         onCancel: () => {
-          // Remove pending uploads — prevents them from being uploaded
-          setUploads((prev) => prev.filter((x) => !pendingUrls.includes(x.url)));
+          // Clear early uploading markers
+          for (const id of earlyUploadIds) setImageUploading(id, false);
 
-          // Remove value images that would re-trigger the crop modal.
-          // For aspectRatios mode: remove images that don't match any allowed ratio.
-          // For cropToFirstImage mode: keep images matching the first image's ratio.
-          if (value?.length && getShouldCrop(value)) {
-            let filtered: typeof value;
-            if (cropToFirstImage) {
-              const targetRatio = value[0].width / value[0].height;
-              filtered = value.filter(({ width, height }) =>
-                almostEqual(targetRatio, width / height, 0.01)
-              );
-            } else {
-              // aspectRatios mode: keep only images that individually pass
-              filtered = value.filter((img) => !getShouldCrop([img]));
-            }
-            if (filtered.length !== value.length) {
-              onChange?.(filtered.length > 0 ? filtered : null);
-            }
+          // Remove pending upload indicators
+          setUploads((prev) => prev.filter((x) => !pendingUrlSet.has(x.url)));
+
+          // Remove the pending URLs from value
+          const latest = valueRef.current;
+          if (latest) {
+            const reverted = latest.filter((img) => !pendingUrlSet.has(img.url));
+            onChange?.(reverted.length > 0 ? reverted : null);
           }
 
           isCroppingRef.current = false;
@@ -605,10 +609,9 @@ export function SourceImageUploadMultiple({
   }
 
   // Slots mode: upload one or more images to specific slots.
-  // Handles all images atomically — resolves dimensions, checks crop, then uploads.
-  async function handleSlotUpload(
-    entries: { slotIndex: number; src: File | string }[]
-  ) {
+  // Resolves dimensions, eagerly sets value, then delegates to the shared
+  // openCropModal or uploads directly. Uses the same pipeline as non-slot mode.
+  async function handleSlotUpload(entries: { slotIndex: number; src: File | string }[]) {
     // Validate file sizes
     for (const { src } of entries) {
       if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
@@ -619,7 +622,6 @@ export function SourceImageUploadMultiple({
 
     setError(null);
 
-    // Build preview entries for all slots
     const items = entries.map(({ slotIndex, src }) => ({
       slotIndex,
       src,
@@ -627,12 +629,15 @@ export function SourceImageUploadMultiple({
       uploadId: getRandomId(),
     }));
 
-    // Show uploading state for all slots at once
+    // Mark as uploading immediately so useImagesUploadingOrVerifying blocks
+    // the whatIf query before blob URLs reach the graph
+    for (const { uploadId } of items) setImageUploading(uploadId, true);
+
+    // Show upload indicators in slots
     setUploads((prev) => {
       const slotIndices = new Set(items.map((x) => x.slotIndex));
-      const filtered = prev.filter((x) => x.slotIndex === undefined || !slotIndices.has(x.slotIndex));
       return [
-        ...filtered,
+        ...prev.filter((x) => x.slotIndex === undefined || !slotIndices.has(x.slotIndex)),
         ...items.map(({ previewUrl, uploadId, slotIndex }) => ({
           status: 'uploading' as const,
           url: previewUrl,
@@ -642,12 +647,8 @@ export function SourceImageUploadMultiple({
       ];
     });
 
-    const uploadIds = new Set(items.map((x) => x.uploadId));
-    const clearPreviews = () =>
-      setUploads((prev) => prev.filter((x) => !uploadIds.has(x.id)));
-
     try {
-      // Resolve dimensions for all images (cache-first)
+      // Resolve dimensions (cache-first)
       const dimensioned = await Promise.all(
         items.map(async (item) => {
           const cached = sourceMetadataStore.getMetadata(item.previewUrl);
@@ -662,97 +663,29 @@ export function SourceImageUploadMultiple({
         })
       );
 
-      // Build what the full image set would look like with all new images
-      const prospectiveValue = value ? [...value] : [];
+      // Eagerly set value at slot positions so concurrent uploads see each other
+      const latestValue = valueRef.current ? [...valueRef.current] : [];
       for (const { slotIndex, previewUrl, width, height } of dimensioned) {
-        while (prospectiveValue.length <= slotIndex) {
-          prospectiveValue.push(undefined as unknown as SourceImageProps);
+        while (latestValue.length <= slotIndex) {
+          latestValue.push(undefined as unknown as SourceImageProps);
         }
-        prospectiveValue[slotIndex] = { url: previewUrl, width, height };
+        latestValue[slotIndex] = { url: previewUrl, width, height };
       }
-      const allImages = prospectiveValue.filter(Boolean) as SourceImageProps[];
+      const allImages = latestValue.filter(Boolean) as SourceImageProps[];
+      onChange?.(allImages);
 
-      // Check if crop is needed BEFORE uploading
+      const newUrls = dimensioned.map((d) => d.previewUrl);
+
+      // Check crop — delegate to shared openCropModal
       if (getShouldCrop(allImages)) {
-        // Keep previews visible while crop modal is open
-        isCroppingRef.current = true;
-        const withDimensions = allImages.map((img) => ({
-          url: img.url,
-          width: img.width,
-          height: img.height,
-          aspectRatio: img.width / img.height,
-        }));
-
-        dialogStore.trigger({
-          id: 'image-crop-modal',
-          component: ImageCropModal,
-          props: {
-            images: withDimensions,
-            onConfirm: async (output) => {
-              const existingValueUrls = new Set(value?.map((v) => v.url) ?? []);
-              const toUpload: { index: number; src: Blob | string; id: string }[] = [];
-
-              for (let i = 0; i < output.length; i++) {
-                const { cropped, src: imgSrc } = output[i];
-                if (cropped) {
-                  toUpload.push({ index: i, src: cropped, id: getRandomId() });
-                } else if (!existingValueUrls.has(imgSrc) || !isOrchestratorUrl(imgSrc)) {
-                  toUpload.push({ index: i, src: imgSrc, id: getRandomId() });
-                }
-              }
-
-              if (toUpload.length) {
-                setUploads(
-                  toUpload.map(({ index: idx, id }) => ({
-                    status: 'uploading' as const,
-                    url: allImages[idx].url,
-                    id,
-                    slotIndex: idx,
-                  }))
-                );
-
-                const uploadResults = await Promise.all(
-                  toUpload.map(async ({ src: uploadSrc, id }) => {
-                    const res = await uploadOrchestratorImage(uploadSrc, id);
-                    if (res.url && res.available) {
-                      return {
-                        url: res.url,
-                        width: res.width,
-                        height: res.height,
-                      } as SourceImageProps;
-                    }
-                    return null;
-                  })
-                );
-
-                const finalValue = allImages.map((img, i) => {
-                  const uploadIdx = toUpload.findIndex((u) => u.index === i);
-                  if (uploadIdx > -1 && uploadResults[uploadIdx]) {
-                    return uploadResults[uploadIdx]!;
-                  }
-                  return img;
-                });
-
-                setUploads([]);
-                isCroppingRef.current = false;
-                onChange?.(finalValue);
-              } else {
-                clearPreviews();
-                isCroppingRef.current = false;
-                onChange?.(allImages);
-              }
-            },
-            onCancel: () => {
-              clearPreviews();
-              isCroppingRef.current = false;
-            },
-            aspectRatios,
-          },
-        });
+        openCropModal(
+          allImages.map((img) => ({ ...img, aspectRatio: img.width / img.height })),
+          newUrls
+        );
       } else {
-        // No crop needed — upload all images now
-        const uploadResults = await Promise.all(
-          dimensioned.map(async ({ src, uploadId, slotIndex, previewUrl }) => {
+        // No crop needed — upload each and swap URL in value as each completes
+        await Promise.all(
+          dimensioned.map(async ({ src, uploadId, previewUrl }) => {
             try {
               const response = await uploadOrchestratorImage(src, uploadId);
               if (response.blockedReason || !response.available || !response.url) {
@@ -765,49 +698,33 @@ export function SourceImageUploadMultiple({
                           src,
                           error: response.blockedReason ?? 'Upload failed',
                           id: uploadId,
-                          slotIndex,
                         }
                       : item
                   )
                 );
-                return null;
+                return;
               }
-              return {
-                slotIndex,
-                uploadId,
-                image: {
-                  url: response.url,
-                  width: response.width,
-                  height: response.height,
-                } as SourceImageProps,
+              // Swap preview URL with orchestrator URL in value
+              const result = {
+                url: response.url,
+                width: response.width,
+                height: response.height,
               };
+              const latest = valueRef.current;
+              if (latest) {
+                onChange?.(latest.map((img) => (img.url === previewUrl ? result : img)));
+              }
+              setUploads((prev) => prev.filter((x) => x.id !== uploadId));
             } catch {
-              return null;
+              setUploads((prev) => prev.filter((x) => x.id !== uploadId));
             }
           })
         );
-
-        const successful = uploadResults.filter(Boolean) as {
-          slotIndex: number;
-          uploadId: string;
-          image: SourceImageProps;
-        }[];
-        if (successful.length) {
-          const finalValue = value ? [...value] : [];
-          for (const { slotIndex, image } of successful) {
-            while (finalValue.length <= slotIndex) {
-              finalValue.push(undefined as unknown as SourceImageProps);
-            }
-            finalValue[slotIndex] = image;
-          }
-          onChange?.(finalValue.filter(Boolean) as SourceImageProps[]);
-          const successIds = new Set(successful.map((s) => s.uploadId));
-          setUploads((prev) => prev.filter((x) => !successIds.has(x.id)));
-        }
       }
     } catch (e) {
       setError((e as Error).message);
-      clearPreviews();
+      const ids = new Set(items.map((x) => x.uploadId));
+      setUploads((prev) => prev.filter((x) => !x.id || !ids.has(x.id)));
     }
   }
 
@@ -954,7 +871,33 @@ export function SourceImageUploadMultiple({
         key={slotIndex}
         className={`flex flex-1 flex-col gap-1${slot.disabled ? ' opacity-50' : ''}`}
       >
-        {imageAtSlot ? (
+        {isUploading ? (
+          // Show loading state (with image preview underneath if available)
+          <Card withBorder padding={0} className="relative overflow-hidden">
+            {imageAtSlot ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imageAtSlot.url}
+                  alt={slot.label}
+                  className="max-h-[200px] w-full object-contain opacity-50"
+                />
+                <Text size="xs" c="dimmed" ta="center" className="py-1">
+                  {slot.label}
+                </Text>
+              </>
+            ) : (
+              <div className="flex min-h-[150px] flex-col items-center justify-center">
+                <Text size="xs" c="dimmed" ta="center" mt={8}>
+                  {slot.label}
+                </Text>
+              </div>
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-dark-9/30">
+              <Loader size="sm" />
+            </div>
+          </Card>
+        ) : imageAtSlot ? (
           // Show image preview
           <Card withBorder padding={0} className="relative overflow-hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -981,14 +924,6 @@ export function SourceImageUploadMultiple({
               disabled={isSlotDisabled}
             />
           </Card>
-        ) : isUploading ? (
-          // Show loading state
-          <div className="flex min-h-[150px] flex-col items-center justify-center rounded border border-dashed border-gray-4 dark:border-dark-4">
-            <Loader size="md" />
-            <Text size="xs" c="dimmed" ta="center" mt={8}>
-              {slot.label}
-            </Text>
-          </div>
         ) : (
           // Show dropzone
           <Dropzone
