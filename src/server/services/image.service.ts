@@ -2002,24 +2002,20 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     }
   }
 
-  // Second pass: fetch user's own content that strict filters would exclude.
-  // Covers nsfw0 (unclassified), private, blocked, unpublished, and poi (when disabled).
+  // Second pass: fetch user's own nsfw0 (unclassified) images.
+  // These are excluded by the nsfwLevel filter and need to be prepended.
   // Runs in parallel with the first main query. Only on first page.
-  const ownExcludedClauses = [
-    _eq('nsfwLevel', _int(0)),
-    _eq('availability', _str(Availability.Private)),
-    _in('blockedFor', [BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified].map(_str)),
-    _eq('isPublished', _bool(false)),
-  ];
-  if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
-
-  const ownExcludedPromise = input.currentUserId && !bitdexCursor
+  const nsfw0Promise = input.currentUserId && !bitdexCursor
     ? queryBitdex('civitai', [
+        _eq('nsfwLevel', _int(0)),
         _eq('userId', _int(input.currentUserId)),
-        _or(...ownExcludedClauses),
       ], { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true)
     : null;
 
+  // Main loop: fetch pages, post-filter, accumulate until we have enough.
+  // Private/blocked/poi/unpublished are NOT filtered in BitDex for logged-in users,
+  // so the user's own content appears in natural sort position.
+  // Post-filter removes others' private/blocked/poi/unpublished content.
   const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
   let lastCursor: any = undefined;
 
@@ -2038,18 +2034,18 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (!result.cursor) break; // no more pages
   }
 
-  if (!accumulated.length && !ownExcludedPromise) return null;
+  if (!accumulated.length && !nsfw0Promise) return null;
 
   let data = accumulated.slice(0, limit);
 
-  // Merge user's own excluded content (deduplicate, prepend)
-  const ownExcluded = await ownExcludedPromise;
-  if (ownExcluded?.documents?.length) {
+  // Merge user's nsfw0 images (deduplicate, prepend — these are recent uploads)
+  const nsfw0Result = await nsfw0Promise;
+  if (nsfw0Result?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
-    const ownDocs = ownExcluded.documents
+    const nsfw0Docs = nsfw0Result.documents
       .map((doc) => mapBitdexDoc(doc))
       .filter((d) => !mainIds.has(d.id));
-    if (ownDocs.length) data = [...ownDocs, ...data];
+    if (nsfw0Docs.length) data = [...nsfw0Docs, ...data];
   }
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
@@ -2890,16 +2886,17 @@ export async function getImagesFromBitdexPreFilter(
     BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified,
   ].map(_str);
 
-  // Strict filters (no per-user OR clauses) — keeps queries cacheable.
-  // User's own excluded content is handled via post-filter in the PRIMARY caller.
-  if (!isModerator) {
+  // For logged-in users: skip private/blocked/poi filters so user's own content
+  // appears in natural sort position. Post-filter in PRIMARY caller handles visibility.
+  // For anonymous users: apply strict filters (nothing to preserve).
+  if (!isModerator && !currentUserId) {
     filters.push(_not(_eq('availability', _str(Availability.Private))));
     filters.push(_notIn('blockedFor', allBlockedReasons));
   }
 
   if (postId) postIds = [...postIds, postId];
 
-  if (disablePoi) {
+  if (disablePoi && !currentUserId) {
     filters.push(_not(_eq('poi', _bool(true))));
   }
   if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
@@ -2982,7 +2979,8 @@ export async function getImagesFromBitdexPreFilter(
   if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
 
   // --- Published ---
-  // Strict filter (cacheable). User's own unpublished content handled via post-filter.
+  // For logged-in users: skip so user's own unpublished content sorts naturally.
+  // Post-filter handles visibility. Anonymous/moderator: apply strict filter.
   if (isModerator) {
     if (notPublished) {
       filters.push(_eq('isPublished', _bool(false)));
@@ -2991,7 +2989,7 @@ export async function getImagesFromBitdexPreFilter(
     } else {
       filters.push(_eq('isPublished', _bool(true)));
     }
-  } else {
+  } else if (!currentUserId) {
     filters.push(_eq('isPublished', _bool(true)));
   }
 
