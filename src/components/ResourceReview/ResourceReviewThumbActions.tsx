@@ -84,7 +84,6 @@ export function ResourceReviewThumbActions({
           }
           className={classes.button}
           size={size}
-          fullWidth
         >
           <Text component="div" c="success.5" size="xs" inline>
             <Group gap={4} wrap="nowrap">
@@ -105,7 +104,6 @@ export function ResourceReviewThumbActions({
           }
           className={classes.button}
           size={size}
-          fullWidth
         >
           <Text component="div" c="red" inline>
             <ThumbsDownIcon size={20} filled={isThumbsDown} />

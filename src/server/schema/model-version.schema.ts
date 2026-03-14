@@ -222,6 +222,34 @@ export const recommendedSettingsSchema = z.object({
   strength: z.coerce.number().nullish(),
 });
 
+export const linkedComponentSettingsSchema = z.object({
+  isLinkedComponent: z.literal(true),
+  componentType: z.string(),
+  fileId: z.number(),
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
+  fileName: z.string(),
+});
+
+export type LinkedComponentSettings = z.infer<typeof linkedComponentSettingsSchema>;
+
+/** Union type for casting the RecommendedResource.settings JSON field from DB reads */
+export type RecommendedResourceSettings = RecommendedSettingsSchema | LinkedComponentSettings;
+
+export const setLinkedComponentsSchema = z.object({
+  id: z.number(), // modelVersionId
+  components: z.array(
+    z.object({
+      id: z.number().optional(), // RecommendedResource.id for existing entries
+      resourceId: z.number(), // target ModelVersion ID
+      settings: linkedComponentSettingsSchema,
+    })
+  ),
+});
+
+export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
+
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
   id: z.number().optional(),

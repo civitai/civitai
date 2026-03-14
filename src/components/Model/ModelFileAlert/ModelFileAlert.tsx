@@ -14,7 +14,6 @@ export const ModelFileAlert = ({
 }: ModelFileAlertProps) => {
   let hasNegativeEmbed = false;
   let hasConfig = false;
-  let hasVAE = false;
   let hasPickle = false;
   let onlyPickle = true;
   // const isPony = baseModel === 'Pony';
@@ -26,7 +25,6 @@ export const ModelFileAlert = ({
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
         hasNegativeEmbed = true;
       else if (file.type === 'Config') hasConfig = true;
-      else if (modelType === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
     }
   }
   if (!hasPickle) onlyPickle = false;
@@ -75,24 +73,6 @@ export const ModelFileAlert = ({
               config file
             </Anchor>
             , download and place it along side the checkpoint.
-          </Text>
-        </AlertWithIcon>
-      )}
-      {hasVAE && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          <Text size="xs">
-            This checkpoint recommends a{' '}
-            <Anchor
-              className="inline-flex"
-              href={createModelFileDownloadUrl({
-                versionId,
-                type: 'VAE',
-              })}
-              inherit
-            >
-              VAE
-            </Anchor>
-            , download and place it in the VAE folder.
           </Text>
         </AlertWithIcon>
       )}
