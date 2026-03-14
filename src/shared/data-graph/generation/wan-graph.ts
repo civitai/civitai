@@ -30,7 +30,7 @@ import {
   sliderNode,
   enumNode,
   imagesNode,
-  resourcesNode,
+  createResourcesGraph,
   createCheckpointGraph,
   type ResourceData,
 } from './common';
@@ -235,15 +235,7 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     ['images', 'resolution']
   )
   .node('duration', enumNode({ options: wanDurations, defaultValue: 5 }))
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources, // Fal provider has 2 max resources
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   // Effect: Sync I2V ecosystem based on resolution when in img2vid mode.
   // T2V switching is handled by the parent wanGraph effect.
   // Only sets ecosystem — model resets to correct default via discriminator switch.
@@ -304,15 +296,7 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     output: z.boolean(),
     defaultValue: false,
   })
-  .node(
-    'resources',
-    (ctx) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: 2,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph({ limit: 2 }));
 
 /**
  * Wan 2.2-5b subgraph - smaller 5B model variant
@@ -346,15 +330,7 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: 'none' as const,
     meta: { options: wanInterpolatorModels },
   })
-  .node(
-    'resources',
-    (ctx) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: 2,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph({ limit: 2 }));
 
 /**
  * Wan 2.5 subgraph - latest version with extended durations
@@ -384,15 +360,7 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     ['images', 'resolution']
   )
   .node('duration', enumNode({ options: wan25Durations, defaultValue: 5 }))
-  .node(
-    'resources',
-    (ctx) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: 2,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph({ limit: 2 }));
 
 // =============================================================================
 // Wan Graph

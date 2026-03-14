@@ -38,7 +38,7 @@ import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawi
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 import { extractSourceMetadataFromUrl } from '~/utils/metadata/extract-source-metadata';
 
 type AspectRatio = `${number}:${number}`;
@@ -131,7 +131,7 @@ type SourceImageUploadContext = {
   aspect: 'square' | 'video';
   cropToFirstImage: boolean;
   aspectRatios?: AspectRatio[];
-  onChange: (value: (string | File)[]) => Promise<void>;
+  onChange: (value: (string | File)[]) => void;
   enableDrawing?: boolean;
   handleDrawingUpload: (
     index: number,
@@ -141,8 +141,8 @@ type SourceImageUploadContext = {
   annotations?: ImageAnnotation[] | null;
   disabled?: boolean;
   slots?: ImageSlot[];
-  /** Upload a file or URL to a specific slot (for slots mode) */
-  handleSlotUpload?: (slotIndex: number, src: File | string) => Promise<void>;
+  /** Upload files or URLs to specific slots (for slots mode) */
+  handleSlotUpload?: (entries: { slotIndex: number; src: File | string }[]) => Promise<void>;
   /** Remove image from a specific slot */
   removeSlotItem?: (slotIndex: number) => void;
 };
@@ -227,15 +227,63 @@ export function SourceImageUploadMultiple({
     [cropToFirstImage, aspectRatios]
   );
 
+  // Collect pending upload URLs for the crop/upload effect (exclude slot uploads —
+  // those are managed by handleSlotUpload's own flow)
+  const pendingUploadUrls = useMemo(
+    () =>
+      uploads
+        .filter((u) => u.status === 'uploading' && u.slotIndex === undefined)
+        .map((u) => u.url),
+    [uploads]
+  );
+
+  // All image URLs currently in play (value + pending uploads)
+  const allImageUrls = useMemo(
+    () => [...(value?.map((v) => v.url) ?? []), ...pendingUploadUrls],
+    [value, pendingUploadUrls]
+  );
+
+  // Reactive: re-evaluates when sourceMetadataStore updates (e.g., after dim resolution)
+  const allDimsResolved = useSourceMetadataStore(
+    (state) =>
+      allImageUrls.length > 0 &&
+      allImageUrls.every((url) => {
+        const meta = state.metadataByUrl[url];
+        return meta?.width && meta?.height;
+      })
+  );
+
+  // Crop analysis & upload effect:
+  // Once all images have dimensions resolved, check if cropping is needed.
+  // If no crop needed, trigger upload for pending images.
+  // If crop needed, open crop modal.
+  // Also handles existing value images that need re-cropping (e.g., after page refresh).
   useEffect(() => {
     if (isCroppingRef.current) return;
-    if (getShouldCrop(previewImages)) {
-      handleCrop(
-        previewImages.map((x) => x.url),
-        'replace'
-      );
+    if (!allDimsResolved) return;
+
+    // Build dimensioned image list for crop check
+    const allImages = allImageUrls.map((url) => {
+      const fromValue = value?.find((v) => v.url === url);
+      if (fromValue?.width && fromValue?.height) return fromValue;
+      const meta = sourceMetadataStore.getMetadata(url);
+      return { url, width: meta!.width!, height: meta!.height! };
+    });
+
+    if (!getShouldCrop(allImages)) {
+      // No crop needed — upload any pending images
+      if (pendingUploadUrls.length) {
+        for (const url of pendingUploadUrls) handleUpload(url);
+      }
+    } else {
+      // Crop needed — open crop modal with all dimensioned images
+      const withAspectRatio = allImages.map((img) => ({
+        ...img,
+        aspectRatio: img.width / img.height,
+      }));
+      openCropModal(withAspectRatio, pendingUploadUrls);
     }
-  }, [previewImages, getShouldCrop]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allDimsResolved, allImageUrls.length, getShouldCrop]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -295,33 +343,47 @@ export function SourceImageUploadMultiple({
     }
   }, [value, warnOnMissingAiMetadata]);
 
-  // Verify image dimensions and extract source metadata for enhancement workflows
+  // Resolve dimensions for any image (from value or uploads) missing dims in sourceMetadataStore.
+  // Caches results via setMetadata which triggers useSourceMetadataStore subscribers.
+  // Also corrects value entries that have missing/wrong dimensions.
   useEffect(() => {
-    if (!value?.length) return;
+    // Collect all image URLs from value + pending uploads
+    const valueUrls = value?.map((v) => v.url) ?? [];
+    const uploadUrls = uploads.filter((u) => u.status === 'uploading').map((u) => u.url);
+    const allUrls = [...valueUrls, ...uploadUrls];
 
-    const unverified = value.filter(({ url }) => !verifiedDimsRef.current.has(url));
-    for (const { url } of unverified) verifiedDimsRef.current.add(url);
+    const unresolved = allUrls.filter((url) => {
+      if (verifiedDimsRef.current.has(url)) return false;
+      const cached = sourceMetadataStore.getMetadata(url);
+      return !cached?.width || !cached?.height;
+    });
 
-    // Verify dimensions for new images and correct the value if they differ
-    if (unverified.length) {
-      const snapshot = value;
-      Promise.all(
-        unverified.map(({ url }) =>
-          getImageDimensions(url)
-            .then(({ width, height }) => ({ url, width, height }))
-            .catch(() => null)
-        )
-      ).then((results) => {
-        const verified = results.filter(
-          (r): r is { url: string; width: number; height: number } => r !== null
-        );
+    if (!unresolved.length) return;
+    for (const url of unresolved) verifiedDimsRef.current.add(url);
 
-        // Cache verified dims in the store for use by resolveImageDimensions
-        for (const { url, width, height } of verified) {
-          sourceMetadataStore.setMetadata(url, { width, height });
-        }
+    // Track verifying state so FormFooter can show loading
+    for (const url of unresolved) setImageVerifying(url, true);
 
-        // Correct the value if any dims differ from what was stored
+    const snapshot = value;
+    Promise.all(
+      unresolved.map((url) =>
+        getImageDimensions(url)
+          .then(({ width, height }) => ({ url, width, height }))
+          .catch(() => null)
+          .finally(() => setImageVerifying(url, false))
+      )
+    ).then((results) => {
+      const verified = results.filter(
+        (r): r is { url: string; width: number; height: number } => r !== null
+      );
+
+      // Cache verified dims in the store
+      for (const { url, width, height } of verified) {
+        sourceMetadataStore.setMetadata(url, { width, height });
+      }
+
+      // Correct value entries that have missing/wrong dimensions
+      if (snapshot?.length) {
         const corrections = verified.filter((r) => {
           const orig = snapshot.find((v) => v.url === r.url);
           return orig && (orig.width !== r.width || orig.height !== r.height);
@@ -334,17 +396,20 @@ export function SourceImageUploadMultiple({
             })
           );
         }
-      });
-    }
+      }
+    });
+  }, [value, uploads]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Extract generation metadata for images not in store
+  // Extract generation metadata for images not in store (separate concern)
+  useEffect(() => {
+    if (!value?.length) return;
     for (const { url } of value) {
       if (sourceMetadataStore.getMetadata(url)) continue;
       extractSourceMetadataFromUrl(url).then((metadata) => {
         if (metadata) sourceMetadataStore.setMetadata(url, metadata);
       });
     }
-  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [value]);
 
   // Auto-upload data: URLs (e.g., base64 from metadata extraction)
   // Treat them as if they were dropped in the dropzone.
@@ -411,106 +476,122 @@ export function SourceImageUploadMultiple({
     }
   }
 
-  async function handleCrop(items: (string | Blob | File)[], action: 'add' | 'replace' = 'add') {
-    const urls = items.map((src) => (typeof src !== 'string' ? URL.createObjectURL(src) : src));
-    const previewUrls = previewItems.filter((x) => x.status === 'complete').map((x) => x.url);
-    const allUrls = action === 'add' ? [...previewUrls, ...urls] : urls;
-    const withAspectRatio = await Promise.all(
-      allUrls.map(async (url) => {
-        const { width, height } = await getImageDimensions(url);
-        const aspectRatio = Math.round(((width / height) * 100) / 100);
-        return { url, width, height, aspectRatio };
-      })
-    );
+  // Open crop modal with already-dimensioned images. pendingUrls are URLs that still
+  // need orchestrator upload (from uploads state, not yet in value).
+  function openCropModal(
+    images: { url: string; width: number; height: number; aspectRatio: number }[],
+    pendingUrls: string[]
+  ) {
+    isCroppingRef.current = true;
 
-    const shouldCrop = getShouldCrop(withAspectRatio);
+    // Track which URLs are existing (in value) vs new (need upload)
+    const existingUrls = new Set(value?.map((v) => v.url) ?? []);
 
-    if (!shouldCrop) {
-      await Promise.all(urls.map((url) => handleUpload(url)));
-    } else {
-      // Open crop modal without touching uploads/value
-      isCroppingRef.current = true;
+    dialogStore.trigger({
+      id: 'image-crop-modal',
+      component: ImageCropModal,
+      props: {
+        images,
+        onConfirm: async (output) => {
+          // Determine what needs uploading:
+          // - Cropped images always need upload (existing or new)
+          // - New images that weren't cropped still need upload
+          // - Existing images that weren't cropped stay as-is
+          const toUpload: { index: number; src: Blob | string; id: string }[] = [];
 
-      // Track which allUrls indices are existing (in value) vs new
-      const existingUrls = new Set(value?.map((v) => v.url) ?? []);
-
-      dialogStore.trigger({
-        id: 'image-crop-modal',
-        component: ImageCropModal,
-        props: {
-          images: withAspectRatio,
-          onConfirm: async (output) => {
-            // Determine what needs uploading:
-            // - Cropped images always need upload (existing or new)
-            // - New images that weren't cropped still need upload
-            // - Existing images that weren't cropped stay as-is
-            const toUpload: { index: number; src: Blob | string; id: string }[] = [];
-
-            for (let i = 0; i < output.length; i++) {
-              const { cropped, src } = output[i];
-              if (cropped) {
-                toUpload.push({ index: i, src: cropped, id: getRandomId() });
-              } else if (!existingUrls.has(src)) {
-                toUpload.push({ index: i, src, id: getRandomId() });
-              }
+          for (let i = 0; i < output.length; i++) {
+            const { cropped, src } = output[i];
+            if (cropped) {
+              toUpload.push({ index: i, src: cropped, id: getRandomId() });
+            } else if (!existingUrls.has(src)) {
+              toUpload.push({ index: i, src, id: getRandomId() });
             }
+          }
 
-            if (toUpload.length) {
-              // Show uploading indicators
-              setUploads(
-                toUpload.map(({ src, id }) => ({
-                  status: 'uploading' as const,
-                  url: typeof src === 'string' ? src : URL.createObjectURL(src),
-                  id,
-                }))
-              );
+          if (toUpload.length) {
+            // Show uploading indicators
+            setUploads(
+              toUpload.map(({ src, id }) => ({
+                status: 'uploading' as const,
+                url: typeof src === 'string' ? src : URL.createObjectURL(src),
+                id,
+              }))
+            );
 
-              const uploadResults = await Promise.all(
-                toUpload.map(async ({ src, id }) => {
-                  const response = await uploadOrchestratorImage(src, id);
-                  if (response.url && response.available) {
-                    return {
-                      url: response.url,
-                      width: response.width,
-                      height: response.height,
-                    } as SourceImageProps;
-                  }
-                  return null;
-                })
-              );
-
-              // Build final value: start from current value, replace/insert at indices
-              const finalValue: SourceImageProps[] = [];
-              for (let i = 0; i < withAspectRatio.length; i++) {
-                const uploadEntry = toUpload.findIndex((u) => u.index === i);
-                if (uploadEntry > -1 && uploadResults[uploadEntry]) {
-                  finalValue[i] = uploadResults[uploadEntry]!;
-                } else {
-                  // Keep existing image as-is
-                  const img = withAspectRatio[i];
-                  finalValue[i] = { url: img.url, width: img.width, height: img.height };
+            const uploadResults = await Promise.all(
+              toUpload.map(async ({ src, id }) => {
+                const response = await uploadOrchestratorImage(src, id);
+                if (response.url && response.available) {
+                  return {
+                    url: response.url,
+                    width: response.width,
+                    height: response.height,
+                  } as SourceImageProps;
                 }
-              }
+                return null;
+              })
+            );
 
-              setUploads([]);
-              isCroppingRef.current = false;
-              onChange?.(finalValue.filter(Boolean) as SourceImageProps[]);
-            } else {
-              isCroppingRef.current = false;
+            // Build final value: start from current value, replace/insert at indices
+            const finalValue: SourceImageProps[] = [];
+            for (let i = 0; i < images.length; i++) {
+              const uploadEntry = toUpload.findIndex((u) => u.index === i);
+              if (uploadEntry > -1 && uploadResults[uploadEntry]) {
+                finalValue[i] = uploadResults[uploadEntry]!;
+              } else {
+                // Keep existing image as-is
+                const img = images[i];
+                finalValue[i] = { url: img.url, width: img.width, height: img.height };
+              }
             }
-          },
-          onCancel: () => {
+
+            setUploads([]);
             isCroppingRef.current = false;
-          },
-          aspectRatios,
+            onChange?.(finalValue.filter(Boolean) as SourceImageProps[]);
+          } else {
+            isCroppingRef.current = false;
+          }
         },
-      });
-    }
+        onCancel: () => {
+          // Remove pending uploads — prevents them from being uploaded
+          setUploads((prev) => prev.filter((x) => !pendingUrls.includes(x.url)));
+
+          // Remove value images that would re-trigger the crop modal.
+          // For aspectRatios mode: remove images that don't match any allowed ratio.
+          // For cropToFirstImage mode: keep images matching the first image's ratio.
+          if (value?.length && getShouldCrop(value)) {
+            let filtered: typeof value;
+            if (cropToFirstImage) {
+              const targetRatio = value[0].width / value[0].height;
+              filtered = value.filter(({ width, height }) =>
+                almostEqual(targetRatio, width / height, 0.01)
+              );
+            } else {
+              // aspectRatios mode: keep only images that individually pass
+              filtered = value.filter((img) => !getShouldCrop([img]));
+            }
+            if (filtered.length !== value.length) {
+              onChange?.(filtered.length > 0 ? filtered : null);
+            }
+          }
+
+          isCroppingRef.current = false;
+        },
+        aspectRatios,
+      },
+    });
   }
 
-  // handle adding new urls or files
-  async function handleChange(value: (string | File)[]) {
-    await handleCrop(value);
+  // handle adding new urls or files — just show previews, effects handle the rest
+  function handleChange(items: (string | File)[]) {
+    setUploads((prev) => [
+      ...prev,
+      ...items.map((src) => ({
+        status: 'uploading' as const,
+        url: typeof src !== 'string' ? URL.createObjectURL(src) : src,
+        id: getRandomId(),
+      })),
+    ]);
   }
 
   // handle drawing upload for individual images
@@ -523,73 +604,84 @@ export function SourceImageUploadMultiple({
     }
   }
 
-  // Slots mode: upload to a specific slot
-  async function handleSlotUpload(slotIndex: number, src: File | string) {
-    // Check file size (only for File objects)
-    if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
-      setError(`Images should not exceed ${maxSizeFormatted}`);
-      return;
+  // Slots mode: upload one or more images to specific slots.
+  // Handles all images atomically — resolves dimensions, checks crop, then uploads.
+  async function handleSlotUpload(
+    entries: { slotIndex: number; src: File | string }[]
+  ) {
+    // Validate file sizes
+    for (const { src } of entries) {
+      if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
+        setError(`Images should not exceed ${maxSizeFormatted}`);
+        return;
+      }
     }
 
     setError(null);
-    const previewUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
-    const uploadId = getRandomId();
 
-    // Add uploading state for this slot
-    setUploads((items) => {
-      // Remove any existing upload for this slot
-      const filtered = items.filter((x) => x.slotIndex !== slotIndex);
-      return [...filtered, { status: 'uploading', url: previewUrl, id: uploadId, slotIndex }];
+    // Build preview entries for all slots
+    const items = entries.map(({ slotIndex, src }) => ({
+      slotIndex,
+      src,
+      previewUrl: typeof src === 'string' ? src : URL.createObjectURL(src),
+      uploadId: getRandomId(),
+    }));
+
+    // Show uploading state for all slots at once
+    setUploads((prev) => {
+      const slotIndices = new Set(items.map((x) => x.slotIndex));
+      const filtered = prev.filter((x) => x.slotIndex === undefined || !slotIndices.has(x.slotIndex));
+      return [
+        ...filtered,
+        ...items.map(({ previewUrl, uploadId, slotIndex }) => ({
+          status: 'uploading' as const,
+          url: previewUrl,
+          id: uploadId,
+          slotIndex,
+        })),
+      ];
     });
 
+    const uploadIds = new Set(items.map((x) => x.uploadId));
+    const clearPreviews = () =>
+      setUploads((prev) => prev.filter((x) => !uploadIds.has(x.id)));
+
     try {
-      const response = await uploadOrchestratorImage(src, uploadId);
+      // Resolve dimensions for all images (cache-first)
+      const dimensioned = await Promise.all(
+        items.map(async (item) => {
+          const cached = sourceMetadataStore.getMetadata(item.previewUrl);
+          const dims =
+            cached?.width && cached?.height
+              ? { width: cached.width, height: cached.height }
+              : await getImageDimensions(item.previewUrl);
+          if (!cached?.width || !cached?.height) {
+            sourceMetadataStore.setMetadata(item.previewUrl, dims);
+          }
+          return { ...item, width: dims.width, height: dims.height };
+        })
+      );
 
-      if (response.blockedReason || !response.available || !response.url) {
-        setUploads((items) =>
-          items.map((item) =>
-            item.id === uploadId
-              ? {
-                  status: 'error',
-                  url: previewUrl,
-                  src,
-                  error: response.blockedReason ?? 'Upload failed',
-                  id: uploadId,
-                  slotIndex,
-                }
-              : item
-          )
-        );
-        return;
-      }
-
-      const newImage: SourceImageProps = {
-        url: response.url,
-        width: response.width,
-        height: response.height,
-      };
-
-      // Build what the full image set would look like with this new image
+      // Build what the full image set would look like with all new images
       const prospectiveValue = value ? [...value] : [];
-      while (prospectiveValue.length <= slotIndex) {
-        prospectiveValue.push(undefined as unknown as SourceImageProps);
+      for (const { slotIndex, previewUrl, width, height } of dimensioned) {
+        while (prospectiveValue.length <= slotIndex) {
+          prospectiveValue.push(undefined as unknown as SourceImageProps);
+        }
+        prospectiveValue[slotIndex] = { url: previewUrl, width, height };
       }
-      prospectiveValue[slotIndex] = newImage;
       const allImages = prospectiveValue.filter(Boolean) as SourceImageProps[];
 
-      // Check if all images share the same allowed aspect ratio
+      // Check if crop is needed BEFORE uploading
       if (getShouldCrop(allImages)) {
-        // Clear slot upload indicator
-        setUploads((items) => items.filter((x) => x.id !== uploadId));
-
-        // Open crop modal with all images
+        // Keep previews visible while crop modal is open
         isCroppingRef.current = true;
-        const withDimensions = await Promise.all(
-          allImages.map(async (img) => {
-            const { width, height } = await getImageDimensions(img.url);
-            return { url: img.url, width, height, aspectRatio: width / height };
-          })
-        );
+        const withDimensions = allImages.map((img) => ({
+          url: img.url,
+          width: img.width,
+          height: img.height,
+          aspectRatio: img.width / img.height,
+        }));
 
         dialogStore.trigger({
           id: 'image-crop-modal',
@@ -597,17 +689,19 @@ export function SourceImageUploadMultiple({
           props: {
             images: withDimensions,
             onConfirm: async (output) => {
-              const toUpload: { index: number; src: Blob; id: string }[] = [];
+              const existingValueUrls = new Set(value?.map((v) => v.url) ?? []);
+              const toUpload: { index: number; src: Blob | string; id: string }[] = [];
 
               for (let i = 0; i < output.length; i++) {
-                const { cropped } = output[i];
+                const { cropped, src: imgSrc } = output[i];
                 if (cropped) {
                   toUpload.push({ index: i, src: cropped, id: getRandomId() });
+                } else if (!existingValueUrls.has(imgSrc) || !isOrchestratorUrl(imgSrc)) {
+                  toUpload.push({ index: i, src: imgSrc, id: getRandomId() });
                 }
               }
 
               if (toUpload.length) {
-                // Show uploading indicators in slots
                 setUploads(
                   toUpload.map(({ index: idx, id }) => ({
                     status: 'uploading' as const,
@@ -618,8 +712,8 @@ export function SourceImageUploadMultiple({
                 );
 
                 const uploadResults = await Promise.all(
-                  toUpload.map(async ({ src, id }) => {
-                    const res = await uploadOrchestratorImage(src, id);
+                  toUpload.map(async ({ src: uploadSrc, id }) => {
+                    const res = await uploadOrchestratorImage(uploadSrc, id);
                     if (res.url && res.available) {
                       return {
                         url: res.url,
@@ -631,7 +725,6 @@ export function SourceImageUploadMultiple({
                   })
                 );
 
-                // Build final value: keep uncropped as-is, replace cropped at index
                 const finalValue = allImages.map((img, i) => {
                   const uploadIdx = toUpload.findIndex((u) => u.index === i);
                   if (uploadIdx > -1 && uploadResults[uploadIdx]) {
@@ -644,25 +737,77 @@ export function SourceImageUploadMultiple({
                 isCroppingRef.current = false;
                 onChange?.(finalValue);
               } else {
-                // No images were cropped — just set the value as-is
+                clearPreviews();
                 isCroppingRef.current = false;
                 onChange?.(allImages);
               }
             },
             onCancel: () => {
+              clearPreviews();
               isCroppingRef.current = false;
             },
             aspectRatios,
           },
         });
       } else {
-        // Aspect ratios match — add directly
-        onChange?.(allImages);
-        setUploads((items) => items.filter((x) => x.id !== uploadId));
+        // No crop needed — upload all images now
+        const uploadResults = await Promise.all(
+          dimensioned.map(async ({ src, uploadId, slotIndex, previewUrl }) => {
+            try {
+              const response = await uploadOrchestratorImage(src, uploadId);
+              if (response.blockedReason || !response.available || !response.url) {
+                setUploads((prev) =>
+                  prev.map((item) =>
+                    item.id === uploadId
+                      ? {
+                          status: 'error' as const,
+                          url: previewUrl,
+                          src,
+                          error: response.blockedReason ?? 'Upload failed',
+                          id: uploadId,
+                          slotIndex,
+                        }
+                      : item
+                  )
+                );
+                return null;
+              }
+              return {
+                slotIndex,
+                uploadId,
+                image: {
+                  url: response.url,
+                  width: response.width,
+                  height: response.height,
+                } as SourceImageProps,
+              };
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        const successful = uploadResults.filter(Boolean) as {
+          slotIndex: number;
+          uploadId: string;
+          image: SourceImageProps;
+        }[];
+        if (successful.length) {
+          const finalValue = value ? [...value] : [];
+          for (const { slotIndex, image } of successful) {
+            while (finalValue.length <= slotIndex) {
+              finalValue.push(undefined as unknown as SourceImageProps);
+            }
+            finalValue[slotIndex] = image;
+          }
+          onChange?.(finalValue.filter(Boolean) as SourceImageProps[]);
+          const successIds = new Set(successful.map((s) => s.uploadId));
+          setUploads((prev) => prev.filter((x) => !successIds.has(x.id)));
+        }
       }
     } catch (e) {
       setError((e as Error).message);
-      setUploads((items) => items.filter((x) => x.id !== uploadId));
+      clearPreviews();
     }
   }
 
@@ -715,10 +860,16 @@ export function SourceImageUploadMultiple({
             <img src={firstImage.url} alt="Uploaded image" className="size-full object-contain" />
           </div>
 
-          <SourceImageUploadMultiple.Dimensions
-            width={firstImage.width}
-            height={firstImage.height}
-          />
+          {!firstImage.width || !firstImage.height ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-dark-9/30">
+              <Loader size="sm" />
+            </div>
+          ) : (
+            <SourceImageUploadMultiple.Dimensions
+              width={firstImage.width}
+              height={firstImage.height}
+            />
+          )}
           <SourceImageUploadMultiple.CloseButton
             onClick={() => removeItem(0)}
             disabled={disabled}
@@ -815,10 +966,16 @@ export function SourceImageUploadMultiple({
             <Text size="xs" c="dimmed" ta="center" className="py-1">
               {slot.label}
             </Text>
-            <SourceImageUploadMultiple.Dimensions
-              width={imageAtSlot.width}
-              height={imageAtSlot.height}
-            />
+            {!imageAtSlot.width || !imageAtSlot.height ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-dark-9/30">
+                <Loader size="sm" />
+              </div>
+            ) : (
+              <SourceImageUploadMultiple.Dimensions
+                width={imageAtSlot.width}
+                height={imageAtSlot.height}
+              />
+            )}
             <SourceImageUploadMultiple.CloseButton
               onClick={() => removeSlotItem(slotIndex)}
               disabled={isSlotDisabled}
@@ -836,14 +993,22 @@ export function SourceImageUploadMultiple({
           // Show dropzone
           <Dropzone
             onDrop={async (files) => {
-              if (files.length > 0) await handleSlotUpload(slotIndex, files[0]);
+              if (!files.length || !slots) return;
+              // Distribute files across empty slots starting from this slot
+              const emptySlotIndices = slots
+                .map((s, i) => ({ i, s }))
+                .filter(({ i, s }) => i >= slotIndex && !s.disabled && !value?.[i])
+                .map(({ i }) => i);
+              const entries = files
+                .slice(0, emptySlotIndices.length)
+                .map((file, idx) => ({ slotIndex: emptySlotIndices[idx], src: file }));
+              if (entries.length) await handleSlotUpload(entries);
             }}
             onDropCapture={async (e: DragEvent) => {
               const url = e.dataTransfer.getData('text/uri-list');
-              if (url?.length) await handleSlotUpload(slotIndex, url);
+              if (url?.length) await handleSlotUpload([{ slotIndex, src: url }]);
             }}
             accept={IMAGE_MIME_TYPE}
-            maxFiles={1}
             disabled={isSlotDisabled}
             className="cursor-pointer"
             useFsAccessApi={!isAndroidDevice()}
@@ -1317,10 +1482,16 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                 alt="image"
                 onError={handleError}
               />
-              <SourceImageUploadMultiple.Dimensions
-                width={previewItem.width}
-                height={previewItem.height}
-              />
+              {!previewItem.width || !previewItem.height ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-dark-9/30">
+                  <Loader size="sm" />
+                </div>
+              ) : (
+                <SourceImageUploadMultiple.Dimensions
+                  width={previewItem.width}
+                  height={previewItem.height}
+                />
+              )}
               {enableDrawing &&
                 (isMobile ? (
                   // Mobile: Large prominent button bottom-left
@@ -1408,7 +1579,10 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
 
 export const InputSourceImageUploadMultiple = withController(SourceImageUploadMultiple);
 
-export const useImagesUploadingStore = create<{ uploading: string[] }>(() => ({ uploading: [] }));
+export const useImagesUploadingStore = create<{
+  uploading: string[];
+  verifying: string[];
+}>(() => ({ uploading: [], verifying: [] }));
 function setImageUploading(id: string, uploading: boolean) {
   if (uploading) {
     useImagesUploadingStore.setState((state) => ({ uploading: [...state.uploading, id] }));
@@ -1417,4 +1591,19 @@ function setImageUploading(id: string, uploading: boolean) {
       uploading: state.uploading.filter((uploadId) => uploadId !== id),
     }));
   }
+}
+function setImageVerifying(url: string, verifying: boolean) {
+  if (verifying) {
+    useImagesUploadingStore.setState((state) => ({ verifying: [...state.verifying, url] }));
+  } else {
+    useImagesUploadingStore.setState((state) => ({
+      verifying: state.verifying.filter((u) => u !== url),
+    }));
+  }
+}
+
+export function useImagesUploadingOrVerifying() {
+  return useImagesUploadingStore(
+    (state) => state.uploading.length > 0 || state.verifying.length > 0
+  );
 }

@@ -33,7 +33,7 @@ export const useResize = (options: Props) => {
   } = options ?? {};
   const [ref, setRef] = useState<HTMLElement | null>(null);
   const [resizerRef, setResizerRef] = useState<HTMLElement | null>(null);
-  const [isResizing, setIsResizing] = useState(false);
+  const isResizing = useRef(false);
   const frame = useRef(0);
 
   useEffect(() => {
@@ -48,16 +48,16 @@ export const useResize = (options: Props) => {
 
   const startResizing = useCallback((e: MouseEvent | TouchEvent) => {
     e.preventDefault();
-    setIsResizing(true);
+    isResizing.current = true;
   }, []);
 
   const stopResizing = useCallback(() => {
-    setIsResizing(false);
+    isResizing.current = false;
     if (frame.current) cancelAnimationFrame(frame.current);
   }, []);
 
   const getClientPosition = (e: MouseEvent | TouchEvent) => {
-    if (e instanceof TouchEvent) {
+    if ('touches' in e) {
       return orientation === 'horizontal' ? e.touches[0].clientX : e.touches[0].clientY;
     }
     return e[mouseMoveClient];
@@ -65,7 +65,7 @@ export const useResize = (options: Props) => {
 
   const resize = useCallback(
     (moveEvent: MouseEvent | TouchEvent) => {
-      if (isResizing && ref) {
+      if (isResizing.current && ref) {
         const getWidth = () => {
           const clientPosition = getClientPosition(moveEvent);
           const width = resizePosition
@@ -84,7 +84,7 @@ export const useResize = (options: Props) => {
         });
       }
     },
-    [isResizing] // eslint-disable-line
+    [ref, mouseMoveClient, resizePosition, minWidth, maxWidth, name] // eslint-disable-line
   );
 
   useEffect(() => {

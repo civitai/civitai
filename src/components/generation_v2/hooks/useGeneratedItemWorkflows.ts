@@ -39,7 +39,8 @@ import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleI
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
 import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
-import { getImageDimensions, getSourceImageFromUrl } from '~/utils/image-utils';
+import { getSourceImageFromUrl } from '~/utils/image-utils';
+import { showWarningNotification } from '~/utils/notifications';
 
 // =============================================================================
 // Types
@@ -143,16 +144,6 @@ export function useGeneratedItemWorkflows({
 // Apply Workflow Utilities
 // =============================================================================
 
-/**
- * Resolve image dimensions for a BlobData item.
- * Priority: sourceMetadataStore cache (set by input component) → BlobData dims → fetch from URL.
- */
-async function resolveImageDimensions(image: BlobData): Promise<{ width: number; height: number }> {
-  const stored = sourceMetadataStore.getMetadata(image.url);
-  if (stored?.width && stored?.height) return { width: stored.width, height: stored.height };
-  return getImageDimensions(image.url).catch(() => ({ width: 512, height: 512 }));
-}
-
 interface ApplyWorkflowOptions {
   workflowId: string;
   image: BlobData;
@@ -199,10 +190,8 @@ function getTargetEcosystemKey(
  * Always uses 'append' runType so the form merges with existing images.
  * Stores source metadata for enhancement tracking.
  */
-async function appendUpscaleImage(image: BlobData) {
+function appendUpscaleImage(image: BlobData) {
   generationGraphPanel.setViewWithReturn('generate');
-
-  const dims = await resolveImageDimensions(image);
 
   // Store source metadata for enhancement tracking
   if (image.params || image.resources) {
@@ -213,10 +202,12 @@ async function appendUpscaleImage(image: BlobData) {
     });
   }
 
+  // Pass image without dimensions — SourceImageUploadMultiple will resolve
+  // them asynchronously and update the graph once verified.
   generationGraphStore.setData({
     params: {
       workflow: 'img2img:upscale',
-      images: [{ url: image.url, width: dims.width, height: dims.height }],
+      images: [{ url: image.url }],
     },
     resources: [],
     runType: 'append',
@@ -226,7 +217,7 @@ async function appendUpscaleImage(image: BlobData) {
 /**
  * Send generated output data to the generation form for a specific workflow.
  */
-async function applyWorkflowToForm({
+function applyWorkflowToForm({
   workflowId,
   image,
   ecosystem,
@@ -246,17 +237,18 @@ async function applyWorkflowToForm({
 
   const inputType = getInputTypeForWorkflow(workflowId);
 
-  // Build images in graph format { url, width, height }[]
+  // Build images in graph format { url }[]
   // Pass image for workflows that require it (inputType: 'image') OR
-  // for text-input workflows whose graph has an 'images' node
+  // for text-input workflows whose graph has an 'images' node.
+  // Dimensions are omitted — SourceImageUploadMultiple will resolve them
+  // asynchronously and update the graph once verified.
   const isImageType = image.type !== 'video';
   const acceptsImages =
     inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
 
-  let images: { url: string; width: number; height: number }[] | undefined;
+  let images: { url: string }[] | undefined;
   if (acceptsImages) {
-    const dims = await resolveImageDimensions(image);
-    images = [{ url: image.url, width: dims.width, height: dims.height }];
+    images = [{ url: image.url }];
   }
 
   if (isEnhancement && (image.params || image.resources)) {
@@ -399,11 +391,11 @@ export async function applyWorkflowWithCheck({
   if (isEnhancement || isStandalone) {
     // Upscale always appends images to build a batch
     if (workflowId === 'img2img:upscale') {
-      await appendUpscaleImage(image);
+      appendUpscaleImage(image);
       return;
     }
 
-    await applyWorkflowToForm({
+    applyWorkflowToForm({
       workflowId,
       image,
       ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
@@ -424,10 +416,9 @@ export async function applyWorkflowWithCheck({
     const acceptsImages =
       inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
 
-    let images: { url: string; width: number; height: number }[] | undefined;
+    let images: { url: string }[] | undefined;
     if (acceptsImages) {
-      const dims = await resolveImageDimensions(image);
-      images = [{ url: image.url, width: dims.width, height: dims.height }];
+      images = [{ url: image.url }];
     }
 
     generationGraphStore.setData({
@@ -481,16 +472,51 @@ export async function applyWorkflowWithCheck({
 // Bulk Workflow Actions
 // =============================================================================
 
+/** Read existing image URLs for a workflow from localStorage (persisted graph state). */
+function getExistingImageUrls(workflowId: string): Set<string> {
+  try {
+    const stored = localStorage.getItem(`generation-graph.workflow.${workflowId}`);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      const images = parsed.images as Array<{ url: string }> | undefined;
+      return new Set(images?.map((img) => img.url) ?? []);
+    }
+  } catch {
+    // Invalid JSON
+  }
+  return new Set();
+}
+
 /**
  * Apply a workflow to multiple images at once.
- * Slices to the workflow's max batch size, stores source metadata for each,
- * verifies dimensions in parallel, and sends to the generation form.
+ * Checks available capacity, slices to fit, stores source metadata for each,
+ * and sends to the generation form. Dimensions are resolved asynchronously
+ * by SourceImageUploadMultiple after the images are set on the graph.
+ * Returns the images that were actually sent to the workflow.
  */
-export async function applyBulkWorkflow(workflowId: string, images: BlobData[]) {
+export function applyBulkWorkflow(workflowId: string, images: BlobData[]): BlobData[] {
   const max = bulkWorkflowLimits[workflowId];
-  if (!max) return;
+  if (!max) return [];
 
-  const batch = images.slice(0, max);
+  // Check current capacity — deduplicate incoming against existing images
+  const existingUrls = getExistingImageUrls(workflowId);
+  const newImages = images.filter((img) => !existingUrls.has(img.url));
+  const availableSlots = max - existingUrls.size;
+
+  if (availableSlots <= 0 || newImages.length === 0) {
+    const reason =
+      availableSlots <= 0
+        ? `The workflow already has ${max} images (the maximum). Clear some images or submit your current batch before adding more.`
+        : 'All selected images are already in the workflow.';
+    showWarningNotification({
+      title: 'No images added',
+      message: reason,
+      autoClose: 5000,
+    });
+    return [];
+  }
+
+  const batch = newImages.slice(0, availableSlots);
 
   generationGraphPanel.setViewWithReturn('generate');
 
@@ -505,17 +531,23 @@ export async function applyBulkWorkflow(workflowId: string, images: BlobData[]) 
     }
   }
 
-  // Resolve dimensions for all images in parallel (uses store cache, then BlobData, then fetch)
-  const imagesWithDims = await Promise.all(
-    batch.map(async (img) => {
-      const dims = await resolveImageDimensions(img);
-      return { url: img.url, width: dims.width, height: dims.height };
-    })
-  );
-
+  // Pass images without dimensions — SourceImageUploadMultiple will resolve
+  // them asynchronously and update the graph once verified.
   generationGraphStore.setData({
-    params: { workflow: workflowId, images: imagesWithDims },
+    params: { workflow: workflowId, images: batch.map((img) => ({ url: img.url })) },
     resources: [],
     runType: 'append',
   });
+
+  // Notify if some images couldn't fit
+  const skipped = newImages.length - batch.length;
+  if (skipped > 0) {
+    showWarningNotification({
+      title: 'Some images were not added',
+      message: `Added ${batch.length} of ${newImages.length} images. The workflow is now at its maximum of ${max}. Clear some images or submit your current batch to add more.`,
+      autoClose: 5000,
+    });
+  }
+
+  return batch;
 }
