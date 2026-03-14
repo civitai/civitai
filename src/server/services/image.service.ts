@@ -174,6 +174,27 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '.
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
 import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
+
+// --- BitDex native filter helpers ---
+const _int = (v: number): Value => ({ Integer: v });
+const _str = (v: string): Value => ({ String: v });
+const _bool = (v: boolean): Value => ({ Bool: v });
+const _eq = (f: string, v: Value): FilterClause => ({ Eq: [f, v] });
+const _notEq = (f: string, v: Value): FilterClause => ({ NotEq: [f, v] });
+const _in = (f: string, vs: Value[]): FilterClause => ({ In: [f, vs] });
+const _notIn = (f: string, vs: Value[]): FilterClause => ({ NotIn: [f, vs] });
+const _gt = (f: string, v: Value): FilterClause => ({ Gt: [f, v] });
+const _gte = (f: string, v: Value): FilterClause => ({ Gte: [f, v] });
+const _lte = (f: string, v: Value): FilterClause => ({ Lte: [f, v] });
+const _not = (c: FilterClause): FilterClause => ({ Not: c });
+const _and = (...cs: (FilterClause | null)[]): FilterClause => {
+  const valid = cs.filter((c): c is FilterClause => c !== null);
+  return valid.length === 1 ? valid[0] : { And: valid };
+};
+const _or = (...cs: (FilterClause | null)[]): FilterClause => {
+  const valid = cs.filter((c): c is FilterClause => c !== null);
+  return valid.length === 1 ? valid[0] : { Or: valid };
+};
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
@@ -1936,6 +1957,106 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   //reviewId?: number;
 };
 
+/**
+ * Safety post-filter for BitDex results. The main query uses strict cacheable filters,
+ * so this rarely removes anything. Exists as a defense-in-depth check.
+ */
+function postFilterBitdexDocs(
+  docs: ReturnType<typeof mapBitdexDoc>[],
+  currentUserId: number | undefined,
+  isModerator: boolean | undefined,
+  disablePoi: boolean | undefined,
+) {
+  // Moderators see everything — no post-filtering needed
+  if (isModerator) return docs;
+
+  return docs.filter((doc) => {
+    const isOwn = currentUserId != null && doc.userId === currentUserId;
+    if (isOwn) return true; // always show user's own content
+
+    if (doc.availability === 'Private') return false;
+    if (doc.blockedFor) return false;
+    if (disablePoi && doc.poi) return false;
+    if (doc.publishedAtUnix == null) return false; // unpublished
+    return true;
+  });
+}
+
+/**
+ * Fetch from BitDex in primary mode with post-filtering and pagination loop.
+ * The main query is fully cacheable (no per-user filter clauses).
+ * Returns null if BitDex can't serve the request.
+ */
+async function fetchBitdexPrimary(input: ImageSearchInput) {
+  const limit = input.limit ?? 100;
+  const MAX_PASSES = 3;
+
+  // Decode BitDex keyset cursor from "offset|bdx:JSON" format
+  let bitdexCursor: any = undefined;
+  if (input.cursor) {
+    const raw = input.cursor.toString();
+    const pipeIdx = raw.indexOf('|');
+    const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
+    if (entryPart.startsWith('bdx:')) {
+      try { bitdexCursor = JSON.parse(entryPart.slice(4)); } catch {}
+    }
+  }
+
+  // Second pass: fetch user's own content that strict filters would exclude.
+  // Covers nsfw0 (unclassified), private, blocked, unpublished, and poi (when disabled).
+  // Runs in parallel with the first main query. Only on first page.
+  const ownExcludedClauses = [
+    _eq('nsfwLevel', _int(0)),
+    _eq('availability', _str(Availability.Private)),
+    _in('blockedFor', [BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified].map(_str)),
+    _eq('isPublished', _bool(false)),
+  ];
+  if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
+
+  const ownExcludedPromise = input.currentUserId && !bitdexCursor
+    ? queryBitdex('civitai', [
+        _eq('userId', _int(input.currentUserId)),
+        _or(...ownExcludedClauses),
+      ], { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true)
+    : null;
+
+  const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
+  let lastCursor: any = undefined;
+
+  for (let pass = 0; pass < MAX_PASSES && accumulated.length < limit; pass++) {
+    const result = await (pass === 0
+      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
+      : getImagesFromBitdexPreFilter(input, true, lastCursor));
+
+    if (!result?.documents?.length) break;
+
+    const docs = result.documents.map((doc) => mapBitdexDoc(doc));
+    const filtered = postFilterBitdexDocs(docs, input.currentUserId, input.isModerator, input.disablePoi);
+    accumulated.push(...filtered);
+    lastCursor = result.cursor;
+
+    if (!result.cursor) break; // no more pages
+  }
+
+  if (!accumulated.length && !ownExcludedPromise) return null;
+
+  let data = accumulated.slice(0, limit);
+
+  // Merge user's own excluded content (deduplicate, prepend)
+  const ownExcluded = await ownExcludedPromise;
+  if (ownExcluded?.documents?.length) {
+    const mainIds = new Set(data.map((d) => d.id));
+    const ownDocs = ownExcluded.documents
+      .map((doc) => mapBitdexDoc(doc))
+      .filter((d) => !mainIds.has(d.id));
+    if (ownDocs.length) data = [...ownDocs, ...data];
+  }
+
+  const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
+  console.log('[BitDex] PRIMARY serving', data.length, 'docs, cursor:', nextCursor ? 'yes' : 'none');
+  return { data, nextCursor };
+}
+
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   const fliptClient = await FliptSingleton.getInstance();
@@ -1956,33 +2077,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
   // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
-  // Uses keyset cursors (not offset) to avoid max_page_size limit.
+  // BitDex queries use strict filters (no per-user OR clauses) for cacheability.
+  // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
   if (bitdexMode === 'primary') {
     try {
-      // Decode BitDex keyset cursor from the consumer's cursor format "offset|bdx:JSON"
-      let bitdexCursor: any = undefined;
-      if (input.cursor) {
-        const raw = input.cursor.toString();
-        const pipeIdx = raw.indexOf('|');
-        const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
-        if (entryPart.startsWith('bdx:')) {
-          try { bitdexCursor = JSON.parse(entryPart.slice(4)); } catch {}
-        }
-      }
-
-      const bitdexResult = await getImagesFromBitdexPreFilter(input, true, bitdexCursor);
-      if (bitdexResult?.documents?.length) {
-        const data = bitdexResult.documents.map((doc) => mapBitdexDoc(doc));
-        // Encode BitDex keyset cursor for next page
-        const nextCursor = bitdexResult.cursor ? `bdx:${JSON.stringify(bitdexResult.cursor)}` : undefined;
-        console.log('[BitDex] PRIMARY serving', data.length, 'docs, total:', bitdexResult.total_matched, 'cursor:', nextCursor ? 'yes' : 'none');
-        return { data, nextCursor };
-      }
-      // If BitDex returned IDs but no documents, fall through to Meili
-      if (bitdexResult) {
-        console.log('[BitDex] PRIMARY got', bitdexResult.ids.length, 'ids but no docs, falling through to Meili');
-      }
-      console.log('[BitDex] PRIMARY returned null, falling through to Meili');
+      const result = await fetchBitdexPrimary(input);
+      if (result) return result;
+      console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
@@ -2688,12 +2789,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 }
 
 // --- BitDex document mapping ---
-// BitDex returns mapped_string fields as lowercase strings and sort fields as u32 unix seconds.
-// Availability needs capitalization to match Prisma enum. Zero values for optional IDs mean absent.
-
-const bitdexAvailabilityNormalize: Record<string, string> = {
-  public: 'Public', private: 'Private', unsearchable: 'Unsearchable',
-};
+// BitDex low_cardinality_string fields preserve original casing (case-insensitive for queries,
+// but output matches input). Sort fields are u32 unix seconds. Zero values for optional IDs mean absent.
 
 /** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
 function mapBitdexDoc(doc: Record<string, unknown>) {
@@ -2706,7 +2803,7 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     nsfwLevel: doc.nsfwLevel as number,
     userId: doc.userId as number,
     type: (doc.type as string) || 'image',
-    availability: bitdexAvailabilityNormalize[(doc.availability as string)] ?? 'Public',
+    availability: (doc.availability as string) || 'Public',
     baseModel: (doc.baseModel as string) || null,
     postId: (doc.postId as number) || null,
     postedToId: (doc.postedToId as number) || null,
@@ -2735,27 +2832,6 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     acceptableMinor: (doc.acceptableMinor as boolean) ?? false,
   };
 }
-
-// --- BitDex native filter helpers ---
-const _int = (v: number): Value => ({ Integer: v });
-const _str = (v: string): Value => ({ String: v });
-const _bool = (v: boolean): Value => ({ Bool: v });
-const _eq = (f: string, v: Value): FilterClause => ({ Eq: [f, v] });
-const _notEq = (f: string, v: Value): FilterClause => ({ NotEq: [f, v] });
-const _in = (f: string, vs: Value[]): FilterClause => ({ In: [f, vs] });
-const _notIn = (f: string, vs: Value[]): FilterClause => ({ NotIn: [f, vs] });
-const _gt = (f: string, v: Value): FilterClause => ({ Gt: [f, v] });
-const _gte = (f: string, v: Value): FilterClause => ({ Gte: [f, v] });
-const _lte = (f: string, v: Value): FilterClause => ({ Lte: [f, v] });
-const _not = (c: FilterClause): FilterClause => ({ Not: c });
-const _and = (...cs: (FilterClause | null)[]): FilterClause => {
-  const valid = cs.filter((c): c is FilterClause => c !== null);
-  return valid.length === 1 ? valid[0] : { And: valid };
-};
-const _or = (...cs: (FilterClause | null)[]): FilterClause => {
-  const valid = cs.filter((c): c is FilterClause => c !== null);
-  return valid.length === 1 ? valid[0] : { Or: valid };
-};
 
 /**
  * Build and execute a BitDex query from the same input as getImagesFromSearchPreFilter.
@@ -2814,30 +2890,17 @@ export async function getImagesFromBitdexPreFilter(
     BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified,
   ].map(_str);
 
+  // Strict filters (no per-user OR clauses) — keeps queries cacheable.
+  // User's own excluded content is handled via post-filter in the PRIMARY caller.
   if (!isModerator) {
-    if (currentUserId) {
-      filters.push(_or(
-        _not(_eq('availability', _str(Availability.Private))),
-        _eq('userId', _int(currentUserId))
-      ));
-      // Exclude blocked images unless owned by current user
-      filters.push(_or(
-        _notIn('blockedFor', allBlockedReasons),
-        _eq('userId', _int(currentUserId))
-      ));
-    } else {
-      filters.push(_not(_eq('availability', _str(Availability.Private))));
-      filters.push(_notIn('blockedFor', allBlockedReasons));
-    }
+    filters.push(_not(_eq('availability', _str(Availability.Private))));
+    filters.push(_notIn('blockedFor', allBlockedReasons));
   }
 
   if (postId) postIds = [...postIds, postId];
 
   if (disablePoi) {
-    filters.push(currentUserId
-      ? _or(_not(_eq('poi', _bool(true))), _eq('userId', _int(currentUserId)))
-      : _not(_eq('poi', _bool(true)))
-    );
+    filters.push(_not(_eq('poi', _bool(true))));
   }
   if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
 
@@ -2884,12 +2947,10 @@ export async function getImagesFromBitdexPreFilter(
   const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
   if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
-  // combinedNsfwLevel maps to nsfwLevel in BitDex
+  // Main NSFW filter — no per-user clause, fully cacheable.
+  // User's own nsfw0 (unclassified) images are fetched in a separate pass and merged.
   const nsfwLevelField = 'nsfwLevel';
-  const nsfwMain = _in(nsfwLevelField, browsingLevels.map(_int));
-  const nsfwUser: FilterClause[] = [_eq(nsfwLevelField, _int(0))];
-  if (currentUserId) nsfwUser.push(_eq('userId', _int(currentUserId)));
-  filters.push(_or(nsfwMain, nsfwUser.length > 1 ? _and(...nsfwUser) : nsfwUser[0]));
+  filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
 
   // NSFW license restrictions
   if (nsfwRestrictedBaseModels.length > 0) {
@@ -2909,8 +2970,8 @@ export async function getImagesFromBitdexPreFilter(
 
   // --- Remix ---
   if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
-  if (remixesOnly && !nonRemixesOnly) filters.push(_gte('remixOfId', _int(1)));
-  if (nonRemixesOnly) filters.push(_not(_gte('remixOfId', _int(1))));
+  if (remixesOnly && !nonRemixesOnly) filters.push(_eq('isRemix', _bool(true)));
+  if (nonRemixesOnly) filters.push(_eq('isRemix', _bool(false)));
 
   // --- Tag exclusions ---
   if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
@@ -2921,25 +2982,17 @@ export async function getImagesFromBitdexPreFilter(
   if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
 
   // --- Published ---
-  // BitDex has isPublished (boolean) derived from publishedAtUnix existence.
-  // Range filters (scheduled, notPublished) aren't expressible — moderator edge cases
-  // will return slightly different results than Meili.
+  // Strict filter (cacheable). User's own unpublished content handled via post-filter.
   if (isModerator) {
     if (notPublished) {
       filters.push(_eq('isPublished', _bool(false)));
     } else if (scheduled) {
-      // Can't express "publishedAt > now" — isPublished is a static boolean.
-      // For now, just require published (will include scheduled items).
       filters.push(_eq('isPublished', _bool(true)));
     } else {
-      const pubClauses: FilterClause[] = [_eq('isPublished', _bool(true))];
-      if (currentUserId) pubClauses.push(_eq('userId', _int(currentUserId)));
-      filters.push(_or(...pubClauses));
+      filters.push(_eq('isPublished', _bool(true)));
     }
   } else {
-    const pubClauses: FilterClause[] = [_eq('isPublished', _bool(true))];
-    if (currentUserId) pubClauses.push(_eq('userId', _int(currentUserId)));
-    filters.push(_or(...pubClauses));
+    filters.push(_eq('isPublished', _bool(true)));
   }
 
   // --- Simple field filters ---
@@ -2979,14 +3032,7 @@ export async function getImagesFromBitdexPreFilter(
   }
 
   // Use keyset cursor when available, fall back to offset
-  console.log('[BitDex] sort:', JSON.stringify(bitdexSort), 'period:', period, 'filters:', filters.length, 'limit:', limit, 'cursor:', cursor ? 'yes' : 'no', 'offset:', offset);
   const result = await queryBitdex('civitai', filters, bitdexSort, limit, cursor, cursor ? undefined : offset, includeDocs);
-  if (result?.documents?.length) {
-    const sample = result.documents.slice(0, 5).map((d: any) => ({ id: d.id, reactionCount: d.reactionCount, sortAt: d.sortAt }));
-    console.log('[BitDex] docs sample:', JSON.stringify(sample));
-  } else {
-    console.log('[BitDex] result:', result ? `ids=${result.ids.length}, docs=${result.documents?.length ?? 'none'}` : 'null');
-  }
   return result;
 }
 

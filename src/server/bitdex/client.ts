@@ -51,6 +51,8 @@ export async function queryBitdex(
     if (offset != null && offset > 0) body.offset = offset;
     if (includeDocs != null) body.include_docs = includeDocs;
 
+    console.log('[BitDex] query:', JSON.stringify(body));
+    const start = Date.now();
     const res = await fetch(`${BITDEX_URL}/api/indexes/${indexName}/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -60,10 +62,18 @@ export async function queryBitdex(
     clearTimeout(timeout);
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(`[BitDex] Query failed ${res.status}: ${errText.slice(0, 500)}`);
+      console.error(`[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`);
       return null;
     }
-    return await res.json();
+    const result = await res.json();
+    console.log('[BitDex] result:', JSON.stringify({
+      ms: Date.now() - start,
+      matched: result.total_matched,
+      ids: result.ids?.length ?? 0,
+      docs: result.documents?.length ?? 0,
+      elapsed_us: result.elapsed_us,
+    }));
+    return result;
   } catch (err) {
     console.error(`[BitDex] Query error:`, err);
     return null;
