@@ -416,6 +416,7 @@ model User {
   strikes                     UserStrike[]                    @relation("userStrikes")
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
+  approvalRequestDecisions    ApprovalRequest[]               @relation("approvalRequestDecisions")
 
   // Comics
   comicProjects              ComicProject[]
@@ -5188,6 +5189,15 @@ model PromptAllowlist {
   @@index([category])
 }
 
+// Approval Request system — agent-submitted requests for moderator review
+enum ApprovalRequestStatus {
+  Pending
+  Approved
+  Rejected
+  Expired
+  Cancelled
+}
+
 // Strike system — graduated user enforcement with points-based escalation
 enum StrikeReason {
   BlockedContent
@@ -5230,4 +5240,33 @@ model UserStrike {
   @@index([userId, expiresAt])
   @@index([status])
   @@index([createdAt])
+}
+
+// Approval Request — agent-submitted moderation actions requiring human approval
+model ApprovalRequest {
+  id             Int                   @id @default(autoincrement())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  action         String
+  entityType     String?
+  entityId       Int?
+  targetUserId   Int?
+  summary        String
+  reasoning      String                @db.Text
+  evidence       Json?
+  safePreviewUrl String?
+  reviewUrl      String?
+  agentSessionId String
+  agentType      String
+  status         ApprovalRequestStatus @default(Pending)
+  decidedAt      DateTime?
+  decidedBy      Int?
+  decidedByUser  User?                 @relation("approvalRequestDecisions", fields: [decidedBy], references: [id], onDelete: SetNull)
+  rejectionReason String?
+  actionParams   Json
+
+  @@index([status])
+  @@index([agentType])
+  @@index([createdAt])
+  @@index([targetUserId])
 }
