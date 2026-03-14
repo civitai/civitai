@@ -1976,6 +1976,7 @@ function postFilterBitdexDocs(
 
     if (doc.availability === 'Private') return false;
     if (doc.blockedFor) return false;
+    if (doc.acceptableMinor) return false;
     if (disablePoi && doc.poi) return false;
     if (doc.publishedAtUnix == null) return false; // unpublished
     return true;
@@ -3001,7 +3002,9 @@ export async function getImagesFromBitdexPreFilter(
 
   // --- Published ---
   // For logged-in users: skip so user's own unpublished content sorts naturally.
-  // Post-filter handles visibility. Anonymous/moderator: apply strict filter.
+  // Post-filter handles visibility. Scheduled/unpublished content from other users
+  // is filtered downstream (not in BitDex or postFilterBitdexDocs).
+  // Anonymous/moderator: apply strict filter.
   if (isModerator) {
     if (notPublished) {
       filters.push(_eq('isPublished', _bool(false)));
