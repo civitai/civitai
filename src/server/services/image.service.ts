@@ -171,7 +171,31 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
+import { queryBitdex } from '~/server/bitdex/client';
+import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
+import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
+
+// --- BitDex native filter helpers ---
+const _int = (v: number): Value => ({ Integer: v });
+const _str = (v: string): Value => ({ String: v });
+const _bool = (v: boolean): Value => ({ Bool: v });
+const _eq = (f: string, v: Value): FilterClause => ({ Eq: [f, v] });
+const _notEq = (f: string, v: Value): FilterClause => ({ NotEq: [f, v] });
+const _in = (f: string, vs: Value[]): FilterClause => ({ In: [f, vs] });
+const _notIn = (f: string, vs: Value[]): FilterClause => ({ NotIn: [f, vs] });
+const _gt = (f: string, v: Value): FilterClause => ({ Gt: [f, v] });
+const _gte = (f: string, v: Value): FilterClause => ({ Gte: [f, v] });
+const _lte = (f: string, v: Value): FilterClause => ({ Lte: [f, v] });
+const _not = (c: FilterClause): FilterClause => ({ Not: c });
+const _and = (...cs: (FilterClause | null)[]): FilterClause => {
+  const valid = cs.filter((c): c is FilterClause => c !== null);
+  return valid.length === 1 ? valid[0] : { And: valid };
+};
+const _or = (...cs: (FilterClause | null)[]): FilterClause => {
+  const valid = cs.filter((c): c is FilterClause => c !== null);
+  return valid.length === 1 ? valid[0] : { Or: valid };
+};
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
@@ -1811,6 +1835,7 @@ export const getAllImagesIndex = async (
     imageMeta,
     imageMetadata,
     thumbnails,
+    imageMetrics,
   ] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
@@ -1824,6 +1849,7 @@ export const getAllImagesIndex = async (
     include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
     await getMetadataForImages(videoIds), // Only need this for videos
     await getThumbnailsForImages(videoIds), // Only need this for videos
+    getImageMetricsObject(searchResults),
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -1834,13 +1860,14 @@ export const getAllImagesIndex = async (
     const metadata = imageMetadata[sr.id]?.metadata ?? null;
     const thumbnail = thumbnails[sr.id] ?? null;
     const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
+    const metrics = imageMetrics[sr.id];
 
     return {
       ...sr,
       modelVersionId: sr.postedToId,
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
-      metadata: { ...metadata, width: sr.width, height: sr.height },
+      metadata: { ...metadata, width: sr.width ?? 0, height: sr.height ?? 0 },
       publishedAt: publishedAtUnix ? sr.sortAt : undefined,
       //
       user: {
@@ -1850,6 +1877,17 @@ export const getAllImagesIndex = async (
         deletedAt: thisUser.deletedAt,
         cosmetics: userCosmetics?.[sr.userId] ?? [],
         profilePicture: profilePictures?.[sr.userId] ?? null,
+      },
+      stats: {
+        likeCountAllTime: metrics?.reactionLike ?? 0,
+        laughCountAllTime: metrics?.reactionLaugh ?? 0,
+        heartCountAllTime: metrics?.reactionHeart ?? 0,
+        cryCountAllTime: metrics?.reactionCry ?? 0,
+        commentCountAllTime: metrics?.comment ?? 0,
+        collectedCountAllTime: metrics?.collection ?? 0,
+        tippedAmountCountAllTime: metrics?.buzz ?? 0,
+        dislikeCountAllTime: 0,
+        viewCountAllTime: 0,
       },
       reactions,
       cosmetic: imageCosmetics?.[sr.id] ?? null,
@@ -1922,6 +1960,124 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   //reviewId?: number;
 };
 
+/**
+ * Safety post-filter for BitDex results. The main query uses strict cacheable filters,
+ * so this rarely removes anything. Exists as a defense-in-depth check.
+ */
+function postFilterBitdexDocs(
+  docs: ReturnType<typeof mapBitdexDoc>[],
+  currentUserId: number | undefined,
+  isModerator: boolean | undefined,
+  disablePoi: boolean | undefined,
+) {
+  // Moderators see everything — no post-filtering needed
+  if (isModerator) return docs;
+
+  return docs.filter((doc) => {
+    const isOwn = currentUserId != null && doc.userId === currentUserId;
+    if (isOwn) return true; // always show user's own content
+
+    if (doc.availability === 'Private') return false;
+    if (doc.blockedFor) return false;
+    if (doc.acceptableMinor) return false;
+    if (disablePoi && doc.poi) return false;
+    if (doc.publishedAtUnix == null) return false; // unpublished
+    return true;
+  });
+}
+
+/**
+ * Fetch from BitDex in primary mode with post-filtering and pagination loop.
+ * The main query is fully cacheable (no per-user filter clauses).
+ * Returns null if BitDex can't serve the request.
+ */
+async function fetchBitdexPrimary(input: ImageSearchInput) {
+  const limit = input.limit ?? 100;
+  const MAX_PASSES = 3;
+
+  // Decode BitDex keyset cursor from "offset|bdx:JSON" format
+  let bitdexCursor: any = undefined;
+  if (input.cursor) {
+    const raw = input.cursor.toString();
+    const pipeIdx = raw.indexOf('|');
+    const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
+    if (entryPart.startsWith('bdx:')) {
+      try { bitdexCursor = JSON.parse(entryPart.slice(4)); } catch {}
+    }
+  }
+
+  // Second pass: fetch user's own nsfw0 (unclassified) images.
+  // These are excluded by the nsfwLevel filter. Merged into main results
+  // and re-sorted so they appear only when they naturally fit the active sort
+  // (e.g. newest → yes, most reactions → no since unrated images have 0).
+  // Runs in parallel with the first main query. Only on first page.
+  const nsfw0Promise = input.currentUserId && !bitdexCursor
+    ? queryBitdex('civitai', [
+        _eq('nsfwLevel', _int(0)),
+        _eq('userId', _int(input.currentUserId)),
+      ], { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true)
+    : null;
+
+  // Main loop: fetch pages, post-filter, accumulate until we have enough.
+  // Private/blocked/poi/unpublished are NOT filtered in BitDex for logged-in users,
+  // so the user's own content appears in natural sort position.
+  // Post-filter removes others' private/blocked/poi/unpublished content.
+  const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
+  let lastCursor: any = undefined;
+
+  for (let pass = 0; pass < MAX_PASSES && accumulated.length < limit; pass++) {
+    const result = await (pass === 0
+      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
+      : getImagesFromBitdexPreFilter(input, true, lastCursor));
+
+    if (!result?.documents?.length) break;
+
+    const docs = result.documents.map((doc) => mapBitdexDoc(doc));
+    const filtered = postFilterBitdexDocs(docs, input.currentUserId, input.isModerator, input.disablePoi);
+    accumulated.push(...filtered);
+    lastCursor = result.cursor;
+
+    if (!result.cursor) break; // no more pages
+  }
+
+  if (!accumulated.length && !nsfw0Promise) return null;
+
+  let data = accumulated;
+
+  // Merge user's nsfw0 images, re-sort by the active sort, then limit.
+  // This ensures unclassified images only appear when they naturally rank
+  // high enough (e.g. newest → likely yes, most reactions → likely no).
+  const nsfw0Result = await nsfw0Promise;
+  if (nsfw0Result?.documents?.length) {
+    const mainIds = new Set(data.map((d) => d.id));
+    const nsfw0Docs = nsfw0Result.documents
+      .map((doc) => mapBitdexDoc(doc))
+      .filter((d) => !mainIds.has(d.id));
+    if (nsfw0Docs.length) {
+      data = [...data, ...nsfw0Docs];
+      const sort = input.sort;
+      if (sort === ImageSort.MostReactions) {
+        data.sort((a, b) => b.reactionCount - a.reactionCount);
+      } else if (sort === ImageSort.MostComments) {
+        data.sort((a, b) => b.commentCount - a.commentCount);
+      } else if (sort === ImageSort.MostCollected) {
+        data.sort((a, b) => b.collectedCount - a.collectedCount);
+      } else if (sort === ImageSort.Oldest) {
+        data.sort((a, b) => a.sortAtUnix - b.sortAtUnix);
+      } else {
+        // Newest (default)
+        data.sort((a, b) => b.sortAtUnix - a.sortAtUnix);
+      }
+    }
+  }
+
+  data = data.slice(0, limit);
+
+  const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
+  console.log('[BitDex] PRIMARY serving', data.length, 'docs, cursor:', nextCursor ? 'yes' : 'none');
+  return { data, nextCursor };
+}
+
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   const fliptClient = await FliptSingleton.getInstance();
@@ -1934,7 +2090,51 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     if (flag.enabled) searchFn = getImagesFromSearchPostFilter;
   }
 
-  return searchFn(input);
+  // Check BitDex mode (off / shadow / primary)
+  const bitdexMode = await getFliptVariant(
+    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+    input.currentUserId?.toString() || 'anonymous'
+  );
+  console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
+
+  // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
+  // BitDex queries use strict filters (no per-user OR clauses) for cacheability.
+  // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
+  if (bitdexMode === 'primary') {
+    try {
+      const result = await fetchBitdexPrimary(input);
+      if (result) return result;
+      console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
+    } catch (err) {
+      console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
+      recordBitdexError(err);
+    }
+    // Fall through to Meili if BitDex fails
+  }
+
+  const meiliStart = Date.now();
+  const result = await searchFn(input);
+
+  // Shadow mode: fire BitDex async alongside Meili for comparison
+  if (bitdexMode === 'shadow') {
+    const meiliElapsed = Date.now() - meiliStart;
+    getImagesFromBitdexPreFilter(input)
+      .then((bitdexResult) => {
+        if (bitdexResult) {
+          compareBitdexResults({
+            bitdexIds: bitdexResult.ids,
+            meiliIds: result.data.map((i: { id: number }) => i.id),
+            bitdexTotalMatched: bitdexResult.total_matched,
+            meiliTotalMatched: result.data.length,
+            bitdexElapsedMs: bitdexResult.elapsed_us / 1000,
+            meiliElapsedMs: meiliElapsed,
+          });
+        }
+      })
+      .catch((err) => recordBitdexError(err));
+  }
+
+  return result;
 }
 
 export async function getImagesFromFeedSearch(
@@ -2586,6 +2786,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     });
 
     endTimer();
+
     return {
       data: fullData,
       nextCursor,
@@ -2606,6 +2807,258 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     endTimer();
     return { data: [], nextCursor: undefined };
   }
+}
+
+// --- BitDex document mapping ---
+// BitDex low_cardinality_string fields preserve original casing (case-insensitive for queries,
+// but output matches input). Sort fields are u32 unix seconds. Zero values for optional IDs mean absent.
+
+/** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
+function mapBitdexDoc(doc: Record<string, unknown>) {
+  const sortAtUnix = (doc.sortAt as number) * 1000; // u32 seconds → epoch ms
+  const publishedAtRaw = doc.publishedAt as number | null;
+  return {
+    id: doc.id as number,
+    url: doc.url as string,
+    hash: (doc.hash as string) || null,
+    nsfwLevel: doc.nsfwLevel as number,
+    userId: doc.userId as number,
+    type: (doc.type as string) || 'image',
+    availability: (doc.availability as string) || 'Public',
+    baseModel: (doc.baseModel as string) || null,
+    postId: (doc.postId as number) || null,
+    postedToId: (doc.postedToId as number) || null,
+    remixOfId: (doc.remixOfId as number) || null,
+    hasMeta: doc.hasMeta as boolean,
+    onSite: doc.onSite as boolean,
+    poi: doc.poi as boolean,
+    minor: doc.minor as boolean,
+    width: (doc.width as number) || null,
+    height: (doc.height as number) || null,
+    needsReview: (doc.needsReview as string) || null,
+    reactionCount: (doc.reactionCount as number) || 0,
+    commentCount: (doc.commentCount as number) || 0,
+    collectedCount: (doc.collectedCount as number) || 0,
+    sortAt: new Date(sortAtUnix),
+    sortAtUnix,
+    publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
+    tagIds: (doc.tagIds as number[]) ?? [],
+    modelVersionIds: (doc.modelVersionIds as number[]) ?? [],
+    toolIds: (doc.toolIds as number[]) ?? [],
+    techniqueIds: (doc.techniqueIds as number[]) ?? [],
+    blockedFor: ((doc.blockedFor as string) || null) as BlockedReason | null,
+    // Fields expected by consumer but not stored in BitDex
+    hideMeta: false,
+    index: 0,
+    acceptableMinor: (doc.acceptableMinor as boolean) ?? false,
+  };
+}
+
+/**
+ * Build and execute a BitDex query from the same input as getImagesFromSearchPreFilter.
+ * Returns { ids, total_matched, elapsed_us, docs? } or null on error.
+ *
+ * @param includeDocs - true to return all doc fields, or an array of field names
+ */
+export async function getImagesFromBitdexPreFilter(
+  input: ImageSearchInput,
+  includeDocs?: boolean | string[],
+  cursor?: any,
+) {
+  let { postIds = [] } = input;
+  const {
+    sort,
+    modelVersionId,
+    types,
+    withMeta,
+    fromPlatform,
+    notPublished,
+    scheduled,
+    username,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    period,
+    isModerator,
+    currentUserId,
+    excludedUserIds,
+    hideAutoResources,
+    hideManualResources,
+    hidden,
+    followed,
+    limit = 100,
+    offset,
+    entry,
+    postId,
+    remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    poiOnly,
+    minorOnly,
+    blockedFor,
+    requiringMeta,
+  } = input;
+  let { browsingLevel, userId } = input;
+
+  const filters: FilterClause[] = [];
+
+  // --- Access control ---
+  const allBlockedReasons = [
+    BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified,
+  ].map(_str);
+
+  // For logged-in users: skip private/blocked/poi filters so user's own content
+  // appears in natural sort position. Post-filter in PRIMARY caller handles visibility.
+  // For anonymous users: apply strict filters (nothing to preserve).
+  if (!isModerator && !currentUserId) {
+    filters.push(_not(_eq('availability', _str(Availability.Private))));
+    filters.push(_notIn('blockedFor', allBlockedReasons));
+  }
+
+  if (postId) postIds = [...postIds, postId];
+
+  if (disablePoi && !currentUserId) {
+    filters.push(_not(_eq('poi', _bool(true))));
+  }
+  if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
+
+  if (isModerator) {
+    if (poiOnly) filters.push(_eq('poi', _bool(true)));
+    if (minorOnly) filters.push(_eq('minor', _bool(true)));
+    if (blockedFor?.length) filters.push(_in('blockedFor', blockedFor.map(_str)));
+  }
+
+  // --- Hidden images ---
+  if (hidden) {
+    if (!currentUserId) return null;
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId: currentUserId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (!imageIds.length) return null;
+    filters.push(_in('id', imageIds.map(_int)));
+  }
+
+  // --- Username → userId ---
+  if (username && !userId) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) return null;
+    userId = targetUser.id;
+  }
+
+  // --- Followed users ---
+  if (currentUserId && followed) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (!userIds.length) return null;
+    filters.push(_in('userId', userIds.map(_int)));
+  }
+
+  // --- NSFW Browsing Level ---
+  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
+  else browsingLevel = onlySelectableLevels(browsingLevel);
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+  if (isModerator && includesNsfwContent) browsingLevels.push(0);
+
+  // Main NSFW filter — no per-user clause, fully cacheable.
+  // User's own nsfw0 (unclassified) images are fetched in a separate pass and merged.
+  const nsfwLevelField = 'nsfwLevel';
+  filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
+
+  // NSFW license restrictions
+  if (nsfwRestrictedBaseModels.length > 0) {
+    filters.push(_not(_and(
+      _in(nsfwLevelField, nsfwBrowsingLevelsArray.map(_int)),
+      _in('baseModel', nsfwRestrictedBaseModels.map(_str))
+    )));
+  }
+
+  // --- Model version ---
+  if (modelVersionId) {
+    const vClauses: FilterClause[] = [_eq('postedToId', _int(modelVersionId))];
+    if (!hideAutoResources) vClauses.push(_in('modelVersionIds', [_int(modelVersionId)]));
+    if (!hideManualResources) vClauses.push(_in('modelVersionIdsManual', [_int(modelVersionId)]));
+    filters.push(_or(...vClauses));
+  }
+
+  // --- Remix ---
+  if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
+  if (remixesOnly && !nonRemixesOnly) filters.push(_eq('isRemix', _bool(true)));
+  if (nonRemixesOnly) filters.push(_eq('isRemix', _bool(false)));
+
+  // --- Tag exclusions ---
+  if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
+
+  // --- Metadata ---
+  if (withMeta) filters.push(_eq('hasMeta', _bool(true)));
+  if (requiringMeta) filters.push(_eq('blockedFor', _str(BlockedReason.AiNotVerified)));
+  if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
+
+  // --- Published ---
+  // For logged-in users: skip so user's own unpublished content sorts naturally.
+  // Post-filter handles visibility. Scheduled/unpublished content from other users
+  // is filtered downstream (not in BitDex or postFilterBitdexDocs).
+  // Anonymous/moderator: apply strict filter.
+  if (isModerator) {
+    if (notPublished) {
+      filters.push(_eq('isPublished', _bool(false)));
+    } else if (scheduled) {
+      filters.push(_eq('isPublished', _bool(true)));
+    } else {
+      filters.push(_eq('isPublished', _bool(true)));
+    }
+  } else if (!currentUserId) {
+    filters.push(_eq('isPublished', _bool(true)));
+  }
+
+  // --- Simple field filters ---
+  if (types?.length) filters.push(_in('type', types.map(_str)));
+  if (tags?.length) filters.push(_in('tagIds', tags.map(_int)));
+  if (tools?.length) filters.push(_in('toolIds', tools.map(_int)));
+  if (techniques?.length) filters.push(_in('techniqueIds', techniques.map(_int)));
+  if (postIds.length) filters.push(_in('postId', postIds.map(_int)));
+  if (baseModels?.length) filters.push(_in('baseModel', baseModels.map(_str)));
+
+  if (userId) filters.push(_eq('userId', _int(userId)));
+  else if (excludedUserIds?.length) filters.push(_notIn('userId', excludedUserIds.map(_int)));
+
+  // --- Period ---
+  // BitDex supports time buckets: Gte on sortAtUnix snaps to pre-computed buckets.
+  // Requires time_buckets config in civitai-index.json (filter_field: sortAtUnix, sort_field: sortAt).
+  if (period && period !== 'AllTime') {
+    const periodMs: Record<string, number> = {
+      Day: 86400000, Week: 604800000, Month: 2592000000, Year: 31536000000,
+    };
+    const ms = periodMs[period];
+    if (ms) filters.push(_gte('sortAtUnix', _int(Math.round((Date.now() - ms) / 1000))));
+  }
+
+  // --- Sort ---
+  let bitdexSort: SortClause | undefined;
+  if (sort === ImageSort.MostComments) {
+    bitdexSort = { field: 'commentCount', direction: 'Desc' };
+  } else if (sort === ImageSort.MostReactions) {
+    bitdexSort = { field: 'reactionCount', direction: 'Desc' };
+  } else if (sort === ImageSort.MostCollected) {
+    bitdexSort = { field: 'collectedCount', direction: 'Desc' };
+  } else if (sort === ImageSort.Oldest) {
+    bitdexSort = { field: 'sortAt', direction: 'Asc' };
+  } else {
+    bitdexSort = { field: 'sortAt', direction: 'Desc' };
+  }
+
+  // Use keyset cursor when available, fall back to offset
+  const result = await queryBitdex('civitai', filters, bitdexSort, limit, cursor, cursor ? undefined : offset, includeDocs);
+  return result;
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {

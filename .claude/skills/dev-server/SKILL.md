@@ -74,6 +74,30 @@ Status values: `starting`, `running`, `stopped`, `crashed`, `error`
 
 Log levels: `stdout`, `stderr`, `error`, `warn`, `info`
 
+## Dashboard TUI
+
+Run `node .claude/skills/dev-server/console.mjs` (or `npm run dev:daemon`) for a live terminal dashboard.
+
+| Key | Action |
+|-----|--------|
+| `1` | Filter: errors (error + warn levels) |
+| `2` | Filter: bitdex |
+| `3` | Filter: trpc |
+| `4` | Filter: api |
+| `5` | Filter: prisma |
+| `6` | Filter: stdout only |
+| `7` | Filter: stderr only |
+| `8` | Filter: info (daemon messages) |
+| `/` or `f` | Free-text search (type query, Enter to apply) |
+| `a` | Show all logs (clear filter) |
+| `r` | Restart session |
+| `c` | Clear log buffer |
+| `x` | Stop session + exit |
+| `q` | Quit dashboard (server keeps running) |
+| `K` | Kill daemon + quit |
+
+Filters toggle on/off. Active filter is highlighted in the footer bar. Search highlights matching text in red.
+
 ## Notes
 
 - The daemon starts automatically when you run CLI commands

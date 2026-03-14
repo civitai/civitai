@@ -33,6 +33,7 @@ export enum FLIPT_FEATURE_FLAGS {
   COMIC_CREATOR = 'comic-creator',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   IMAGE_INDEX_FEED = 'image-index-feed',
+  BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
