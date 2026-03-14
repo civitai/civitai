@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Button,
   Group,
   Loader,
@@ -14,6 +15,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
+  IconInfoCircle,
   IconPencil,
   IconPhotoUp,
   IconPlus,
@@ -835,6 +837,14 @@ export function PanelModal({
             onChange={onModelChange}
             size="sm"
           />
+          {(annotationElements.length > 0 || initialEnhanceSource) && (
+            <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />} py="xs">
+              <Text size="xs">
+                Tip: Sketch annotations work best with Nano Banana. Results may vary with other
+                models.
+              </Text>
+            </Alert>
+          )}
           <AspectRatioSelector
             value={aspectRatio}
             onChange={setAspectRatio}

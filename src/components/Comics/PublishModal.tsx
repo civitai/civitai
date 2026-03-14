@@ -98,6 +98,7 @@ export function PublishModal({
               value={publishEaBuzzPrice}
               onChange={(val) => setPublishEaBuzzPrice(val)}
               min={1}
+              max={10000}
               leftSection={<IconLock size={16} />}
             />
             <NumberInput
@@ -106,7 +107,7 @@ export function PublishModal({
               value={publishEaTimeframe}
               onChange={(val) => setPublishEaTimeframe(val)}
               min={1}
-              max={365}
+              max={30}
             />
           </>
         )}

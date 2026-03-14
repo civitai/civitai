@@ -3774,6 +3774,14 @@ export const getImagesForPosts = async ({
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
   // }
 
+  if (!isModerator) {
+    imageWhere.push(
+      userId
+        ? Prisma.sql`(i."ingestion" != 'Blocked' OR i."userId" = ${userId})`
+        : Prisma.sql`i."ingestion" != 'Blocked'`
+    );
+  }
+
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {

@@ -62,7 +62,7 @@ type RootThreadContext = {
   activeComment?: CommentV2Model;
 };
 
-const RootThreadCtx = createContext<RootThreadContext>({} as any);
+export const RootThreadCtx = createContext<RootThreadContext>({} as any);
 export const useRootThreadContext = () => {
   const context = useContext(RootThreadCtx);
   if (!context) throw new Error('useRootThreadContext can only be used inside RootThreadProvider');
@@ -145,7 +145,7 @@ type CommentsContext = CommentConnectorInput &
     level?: number;
   };
 
-const CommentsCtx = createContext<CommentsContext>({} as any);
+export const CommentsCtx = createContext<CommentsContext>({} as any);
 export const useCommentsContext = () => {
   const context = useContext(CommentsCtx);
   if (!context) throw new Error('useCommentsContext can only be used inside CommentsProvider');

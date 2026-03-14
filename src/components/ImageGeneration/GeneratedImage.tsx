@@ -194,7 +194,7 @@ export function GeneratedImage({
       ref={ref}
       className={clsx(
         'max-w-full border',
-        isLightbox ? 'max-h-full items-center justify-center' : 'w-full self-start',
+        isLightbox ? 'max-h-[calc(100vh-32px)] items-center justify-center' : 'w-full self-start',
         classes.imageWrapper,
         selected && 'ring-2 ring-blue-5/60'
       )}
@@ -204,7 +204,10 @@ export function GeneratedImage({
       {(isLightbox || inView) && (
         <>
           <div
-            className="relative flex max-h-full items-center justify-center"
+            className={clsx(
+              'relative flex items-center justify-center',
+              isLightbox ? 'max-h-[calc(100vh-32px)]' : 'max-h-full'
+            )}
             style={{ aspectRatio: image.aspect }}
           >
             {
@@ -215,7 +218,6 @@ export function GeneratedImage({
                 alt=""
                 className={clsx('max-h-full min-h-0 w-auto max-w-full', {
                   ['cursor-pointer']: !isLightbox,
-                  // ['pointer-events-none']: running,
                 })}
                 onClick={handleImageClick}
                 onMouseDown={(e) => {
@@ -236,6 +238,13 @@ export function GeneratedImage({
                 imageProps={{
                   onDragStart: handleDragImage,
                   onContextMenu: handleContextMenu,
+                  ...(isLightbox && {
+                    style: {
+                      width: 'auto',
+                      maxHeight: 'calc(100vh - 32px)',
+                      maxWidth: 'calc(100vw - 32px)',
+                    },
+                  }),
                 }}
                 videoProps={{
                   onDragStart: handleDragVideo,

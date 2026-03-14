@@ -5,6 +5,7 @@ import {
   Container,
   Group,
   Loader,
+  ScrollArea,
   Stack,
   Text,
   Title,
@@ -31,22 +32,15 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { slugit } from '~/utils/string-helpers';
 
+import type { WorkflowStepEvent } from '@civitai/client';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 
-const DrawingEditorModal = dynamic(
-  () =>
-    import(
-      '~/components/Generation/Input/DrawingEditor/DrawingEditorModal'
-    ).then((mod) => mod.DrawingEditorModal),
-  { ssr: false }
-);
 import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
   COMIC_MODEL_MAX_IMAGES,
@@ -55,6 +49,7 @@ import {
 } from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
 import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
+
 import { PanelModal } from '~/components/Comics/PanelModal';
 import { ProjectSettingsModal } from '~/components/Comics/ProjectSettingsModal';
 import { PublishModal } from '~/components/Comics/PublishModal';
@@ -63,8 +58,10 @@ import { SmartCreateModal } from '~/components/Comics/SmartCreateModal';
 import { SortableChapter } from '~/components/Comics/SortableChapter';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { SignalMessages } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { ComicChapterStatus, ComicPanelStatus } from '~/shared/utils/prisma/enums';
@@ -222,13 +219,65 @@ function ProjectWorkspace() {
   }, [prompt, activeReferences]);
 
   const mentionedRefImageCount = useMemo(
-    () => mentionedReferences.reduce((sum, c) => sum + ((c as any).images?.length ?? 0), 0),
+    () => mentionedReferences.reduce((sum, c) => sum + (c.images?.length ?? 0), 0),
     [mentionedReferences]
   );
 
   const mentionedIdKey = mentionedReferences.map((r) => r.id).join(',');
+  const prevMentionedIdKeyRef = useRef(mentionedIdKey);
   useEffect(() => {
-    setSelectedImageIds(null);
+    const prevKey = prevMentionedIdKeyRef.current;
+    prevMentionedIdKeyRef.current = mentionedIdKey;
+
+    // Nothing changed — skip
+    if (prevKey === mentionedIdKey) return;
+
+    const prevIds = new Set(prevKey ? prevKey.split(',').filter(Boolean).map(Number) : []);
+    const currIds = new Set(
+      mentionedIdKey ? mentionedIdKey.split(',').filter(Boolean).map(Number) : []
+    );
+
+    // If no references remain, reset to null
+    if (currIds.size === 0) {
+      setSelectedImageIds(null);
+      return;
+    }
+
+    // If selections were null (all images selected), keep null so new refs auto-include
+    if (selectedImageIds === null) return;
+
+    // Find which references were added vs removed
+    const addedIds = [...currIds].filter((id) => !prevIds.has(id));
+    const removedIds = [...prevIds].filter((id) => !currIds.has(id));
+
+    // Collect image IDs belonging to removed references so we can strip them
+    const removedImageIds = new Set<number>();
+    for (const ref of activeReferences) {
+      if (removedIds.includes(ref.id)) {
+        for (const ri of ref.images ?? []) {
+          if (ri.image?.id) removedImageIds.add(ri.image.id);
+        }
+      }
+    }
+
+    // Collect image IDs belonging to newly added references so we auto-include them
+    const addedImageIds: number[] = [];
+    for (const ref of mentionedReferences) {
+      if (addedIds.includes(ref.id)) {
+        for (const ri of ref.images ?? []) {
+          if (ri.image?.id) addedImageIds.push(ri.image.id);
+        }
+      }
+    }
+
+    // Filter out removed images, add new ones
+    const next = selectedImageIds
+      .filter((id) => !removedImageIds.has(id))
+      .concat(addedImageIds);
+
+    // If result is empty (shouldn't happen normally), reset to null
+    setSelectedImageIds(next.length > 0 ? next : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mentionedIdKey]);
 
   const reservedSlots = useMemo(() => (includePreviousImage ? 1 : 0), [includePreviousImage]);
@@ -242,54 +291,86 @@ function ProjectWorkspace() {
     [activeReferences]
   );
 
-  // ── Polling ──
-  const generatingPanelIds = useMemo(
-    () => (activeChapter?.panels ?? []).filter((p) => p.status === 'Generating').map((p) => p.id),
+  // ── Signal-based panel updates ──
+  const generatingPanels = useMemo(
+    () =>
+      (activeChapter?.panels ?? [])
+        .filter((p) => p.status === 'Generating')
+        .map((p) => ({ id: p.id, workflowId: p.workflowId })),
     [activeChapter?.panels]
   );
-
-  const handledPanelIdsRef = useRef<Set<number>>(new Set());
-  useEffect(() => {
-    const current = new Set(generatingPanelIds);
-    for (const panelId of handledPanelIdsRef.current) {
-      if (!current.has(panelId)) handledPanelIdsRef.current.delete(panelId);
-    }
-  }, [generatingPanelIds]);
+  const generatingPanelIds = useMemo(
+    () => generatingPanels.map((p) => p.id),
+    [generatingPanels]
+  );
 
   const utils = trpc.useUtils();
 
-  useEffect(() => {
-    if (generatingPanelIds.length === 0) return;
-    const interval = setInterval(async () => {
-      const toPoll = generatingPanelIds.filter((pid) => !handledPanelIdsRef.current.has(pid));
-      if (toPoll.length === 0) return;
+  // Poll server to download image from orchestrator and update panel in DB, then refetch
+  const pollAndUpdatePanels = useCallback(
+    async (panelIds: number[]) => {
+      if (panelIds.length === 0) return;
       try {
         const results = await Promise.all(
-          toPoll.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
+          panelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
         );
-        let hasTerminal = false;
         const failedCount = results.filter((r) => r.status === 'Failed').length;
-        for (let i = 0; i < results.length; i++) {
-          const status = results[i].status;
-          if (status === 'Ready' || status === 'Failed') {
-            handledPanelIdsRef.current.add(toPoll[i]);
-            hasTerminal = true;
-          }
-        }
+        const hasTerminal = results.some(
+          (r) => r.status === 'Ready' || r.status === 'Failed'
+        );
         if (failedCount > 0) {
           showErrorNotification({
             title: 'Panel generation failed',
             error: new Error('Buzz has been refunded automatically.'),
           });
         }
-        if (hasTerminal) refetch();
+        if (hasTerminal) {
+          await utils.comics.getProject.invalidate({ id: projectId });
+        }
       } catch {
         /* ignore */
       }
-    }, 1500);
-    return () => clearInterval(interval);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generatingPanelIds.join(','), utils, refetch]);
+    [utils, projectId]
+  );
+
+  // Map workflowId → panelId so signals can target the right panel
+  const workflowToPanelRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const map = new Map<string, number>();
+    for (const p of generatingPanels) {
+      if (p.workflowId) map.set(p.workflowId, p.id);
+    }
+    workflowToPanelRef.current = map;
+  }, [generatingPanels]);
+
+  // When a signal arrives, poll the matching panel (or all generating panels if mapping missed)
+  useSignalConnection(
+    SignalMessages.TextToImageUpdate,
+    useCallback(
+      (data: Omit<WorkflowStepEvent, '$type'> & { $type: string }) => {
+        if (data.$type !== 'step') return;
+        if (data.status !== 'succeeded' && data.status !== 'failed') return;
+        const panelId = workflowToPanelRef.current.get(data.workflowId);
+        if (panelId != null) {
+          void pollAndUpdatePanels([panelId]);
+        } else if (generatingPanelIds.length > 0) {
+          // workflowId not in map (race condition) — poll all generating panels
+          void pollAndUpdatePanels(generatingPanelIds);
+        }
+      },
+      [pollAndUpdatePanels, generatingPanelIds]
+    )
+  );
+
+  // One-time check on mount for panels that started generating before page load
+  const initialCheckDoneRef = useRef(false);
+  useEffect(() => {
+    if (initialCheckDoneRef.current || generatingPanelIds.length === 0) return;
+    initialCheckDoneRef.current = true;
+    void pollAndUpdatePanels(generatingPanelIds);
+  }, [generatingPanelIds, pollAndUpdatePanels]);
 
   const processingReferenceIds = useMemo(
     () => allReferences.filter((c) => c.status === 'Pending').map((c) => c.id),
@@ -351,11 +432,24 @@ function ProjectWorkspace() {
   });
 
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
+    onMutate: async ({ panelId }) => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          chapters: prev.chapters.map((ch) => ({
+            ...ch,
+            panels: ch.panels.filter((p) => p.id !== panelId),
+          })),
+        };
+      });
+    },
     onSuccess: () => {
       refetch();
       setDetailPanelId(null);
     },
-    onError: handleMutationError,
+    onError: () => refetch(),
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
@@ -366,11 +460,37 @@ function ProjectWorkspace() {
   });
 
   const createChapterMutation = trpc.comics.createChapter.useMutation({
+    onMutate: async () => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        const nextPosition = prev.chapters.length > 0
+          ? Math.max(...prev.chapters.map((ch) => ch.position)) + 1
+          : 0;
+        const placeholder = {
+          id: -Date.now(),
+          name: 'New Chapter',
+          position: nextPosition,
+          status: ComicChapterStatus.Draft,
+          panels: [],
+          earlyAccessConfig: null,
+          scheduledAt: null,
+          availability: 'Public',
+          nsfwLevel: 0,
+          earlyAccessEndsAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          publishedAt: null,
+          projectId,
+        } as unknown as (typeof prev.chapters)[number];
+        return { ...prev, chapters: [...prev.chapters, placeholder] };
+      });
+    },
     onSuccess: (data) => {
       setActiveChapterPosition(data.position);
       refetch();
     },
-    onError: handleMutationError,
+    onError: () => refetch(),
   });
 
   const updateChapterMutation = trpc.comics.updateChapter.useMutation({
@@ -384,8 +504,16 @@ function ProjectWorkspace() {
   });
 
   const deleteChapterMutation = trpc.comics.deleteChapter.useMutation({
+    onMutate: async ({ chapterPosition }) => {
+      await utils.comics.getProject.cancel({ id: projectId });
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        const filtered = prev.chapters.filter((ch) => ch.position !== chapterPosition);
+        return { ...prev, chapters: filtered };
+      });
+    },
     onSuccess: () => refetch(),
-    onError: handleMutationError,
+    onError: () => refetch(),
   });
 
   const updateProjectMutation = trpc.comics.updateProject.useMutation({
@@ -420,6 +548,7 @@ function ProjectWorkspace() {
   });
 
   const planPanelsMutation = trpc.comics.planChapterPanels.useMutation({
+    onSuccess: () => refetch(),
     onError: handleMutationError,
   });
 
@@ -448,7 +577,7 @@ function ProjectWorkspace() {
     },
   });
 
-  const { uploadToCF: uploadSketchToCF } = useCFImageUpload();
+
 
   // ── Handlers ──
   const handleModelChange = (value: string | null) => {
@@ -805,65 +934,27 @@ function ProjectWorkspace() {
     openPanelModal();
   };
 
-  const handleSketchEdit = (panel: { id: number; imageUrl: string | null; image?: { width: number; height: number } | null }) => {
-    if (!panel.imageUrl) return;
-    const edgeUrl = getEdgeUrl(panel.imageUrl, { original: true }) ?? panel.imageUrl;
-
-    const openSketchDialog = (imgWidth: number, imgHeight: number) => {
-      dialogStore.trigger({
-        component: DrawingEditorModal,
-        props: {
-          sourceImage: { url: edgeUrl, width: imgWidth, height: imgHeight } as any,
-          onConfirm: async (blob: Blob) => {
-            try {
-              const file = new File([blob], 'sketch-annotation.jpg', { type: 'image/jpeg' });
-              const result = await uploadSketchToCF(file);
-              // Save with proper Image record creation and NSFW scanning
-              await replacePanelImageMutation.mutateAsync({
-                panelId: panel.id,
-                imageUrl: result.id,
-              });
-            } catch (err) {
-              console.error('Failed to save sketch edit:', err);
-              showErrorNotification({ error: err as Error, title: 'Failed to save sketch edit' });
-            }
-          },
-        },
-      });
-    };
-
-    // Pre-load image to get actual dimensions (panel.image may be null)
-    const img = new window.Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      openSketchDialog(img.naturalWidth || panel.image?.width || 1024, img.naturalHeight || panel.image?.height || 1024);
-    };
-    img.onerror = () => {
-      openSketchDialog(panel.image?.width ?? 1024, panel.image?.height ?? 1024);
-    };
-    img.src = edgeUrl;
-  };
-
-  const handleEnhanceExisting = (panel: {
-    id: number;
-    imageUrl: string | null;
-    image?: { width: number; height: number } | null;
-  }) => {
-    if (!panel.imageUrl) return;
-    const previewUrl = getEdgeUrl(panel.imageUrl, { width: 400 }) ?? panel.imageUrl;
-    setRegeneratingPanelId(panel.id);
-    setEnhanceExistingSource({
-      url: panel.imageUrl,
-      previewUrl,
-      width: panel.image?.width ?? 1024,
-      height: panel.image?.height ?? 1024,
+  const handleOpenIterativeEditor = (panel: { id: number; position: number; imageUrl: string | null; image?: { width: number; height: number } | null }) => {
+    const params = new URLSearchParams({
+      chapter: String(activeChapterPosition ?? 0),
+      panelId: String(panel.id),
+      panelPosition: String(panel.position),
     });
-    openPanelModal();
+    if (panel.imageUrl) {
+      params.set('imageUrl', panel.imageUrl);
+      params.set('width', String(panel.image?.width ?? 1024));
+      params.set('height', String(panel.image?.height ?? 1024));
+    }
+    void router.push(`/comics/project/${projectId}/iterate?${params.toString()}`);
   };
 
-  const handleDrawerEnhance = (panel: any) => {
-    setDetailPanelId(null);
-    handleEnhanceExisting(panel);
+  const handleOpenIterativeEditorNew = () => {
+    if (!activeChapter) return;
+    const params = new URLSearchParams({
+      chapter: String(activeChapterPosition ?? 0),
+      panelPosition: String(activeChapter.panels.length),
+    });
+    void router.push(`/comics/project/${projectId}/iterate?${params.toString()}`);
   };
 
   const getStatusDotClass = (status: string, hasRefs: boolean) => {
@@ -885,7 +976,7 @@ function ProjectWorkspace() {
       <Container size="xl" py="xl">
         <Stack align="center" gap="md" py={60}>
           <Loader color="yellow" />
-          <Text c="dimmed">Loading project...</Text>
+          <Text size="sm" c="dimmed">Loading project...</Text>
         </Stack>
       </Container>
     );
@@ -937,7 +1028,7 @@ function ProjectWorkspace() {
                 >
                   <IconArrowLeft size={16} />
                 </ActionIcon>
-                <Title order={3} style={{ fontWeight: 700 }} lineClamp={1}>
+                <Title order={3} fw={700} lineClamp={1}>
                   {project.name}
                 </Title>
               </Group>
@@ -1001,36 +1092,38 @@ function ProjectWorkspace() {
                 </ActionIcon>
               </div>
 
-              <Stack gap={8}>
-                {allReferences.length === 0 ? (
-                  <div className="flex flex-col items-center py-8 text-center">
-                    <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
-                    <Text size="xs" c="dimmed" mb="md">
-                      References help maintain character consistency across panels. Optional — you
-                      can generate panels without them.
-                    </Text>
-                    <button
-                      className={styles.gradientBtn}
-                      onClick={() => router.push(`/comics/project/${projectId}/character`)}
-                    >
-                      <IconPlus size={14} />
-                      Add Reference
-                    </button>
-                  </div>
-                ) : (
-                  allReferences.map((ref) => (
-                    <ReferenceSidebarItem
-                      key={ref.id}
-                      character={ref}
-                      projectId={projectId}
-                      referenceImageMap={referenceImageMap}
-                      onDelete={handleDeleteReference}
-                      getStatusDotClass={getStatusDotClass}
-                      getStatusLabel={getStatusLabel}
-                    />
-                  ))
-                )}
-              </Stack>
+              <ScrollArea.Autosize mah="calc(100vh - 240px)" scrollbarSize={6}>
+                <Stack gap={8}>
+                  {allReferences.length === 0 ? (
+                    <div className="flex flex-col items-center py-8 text-center">
+                      <IconUser size={32} style={{ color: '#605e6e', marginBottom: 12 }} />
+                      <Text size="xs" c="dimmed" mb="md">
+                        References help maintain character consistency across panels. Optional — you
+                        can generate panels without them.
+                      </Text>
+                      <button
+                        className={styles.gradientBtn}
+                        onClick={() => router.push(`/comics/project/${projectId}/character`)}
+                      >
+                        <IconPlus size={14} />
+                        Add Reference
+                      </button>
+                    </div>
+                  ) : (
+                    allReferences.map((ref) => (
+                      <ReferenceSidebarItem
+                        key={ref.id}
+                        character={ref}
+                        projectId={projectId}
+                        referenceImageMap={referenceImageMap}
+                        onDelete={handleDeleteReference}
+                        getStatusDotClass={getStatusDotClass}
+                        getStatusLabel={getStatusLabel}
+                      />
+                    ))
+                  )}
+                </Stack>
+              </ScrollArea.Autosize>
             </div>
 
             {/* ── Sidebar: Chapters ───────────────── */}
@@ -1315,7 +1408,7 @@ function ProjectWorkspace() {
               {activeChapter && activeChapter.panels.length === 0 && (
                 <div className="flex flex-col items-center py-12 text-center">
                   <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                  <Text c="dimmed" mb="md">
+                  <Text size="sm" c="dimmed" mb="md">
                     No panels yet. Create your first panel!
                   </Text>
                   <Text c="dimmed" size="xs" maw={360}>
@@ -1356,8 +1449,7 @@ function ProjectWorkspace() {
                             openPanelModal();
                           }}
                           onClick={() => setDetailPanelId(panel.id)}
-                          onSketchEdit={() => handleSketchEdit(panel as any)}
-                          onEnhance={() => handleEnhanceExisting(panel as any)}
+                          onIterativeEdit={() => handleOpenIterativeEditor({ ...panel, position: index } as any)}
                         />
                       </SortablePanel>
                     ))}
@@ -1394,14 +1486,20 @@ function ProjectWorkspace() {
       <PanelDetailDrawer
         detailPanelId={detailPanelId}
         setDetailPanelId={setDetailPanelId}
+        projectId={project.id}
         detailPanel={detailPanel as any}
         detailPanelIndex={detailPanelIndex}
         referenceNameMap={referenceNameMap}
         onRegenerate={handleDrawerRegenerate}
         onInsertAfter={handleDrawerInsertAfter}
         onDelete={(panelId) => deletePanelMutation.mutate({ panelId })}
-        onSketchEdit={handleSketchEdit}
-        onEnhance={handleDrawerEnhance}
+        onIterativeEdit={(panel) => {
+          setDetailPanelId(null);
+          const panelIndex = activeChapter
+            ? activeChapter.panels.findIndex((p) => p.id === panel.id)
+            : -1;
+          handleOpenIterativeEditor({ ...panel, position: panelIndex >= 0 ? panelIndex : 0 } as any);
+        }}
       />
 
       <PanelModal
@@ -1508,6 +1606,7 @@ function ProjectWorkspace() {
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}
         isSaving={updateProjectMutation.isLoading}
       />
+
     </>
   );
 }
