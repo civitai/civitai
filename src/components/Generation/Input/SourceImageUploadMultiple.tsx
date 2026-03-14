@@ -155,7 +155,7 @@ const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
 const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
 export function SourceImageUploadMultiple({
-  value,
+  value: rawValue,
   onChange,
   children,
   slots,
@@ -172,6 +172,8 @@ export function SourceImageUploadMultiple({
   onRemove,
   disabled = false,
 }: SourceImageUploadProps) {
+  // Normalize: graph can pass null (e.g. txt2img persisted state) — treat as undefined
+  const value = Array.isArray(rawValue) ? rawValue : undefined;
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const isSlotsMode = !!slots?.length;
