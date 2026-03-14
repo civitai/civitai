@@ -2003,7 +2003,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   }
 
   // Second pass: fetch user's own nsfw0 (unclassified) images.
-  // These are excluded by the nsfwLevel filter and need to be prepended.
+  // These are excluded by the nsfwLevel filter. Merged into main results
+  // and re-sorted so they appear only when they naturally fit the active sort
+  // (e.g. newest → yes, most reactions → no since unrated images have 0).
   // Runs in parallel with the first main query. Only on first page.
   const nsfw0Promise = input.currentUserId && !bitdexCursor
     ? queryBitdex('civitai', [
@@ -2036,17 +2038,36 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
 
   if (!accumulated.length && !nsfw0Promise) return null;
 
-  let data = accumulated.slice(0, limit);
+  let data = accumulated;
 
-  // Merge user's nsfw0 images (deduplicate, prepend — these are recent uploads)
+  // Merge user's nsfw0 images, re-sort by the active sort, then limit.
+  // This ensures unclassified images only appear when they naturally rank
+  // high enough (e.g. newest → likely yes, most reactions → likely no).
   const nsfw0Result = await nsfw0Promise;
   if (nsfw0Result?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
     const nsfw0Docs = nsfw0Result.documents
       .map((doc) => mapBitdexDoc(doc))
       .filter((d) => !mainIds.has(d.id));
-    if (nsfw0Docs.length) data = [...nsfw0Docs, ...data];
+    if (nsfw0Docs.length) {
+      data = [...data, ...nsfw0Docs];
+      const sort = input.sort;
+      if (sort === ImageSort.MostReactions) {
+        data.sort((a, b) => b.reactionCount - a.reactionCount);
+      } else if (sort === ImageSort.MostComments) {
+        data.sort((a, b) => b.commentCount - a.commentCount);
+      } else if (sort === ImageSort.MostCollected) {
+        data.sort((a, b) => b.collectedCount - a.collectedCount);
+      } else if (sort === ImageSort.Oldest) {
+        data.sort((a, b) => a.sortAtUnix - b.sortAtUnix);
+      } else {
+        // Newest (default)
+        data.sort((a, b) => b.sortAtUnix - a.sortAtUnix);
+      }
+    }
   }
+
+  data = data.slice(0, limit);
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
   console.log('[BitDex] PRIMARY serving', data.length, 'docs, cursor:', nextCursor ? 'yes' : 'none');
