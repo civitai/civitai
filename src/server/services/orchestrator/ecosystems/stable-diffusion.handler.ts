@@ -239,7 +239,7 @@ export const createStableDiffusionInput = defineHandler<
     }
 
     return [
-      createComfyInput(
+      await createComfyInput(
         {
           key: comfyKey,
           quantity,
