@@ -1795,7 +1795,7 @@ export const getAllImagesIndex = async (
 
   const currentUserId = user?.id;
 
-  const { data: searchResults, nextCursor: searchNextCursor } = await getImagesFromSearch({
+  const { data: searchResults, nextCursor: searchNextCursor, source: searchSource } = await getImagesFromSearch({
     ...input,
     currentUserId,
     isModerator: user?.isModerator,
@@ -1918,6 +1918,7 @@ export const getAllImagesIndex = async (
   return {
     nextCursor,
     items: mergedData,
+    ...(searchSource && { source: searchSource }),
   };
 };
 
@@ -2103,7 +2104,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   if (bitdexMode === 'primary') {
     try {
       const result = await fetchBitdexPrimary(input);
-      if (result) return result;
+      if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
@@ -2134,7 +2135,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       .catch((err) => recordBitdexError(err));
   }
 
-  return result;
+  return { ...result, source: 'meili' as const };
 }
 
 export async function getImagesFromFeedSearch(
