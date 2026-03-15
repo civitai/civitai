@@ -18,7 +18,7 @@
  *    - Routes to appropriate step type based on ecosystem
  */
 
-import type { WorkflowStepTemplate } from '@civitai/client';
+import type { WorkflowCost, WorkflowStepTemplate } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import {
   generationGraph,
@@ -782,6 +782,7 @@ export async function createWorkflowStepsFromGraph({
 
   // Wrap with request-level concerns: priority, timeout, outputFormat
   // isPrivateGeneration and remixOfId live on workflow.metadata, not per-step
+  // Intermediate steps (videoInterpolation) don't get outputFormat injected
   const wrappedSteps = steps.map((step) => ({
     $type: step.$type,
     input: {
@@ -1036,6 +1037,11 @@ export interface NormalizedStepMetadata {
       postId?: number;
     }
   >;
+  /**
+   * When true, this step's output should be hidden from the user.
+   * Used for intermediate steps in multi-step workflows (e.g., Wan 2.2 videoGen before interpolation).
+   */
+  suppressOutput?: boolean;
 }
 
 export type StepMetadataTransformation = {
@@ -1078,7 +1084,7 @@ export interface NormalizedWorkflow {
   status: WorkflowStatus;
   createdAt: Date;
   transactions: TransactionInfo[];
-  cost?: { type?: string; currency?: string; total?: number; base?: number };
+  cost: WorkflowCost;
   tags: string[];
   allowMatureContent?: boolean | null;
   duration?: number;
@@ -1454,6 +1460,7 @@ function formatStep(
         params: finalParams,
         remixOfId,
         images: metadata.images as NormalizedStepMetadata['images'],
+        suppressOutput: metadata.suppressOutput as boolean | undefined,
       }),
       ...(resolvedResources ? { resources: resolvedResources } : {}),
     },
