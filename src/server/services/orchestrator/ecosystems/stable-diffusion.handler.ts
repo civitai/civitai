@@ -238,15 +238,17 @@ export const createStableDiffusionInput = defineHandler<
       workflowData.upscaleHeight = data.upscaleHeight;
     }
 
-    return createComfyInput(
-      {
-        key: comfyKey,
-        quantity,
-        params: workflowData,
-        resources: [data.model, ...userResources, ...(data.vae ? [data.vae] : [])],
-      },
-      ctx
-    );
+    return [
+      createComfyInput(
+        {
+          key: comfyKey,
+          quantity,
+          params: workflowData,
+          resources: [data.model, ...userResources, ...(data.vae ? [data.vae] : [])],
+        },
+        ctx
+      ),
+    ];
   }
 
   return [
