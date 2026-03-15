@@ -110,7 +110,7 @@ export default function QuestionPage(
       <Meta
         title={`${question.title} | Civitai`}
         description={truncate(removeTags(question.content ?? ''), { length: 150 })}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions/${id}`, rel: 'canonical' }]}
+        canonical={`/questions/${id}`}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
       <Container pb={60} px="xs">

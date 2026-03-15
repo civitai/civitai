@@ -20,7 +20,7 @@ export const serverSchema = z.object({
   DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
-  LOGICAL_REPLICA_DB_URL: z.url(),
+  DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
@@ -241,6 +241,10 @@ export const serverSchema = z.object({
   NOW_PAYMENTS_API_URL: z.string().optional(),
   NOW_PAYMENTS_API_KEY: z.string().optional(),
   NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+  NOW_PAYMENTS_EMAIL: z.string().optional(),
+  NOW_PAYMENTS_PASSWORD: z.string().optional(),
+  NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
+  NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
 
   // Coinbase Related:
   COINBASE_API_URL: z.string().optional(),
@@ -277,4 +281,7 @@ export const serverSchema = z.object({
   // Storage resolver internal API (for registering B2 uploads)
   STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
   STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
+
+  // BitDex
+  BITDEX_URL: z.string().optional().default(''),
 });

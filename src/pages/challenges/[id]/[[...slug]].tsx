@@ -81,7 +81,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { env } from '~/env/client';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -290,14 +289,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         description={
           challenge.description || `Participate in the ${challenge.title} challenge on Civitai`
         }
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL as string}/challenges/${challenge.id}/${slugit(
-              challenge.title
-            )}`,
-            rel: 'canonical',
-          },
-        ]}
+        canonical={`/challenges/${challenge.id}/${slugit(challenge.title)}`}
       />
       <SensitiveShield contentNsfwLevel={challenge.nsfwLevel}>
         <Container size="xl" mb={{ base: 'md', sm: 32 }}>

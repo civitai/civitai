@@ -32,34 +32,34 @@ export const lewtDropVendor: Vendor = {
     memberships: [
       {
         tier: 'Bronze',
-        image: '/images/gift-cards/Bronze3.webp',
+        image: '/images/gift-cards/bronze_final.webp',
         durations: [
           {
             months: 3,
             url: 'https://lewtdrop.com/products/buzz-membership-gift-card-bronze?variant=53151980748960',
-            image: '/images/gift-cards/Bronze3.webp',
+            image: '/images/gift-cards/bronze_final.webp',
           },
         ],
       },
       {
         tier: 'Silver',
-        image: '/images/gift-cards/Silver3.webp',
+        image: '/images/gift-cards/silver_final.webp',
         durations: [
           {
             months: 1,
             url: 'https://lewtdrop.com/products/buzz-membership-gift-card-silver?variant=53151987138720',
-            image: '/images/gift-cards/Silver3.webp',
+            image: '/images/gift-cards/silver_final.webp',
           },
         ],
       },
       {
         tier: 'Gold',
-        image: '/images/gift-cards/Gold3.webp',
+        image: '/images/gift-cards/gold_final.webp',
         durations: [
           {
             months: 1,
             url: 'https://lewtdrop.com/products/buzz-membership-gift-card-gold?variant=53151987368096',
-            image: '/images/gift-cards/Gold3.webp',
+            image: '/images/gift-cards/gold_final.webp',
           },
         ],
       },

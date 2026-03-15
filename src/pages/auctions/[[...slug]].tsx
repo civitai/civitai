@@ -26,7 +26,6 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -217,7 +216,7 @@ export default function Auctions({
       <Meta
         title={getDocTitle()}
         description="View and participate in auctions for featured spots on Civitai."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/${pathname}`, rel: 'canonical' }]}
+        canonical={pathname}
         deIndex={slug === MY_BIDS}
       />
       <Container size="xl" h="100%" data-tour="auction:start">

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1476",
+  "version": "5.0.1496",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -211,6 +211,7 @@
     "path-to-regexp": "^6.2.1",
     "pg": "^8.11.3",
     "prom-client": "^14.2.0",
+    "qrcode.react": "^4.2.0",
     "query-string": "^7.1.1",
     "rand-seed": "^1.0.2",
     "randomstring": "^1.3.0",

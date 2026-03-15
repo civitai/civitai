@@ -13,6 +13,7 @@ import {
   ecosystemByKey,
   getCompatibleBaseModels,
   getEcosystemDefaults,
+  getGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
 import { MAX_SEED, samplers } from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -938,6 +939,49 @@ export function resourcesNode({
 }
 
 /**
+ * Creates a resources subgraph with ecosystem compatibility enforcement.
+ * Wraps resourcesNode with an effect that filters out resources incompatible
+ * with the current ecosystem whenever the ecosystem changes.
+ *
+ * Unlike a transform (which is skipped on direct updates), effects run after
+ * any context change, so this catches resources arriving via graph.set() too.
+ */
+export function createResourcesGraph(options?: { resourceTypes?: ModelType[]; limit?: number }) {
+  return new DataGraph<{ ecosystem: string }, GenerationCtx>()
+    .node(
+      'resources',
+      (ctx, ext) =>
+        resourcesNode({
+          ecosystem: ctx.ecosystem,
+          resourceTypes: options?.resourceTypes,
+          limit: options?.limit ?? ext.limits.maxResources,
+        }),
+      ['ecosystem']
+    )
+    .effect(
+      (ctx, _ext, set) => {
+        const resources = (ctx as { resources?: ResourceData[] }).resources;
+        if (!resources?.length) return;
+        const ecosystemData = ecosystemByKey.get(ctx.ecosystem);
+        if (!ecosystemData) return;
+        const filtered = resources.filter((r) => {
+          if (!r.baseModel) return true;
+          const resourceEco = baseModelByName.get(r.baseModel);
+          if (!resourceEco) return true;
+          const modelType = (r.model?.type ?? 'LORA') as ModelType;
+          return (
+            getGenerationSupport(ecosystemData.id, resourceEco.ecosystemId, modelType) !== null
+          );
+        });
+        if (filtered.length !== resources.length) {
+          set('resources', filtered);
+        }
+      },
+      ['ecosystem']
+    );
+}
+
+/**
  * Creates a VAE node.
  * Meta contains only: options (dynamic based on ecosystem)
  *
@@ -957,6 +1001,30 @@ export function vaeNode({ ecosystem }: { ecosystem: string }) {
       },
     }),
   };
+}
+
+/**
+ * Creates a VAE subgraph with ecosystem compatibility enforcement.
+ * Wraps vaeNode with an effect that clears the VAE if it's incompatible
+ * with the current ecosystem whenever the ecosystem changes.
+ */
+export function createVaeGraph() {
+  return new DataGraph<{ ecosystem: string }, GenerationCtx>()
+    .node('vae', (ctx) => vaeNode({ ecosystem: ctx.ecosystem }), ['ecosystem'])
+    .effect(
+      (ctx, _ext, set) => {
+        const vae = (ctx as { vae?: ResourceData }).vae;
+        if (!vae?.baseModel) return;
+        const ecosystemData = ecosystemByKey.get(ctx.ecosystem);
+        if (!ecosystemData) return;
+        const resourceEco = baseModelByName.get(vae.baseModel);
+        if (!resourceEco) return;
+        if (getGenerationSupport(ecosystemData.id, resourceEco.ecosystemId, 'VAE') === null) {
+          set('vae', undefined);
+        }
+      },
+      ['ecosystem']
+    );
 }
 
 // =============================================================================

@@ -91,6 +91,7 @@ export const imageMetadataResourceSchema = z.object({
   name: z.string().optional(),
   weight: z.number().optional(),
   hash: z.string().optional(),
+  unmatched: z.boolean().optional(),
 });
 
 export const additionalResourceSchema = z.object({

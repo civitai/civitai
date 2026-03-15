@@ -78,7 +78,7 @@ export function ChapterSettingsModal({
         {isPublished && (
           <>
             <Switch
-              label="Early Access Paywall"
+              label="Early Access"
               description="Require Buzz payment to read this chapter"
               checked={chapterSettingsEaEnabled}
               onChange={(e) => setChapterSettingsEaEnabled(e.currentTarget.checked)}
@@ -96,7 +96,7 @@ export function ChapterSettingsModal({
                   value={chapterSettingsEaBuzzPrice}
                   onChange={(val) => setChapterSettingsEaBuzzPrice(val)}
                   min={1}
-                  max={currentEaConfig?.buzzPrice}
+                  max={currentEaConfig ? Math.min(currentEaConfig.buzzPrice, 10000) : 10000}
                   leftSection={<IconLock size={16} />}
                 />
                 <NumberInput
@@ -109,7 +109,7 @@ export function ChapterSettingsModal({
                   value={chapterSettingsEaTimeframe}
                   onChange={(val) => setChapterSettingsEaTimeframe(val)}
                   min={1}
-                  max={currentEaConfig?.timeframe ?? 365}
+                  max={currentEaConfig ? Math.min(currentEaConfig.timeframe, 30) : 30}
                 />
               </>
             )}

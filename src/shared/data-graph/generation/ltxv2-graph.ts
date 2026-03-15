@@ -28,7 +28,7 @@ import {
   sliderNode,
   enumNode,
   imagesNode,
-  resourcesNode,
+  createResourcesGraph,
   createCheckpointGraph,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
@@ -182,15 +182,7 @@ export const ltxv2Graph = new DataGraph<LTXV2Ctx, GenerationCtx>()
   )
 
   // Resources node (LoRAs)
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph());
 
 // Export constants for use in components
 export { ltxv2AspectRatios, ltxv2Durations };

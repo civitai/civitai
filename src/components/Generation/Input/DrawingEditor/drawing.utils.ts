@@ -261,6 +261,20 @@ export const imageAnnotationsSchema = defaultCatch(
               strokeWidth: z.number(),
               rotation: z.number().optional(),
             }),
+            // Speech bubble element
+            z.object({
+              type: z.literal('speechBubble'),
+              id: z.string().optional(),
+              x: z.number(),
+              y: z.number(),
+              width: z.number(),
+              height: z.number(),
+              tailX: z.number(),
+              tailY: z.number(),
+              color: z.string(),
+              strokeWidth: z.number(),
+              rotation: z.number().optional(),
+            }),
             // Text element
             z.object({
               type: z.literal('text'),
@@ -275,6 +289,21 @@ export const imageAnnotationsSchema = defaultCatch(
               scaleX: z.number().optional(),
               scaleY: z.number().optional(),
               width: z.number().optional(),
+            }),
+            // Image overlay element
+            z.object({
+              type: z.literal('image'),
+              id: z.string().optional(),
+              x: z.number(),
+              y: z.number(),
+              width: z.number(),
+              height: z.number(),
+              imageUrl: z.string(),
+              color: z.string(),
+              strokeWidth: z.number(),
+              rotation: z.number().optional(),
+              flipX: z.boolean().optional(),
+              flipY: z.boolean().optional(),
             }),
           ])
         ),

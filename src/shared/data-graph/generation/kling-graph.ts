@@ -180,10 +180,9 @@ const klingLegacyGraph = new DataGraph<KlingVersionCtx, GenerationCtx>()
   .node(
     'aspectRatio',
     (ctx) => {
-      const isTxt2Vid = !ctx.images?.length;
       return {
         ...aspectRatioNode({ options: klingAspectRatios, defaultValue: '1:1' }),
-        when: isTxt2Vid,
+        when: ctx.workflow !== 'img2vid',
       };
     },
     ['workflow']

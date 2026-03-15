@@ -722,6 +722,36 @@ export const upsertArticle = async ({
       }
     }
 
+    // For updates, fetch article early so we can check cover image ownership and NSFW level
+    let article: {
+      id: number;
+      cover: string | null;
+      coverId: number | null;
+      userId: number;
+      publishedAt: Date | null;
+      status: string;
+      nsfwLevel: number;
+      metadata: Prisma.JsonValue;
+    } | null = null;
+    if (id) {
+      article = await dbWrite.article.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          cover: true,
+          coverId: true,
+          userId: true,
+          publishedAt: true,
+          status: true,
+          nsfwLevel: true,
+          metadata: true,
+        },
+      });
+      if (!article) throw throwNotFoundError();
+      const isOwner = article.userId === userId || isModerator;
+      if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    }
+
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;
@@ -730,9 +760,13 @@ export const upsertArticle = async ({
         const result = await createImage({ ...coverImage, userId });
         coverId = result.id;
       } else {
-        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
-        if (!isImgOwner) {
-          throw throwAuthorizationError('Invalid cover image');
+        // Skip ownership check when the cover image hasn't changed (e.g. mod-uploaded covers)
+        const isExistingCover = article != null && coverId === article.coverId;
+        if (!isExistingCover) {
+          const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
+          if (!isImgOwner) {
+            throw throwAuthorizationError('Invalid cover image');
+          }
         }
       }
     }
@@ -780,31 +814,12 @@ export const upsertArticle = async ({
       return result;
     }
 
-    const article = await dbWrite.article.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        cover: true,
-        coverId: true,
-        userId: true,
-        publishedAt: true,
-        status: true,
-        nsfwLevel: true,
-        metadata: true,
-      },
-    });
+    // article is guaranteed non-null here since the `if (id)` block above fetches it
     if (!article) throw throwNotFoundError();
 
-    const isOwner = article.userId === userId || isModerator;
-    if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
-
-    // Validate userNsfwLevel cannot be set below system rating (non-moderators only)
-    if (data.userNsfwLevel < article.nsfwLevel && !isModerator) {
-      throw throwBadRequestError(
-        `NSFW level cannot be set below the system rating (${
-          NsfwLevel[article.nsfwLevel]
-        }). You can only set it equal to or higher than the current level.`
-      );
+    // Auto-clamp userNsfwLevel to system floor instead of blocking edits
+    if (data.userNsfwLevel != null && !isModerator) {
+      data.userNsfwLevel = Math.max(data.userNsfwLevel, article.nsfwLevel);
     }
 
     // Prevent owners from re-publishing articles unpublished for ToS violations

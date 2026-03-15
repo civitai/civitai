@@ -43,14 +43,14 @@ type ClientInstanceType =
   | 'primaryReadLong'
   | 'notification'
   | 'notificationRead'
-  | 'logicalReplica';
+  | 'datapacketRead';
 const instanceUrlMap: Record<ClientInstanceType, string> = {
   notification: env.NOTIFICATION_DB_URL,
   notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
   primary: env.DATABASE_URL,
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
-  logicalReplica: env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL,
+  datapacketRead: env.DATAPACKET_DATABASE_RO_URL ?? env.DATABASE_URL,
 };
 
 export function getClient(
@@ -68,8 +68,8 @@ export function getClient(
   const isNotification = instance === 'notification' || instance === 'notificationRead';
   const appBaseName = isNotification
     ? 'notif-pg'
-    : instance === 'logicalReplica'
-    ? 'logical-pg'
+    : instance === 'datapacketRead'
+    ? 'dp-read-pg'
     : 'node-pg';
 
   // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.
@@ -91,8 +91,8 @@ export function getClient(
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
-      isNotification && env.IS_DATAPACKET
-        ? undefined // DP: set per-connection below (PgBouncer rejects startup param)
+      (isNotification || instance === 'datapacketRead') && env.IS_DATAPACKET
+        ? undefined // DP: set per-connection below (PgBouncer ignores startup params)
         : instance === 'notificationRead'
         ? undefined // DOKS: standby doesn't support this
         : instance === 'primaryRead'
@@ -101,11 +101,17 @@ export function getClient(
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
 
-  // Set statement_timeout per-connection for notification instances on DP
-  // (can't use startup parameter with DO managed PgBouncer)
+  // Set statement_timeout per-connection on DP instances that go through PgBouncer
+  // (PgBouncer ignores statement_timeout as a startup parameter)
   if (env.IS_DATAPACKET && isNotification && notifStatementTimeout) {
     pool.on('connect', (client) => {
       client.query(`SET statement_timeout = ${Number(notifStatementTimeout)}`).catch(() => {});
+    });
+  }
+  if (env.IS_DATAPACKET && instance === 'datapacketRead') {
+    const readTimeout = env.DATABASE_READ_TIMEOUT ?? 120000; // 2 minutes default
+    pool.on('connect', (client) => {
+      client.query(`SET statement_timeout = ${Number(readTimeout)}`).catch(() => {});
     });
   }
 

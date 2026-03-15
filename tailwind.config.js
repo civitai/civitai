@@ -154,6 +154,10 @@ module.exports = {
         },
       },
       keyframes: {
+        'border-chase': {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg)' },
+        },
         wiggle: {
           '0%, 100%': { transform: 'rotate(-3deg)' },
           '50%': { transform: 'rotate(3deg)' },
@@ -197,6 +201,7 @@ module.exports = {
         wiggle: 'wiggle 1s ease-in-out infinite',
         jello: 'jello 2s 1s ease-in-out',
         glowPulse: 'glowPulse 1.2s ease-in-out 3',
+        'border-chase': 'border-chase 3s linear infinite',
       },
     },
   },

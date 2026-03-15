@@ -119,7 +119,7 @@ const featureFlags = createFeatureFlags({
   creatorComp: ['public'],
   experimentalGen: ['mod'],
   imageIndex: ['public'],
-  imageIndexFeed: ['public'],
+  imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
@@ -151,7 +151,7 @@ const featureFlags = createFeatureFlags({
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
-  logicalReplica: ['public'],
+  datapacketRead: ['public'],
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],

@@ -5,6 +5,7 @@ import {
   deleteUserHandler,
   deleteUserPaymentMethodHandler,
   dismissAlertHandler,
+  restoreAlertHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getLeaderboardHandler,
@@ -45,6 +46,7 @@ import {
   computeDeviceFingerprintSchema,
   deleteUserSchema,
   dismissAlertSchema,
+  restoreAlertSchema,
   getAllUsersInput,
   getByUsernameSchema,
   getUserByUsernameSchema,
@@ -221,6 +223,7 @@ export const userRouter = router({
   getSettings: protectedProcedure.query(getUserSettingsHandler),
   setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
+  restoreAlert: protectedProcedure.input(restoreAlertSchema).mutation(restoreAlertHandler),
   getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
   getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),
   setLeaderboardEligibility: moderatorProcedure

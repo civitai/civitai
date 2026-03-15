@@ -321,7 +321,8 @@
 
   @media (max-width: 860px) {
     position: static;
-    max-height: none;
+    max-height: 360px;
+    overflow-y: auto;
   }
 }
 
@@ -728,6 +729,12 @@
   }
 }
 
+.subtleBtnSm {
+  composes: subtleBtn;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 .dangerBtn {
   background: rgba(250, 82, 82, 0.1);
   color: #fa5252;
@@ -797,12 +804,6 @@
     width: auto;
     object-fit: contain;
   }
-}
-
-.enhanceImageRemove {
-  position: absolute;
-  top: 6px;
-  right: 6px;
 }
 
 .enhanceSourceOptions {

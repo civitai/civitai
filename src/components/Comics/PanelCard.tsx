@@ -1,8 +1,9 @@
-import { ActionIcon, Badge, Menu, Text } from '@mantine/core';
+import { ActionIcon, Badge, Menu, Text, Tooltip } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconDotsVertical,
   IconEye,
+  IconMessages,
   IconPhoto,
   IconPlus,
   IconRefreshDot,
@@ -51,6 +52,7 @@ export interface PanelCardProps {
   onRegenerate: () => void;
   onInsertAfter: () => void;
   onClick: () => void;
+  onIterativeEdit?: () => void;
 }
 
 export function PanelCard({
@@ -61,11 +63,15 @@ export function PanelCard({
   onRegenerate,
   onInsertAfter,
   onClick,
+  onIterativeEdit,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
   const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
 
+  const promptPreview = prompt?.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+
   return (
+    <Tooltip label={promptPreview} disabled={!prompt} withArrow position="top" multiline maw={300} openDelay={400}>
     <div className={styles.panelCard} onClick={onClick}>
       {imageUrl ? (
         <>
@@ -106,6 +112,17 @@ export function PanelCard({
                     >
                       View Details
                     </Menu.Item>
+                    {status === 'Ready' && imageUrl && onIterativeEdit && (
+                      <Menu.Item
+                        leftSection={<IconMessages size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onIterativeEdit();
+                        }}
+                      >
+                        Iterative Edit
+                      </Menu.Item>
+                    )}
                     {(status === 'Ready' || status === 'Failed') && (
                       <Menu.Item
                         leftSection={<IconRefreshDot size={14} />}
@@ -142,13 +159,18 @@ export function PanelCard({
             </div>
             <div className="flex flex-col gap-1">
               {referenceNames.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {referenceNames.map((name) => (
+                <div className="flex flex-wrap gap-1" style={{ maxHeight: 44, overflow: 'hidden' }}>
+                  {referenceNames.slice(0, 3).map((name) => (
                     <span key={name} className={styles.panelCharacterPill}>
                       <IconUser size={10} />
                       {name}
                     </span>
                   ))}
+                  {referenceNames.length > 3 && (
+                    <span className={styles.panelCharacterPill}>
+                      +{referenceNames.length - 3}
+                    </span>
+                  )}
                 </div>
               )}
               <p className={styles.panelPrompt}>{prompt}</p>
@@ -164,6 +186,52 @@ export function PanelCard({
             </div>
           ) : status === 'Failed' ? (
             <div className={styles.panelFailed}>
+              <div className="absolute top-2 right-2">
+                <div className={styles.panelMenu}>
+                  <Menu position="bottom-end" withinPortal>
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="filled"
+                        color="dark"
+                        size="sm"
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                      >
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        leftSection={<IconRefreshDot size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onRegenerate();
+                        }}
+                      >
+                        Regenerate
+                      </Menu.Item>
+                      <Menu.Item
+                        leftSection={<IconPlus size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onInsertAfter();
+                        }}
+                      >
+                        Insert after
+                      </Menu.Item>
+                      <Menu.Item
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onDelete();
+                        }}
+                      >
+                        Delete
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                </div>
+              </div>
               <IconAlertTriangle size={28} />
               <Text size="xs" c="red">
                 Failed
@@ -198,6 +266,7 @@ export function PanelCard({
         </>
       )}
     </div>
+    </Tooltip>
   );
 }
 

@@ -22,6 +22,7 @@ export type RegionBlockConfig = {
 // Example: "GB:2025-07-24,FR:2025-08-01,US:CA:2025-07-24"
 const DEFAULT_REGION_BLOCK_CONFIG: RegionBlockConfig[] = [
   { region: 'GB', effectiveDate: '2025-07-24' },
+  { region: 'AU', effectiveDate: '2026-03-15' },
 ];
 
 export const REGION_BLOCK_CONFIG: RegionBlockConfig[] = process.env.REGION_BLOCK_CONFIG

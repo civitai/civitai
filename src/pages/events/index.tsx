@@ -6,7 +6,6 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -29,7 +28,7 @@ function EventsPage() {
       <Meta
         title="Civitai Events | Fun AI Art challenges"
         description="Test your AI Art Skills by participating in our community events."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events`, rel: 'canonical' }]}
+        canonical="/events"
       />
 
       <MasonryContainer>

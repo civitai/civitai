@@ -14,7 +14,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
-  resourcesNode,
+  createResourcesGraph,
   seedNode,
   sliderNode,
 } from './common';
@@ -68,15 +68,7 @@ export const ponyV7Graph = new DataGraph<{ ecosystem: string; workflow: string }
       }),
     []
   )
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: ponyV7AspectRatios, defaultValue: '1:1' }))
   .node(
     'cfgScale',

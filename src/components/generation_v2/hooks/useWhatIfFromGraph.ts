@@ -26,6 +26,7 @@ import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
 import { usePromptFocusedStore } from '../inputs/PromptInput';
+import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 // =============================================================================
 // Constants
@@ -75,6 +76,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const currentUser = useCurrentUser();
   const { isLoading: resourcesLoading } = useResourceDataContext();
   const promptFocused = usePromptFocusedStore((x) => x.focused);
+  const imagesPending = useImagesUploadingOrVerifying();
 
   // Track graph changes with a revision counter
   const [revision, incrementRevision] = useReducer((r: number) => r + 1, 0);
@@ -147,7 +149,8 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const isNoSubmit = workflowConfigByKey.get(snapshot?.workflow as string)?.noSubmit === true;
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
-    enabled: enabled && !isNoSubmit && !!currentUser && !!queryPayload && !resourcesLoading,
+    enabled:
+      enabled && !isNoSubmit && !!currentUser && !!queryPayload && !resourcesLoading && !imagesPending,
   });
 
   const data = useMemo(
@@ -173,7 +176,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   return {
     ...queryResult,
     data,
-    isLoading: queryResult.isFetching,
+    isLoading: queryResult.isFetching || imagesPending,
     isPromptDirty,
     canEstimateCost,
     validationErrors,

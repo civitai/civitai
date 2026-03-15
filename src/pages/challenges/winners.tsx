@@ -5,7 +5,6 @@ import { Page } from '~/components/AppLayout/Page';
 import { CompletedChallengesInfinite } from '~/components/Challenge/Infinite/CompletedChallengesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -21,9 +20,7 @@ function PreviousWinnersPage() {
       <Meta
         title="Previous Challenge Winners | Civitai"
         description="Browse past AI art challenge winners and their prize-winning creations"
-        links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/challenges/winners`, rel: 'canonical' },
-        ]}
+        canonical="/challenges/winners"
       />
 
       <MasonryContainer>

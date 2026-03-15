@@ -17,7 +17,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
-  resourcesNode,
+  createResourcesGraph,
   samplerNode,
   schedulerNode,
   seedNode,
@@ -81,15 +81,7 @@ type ZImageModeCtx = {
  * For ZImageTurbo variant
  */
 const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: zImageAspectRatios, defaultValue: '1:1' }))
   .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 9 }))
@@ -100,15 +92,7 @@ const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
  * For ZImageBase variant
  */
 const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('negativePrompt', negativePromptNode())
   .node('aspectRatio', aspectRatioNode({ options: zImageAspectRatios, defaultValue: '1:1' }))
   .node('sampler', samplerNode({ options: zImageSamplers, defaultValue: 'euler' }))

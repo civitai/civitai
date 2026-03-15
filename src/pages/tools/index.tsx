@@ -4,7 +4,6 @@ import { Page } from '~/components/AppLayout/Page';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { ToolsInfinite } from '~/components/Tool/ToolsInfinite';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -25,7 +24,7 @@ function ToolsPage() {
       <Meta
         title="Civitai Tools | AI Tools Showcase"
         description="Discover the latest tools used to create generative AI art and explore a gallery of AI-generated art"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tools`, rel: 'canonical' }]}
+        canonical="/tools"
       />
       <MasonryContainer>
         <Stack gap="xs">

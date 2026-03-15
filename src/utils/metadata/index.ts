@@ -31,11 +31,22 @@ export async function ExifParser(file: File | string) {
     exif.userComment = Int32Array.from(exif.UserComment);
   }
 
-  const [name, parser] = Object.entries(parsers).find(([name, x]) => x.canParse(exif)) ?? [];
+  // Clone exif before each canParse to prevent cross-parser mutation
+  let matchedExif = exif;
+  let matchedParser: (typeof parsers)[keyof typeof parsers] | undefined;
+  for (const [, p] of Object.entries(parsers)) {
+    const exifCopy = { ...exif };
+    if (p.canParse(exifCopy)) {
+      matchedParser = p;
+      matchedExif = exifCopy;
+      break;
+    }
+  }
+  const parser = matchedParser;
 
   function parse() {
     try {
-      return parser?.parse(exif);
+      return parser?.parse(matchedExif);
     } catch (e) {
       console.error('Error parsing metadata', e);
     }

@@ -36,7 +36,6 @@ import { ResourceReviewThumbActions } from '~/components/ResourceReview/Resource
 import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
@@ -185,12 +184,7 @@ export default function ModelReviews() {
       <Meta
         title={`${model?.name} Reviews | Rated ${ratingAverage} Stars by ${ratingCount} Users on Civitai`}
         description={`Explore user reviews of the ${model?.name} AI model on Civitai, rated ${ratingAverage} stars by ${ratingCount} users, and see how it has helped others bring their creative visions to life`}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/models/${modelId}/reviews?modelVersionId=${modelVersionId}`,
-            rel: 'canonical',
-          },
-        ]}
+        canonical={`/models/${modelId}/reviews?modelVersionId=${modelVersionId}`}
       />
       <Container size="xl">
         <ContainerGrid2 gutter={48}>

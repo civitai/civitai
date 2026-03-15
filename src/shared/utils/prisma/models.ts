@@ -190,7 +190,7 @@ export type ComicReferenceStatus = "Pending" | "Ready" | "Failed";
 
 export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
 
-export type ComicChapterStatus = "Draft" | "Published";
+export type ComicChapterStatus = "Draft" | "Published" | "Scheduled";
 
 export type ComicReferenceType = "Character" | "Location" | "Item" | "Style";
 
@@ -321,8 +321,30 @@ export interface CashWithdrawal {
 export interface CryptoWallet {
   userId: number;
   user?: User;
+  chain: string;
   wallet: string;
   smartAccount: string | null;
+  payCurrency: string;
+}
+
+export interface CryptoDeposit {
+  paymentId: bigint;
+  userId: number;
+  user?: User;
+  status: string;
+  payCurrency: string;
+  payAmount: number | null;
+  outcomeAmount: number | null;
+  buzzCredited: number | null;
+  bonusBuzz: number | null;
+  multiplier: number | null;
+  depositFee: number | null;
+  serviceFee: number | null;
+  feeCurrency: string | null;
+  paidFiat: number | null;
+  chain: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface CryptoTransaction {
@@ -468,6 +490,7 @@ export interface User {
   moderationRules?: ModerationRule[];
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
+  CryptoDeposit?: CryptoDeposit[];
   CryptoTransaction?: CryptoTransaction[];
   userRestrictions?: UserRestriction[];
   challengesCreated?: Challenge[];

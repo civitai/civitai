@@ -52,10 +52,8 @@ export function Home() {
       <Meta
         title="Civitai | Discover and Create AI Art"
         description="Explore thousands of free Stable Diffusion & Flux models, create and share AI-generated art, and join the world's largest community of generative AI creators."
-        links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/`, rel: 'canonical' },
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/home`, rel: 'alternate' },
-        ]}
+        canonical="/"
+        alternate="/home"
       />
 
       {isLoading ? (

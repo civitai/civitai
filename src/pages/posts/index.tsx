@@ -7,7 +7,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
-import { env } from '~/env/client';
 
 function PostsPage() {
   const { query } = usePostQueryParams();
@@ -17,7 +16,7 @@ function PostsPage() {
       <Meta
         title="Community Posts | Civitai"
         description="Discover creative posts from our community featuring AI art created with Stable Diffusion, Flux, and other models. Find tutorials, showcases, and inspiration."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/posts`, rel: 'canonical' }]}
+        canonical="/posts"
       />
       <MasonryContainer>
         <Stack gap="xs">

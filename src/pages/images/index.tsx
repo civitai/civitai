@@ -6,7 +6,6 @@ import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 
 export default Page(
   function () {
@@ -18,7 +17,7 @@ export default Page(
         <Meta
           title="AI Art Gallery | Civitai"
           description="Explore millions of AI-generated images created with Stable Diffusion, Flux, and other models. Discover prompts, techniques, and inspiration."
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/images`, rel: 'canonical' }]}
+          canonical="/images"
         />
         {/* <ToolBanner /> */}
         <MasonryContainer className="min-h-full">

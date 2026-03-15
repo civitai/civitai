@@ -21,8 +21,8 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   negativePromptNode,
-  resourcesNode,
   samplerNode,
   seedNode,
   sliderNode,
@@ -75,15 +75,7 @@ const fastDevModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
  * Full mode subgraph: negative prompt available, configurable CFG/sampler/steps
  */
 const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: hiDreamAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
   .node(

@@ -18,8 +18,8 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   imagesNode,
-  resourcesNode,
   seedNode,
   sliderNode,
   type ResourceData,
@@ -104,15 +104,9 @@ const baseModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>()
  * Dev mode subgraph: resources + base controls
  * Dev mode supports LoRA resources
  */
-const devModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>().merge(baseModeGraph).node(
-  'resources',
-  (ctx, ext) =>
-    resourcesNode({
-      ecosystem: ctx.ecosystem,
-      limit: ext.limits.maxResources,
-    }),
-  ['ecosystem']
-);
+const devModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>()
+  .merge(baseModeGraph)
+  .merge(createResourcesGraph());
 
 /**
  * Other modes subgraph: just base controls (no resources)

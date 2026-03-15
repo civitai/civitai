@@ -30,7 +30,6 @@ import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -169,12 +168,7 @@ export default function Leaderboard() {
           .slice(0, 10)
           .map((x, i) => `${i + 1}. ${x.user.username}`)
           .join(', ')}... Check out the full leaderboard.`}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/leaderboard/${selectedLeaderboard?.id ?? 'overall'}`,
-            rel: 'canonical',
-          },
-        ]}
+        canonical={`/leaderboard/${selectedLeaderboard?.id ?? 'overall'}`}
       />
       <Container size="lg">
         <ContainerGrid2 gutter="xl">

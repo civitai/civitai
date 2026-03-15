@@ -14,7 +14,7 @@ type CivitaiResource = {
 };
 
 // #region [helpers]
-const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const hashesPrefix = ', Hashes: ';
 const civitaiResources = /, Civitai resources:\s*(\[\{.*?\}\])/;
 const civitaiMetadataPrefix = ', Civitai metadata: ';
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
@@ -178,10 +178,10 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     }
 
     // Extract Hashes
-    const hashes = detailsLine?.match(hashesRegex)?.[1];
-    if (hashes && detailsLine) {
-      metadata.hashes = JSON.parse(hashes);
-      detailsLine = detailsLine.replace(hashesRegex, '');
+    const hashesResult = detailsLine ? extractBalancedJson(detailsLine, hashesPrefix) : null;
+    if (hashesResult && detailsLine) {
+      metadata.hashes = JSON.parse(hashesResult.json);
+      detailsLine = detailsLine.slice(0, hashesResult.start) + detailsLine.slice(hashesResult.end);
     }
 
     // Extract Civitai Resources
@@ -265,6 +265,29 @@ export const automaticMetadataProcessor = createMetadataProcessor({
         name: metadata['Model'] as string,
         hash: metadata['Model hash'] as string,
       });
+    }
+
+    // Extract Refiner hash
+    if (metadata['Refiner'] && metadata['Refiner hash']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      if (!metadata.hashes['refiner'])
+        metadata.hashes['refiner'] = metadata['Refiner hash'] as string;
+
+      resources.push({
+        type: 'model',
+        name: (metadata['Refiner'] as string).replace(/\.[^/.]+$/, ''),
+        hash: metadata['Refiner hash'] as string,
+      });
+    }
+
+    // Extract Size into width/height
+    if (metadata['Size'] && typeof metadata['Size'] === 'string') {
+      const [w, h] = (metadata['Size'] as string).split('x').map(Number);
+      if (w && h) {
+        metadata.width = w;
+        metadata.height = h;
+      }
+      delete metadata['Size'];
     }
 
     // Extract hypernetwork details

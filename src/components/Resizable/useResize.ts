@@ -33,7 +33,7 @@ export const useResize = (options: Props) => {
   } = options ?? {};
   const [ref, setRef] = useState<HTMLElement | null>(null);
   const [resizerRef, setResizerRef] = useState<HTMLElement | null>(null);
-  const [isResizing, setIsResizing] = useState(false);
+  const isResizing = useRef(false);
   const frame = useRef(0);
 
   useEffect(() => {
@@ -46,21 +46,28 @@ export const useResize = (options: Props) => {
 
   const mouseMoveClient = orientation === 'horizontal' ? 'clientX' : 'clientY';
 
-  const startResizing = useCallback((e: MouseEvent) => {
+  const startResizing = useCallback((e: MouseEvent | TouchEvent) => {
     e.preventDefault();
-    setIsResizing(true);
+    isResizing.current = true;
   }, []);
 
   const stopResizing = useCallback(() => {
-    setIsResizing(false);
+    isResizing.current = false;
     if (frame.current) cancelAnimationFrame(frame.current);
   }, []);
 
+  const getClientPosition = (e: MouseEvent | TouchEvent) => {
+    if ('touches' in e) {
+      return orientation === 'horizontal' ? e.touches[0].clientX : e.touches[0].clientY;
+    }
+    return e[mouseMoveClient];
+  };
+
   const resize = useCallback(
-    (mouseMoveEvent: MouseEvent) => {
-      if (isResizing && ref) {
+    (moveEvent: MouseEvent | TouchEvent) => {
+      if (isResizing.current && ref) {
         const getWidth = () => {
-          const clientPosition = mouseMoveEvent[mouseMoveClient];
+          const clientPosition = getClientPosition(moveEvent);
           const width = resizePosition
             ? clientPosition - ref.getBoundingClientRect()[clientRectDict[resizePosition]]
             : clientPosition;
@@ -77,17 +84,23 @@ export const useResize = (options: Props) => {
         });
       }
     },
-    [isResizing] // eslint-disable-line
+    [ref, mouseMoveClient, resizePosition, minWidth, maxWidth, name] // eslint-disable-line
   );
 
   useEffect(() => {
     window.addEventListener('mousemove', resize);
     window.addEventListener('mouseup', stopResizing);
+    window.addEventListener('touchmove', resize, { passive: false });
+    window.addEventListener('touchend', stopResizing);
     resizerRef?.addEventListener('mousedown', startResizing);
+    resizerRef?.addEventListener('touchstart', startResizing, { passive: false });
     return () => {
       window.removeEventListener('mousemove', resize);
       window.removeEventListener('mouseup', stopResizing);
+      window.removeEventListener('touchmove', resize);
+      window.removeEventListener('touchend', stopResizing);
       resizerRef?.removeEventListener('mousedown', startResizing);
+      resizerRef?.removeEventListener('touchstart', startResizing);
       if (frame.current) cancelAnimationFrame(frame.current);
     };
   }, [resize, stopResizing, resizerRef, ref, startResizing]);

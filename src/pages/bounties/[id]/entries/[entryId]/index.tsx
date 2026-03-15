@@ -62,7 +62,6 @@ import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -158,12 +157,7 @@ export default function BountyEntryDetailsPage({
       title={`Civitai | ${bounty?.name} | ${user?.username}`}
       images={bountyEntry?.images}
       description={bounty?.description}
-      links={[
-        {
-          href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/entries/${bountyEntry.id}`,
-          rel: 'canonical',
-        },
-      ]}
+      canonical={`/bounties/${bounty.id}/entries/${bountyEntry.id}`}
       deIndex={bounty?.availability === Availability.Unsearchable}
     />
   );

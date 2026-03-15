@@ -66,6 +66,7 @@ export default function Safety({
       <Meta
         title="Safety Center | Policies and Guidelines"
         description="Our policies and guidelines for safety"
+        canonical="/safety"
       />
       <div className={classes.hero}>
         <Container size="md">

@@ -504,55 +504,59 @@ export const getPostsInfinite = async ({
 
   return {
     nextCursor,
-    items: withSpan('post:getInfinite:transform', () => postsRaw
-      // remove unlisted resources the user has no access to:
-      .filter((p) => {
-        // Allow mods and owners to view all.
-        if (user?.isModerator || p.userId === user?.id) return true;
+    items: withSpan('post:getInfinite:transform', () =>
+      postsRaw
+        // remove unlisted resources the user has no access to:
+        .filter((p) => {
+          // Allow mods and owners to view all.
+          if (user?.isModerator || p.userId === user?.id) return true;
 
-        // Hide posts from unpublished model versions:
-        if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
-          return false;
-        }
-
-        // Hide posts from collections the user has no access to:
-        if (p.collectionId) {
-          const collection = collections.find((x) => x.id === p.collectionId);
-          if (!collection) return false;
-
-          if (
-            collection.read !== CollectionReadConfiguration.Public &&
-            !collection?.contributors[0]?.permissions.includes(CollectionContributorPermission.VIEW)
-          ) {
+          // Hide posts from unpublished model versions:
+          if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
             return false;
           }
-        }
 
-        return true;
-      })
-      .map(({ userId: creatorId, ...post }) => {
-        const _images = images.filter((x) => x.postId === post.id);
-        const { username, image, deletedAt } = userData[creatorId] || {};
+          // Hide posts from collections the user has no access to:
+          if (p.collectionId) {
+            const collection = collections.find((x) => x.id === p.collectionId);
+            if (!collection) return false;
 
-        return {
-          ...post,
-          imageCount: _images.length,
-          user: {
-            id: creatorId,
-            username,
-            image,
-            deletedAt,
-            cosmetics: [] as Awaited<ReturnType<typeof getCosmeticsForUsers>>[string],
-            profilePicture: null as
-              | Awaited<ReturnType<typeof getProfilePicturesForUsers>>[string]
-              | null,
-          },
-          stats: postStats[post.id] ?? null,
-          images: _images,
-          cosmetic: cosmetics[post.id] ?? null,
-        };
-      })
-      .filter((x) => x.imageCount !== 0)),
+            if (
+              collection.read !== CollectionReadConfiguration.Public &&
+              !collection?.contributors[0]?.permissions.includes(
+                CollectionContributorPermission.VIEW
+              )
+            ) {
+              return false;
+            }
+          }
+
+          return true;
+        })
+        .map(({ userId: creatorId, ...post }) => {
+          const _images = images.filter((x) => x.postId === post.id);
+          const { username, image, deletedAt } = userData[creatorId] || {};
+
+          return {
+            ...post,
+            imageCount: _images.length,
+            user: {
+              id: creatorId,
+              username,
+              image,
+              deletedAt,
+              cosmetics: [] as Awaited<ReturnType<typeof getCosmeticsForUsers>>[string],
+              profilePicture: null as
+                | Awaited<ReturnType<typeof getProfilePicturesForUsers>>[string]
+                | null,
+            },
+            stats: postStats[post.id] ?? null,
+            images: _images,
+            cosmetic: cosmetics[post.id] ?? null,
+          };
+        })
+        .filter((x) => x.imageCount !== 0)
+    ),
   };
 };
 

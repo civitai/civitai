@@ -209,6 +209,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
         <Meta
           title={`${club.name} - Club hosted by ${club.user.username}`}
           description={club.description ?? undefined}
+          deIndex={true}
         />
       )}
       <Container fluid p={0} mt={club.headerImage ? '-md' : ''}>

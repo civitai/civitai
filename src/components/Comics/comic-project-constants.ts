@@ -34,6 +34,13 @@ export const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; h
       { label: '3:4', width: 1104, height: 1472 },
       { label: '9:16', width: 928, height: 1664 },
     ],
+    Grok: [
+      { label: '16:9', width: 1824, height: 1024 },
+      { label: '4:3', width: 1184, height: 888 },
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:4', width: 888, height: 1184 },
+      { label: '9:16', width: 1024, height: 1824 },
+    ],
   };
 
 export const COMIC_MODEL_MAX_IMAGES: Record<string, number> = {
@@ -42,6 +49,7 @@ export const COMIC_MODEL_MAX_IMAGES: Record<string, number> = {
   Seedream: 7,
   OpenAI: 7,
   Qwen: 3,
+  Grok: 7,
 };
 
 export const COMIC_MODEL_OPTIONS = [
@@ -50,6 +58,7 @@ export const COMIC_MODEL_OPTIONS = [
   { value: 'Seedream', label: 'Seedream v4.5' },
   { value: 'OpenAI', label: 'OpenAI GPT-Image' },
   { value: 'Qwen', label: 'Qwen' },
+  { value: 'Grok', label: 'Grok Imagine' },
 ];
 
 export const genreOptions = Object.entries(ComicGenre).map(([key, value]) => ({

@@ -84,6 +84,7 @@ import {
   getUserPurchasedRewards,
   getUsers,
   getUserSettings,
+  setDismissedAlerts,
   getUsersWithSearch,
   isUsernamePermitted,
   setLeaderboardEligibility,
@@ -1351,15 +1352,37 @@ export const dismissAlertHandler = async ({
   input,
   ctx,
 }: {
+  input: { alertId: string; dismiss: boolean };
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const { dismissedAlerts = [] } = await getUserSettings(id);
+
+    const updated = input.dismiss
+      ? [...new Set([...dismissedAlerts, input.alertId])]
+      : dismissedAlerts.filter((a: string) => a !== input.alertId);
+
+    await setDismissedAlerts(id, updated);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const restoreAlertHandler = async ({
+  input,
+  ctx,
+}: {
   input: { alertId: string };
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const { id } = ctx.user;
     const { dismissedAlerts = [] } = await getUserSettings(id);
-    dismissedAlerts.push(input.alertId);
 
-    await setUserSetting(id, { dismissedAlerts });
+    await setUserSetting(id, {
+      dismissedAlerts: dismissedAlerts.filter((a: string) => a !== input.alertId),
+    });
   } catch (error) {
     throw throwDbError(error);
   }

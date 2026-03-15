@@ -1,16 +1,17 @@
 import { Badge, Button, Modal, Textarea } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { useRef, useState, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type Konva from 'konva';
+import dynamic from 'next/dynamic';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { DrawingCanvas } from './DrawingCanvas';
 import { DrawingToolbar } from './DrawingToolbar';
 import type {
   DrawingEditorModalProps,
   DrawingTool,
   DrawingElement,
   DrawingTextElement,
+  DrawingImageElement,
 } from './drawing.types';
 import {
   DEFAULT_BRUSH_COLOR,
@@ -22,6 +23,12 @@ import {
 } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
 import { showErrorNotification } from '~/utils/notifications';
+
+// Dynamically import DrawingCanvas (uses react-konva which requires browser APIs)
+const DrawingCanvas = dynamic(
+  () => import('./DrawingCanvas').then((mod) => mod.DrawingCanvas),
+  { ssr: false }
+);
 
 const MAX_CANVAS_WIDTH = 700;
 const MAX_CANVAS_HEIGHT = 500;
@@ -37,6 +44,7 @@ export function DrawingEditorModal({
   onConfirm,
   onCancel,
   initialLines = [],
+  confirmLabel = 'Apply',
 }: DrawingEditorModalProps) {
   const dialog = useDialogContext();
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -133,6 +141,15 @@ export function DrawingEditorModal({
     fontSize?: number; // Font size to preserve when editing
   } | null>(null);
 
+  // ── Image overlay state ──
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [overlayImages, setOverlayImages] = useState<Map<string, HTMLImageElement>>(new Map());
+
+  // Trigger file picker for image overlay
+  const handleAddImage = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
   // Handle keyboard shortcuts using Mantine's useHotkeys
   useHotkeys(
     [
@@ -176,6 +193,107 @@ export function DrawingEditorModal({
       MAX_CANVAS_HEIGHT
     );
   }, [sourceImage.width, sourceImage.height, isMobile]);
+
+  // Handle file selection for image overlay
+  const handleImageFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      // Reset input so the same file can be selected again
+      e.target.value = '';
+
+      // Limit file size to 10MB to avoid bloating undo history with huge data URLs
+      if (file.size > 10 * 1024 * 1024) {
+        showErrorNotification({ title: 'Image too large', error: new Error('Please select an image under 10MB') });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onerror = () => {
+        showErrorNotification({ title: 'Failed to read image', error: new Error('Could not read the selected file') });
+      };
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const img = new window.Image();
+        img.onerror = () => {
+          showErrorNotification({ title: 'Invalid image', error: new Error('The selected file could not be loaded as an image') });
+        };
+        img.onload = () => {
+          // Scale to max 40% of canvas
+          const maxW = canvasDimensions.width * 0.4;
+          const maxH = canvasDimensions.height * 0.4;
+          let w = img.naturalWidth;
+          let h = img.naturalHeight;
+          if (w > maxW || h > maxH) {
+            const scale = Math.min(maxW / w, maxH / h);
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+
+          const newElement: DrawingImageElement = {
+            type: 'image',
+            id: generateElementId(),
+            x: Math.round((canvasDimensions.width - w) / 2),
+            y: Math.round((canvasDimensions.height - h) / 2),
+            width: w,
+            height: h,
+            imageUrl: dataUrl,
+            color: '#000000',
+            strokeWidth: 0,
+          };
+
+          // Add to overlay map
+          setOverlayImages((prev) => {
+            const next = new Map(prev);
+            next.set(newElement.id, img);
+            return next;
+          });
+
+          setElements((prev) => [...prev, newElement]);
+          setTool('select');
+          setSelectedId(newElement.id);
+          setTimeout(commitToHistory, 0);
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(file);
+    },
+    [canvasDimensions, commitToHistory]
+  );
+
+  // Sync overlayImages map when elements change (handles undo/redo, clear)
+  useEffect(() => {
+    const imageElements = elements.filter((el): el is DrawingImageElement => el.type === 'image');
+    const currentIds = new Set(imageElements.map((el) => el.id));
+
+    // Remove images from map that are no longer in elements
+    setOverlayImages((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const key of next.keys()) {
+        if (!currentIds.has(key)) {
+          next.delete(key);
+          changed = true;
+        }
+      }
+      // Load any image elements not yet in the map (e.g., from undo)
+      for (const el of imageElements) {
+        if (!next.has(el.id)) {
+          changed = true;
+          const img = new window.Image();
+          img.onload = () => {
+            setOverlayImages((p) => {
+              const n = new Map(p);
+              n.set(el.id, img);
+              return n;
+            });
+          };
+          img.src = el.imageUrl;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [elements]);
 
   // Callback to capture the stage instance when it's ready
   const handleStageReady = useCallback((stage: Konva.Stage) => {
@@ -340,7 +458,7 @@ export function DrawingEditorModal({
               Cancel
             </Button>
             <Button size="sm" onClick={handleConfirm} loading={loading} disabled={!hasChanges}>
-              Apply
+              {confirmLabel}
             </Button>
           </div>
         </div>
@@ -372,6 +490,7 @@ export function DrawingEditorModal({
               onSelectedIdChange={setSelectedId}
               onCommit={commitToHistory}
               editingTextId={textInput?.editingId}
+              overlayImages={overlayImages}
             />
 
             {/* Text Input Overlay - positioned relative to canvas */}
@@ -431,10 +550,20 @@ export function DrawingEditorModal({
             onUndo={handleUndo}
             canUndo={canUndo}
             onDownload={handleDownload}
+            onAddImage={handleAddImage}
             isMobile={isMobile}
           />
         </div>
       </div>
+
+      {/* Hidden file input for image overlays */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleImageFileSelect}
+      />
     </Modal>
   );
 }

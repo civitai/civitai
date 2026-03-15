@@ -147,15 +147,24 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const isTxt2Img = request.params?.workflow === 'txt2img';
+    const isEnhancement = workflowDefinition?.enhancement === true;
+
+    // For enhancement workflows, use the first step's params/resources — the StepData getter
+    // resolves the full original generation context (falling back to workflow metadata as needed).
+    // For regular workflows, use workflow-level params/resources directly.
+    const firstStep = isEnhancement ? request.steps[0] : null;
+    const replayParams = firstStep ? firstStep.params : request.params;
+    const replayResources = firstStep ? firstStep.resources : request.resources;
+
+    const isTxt2Img = replayParams?.workflow === 'txt2img';
     generationGraphStore.setData({
       params: {
-        ...request.params,
+        ...replayParams,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
       },
-      resources: request.resources,
+      resources: replayResources,
       runType: 'replay',
       remixOfId: request.remixOfId,
     });
@@ -370,7 +379,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
   const unstable = unstableResources?.includes(id);
 
   return (
-    <Button.Group>
+    <Button.Group className="max-w-full">
       <Button
         size="compact-sm"
         variant="default"
@@ -385,6 +394,8 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
           ) : undefined
         }
         color={unstable ? 'yellow' : undefined}
+        className="min-w-0 flex-1"
+        classNames={{ label: 'truncate' }}
       >
         {model.name} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}

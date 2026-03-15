@@ -42,7 +42,7 @@ export default function ClubsPage() {
       <Meta
         title="Join & Support creators on Civitai Clubs"
         description="Create, join and share your own Civitai Clubs."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/bounties`, rel: 'canonical' }]}
+        canonical="/bounties"
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.club}

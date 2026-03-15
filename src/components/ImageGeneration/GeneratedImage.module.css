@@ -32,6 +32,27 @@
   }
 }
 
+.actionsFooter {
+  border-top: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-7));
+  gap: 4px;
+  padding: 4px;
+}
+
+.footerActionIcon {
+  /* Override Mantine's fixed square size so buttons fill the bar equally */
+  --ai-size: auto !important;
+  flex: 1;
+  align-self: stretch;
+}
+
+.footerDivider {
+  width: 1px;
+  height: 16px;
+  align-self: center;
+  background: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
 .favoriteButton {
   background: rgba(240, 62, 62, 0.5);
 }
@@ -44,8 +65,28 @@
   padding: 4px;
 }
 
+.desktopOnly {
+  /* Hide on small containers */
+  @container (max-width: 420px) {
+    display: none !important;
+  }
+  /* Hide on touch/coarse-pointer devices regardless of container size */
+  @media (pointer: coarse) {
+    display: none !important;
+  }
+}
+
+.mobileOnly {
+  /* Hide only when large container AND precise pointer (mouse) — show otherwise */
+  @container (min-width: 421px) {
+    @media (pointer: fine) {
+      display: none !important;
+    }
+  }
+}
+
 .scrollableDropdown {
-  @media (max-height: 700px) {
+  @media (max-height: 900px) {
     max-height: calc(90dvh - 32px);
     overflow-y: auto;
   }
