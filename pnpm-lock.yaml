@@ -4,10 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  client: link:../../Users/bkdie/AppData/Local/pnpm/global/5/node_modules/@civitai/client
-  '@civitai/client': link:../civitai-client-javascript
-
 importers:
 
   .:
@@ -294,12 +290,6 @@ importers:
       circular-dependency-plugin:
         specifier: ^5.2.2
         version: 5.2.2(webpack@5.101.0(@swc/core@1.15.11(@swc/helpers@0.5.17))(esbuild@0.25.8))
-      civitai-client-javascript:
-        specifier: link:../../c/Work/civitai-client-javascript
-        version: link:../../c/Work/civitai-client-javascript
-      client:
-        specifier: link:../../Users/bkdie/AppData/Local/pnpm/global/5/node_modules/@civitai/client
-        version: link:../../Users/bkdie/AppData/Local/pnpm/global/5/node_modules/@civitai/client
       cloudflare:
         specifier: ^2.9.1
         version: 2.9.1
