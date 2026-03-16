@@ -2129,18 +2129,19 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const meiliStart = Date.now();
   const result = await searchFn(input);
 
-  // Shadow mode: fire BitDex async alongside Meili for comparison
+  // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
+  // that primary uses, compare results against Meili, but serve Meili results.
   if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
-    getImagesFromBitdexPreFilter(input)
+    fetchBitdexPrimary(input)
       .then((bitdexResult) => {
         if (bitdexResult) {
           compareBitdexResults({
-            bitdexIds: bitdexResult.ids,
+            bitdexIds: bitdexResult.data.map((d) => d.id),
             meiliIds: result.data.map((i: { id: number }) => i.id),
-            bitdexTotalMatched: bitdexResult.total_matched,
+            bitdexTotalMatched: bitdexResult.data.length,
             meiliTotalMatched: result.data.length,
-            bitdexElapsedMs: bitdexResult.elapsed_us / 1000,
+            bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
             meiliElapsedMs: meiliElapsed,
             sort: input.sort ?? 'Newest',
             hasPeriod: !!input.period,
