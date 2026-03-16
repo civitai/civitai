@@ -21,6 +21,7 @@ import {
   imagesNode,
   negativePromptNode,
   seedNode,
+  type AspectRatioOption,
   type ResourceData,
 } from './common';
 
@@ -54,8 +55,8 @@ const nanoBananaModeVersionOptions = [
 // Aspect Ratios & Resolutions
 // =============================================================================
 
-/** Nano Banana Pro aspect ratios */
-const nanoBananaProAspectRatios = [
+/** Base aspect ratios at 1K resolution */
+const nanoBananaBaseAspectRatios: AspectRatioOption[] = [
   { label: '16:9', value: '16:9', width: 1920, height: 1080 },
   { label: '4:3', value: '4:3', width: 1440, height: 1080 },
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
@@ -65,6 +66,22 @@ const nanoBananaProAspectRatios = [
 
 /** Resolution options for Nano Banana Pro */
 const resolutionOptions = ['1K', '2K', '4K'] as const;
+
+const resolutionMultiplier: Record<string, number> = {
+  '1K': 1,
+  '2K': 2,
+  '4K': 4,
+};
+
+/** Get aspect ratio options scaled to the selected resolution */
+function getNanoBananaAspectRatios(resolution: string): AspectRatioOption[] {
+  const multiplier = resolutionMultiplier[resolution] ?? 1;
+  return nanoBananaBaseAspectRatios.map((ar) => ({
+    ...ar,
+    width: ar.width * multiplier,
+    height: ar.height * multiplier,
+  }));
+}
 
 // =============================================================================
 // Mode Subgraphs
@@ -87,7 +104,6 @@ const standardModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>().node
 /** Pro mode subgraph: negativePrompt, aspectRatio, resolution, seed */
 const proModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
   .node('negativePrompt', negativePromptNode())
-  .node('aspectRatio', aspectRatioNode({ options: nanoBananaProAspectRatios, defaultValue: '1:1' }))
   .node('resolution', {
     input: z.enum(resolutionOptions).optional(),
     output: z.enum(resolutionOptions),
@@ -96,11 +112,21 @@ const proModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
       options: resolutionOptions.map((r) => ({ label: r, value: r })),
     },
   })
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '1K';
+      return aspectRatioNode({
+        options: getNanoBananaAspectRatios(resolution),
+        defaultValue: '1:1',
+      });
+    },
+    ['resolution']
+  )
   .node('seed', seedNode());
 
 /** V2 mode subgraph: aspectRatio, resolution, enableWebSearch, seed */
 const v2ModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: nanoBananaProAspectRatios, defaultValue: '1:1' }))
   .node('resolution', {
     input: z.enum(resolutionOptions).optional(),
     output: z.enum(resolutionOptions),
@@ -109,6 +135,17 @@ const v2ModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
       options: resolutionOptions.map((r) => ({ label: r, value: r })),
     },
   })
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '1K';
+      return aspectRatioNode({
+        options: getNanoBananaAspectRatios(resolution),
+        defaultValue: '1:1',
+      });
+    },
+    ['resolution']
+  )
   .node('enableWebSearch', {
     input: z.boolean().optional(),
     output: z.boolean(),
