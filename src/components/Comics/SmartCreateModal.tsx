@@ -10,9 +10,9 @@ interface SmartCreateModalProps {
   opened: boolean;
   onClose: () => void;
   references: { id: number; name: string }[];
-  planCost: number;
-  panelCost: number;
-  enhanceCost: number;
+  planCost: number | null;
+  panelCost: number | null;
+  enhanceCost: number | null;
   effectiveModel: string;
   activeAspectRatios: { label: string; width: number; height: number }[];
   onModelChange: (value: string | null) => void;
@@ -133,10 +133,10 @@ export function SmartCreateModal({
               Cancel
             </Button>
             <BuzzTransactionButton
-              buzzAmount={planCost}
-              label={isPlanningPanels ? 'Planning...' : 'Plan Panels'}
+              buzzAmount={planCost ?? 0}
+              label={planCost == null ? 'Loading cost...' : isPlanningPanels ? 'Planning...' : 'Plan Panels'}
               loading={isPlanningPanels}
-              disabled={!smartStory.trim()}
+              disabled={!smartStory.trim() || planCost == null}
               onPerformTransaction={handlePlanPanels}
               showPurchaseModal
             />
@@ -230,13 +230,9 @@ export function SmartCreateModal({
           />
 
           <Text size="sm" c="dimmed">
-            Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
-            {panelCost > 0 ? panelCost + (smartEnhance ? enhanceCost : 0) : '...'} ={' '}
-            {panelCost > 0
-              ? smartPanels.filter((p) => p.prompt.trim()).length *
-                (panelCost + (smartEnhance ? enhanceCost : 0))
-              : 'Estimating...'}{' '}
-            Buzz
+            {panelCost != null
+              ? `Cost: ${smartPanels.filter((p) => p.prompt.trim()).length} panels x ${panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0)} = ${smartPanels.filter((p) => p.prompt.trim()).length * (panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0))} Buzz`
+              : 'Calculating cost...'}
           </Text>
 
           <Group justify="space-between">
@@ -250,11 +246,11 @@ export function SmartCreateModal({
             <BuzzTransactionButton
               buzzAmount={
                 smartPanels.filter((p) => p.prompt.trim()).length *
-                (panelCost + (smartEnhance ? enhanceCost : 0))
+                ((panelCost ?? 0) + (smartEnhance ? (enhanceCost ?? 0) : 0))
               }
-              label={isCreating ? 'Creating...' : 'Create Chapter'}
+              label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
-              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0}
+              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null}
               onPerformTransaction={handleSmartCreate}
               showPurchaseModal
             />

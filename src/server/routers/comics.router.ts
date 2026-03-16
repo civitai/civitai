@@ -1132,9 +1132,7 @@ export const comicsRouter = router({
           disablePoi: false,
           priority: 'low',
           sourceImage: null,
-          // Pass a dummy image so the estimate reflects img2img pricing (references are
-          // included in actual generation, which changes the cost).
-          images: [{ url: getEdgeUrl('placeholder', { original: true }), width: defaultDims.width, height: defaultDims.height }],
+          images: null,
         },
         resources: [{ id: modelConfig.versionId, strength: 1 }],
         tags: ['comics'],

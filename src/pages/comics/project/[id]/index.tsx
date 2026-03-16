@@ -144,22 +144,22 @@ function ProjectWorkspace() {
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana';
   const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
 
-  const { data: costEstimate } = trpc.comics.getPanelCostEstimate.useQuery(
+  const { data: costEstimate, isLoading: isCostLoading, error: costError } = trpc.comics.getPanelCostEstimate.useQuery(
     { baseModel: effectiveModel },
-    { staleTime: 5 * 60 * 1000 }
+    { staleTime: 5 * 60 * 1000, retry: 2 }
   );
-  const panelCost = costEstimate?.cost ?? 25;
+  const panelCost = costEstimate?.cost ?? null;
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
     { staleTime: 5 * 60 * 1000 }
   );
-  const enhanceCost = enhanceCostEstimate?.cost ?? 0;
+  const enhanceCost = enhanceCostEstimate?.cost ?? null;
 
   const { data: planCostEstimate } = trpc.comics.getPlanChapterCostEstimate.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
   });
-  const planCost = planCostEstimate?.cost ?? 0;
+  const planCost = planCostEstimate?.cost ?? null;
 
   // ── Active chapter ──
   useEffect(() => {
