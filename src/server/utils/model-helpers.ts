@@ -131,7 +131,7 @@ export type GroupedFileVariants<T> = {
   safeTensorVariants: T[];
   ggufVariants: T[];
   otherFormatVariants: T[];
-  components: Partial<Record<ModelFileComponentType, T[]>>;
+  requiredComponents: Partial<Record<ModelFileComponentType, T[]>>;
   optionalFiles: T[];
 };
 
@@ -199,7 +199,7 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
     safeTensorVariants: [],
     ggufVariants: [],
     otherFormatVariants: [],
-    components: {},
+    requiredComponents: {},
     optionalFiles: [],
   };
 
@@ -226,15 +226,14 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
         result.otherFormatVariants.push(file);
       }
     } else {
-      // Group component files by component type
+      // Group component files by component type, using isRequired to distinguish
       const componentType = metadata.componentType ?? inferComponentType(fileType);
-      if (componentType) {
-        if (!result.components[componentType]) {
-          result.components[componentType] = [];
+      if (componentType && metadata.isRequired) {
+        if (!result.requiredComponents[componentType]) {
+          result.requiredComponents[componentType] = [];
         }
-        result.components[componentType]!.push(file);
+        result.requiredComponents[componentType]!.push(file);
       } else {
-        // Files without a component type are optional (workflows, configs, etc.)
         result.optionalFiles.push(file);
       }
     }
@@ -246,8 +245,8 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
   result.otherFormatVariants = sortByQuality(result.otherFormatVariants);
 
   // Sort component groups by quality
-  for (const key of Object.keys(result.components) as ModelFileComponentType[]) {
-    result.components[key] = sortByQuality(result.components[key]!);
+  for (const key of Object.keys(result.requiredComponents) as ModelFileComponentType[]) {
+    result.requiredComponents[key] = sortByQuality(result.requiredComponents[key]!);
   }
 
   return result;

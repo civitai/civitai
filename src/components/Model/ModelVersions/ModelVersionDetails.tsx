@@ -216,7 +216,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
-    modelFilesVisible.length === 0 && Object.keys(groupedFiles.components).length > 0;
+    modelFilesVisible.length === 0 && Object.keys(groupedFiles.requiredComponents).length > 0;
 
   const displayCivitaiLink =
     civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
@@ -1045,7 +1045,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               </Accordion.Item>
             )}
             {/* Required Components Section */}
-            {isDownloadable && Object.keys(groupedFiles.components).length > 0 && (
+            {isDownloadable && Object.keys(groupedFiles.requiredComponents).length > 0 && (
               <RequiredComponentsSection
                 groupedFiles={groupedFiles}
                 versionId={version.id}

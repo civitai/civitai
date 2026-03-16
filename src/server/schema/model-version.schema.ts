@@ -230,6 +230,7 @@ export const linkedComponentSettingsSchema = z.object({
   modelName: z.string(),
   versionName: z.string(),
   fileName: z.string(),
+  isRequired: z.boolean().optional(),
 });
 
 export type LinkedComponentSettings = z.infer<typeof linkedComponentSettingsSchema>;

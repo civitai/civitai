@@ -189,6 +189,7 @@ export const getModelVersionHandler = async ({
         versionName: s.versionName,
         fileId: s.fileId,
         fileName: s.fileName,
+        isRequired: s.isRequired,
       };
     });
 

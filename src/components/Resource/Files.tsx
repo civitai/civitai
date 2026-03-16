@@ -13,6 +13,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
   Badge,
+  Switch,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
@@ -24,12 +25,11 @@ import {
   IconCloudUpload,
   IconLink,
   IconPlus,
-  IconPuzzle,
   IconRefresh,
   IconTrash,
   IconX,
   IconFile3d,
-  IconFileSettings,
+  IconLayersLinked,
 } from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
 import { useState } from 'react';
@@ -48,7 +48,7 @@ import { trpc } from '~/utils/trpc';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
-import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
+import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -104,17 +104,16 @@ export function Files() {
     fileExtensions,
     maxFiles,
     baseModel,
+    acceptedModelFiles,
     addLinkedComponent,
     removeLinkedComponent,
   } = useFilesContext();
   const queryUtils = trpc.useUtils();
 
-  // Categorize files by type
-  const modelFiles = files.filter((f) => ['Model', 'Pruned Model'].includes(f.type ?? ''));
-  const requiredComponentFileTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
-  const requiredComponents = files.filter((f) => requiredComponentFileTypes.includes(f.type ?? ''));
-  const optionalFiles = files.filter(
-    (f) => !['Model', 'Pruned Model', ...requiredComponentFileTypes].includes(f.type ?? '')
+  // Dynamic 2-way file categorization based on model type
+  const modelFiles = files.filter((f) => acceptedModelFiles.includes(f.type as ModelFileType));
+  const additionalFiles = files.filter(
+    (f) => !acceptedModelFiles.includes(f.type as ModelFileType)
   );
 
   const handleInlineDrop = (droppedFiles: File[], defaultType?: ModelFileType) => {
@@ -146,6 +145,7 @@ export function Files() {
         versionName: resource.name,
         fileId: primaryFile.id,
         fileName: primaryFile.name,
+        isRequired: true,
       });
     } catch {
       showErrorNotification({ error: new Error('Failed to fetch model version details') });
@@ -175,7 +175,7 @@ export function Files() {
     });
 
     openResourceSelectModal({
-      title: 'Link Required Component',
+      title: 'Link Component',
       onSelect: handleLinkResource,
       options: {
         resources,
@@ -185,7 +185,7 @@ export function Files() {
     });
   };
 
-  const hasRequiredComponents = requiredComponents.length > 0 || linkedComponents.length > 0;
+  const hasAdditionalContent = additionalFiles.length > 0 || linkedComponents.length > 0;
 
   return (
     <Stack>
@@ -263,40 +263,33 @@ export function Files() {
         </Stack>
       </Card>
 
-      {/* Required Components Section - always visible */}
-      <Card
-        withBorder
-        style={{
-          borderColor: 'rgba(250, 176, 5, 0.3)',
-          backgroundColor: 'rgba(250, 176, 5, 0.03)',
-        }}
-      >
+      {/* Additional Components Section - merged required + optional */}
+      <Card withBorder>
         <Card.Section
           withBorder
           inheritPadding
           py="md"
-          style={{ borderColor: 'rgba(250, 176, 5, 0.2)' }}
+          style={{ borderColor: 'var(--mantine-color-dark-4)' }}
         >
           <Group gap="xs">
-            <IconPuzzle size={20} style={{ color: 'var(--mantine-color-yellow-5)' }} />
+            <IconLayersLinked size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
             <Text fw={600} c="white">
-              Required Components
+              Additional Components
             </Text>
-            <Badge color="yellow" variant="light" size="sm">
-              Users must download
-            </Badge>
           </Group>
           <Text size="sm" c="dimmed" mt={4}>
-            Additional files users need to run this model. Add multiple precision variants if
-            available.
+            Components and files that accompany this model. Mark each as required or optional.
           </Text>
         </Card.Section>
         <Stack gap="sm" p="md">
-          {!hasRequiredComponents && (
+          {!hasAdditionalContent && (
             <Stack gap="xs" align="center" py="md">
-              <IconPuzzle size={32} style={{ color: 'rgba(250, 176, 5, 0.25)' }} />
+              <IconLayersLinked
+                size={32}
+                style={{ color: 'var(--mantine-color-dimmed)', opacity: 0.25 }}
+              />
               <Text size="sm" c="dimmed">
-                No required components added yet
+                No additional components yet
               </Text>
               <Text size="xs" c="dimmed" ta="center" maw={400}>
                 Upload component files like VAE, Text Encoder, or UNet, or link to existing models
@@ -304,19 +297,22 @@ export function Files() {
               </Text>
             </Stack>
           )}
-          {requiredComponents.map((file) => (
-            <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+          {additionalFiles.map((file) => (
+            <FileCard key={file.uuid} data={file} index={files.indexOf(file)} showRequiredToggle />
           ))}
           {linkedComponents.map((component) => (
             <LinkedComponentCard
               key={`${component.componentType}-${component.versionId}`}
               component={component}
               onRemove={removeLinkedComponent}
+              onToggleRequired={(isRequired) => {
+                addLinkedComponent({ ...component, isRequired });
+              }}
             />
           ))}
           <InlineDropzone
-            label="Upload a required component file"
-            onDrop={(files) => handleInlineDrop(files, 'VAE')}
+            label="Upload a component file"
+            onDrop={(files) => handleInlineDrop(files)}
           />
           <Text size="xs" c="dimmed" ta="center">
             or
@@ -329,32 +325,6 @@ export function Files() {
           >
             Link to Existing Model on Civitai
           </Button>
-        </Stack>
-      </Card>
-
-      {/* Optional Files Section - always visible */}
-      <Card withBorder>
-        <Card.Section
-          withBorder
-          inheritPadding
-          py="md"
-          style={{ borderColor: 'var(--mantine-color-dark-4)' }}
-        >
-          <Group gap="xs">
-            <IconFileSettings size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
-            <Text fw={600} c="white">
-              Optional Files
-            </Text>
-          </Group>
-          <Text size="sm" c="dimmed" mt={4}>
-            Workflows, configs, and other helpful files. Not required to use the model.
-          </Text>
-        </Card.Section>
-        <Stack gap="sm" p="md">
-          {optionalFiles.map((file) => (
-            <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
-          ))}
-          <InlineDropzone label="Add optional file" onDrop={(files) => handleInlineDrop(files)} />
         </Stack>
       </Card>
 
@@ -398,9 +368,11 @@ export function Files() {
 function LinkedComponentCard({
   component,
   onRemove,
+  onToggleRequired,
 }: {
   component: LinkedComponent;
   onRemove: (componentType: ModelFileComponentType) => void;
+  onToggleRequired: (isRequired: boolean) => void;
 }) {
   const config = componentTypeConfig[component.componentType] ?? componentTypeConfig.Other;
   const Icon = config.icon;
@@ -453,6 +425,13 @@ function LinkedComponentCard({
               disabled
             />
           </div>
+          <Switch
+            size="xs"
+            label="Required"
+            checked={component.isRequired ?? true}
+            onChange={(e) => onToggleRequired(e.currentTarget.checked)}
+            style={{ marginTop: 18 }}
+          />
           <LegacyActionIcon
             color="red"
             onClick={() => onRemove(component.componentType)}
@@ -467,8 +446,16 @@ function LinkedComponentCard({
 }
 
 // Compact horizontal file card
-function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
-  const { removeFile, fileTypes, modelId } = useFilesContext();
+function FileCard({
+  data: versionFile,
+  index,
+  showRequiredToggle,
+}: {
+  data: FileFromContextProps;
+  index: number;
+  showRequiredToggle?: boolean;
+}) {
+  const { removeFile, updateFile, fileTypes, modelId } = useFilesContext();
   const queryUtils = trpc.useUtils();
   const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
 
@@ -525,6 +512,17 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
           <Text size="xs" c="dimmed">
             {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
           </Text>
+          {showRequiredToggle && !versionFile.isUploading && (
+            <Switch
+              size="xs"
+              label="Required"
+              checked={versionFile.isRequired ?? false}
+              onChange={(e) =>
+                updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
+              }
+              mt={4}
+            />
+          )}
         </div>
         {!versionFile.isUploading && (
           <Group gap="xs" wrap="nowrap" align="flex-end">
@@ -744,6 +742,7 @@ function FileEditForm({
           format: versionFile.format ?? undefined,
           quantType: versionFile.quantType ?? undefined,
           componentType: versionFile.componentType ?? undefined,
+          isRequired: versionFile.isRequired ?? undefined,
         },
       });
     }
@@ -777,6 +776,7 @@ function FileEditForm({
       fp: initialFile.fp,
       quantType: initialFile.quantType,
       componentType: initialFile.componentType,
+      isRequired: initialFile.isRequired,
     });
   };
 
@@ -817,11 +817,13 @@ function FileEditForm({
             else if (newType === 'Text Encoder') suggestedComponentType = 'TextEncoder';
             else if (newType === 'Config') suggestedComponentType = 'Config';
 
+            const requiredTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
             updateFile(versionFile.uuid, {
               type: newType,
               size: null,
               fp: null,
               componentType: suggestedComponentType,
+              isRequired: newType ? requiredTypes.includes(newType) : false,
             });
           }}
         />

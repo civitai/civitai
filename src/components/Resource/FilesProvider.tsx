@@ -4,7 +4,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useState } from 'react';
 import * as z from 'zod';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import type { LinkedComponent } from '~/components/Resource/LinkComponentModal';
+import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
@@ -40,6 +40,7 @@ export type FileFromContextProps = {
   format?: ModelFileFormat | null;
   quantType?: ModelFileQuantType | null;
   componentType?: ModelFileComponentType | null;
+  isRequired?: boolean | null;
   versionId?: number;
   file?: File;
   uuid: string;
@@ -57,6 +58,7 @@ type FilesContextState = {
   baseModel?: string;
   fileExtensions: string[];
   fileTypes: ModelFileType[];
+  acceptedModelFiles: ModelFileType[];
   maxFiles: number;
   onDrop: (files: File[], defaultType?: ModelFileType) => void;
   startUpload: () => Promise<void>;
@@ -98,6 +100,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       format: file.metadata?.format,
       quantType: file.metadata?.quantType,
       componentType: file.metadata?.componentType,
+      isRequired: file.metadata?.isRequired ?? null,
       versionId: version.id,
       uuid: randomId(),
       modelType: model?.type ?? null,
@@ -134,6 +137,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       version?.linkedComponents?.map((c) => ({
         ...c,
         componentType: c.componentType as ModelFileComponentType,
+        isRequired: c.isRequired ?? true,
       })) ?? []
   );
 
@@ -161,6 +165,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           modelName: c.modelName,
           versionName: c.versionName,
           fileName: c.fileName,
+          isRequired: c.isRequired ?? true,
         },
       })),
     });
@@ -169,7 +174,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const addLinkedComponent = (component: LinkedComponent) => {
     const updated = [
       ...linkedComponents.filter((c) => c.componentType !== component.componentType),
-      component,
+      { ...component, isRequired: component.isRequired ?? true },
     ];
     setLinkedComponents(updated);
     persistLinkedComponents(updated);
@@ -258,11 +263,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     // Check component-only model constraint (needs access to linkedComponents)
     const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
     if (modelFiles.length === 0) {
-      const requiredComponentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
-      const uploadedComponents = files.filter(
-        (f) => f.type && requiredComponentTypes.includes(f.type)
-      );
-      const totalComponents = uploadedComponents.length + linkedComponents.length;
+      const uploadedRequiredComponents = files.filter((f) => f.isRequired === true);
+      const requiredLinkedComponents = linkedComponents.filter((c) => c.isRequired !== false);
+      const totalComponents = uploadedRequiredComponents.length + requiredLinkedComponents.length;
       if (totalComponents < 2) {
         showErrorNotification({
           title: 'Insufficient components',
@@ -384,6 +387,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   });
 
   const onDrop = (files: File[], defaultType?: ModelFileType) => {
+    const componentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
     const toUpload = files.map((file) => {
       const inferredType = defaultType ?? inferFileType(file.name);
       return {
@@ -396,6 +400,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         uuid: randomId(),
         isPending: true,
         type: inferredType,
+        isRequired: inferredType ? componentTypes.includes(inferredType) : false,
       };
     }) as FileFromContextProps[];
     setFiles((state) => [...state, ...toUpload]);
@@ -408,6 +413,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     format,
     quantType,
     componentType,
+    isRequired,
     versionId,
     file,
     uuid,
@@ -423,7 +429,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
-          meta: { versionId, type, size, fp, format, quantType, componentType, uuid },
+          meta: { versionId, type, size, fp, format, quantType, componentType, isRequired, uuid },
         },
         async ({ meta, size, backend, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {
@@ -497,6 +503,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         removeFile,
         fileExtensions: acceptedFileTypes,
         fileTypes: acceptedModelFiles,
+        acceptedModelFiles,
         modelId: model?.id,
         baseModel: version?.baseModel ?? undefined,
         maxFiles,

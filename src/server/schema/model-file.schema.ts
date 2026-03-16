@@ -95,6 +95,7 @@ export const modelFileMetadataSchema = z.object({
   fp: z.enum(constants.modelFileFp).nullish(),
   quantType: z.enum(constants.modelFileQuantTypes).nullish(),
   componentType: z.enum(constants.modelFileComponentTypes).nullish(),
+  isRequired: z.boolean().nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
   shareDataset: z.boolean().nullish(),
@@ -148,6 +149,19 @@ export const modelFileUpsertSchema = z.union([
   modelFileCreateSchema.extend({ id: z.undefined() }),
   modelFileUpdateSchema,
 ]);
+
+// Type for linked components (used by FilesProvider and Files)
+export type LinkedComponent = {
+  recommendedResourceId?: number;
+  componentType: ModelFileComponentType;
+  modelId: number;
+  modelName: string;
+  versionId: number;
+  versionName: string;
+  fileId: number;
+  fileName: string;
+  isRequired?: boolean;
+};
 
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
 export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);

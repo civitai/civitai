@@ -132,6 +132,7 @@ declare global {
     fp?: ModelFileFp;
     quantType?: ModelFileQuantType;
     componentType?: ModelFileComponentType;
+    isRequired?: boolean;
   };
 
   // TODO should find a way to merge this with ModelFileMetadata

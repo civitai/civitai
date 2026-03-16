@@ -49,14 +49,7 @@ interface RequiredComponentsSectionProps {
   isPrimary?: boolean;
 }
 
-// Required component types (shown with yellow warning styling)
-const requiredComponentTypes: ModelFileComponentType[] = [
-  'VAE',
-  'TextEncoder',
-  'UNet',
-  'CLIPVision',
-  'ControlNet',
-];
+// Component types are now data-driven via groupedFiles.requiredComponents
 
 export function RequiredComponentsSection({
   groupedFiles,
@@ -72,7 +65,7 @@ export function RequiredComponentsSection({
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
-  // Get only required component types that have files
+  // Get only required component types that have files (now data-driven)
   const requiredComponents = useMemo(() => {
     const result: Array<{
       type: ModelFileComponentType;
@@ -80,19 +73,18 @@ export function RequiredComponentsSection({
       config: (typeof componentTypeConfig)[ModelFileComponentType];
     }> = [];
 
-    for (const componentType of requiredComponentTypes) {
-      const files = groupedFiles.components[componentType];
+    for (const [componentType, files] of Object.entries(groupedFiles.requiredComponents)) {
       if (files && files.length > 0) {
         result.push({
-          type: componentType,
+          type: componentType as ModelFileComponentType,
           files,
-          config: componentTypeConfig[componentType],
+          config: componentTypeConfig[componentType as ModelFileComponentType],
         });
       }
     }
 
     return result;
-  }, [groupedFiles.components]);
+  }, [groupedFiles.requiredComponents]);
 
   // Track selected file for each component type
   const [selectedFiles, setSelectedFiles] = useState<
