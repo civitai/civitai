@@ -274,8 +274,8 @@ export const getInfiniteImagesHandler = async ({
 
   // Check BitDex mode first — if active (shadow or primary), always route through
   // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
-  // Collections are supported via collectionIds multi_value field in BitDex.
-  const bitdexMode = await getFliptVariant(
+  // Skip BitDex for collection queries — collection membership requires relational joins.
+  const bitdexMode = input.collectionId ? null : await getFliptVariant(
     FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
     user?.id?.toString() || 'anonymous',
     buildFliptContext(user)
@@ -343,8 +343,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const { user, features } = ctx;
 
     // Check BitDex mode — if active, always route through getAllImagesIndex.
-    // Collections supported via collectionIds multi_value field in BitDex.
-    const bitdexMode = await getFliptVariant(
+    // Skip BitDex for collection queries — collection membership requires relational joins.
+    const bitdexMode = input.collectionId ? null : await getFliptVariant(
       FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
       user?.id?.toString() || 'anonymous',
       buildFliptContext(user)
