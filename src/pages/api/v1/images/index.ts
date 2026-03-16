@@ -7,8 +7,9 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
+import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getAllImages, getAllImagesIndex, getImagesFromFeedSearch } from '~/server/services/image.service';
+import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
@@ -107,8 +108,17 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     const features = getFeatureFlags({ user: session?.user, req });
 
-    // Use legacy getAllImages for specific model/image lookups, new feed service for index queries
-    const useLegacyMethod = data.modelId || data.imageId;
+    // Check BitDex mode — if active, route through getAllImagesIndex
+    const bitdexMode = await getFliptVariant(
+      FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+      session?.user?.id?.toString() || 'anonymous',
+      buildFliptContext(session?.user)
+    );
+    const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
+
+    // Use legacy getAllImages for specific model/image lookups (unless BitDex active),
+    // BitDex getAllImagesIndex when flag is active, or feed search for index queries.
+    const useLegacyMethod = !useBitdex && (data.modelId || data.imageId);
 
     const { items, nextCursor } = useLegacyMethod
       ? await getAllImages({
@@ -126,6 +136,24 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disableMinor: true,
           disablePoi: true,
           includeBaseModel: true,
+          useDatapacketRead: features.datapacketRead,
+        })
+      : useBitdex
+      ? await getAllImagesIndex({
+          ...data,
+          types: type ? [type] : undefined,
+          limit,
+          skip,
+          cursor,
+          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          periodMode: 'published',
+          browsingLevel: _browsingLevel,
+          withMeta,
+          user: session?.user,
+          useCombinedNsfwLevel: !features.canViewNsfw,
+          disableMinor: true,
+          disablePoi: true,
+          headers: { src: '/api/v1/images' },
           useDatapacketRead: features.datapacketRead,
         })
       : await getImagesFromFeedSearch({
