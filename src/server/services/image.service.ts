@@ -2106,6 +2106,47 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     }
   }
 
+  // Collection pending items: fetch user's own REVIEW items from PG and merge.
+  // BitDex only has ACCEPTED collection items, so pending items need a PG lookup.
+  if (input.collectionId && input.currentUserId && !bitdexCursor) {
+    const pendingItems = await dbRead.collectionItem.findMany({
+      where: {
+        collectionId: input.collectionId,
+        addedById: input.currentUserId,
+        status: 'REVIEW',
+        imageId: { not: null },
+      },
+      select: { imageId: true },
+    });
+    if (pendingItems.length) {
+      const pendingImageIds = pendingItems.map((p) => p.imageId!);
+      const mainIds = new Set(data.map((d) => d.id));
+      const newIds = pendingImageIds.filter((id) => !mainIds.has(id));
+      if (newIds.length) {
+        const pendingResult = await queryBitdex('civitai', [
+          _in('id', newIds.map(_int)),
+        ], { field: 'sortAt', direction: 'Desc' }, newIds.length, undefined, undefined, true);
+        if (pendingResult?.documents?.length) {
+          const pendingDocs = pendingResult.documents.map((doc) => mapBitdexDoc(doc));
+          data = [...data, ...pendingDocs];
+          // Re-sort with the same sort logic
+          const sort = input.sort;
+          if (sort === ImageSort.MostReactions) {
+            data.sort((a, b) => b.reactionCount - a.reactionCount);
+          } else if (sort === ImageSort.MostComments) {
+            data.sort((a, b) => b.commentCount - a.commentCount);
+          } else if (sort === ImageSort.MostCollected) {
+            data.sort((a, b) => b.collectedCount - a.collectedCount);
+          } else if (sort === ImageSort.Oldest) {
+            data.sort((a, b) => a.sortAtUnix - b.sortAtUnix);
+          } else {
+            data.sort((a, b) => b.sortAtUnix - a.sortAtUnix);
+          }
+        }
+      }
+    }
+  }
+
   data = data.slice(0, limit);
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
@@ -2945,6 +2986,7 @@ export async function getImagesFromBitdexPreFilter(
     minorOnly,
     blockedFor,
     requiringMeta,
+    collectionId,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -3069,6 +3111,10 @@ export async function getImagesFromBitdexPreFilter(
   if (tools?.length) filters.push(_in('toolIds', tools.map(_int)));
   if (techniques?.length) filters.push(_in('techniqueIds', techniques.map(_int)));
   if (postIds.length) filters.push(_in('postId', postIds.map(_int)));
+
+  // --- Collection filter (requires collectionIds multi_value field in BitDex) ---
+  // Only filters ACCEPTED items — user's pending items handled via second pass in fetchBitdexPrimary
+  if (collectionId) filters.push(_in('collectionIds', [_int(collectionId)]));
   if (baseModels?.length) filters.push(_in('baseModel', baseModels.map(_str)));
 
   if (userId) filters.push(_eq('userId', _int(userId)));
