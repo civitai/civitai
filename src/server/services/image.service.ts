@@ -172,6 +172,7 @@ import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
 import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
@@ -2099,9 +2100,14 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   // Check BitDex mode (off / shadow / primary)
+  // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
+  // and 'testers' (userId in list) segments match correctly.
   const bitdexMode = await getFliptVariant(
     FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    input.currentUserId?.toString() || 'anonymous'
+    input.currentUserId?.toString() || 'anonymous',
+    buildFliptContext(input.currentUserId
+      ? { id: input.currentUserId, isModerator: input.isModerator } as SessionUser
+      : undefined)
   );
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
@@ -2123,18 +2129,19 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const meiliStart = Date.now();
   const result = await searchFn(input);
 
-  // Shadow mode: fire BitDex async alongside Meili for comparison
+  // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
+  // that primary uses, compare results against Meili, but serve Meili results.
   if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
-    getImagesFromBitdexPreFilter(input)
+    fetchBitdexPrimary(input)
       .then((bitdexResult) => {
         if (bitdexResult) {
           compareBitdexResults({
-            bitdexIds: bitdexResult.ids,
+            bitdexIds: bitdexResult.data.map((d) => d.id),
             meiliIds: result.data.map((i: { id: number }) => i.id),
-            bitdexTotalMatched: bitdexResult.total_matched,
+            bitdexTotalMatched: bitdexResult.data.length,
             meiliTotalMatched: result.data.length,
-            bitdexElapsedMs: bitdexResult.elapsed_us / 1000,
+            bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
             meiliElapsedMs: meiliElapsed,
             sort: input.sort ?? 'Newest',
             hasPeriod: !!input.period,

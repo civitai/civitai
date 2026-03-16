@@ -52,6 +52,8 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -269,10 +271,19 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
-  // Use getAllImagesIndex (old Meilisearch) when useIndex is true
-  // Use getAllImages (DB) otherwise
-  // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
-  const useIndex = features.imageIndexFeed && input.useIndex;
+
+  // Check BitDex mode first — if active (shadow or primary), always route through
+  // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
+  const bitdexMode = await getFliptVariant(
+    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+    user?.id?.toString() || 'anonymous',
+    buildFliptContext(user)
+  );
+  const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
+
+  // Use getAllImagesIndex when useIndex is true OR BitDex is active.
+  // Use getAllImages (DB) otherwise.
+  const useIndex = useBitdex || (features.imageIndexFeed && input.useIndex);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
