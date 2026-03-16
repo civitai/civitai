@@ -1962,8 +1962,9 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
 };
 
 /**
- * Safety post-filter for BitDex results. The main query uses strict cacheable filters,
- * so this rarely removes anything. Exists as a defense-in-depth check.
+ * Defense-in-depth post-filter for BitDex results. The main query uses strict
+ * cacheable filters (no per-user clauses), so this rarely removes anything.
+ * User's own excluded content is fetched in a separate second pass and merged.
  */
 function postFilterBitdexDocs(
   docs: ReturnType<typeof mapBitdexDoc>[],
@@ -2007,22 +2008,28 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     }
   }
 
-  // Second pass: fetch user's own nsfw0 (unclassified) images.
-  // These are excluded by the nsfwLevel filter. Merged into main results
-  // and re-sorted so they appear only when they naturally fit the active sort
-  // (e.g. newest → yes, most reactions → no since unrated images have 0).
-  // Runs in parallel with the first main query. Only on first page.
-  const nsfw0Promise = input.currentUserId && !bitdexCursor
+  // Second pass: fetch user's own content that strict filters would exclude.
+  // Covers nsfw0, private, blocked, unpublished, and poi (when disabled).
+  // Merged into main results and re-sorted so they appear only when they
+  // naturally fit the active sort. Runs in parallel with main query. First page only.
+  const ownExcludedClauses = [
+    _eq('nsfwLevel', _int(0)),
+    _eq('availability', _str(Availability.Private)),
+    _in('blockedFor', [BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified].map(_str)),
+    _eq('isPublished', _bool(false)),
+  ];
+  if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
+
+  const ownExcludedPromise = input.currentUserId && !bitdexCursor
     ? queryBitdex('civitai', [
-        _eq('nsfwLevel', _int(0)),
         _eq('userId', _int(input.currentUserId)),
+        _or(...ownExcludedClauses),
       ], { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true)
     : null;
 
   // Main loop: fetch pages, post-filter, accumulate until we have enough.
-  // Private/blocked/poi/unpublished are NOT filtered in BitDex for logged-in users,
-  // so the user's own content appears in natural sort position.
-  // Post-filter removes others' private/blocked/poi/unpublished content.
+  // Main query uses strict filters (cacheable). User's own excluded content
+  // is fetched in the parallel second pass above and merged after.
   const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
   let lastCursor: any = undefined;
 
@@ -2041,21 +2048,21 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (!result.cursor) break; // no more pages
   }
 
-  if (!accumulated.length && !nsfw0Promise) return null;
+  if (!accumulated.length && !ownExcludedPromise) return null;
 
   let data = accumulated;
 
-  // Merge user's nsfw0 images, re-sort by the active sort, then limit.
-  // This ensures unclassified images only appear when they naturally rank
-  // high enough (e.g. newest → likely yes, most reactions → likely no).
-  const nsfw0Result = await nsfw0Promise;
-  if (nsfw0Result?.documents?.length) {
+  // Merge user's own excluded content, re-sort by the active sort, then limit.
+  // This ensures user's own private/blocked/unpublished/nsfw0/poi content appears
+  // only when it naturally ranks high enough for the active sort.
+  const ownExcluded = await ownExcludedPromise;
+  if (ownExcluded?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
-    const nsfw0Docs = nsfw0Result.documents
+    const ownDocs = ownExcluded.documents
       .map((doc) => mapBitdexDoc(doc))
       .filter((d) => !mainIds.has(d.id));
-    if (nsfw0Docs.length) {
-      data = [...data, ...nsfw0Docs];
+    if (ownDocs.length) {
+      data = [...data, ...ownDocs];
       const sort = input.sort;
       if (sort === ImageSort.MostReactions) {
         data.sort((a, b) => b.reactionCount - a.reactionCount);
@@ -2915,17 +2922,16 @@ export async function getImagesFromBitdexPreFilter(
     BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified,
   ].map(_str);
 
-  // For logged-in users: skip private/blocked/poi filters so user's own content
-  // appears in natural sort position. Post-filter in PRIMARY caller handles visibility.
-  // For anonymous users: apply strict filters (nothing to preserve).
-  if (!isModerator && !currentUserId) {
+  // Strict filters (no per-user OR clauses) — keeps queries cacheable.
+  // User's own excluded content is fetched in a parallel second pass and merged.
+  if (!isModerator) {
     filters.push(_not(_eq('availability', _str(Availability.Private))));
     filters.push(_notIn('blockedFor', allBlockedReasons));
   }
 
   if (postId) postIds = [...postIds, postId];
 
-  if (disablePoi && !currentUserId) {
+  if (disablePoi) {
     filters.push(_not(_eq('poi', _bool(true))));
   }
   if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
@@ -3008,10 +3014,7 @@ export async function getImagesFromBitdexPreFilter(
   if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
 
   // --- Published ---
-  // For logged-in users: skip so user's own unpublished content sorts naturally.
-  // Post-filter handles visibility. Scheduled/unpublished content from other users
-  // is filtered downstream (not in BitDex or postFilterBitdexDocs).
-  // Anonymous/moderator: apply strict filter.
+  // Strict filter (cacheable). User's own unpublished content handled via second pass.
   if (isModerator) {
     if (notPublished) {
       filters.push(_eq('isPublished', _bool(false)));
@@ -3020,7 +3023,7 @@ export async function getImagesFromBitdexPreFilter(
     } else {
       filters.push(_eq('isPublished', _bool(true)));
     }
-  } else if (!currentUserId) {
+  } else {
     filters.push(_eq('isPublished', _bool(true)));
   }
 
