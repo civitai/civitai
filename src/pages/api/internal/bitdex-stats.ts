@@ -15,7 +15,7 @@ import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
  *
  * Spot-check specific images (by ID):
  *   GET /api/internal/bitdex-stats?token=<WEBHOOK_TOKEN>&ids=123,456,789
- *   Returns: base stats + per-image data from PG (publishedAt, nsfwLevel, availability)
+ *   Returns: base stats + per-image data from PG (sortAt, nsfwLevel, blockedFor, poi, minor)
  *   and metrics from Redis/ClickHouse (reactionLike, comment, collection, etc.)
  *   Max 50 IDs per request.
  */
@@ -49,11 +49,14 @@ export default WebhookEndpoint(async function handler(
         where: { id: { in: ids } },
         select: {
           id: true,
-          publishedAt: true,
+          sortAt: true,
           nsfwLevel: true,
-          availability: true,
           userId: true,
           type: true,
+          postId: true,
+          blockedFor: true,
+          poi: true,
+          minor: true,
         },
       });
 
