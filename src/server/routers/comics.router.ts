@@ -1158,7 +1158,7 @@ export const comicsRouter = router({
       };
     } catch (error) {
       console.error('Comics getPanelCostEstimate failed:', error);
-      return { cost: 0, ready: false };
+      throw error;
     }
   }),
 
@@ -1268,7 +1268,7 @@ export const comicsRouter = router({
         return { cost: workflow.cost?.total ?? 0, ready: true };
       } catch (error) {
         console.error('Comics getIterateCostEstimate failed:', error);
-        return { cost: 0, ready: false };
+        throw error;
       }
     }),
 
@@ -1824,7 +1824,7 @@ export const comicsRouter = router({
           token,
           userPrompt: input.prompt,
           characterName: primaryReferenceName,
-          characterNames: mentionedNames.length > 0 ? mentionedNames : allReferenceNames,
+          characterNames: mentionedNames,
           previousPanel: effectiveContext ?? undefined,
         });
       } else {
@@ -2430,7 +2430,7 @@ export const comicsRouter = router({
           token,
           userPrompt,
           characterName: primaryReferenceName,
-          characterNames: mentionedNames.length > 0 ? mentionedNames : allReferenceNames,
+          characterNames: mentionedNames,
         });
       }
 
@@ -2607,7 +2607,7 @@ export const comicsRouter = router({
           enhance: input.enhance,
           position: i,
           contextPanel,
-          allReferenceNames: mentionedRefNames.length > 0 ? mentionedRefNames : allReferenceNames,
+          allReferenceNames: mentionedRefNames,
           primaryReferenceName: panelPrimaryRefName,
           refImages: mentionedRefImages,
           userId: ctx.user!.id,
@@ -3333,7 +3333,7 @@ export const comicsRouter = router({
           token,
           userPrompt,
           characterName: primaryReferenceName,
-          characterNames: mentionedNames.length > 0 ? mentionedNames : allReferenceNames,
+          characterNames: mentionedNames,
           previousPanel: effectiveContext ?? undefined,
         });
       }
@@ -3613,7 +3613,7 @@ export const comicsRouter = router({
               token: batchToken,
               userPrompt: panelDef.prompt,
               characterName: panelPrimaryRefName,
-              characterNames: mentionedRefNames.length > 0 ? mentionedRefNames : allReferenceNames,
+              characterNames: mentionedRefNames,
               previousPanel: contextPanel ?? undefined,
             });
           }
@@ -3780,7 +3780,7 @@ export const comicsRouter = router({
             enhance: panelDef.enhance,
             position,
             contextPanel,
-            allReferenceNames: mentionedRefNames.length > 0 ? mentionedRefNames : allReferenceNames,
+            allReferenceNames: mentionedRefNames,
             primaryReferenceName: panelPrimaryRefName,
             refImages: mentionedRefImages,
             userId: ctx.user!.id,

@@ -13,6 +13,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
@@ -40,6 +41,7 @@ export function getNsfwLabel(level: number): { label: string; color: string } | 
 export interface PanelCardProps {
   panel: {
     id: number;
+    imageId: number | null;
     imageUrl: string | null;
     prompt: string;
     status: string;
@@ -53,6 +55,7 @@ export interface PanelCardProps {
   onInsertAfter: () => void;
   onClick: () => void;
   onIterativeEdit?: () => void;
+  onRatingChange?: () => void;
 }
 
 export function PanelCard({
@@ -64,6 +67,7 @@ export function PanelCard({
   onInsertAfter,
   onClick,
   onIterativeEdit,
+  onRatingChange,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
   const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
@@ -85,7 +89,22 @@ export function PanelCard({
               <div className="flex items-center gap-1">
                 <span className={styles.panelNumber}>#{position}</span>
                 {nsfwInfo && (
-                  <Badge size="xs" color={nsfwInfo.color} variant="filled">
+                  <Badge
+                    size="xs"
+                    color={nsfwInfo.color}
+                    variant="filled"
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      if (panel.imageId && panel.image?.nsfwLevel != null) {
+                        openSetBrowsingLevelModal({
+                          imageId: panel.imageId,
+                          nsfwLevel: panel.image.nsfwLevel as NsfwLevel,
+                          onSubmit: () => onRatingChange?.(),
+                        });
+                      }
+                    }}
+                  >
                     {nsfwInfo.label}
                   </Badge>
                 )}

@@ -1,6 +1,6 @@
 import { ActionIcon, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
 import { IconArrowLeft, IconPlus, IconX } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
@@ -55,6 +55,7 @@ export function SmartCreateModal({
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
   const [smartEnhance, setSmartEnhance] = useState(true);
   const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   const resetSmartState = () => {
     setSmartStep('input');
@@ -153,8 +154,8 @@ export function SmartCreateModal({
             {smartPanels.length} panels planned
           </Text>
 
-          <ScrollArea.Autosize mah="50vh">
-            <Stack gap="sm">
+          <ScrollArea.Autosize mah="50vh" viewportRef={scrollViewportRef}>
+            <Stack gap="sm" pr="sm">
               {smartPanels.map((panel, index) => (
                 <div key={index} className="flex gap-2 items-start">
                   <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
@@ -193,7 +194,16 @@ export function SmartCreateModal({
             color="yellow"
             size="xs"
             leftSection={<IconPlus size={14} />}
-            onClick={() => setSmartPanels([...smartPanels, { prompt: '' }])}
+            onClick={() => {
+              setSmartPanels([...smartPanels, { prompt: '' }]);
+              // Scroll to the newly added panel after render
+              requestAnimationFrame(() => {
+                scrollViewportRef.current?.scrollTo({
+                  top: scrollViewportRef.current.scrollHeight,
+                  behavior: 'smooth',
+                });
+              });
+            }}
           >
             Add Panel
           </Button>

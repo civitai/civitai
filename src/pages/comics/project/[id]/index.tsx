@@ -1450,6 +1450,7 @@ function ProjectWorkspace() {
                           }}
                           onClick={() => setDetailPanelId(panel.id)}
                           onIterativeEdit={() => handleOpenIterativeEditor({ ...panel, position: index } as any)}
+                          onRatingChange={() => void utils.comics.getProject.invalidate({ id: projectId })}
                         />
                       </SortablePanel>
                     ))}

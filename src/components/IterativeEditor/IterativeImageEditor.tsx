@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Group,
   Loader,
   NumberInput,
   Select,
@@ -198,8 +199,18 @@ export function IterativeImageEditor({
     }
     return ids;
   }, [mentionedCharacterRefs]);
-  const effectiveCharacterImageCount = selectedImageIds
-    ? selectedImageIds.length
+
+  // Filter selectedImageIds to only include IDs from currently-mentioned characters.
+  // This prevents stale selections from counting when @mentions are removed from the prompt.
+  const activeSelectedImageIds = useMemo(() => {
+    if (!selectedImageIds || allCharacterImageIds.length === 0) return null;
+    const validIds = new Set(allCharacterImageIds);
+    const filtered = selectedImageIds.filter((id) => validIds.has(id));
+    return filtered.length > 0 ? filtered : null;
+  }, [selectedImageIds, allCharacterImageIds]);
+
+  const effectiveCharacterImageCount = activeSelectedImageIds
+    ? activeSelectedImageIds.length
     : allCharacterImageIds.length;
 
   const usedImageSlots =
@@ -402,7 +413,7 @@ export function IterativeImageEditor({
               sourceImageHeight: currentSource.height,
             }
           : {}),
-        ...(selectedImageIds ? { selectedImageIds } : {}),
+        ...(activeSelectedImageIds ? { selectedImageIds: activeSelectedImageIds } : {}),
         ...(activeUserReferences.length > 0 ? { referenceImages: activeUserReferences } : {}),
       };
 
@@ -802,25 +813,6 @@ export function IterativeImageEditor({
           )}
           <div className={styles.inputActions}>
             <div className={styles.inputActionsLeft}>
-              {currentSource && (
-                <Tooltip label="Annotate current source image">
-                  <Button
-                    variant="light"
-                    size="compact-sm"
-                    leftSection={<IconPencil size={14} />}
-                    onClick={handleAnnotateSource}
-                    disabled={isGenerating}
-                  >
-                    Annotate
-                  </Button>
-                </Tooltip>
-              )}
-              {annotationElements.length > 0 && (
-                <Badge size="sm" color="blue" variant="light">
-                  <IconPencil size={10} style={{ marginRight: 4 }} />
-                  Annotated
-                </Badge>
-              )}
             </div>
             <div className="flex items-center gap-1">
               {costFailed && onRetryCost && (
@@ -916,6 +908,28 @@ export function IterativeImageEditor({
               Reset to original
             </Button>
           )}
+          <Group gap="xs" mt={4}>
+            {currentSource && (
+              <Tooltip label="Annotate / sketch on the source image">
+                <Button
+                  variant="light"
+                  size="compact-xs"
+                  leftSection={<IconPencil size={14} />}
+                  onClick={handleAnnotateSource}
+                  disabled={isGenerating}
+                  flex={1}
+                >
+                  Annotate
+                </Button>
+              </Tooltip>
+            )}
+            {annotationElements.length > 0 && (
+              <Badge size="sm" color="blue" variant="light">
+                <IconPencil size={10} style={{ marginRight: 4 }} />
+                Annotated
+              </Badge>
+            )}
+          </Group>
         </div>
 
         {/* Model selector */}
