@@ -2013,20 +2013,46 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   // Covers nsfw0, private, blocked, unpublished, and poi (when disabled).
   // Merged into main results and re-sorted so they appear only when they
   // naturally fit the active sort. Runs in parallel with main query. First page only.
-  const ownExcludedClauses = [
-    _eq('nsfwLevel', _int(0)),
-    _eq('availability', _str(Availability.Private)),
-    _in('blockedFor', [BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified].map(_str)),
-    _eq('isPublished', _bool(false)),
-  ];
-  if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
+  //
+  // Content-scoping filters from the main query are applied so the second pass
+  // only returns content relevant to the current view (e.g. same model, same post).
+  // Skip entirely if viewing another user's profile (userId !== currentUserId).
+  const skipOwnExcluded = !input.currentUserId || bitdexCursor
+    || (input.userId && input.userId !== input.currentUserId);
 
-  const ownExcludedPromise = input.currentUserId && !bitdexCursor
-    ? queryBitdex('civitai', [
-        _eq('userId', _int(input.currentUserId)),
-        _or(...ownExcludedClauses),
-      ], { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true)
-    : null;
+  let ownExcludedPromise: ReturnType<typeof queryBitdex> | null = null;
+  if (!skipOwnExcluded) {
+    const ownExcludedClauses = [
+      _eq('nsfwLevel', _int(0)),
+      _eq('availability', _str(Availability.Private)),
+      _in('blockedFor', [BlockedReason.TOS, BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.AiNotVerified].map(_str)),
+      _eq('isPublished', _bool(false)),
+    ];
+    if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
+
+    // Content-scoping filters — keep second pass results relevant to the current view
+    const scopeFilters: FilterClause[] = [
+      _eq('userId', _int(input.currentUserId!)),
+      _or(...ownExcludedClauses),
+    ];
+    if (input.modelVersionId) {
+      scopeFilters.push(_or(
+        _eq('postedToId', _int(input.modelVersionId)),
+        _in('modelVersionIds', [_int(input.modelVersionId)])
+      ));
+    }
+    if (input.postId) scopeFilters.push(_eq('postId', _int(input.postId)));
+    if (input.postIds?.length) scopeFilters.push(_in('postId', input.postIds.map(_int)));
+    if (input.types?.length) scopeFilters.push(_in('type', input.types.map(_str)));
+    if (input.tags?.length) scopeFilters.push(_in('tagIds', input.tags.map(_int)));
+    if (input.baseModels?.length) scopeFilters.push(_in('baseModel', input.baseModels.map(_str)));
+    if (input.remixOfId) scopeFilters.push(_eq('remixOfId', _int(input.remixOfId)));
+    if (input.withMeta) scopeFilters.push(_eq('hasMeta', _bool(true)));
+    if (input.fromPlatform) scopeFilters.push(_eq('onSite', _bool(true)));
+
+    ownExcludedPromise = queryBitdex('civitai', scopeFilters,
+      { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true);
+  }
 
   // Main loop: fetch pages, post-filter, accumulate until we have enough.
   // Main query uses strict filters (cacheable). User's own excluded content
@@ -2935,6 +2961,9 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_not(_eq('availability', _str(Availability.Private))));
     filters.push(_notIn('blockedFor', allBlockedReasons));
   }
+
+  // Only show images that belong to a post (postId=0 means no post — e.g. comic references)
+  filters.push(_not(_eq('postId', _int(0))));
 
   if (postId) postIds = [...postIds, postId];
 

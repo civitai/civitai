@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import type { FreshdeskWebhookPayload } from '~/server/http/freshdesk/freshdesk.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { AI_MODELS, openrouter } from '~/server/services/ai/openrouter';
@@ -12,6 +13,7 @@ const log = (data: Record<string, unknown>) =>
 export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
   const { ticket_id, phase } = payload;
   const startTime = Date.now();
+  const agentId = env.FRESHDESK_AGENT_ID ? Number(env.FRESHDESK_AGENT_ID) : undefined;
 
   await log({ type: 'start', ticket_id, phase });
 
@@ -40,7 +42,7 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
       userMessage,
       tools,
       executeToolCall,
-      maxTurns: 25,
+      maxTurns: 15,
     });
 
     const durationMs = Date.now() - startTime;
@@ -70,7 +72,9 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
       } else {
         await freshdeskCaller.addNote(
           ticket_id,
-          `<p><strong>⚠️ Agent Handoff (${phase})</strong></p><p>The automated agent reached its turn limit before completing. Here is a summary of findings so far:</p><p>${summary}</p><p><em>A human agent should continue from here.</em></p>`
+          `<p><strong>⚠️ Agent Handoff (${phase})</strong></p><p>The automated agent reached its turn limit before completing. Here is a summary of findings so far:</p><p>${summary}</p><p><em>A human agent should continue from here.</em></p>`,
+          true,
+          agentId
         );
       }
     }
@@ -88,7 +92,9 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
       try {
         await freshdeskCaller.addNote(
           ticket_id,
-          `<p><strong>⚠️ Agent Error (${phase})</strong></p><p>The automated agent encountered an error processing this ticket. A human agent should review manually.</p><p><em>Error: ${message}</em></p>`
+          `<p><strong>⚠️ Agent Error (${phase})</strong></p><p>The automated agent encountered an error processing this ticket. A human agent should review manually.</p><p><em>Error: ${message}</em></p>`,
+          true,
+          agentId
         );
       } catch (error) {
         // If we can't even add a note, just log it

@@ -22,7 +22,7 @@ export const AI_MODELS = {
   KIMI: 'moonshotai/kimi-k2.5',
   GROK: 'x-ai/grok-4.1-fast',
   GPT_5_NANO: 'openai/gpt-5-nano',
-  STEP_FUN: 'stepfun/step-3.5-flash:free',
+  STEP_FUN: 'stepfun/step-3.5-flash',
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',

@@ -42,6 +42,27 @@ import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 
+export async function isExemptFromAiVerification(
+  imageId: number,
+  metadata?: MediaMetadata | null
+): Promise<boolean> {
+  // Fast path: check metadata flags (no DB query needed)
+  if (metadata?.profilePicture) return true;
+  if (metadata?.coverImage) return true;
+
+  // DB fallback: check relationships for existing images without metadata flags
+  const [result] = await dbWrite.$queryRaw<{ exempt: boolean }[]>`
+    SELECT (
+      EXISTS(SELECT 1 FROM "User" WHERE "profilePictureId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty'))
+    ) AS exempt
+  `;
+  return result?.exempt ?? false;
+}
+
 type WdTaggingStep = {
   $type: 'wdTagging';
   output: { tags: Record<string, number>; rating: Record<string, number> };
@@ -232,7 +253,11 @@ export async function processImageScanResult(req: NextApiRequest) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = audit.blockedFor;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
-    } else if (audit.nsfw && !validAiGeneration) {
+    } else if (
+      audit.nsfw &&
+      !validAiGeneration &&
+      !(await isExemptFromAiVerification(image.id, image.metadata as MediaMetadata | null))
+    ) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = BlockedReason.AiNotVerified;
       toUpdate.nsfwLevel = audit.nsfwLevel;
