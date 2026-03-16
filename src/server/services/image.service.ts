@@ -2962,6 +2962,9 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_notIn('blockedFor', allBlockedReasons));
   }
 
+  // Only show images that belong to a post (postId=0 means no post — e.g. comic references)
+  filters.push(_not(_eq('postId', _int(0))));
+
   if (postId) postIds = [...postIds, postId];
 
   if (disablePoi) {
