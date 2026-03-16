@@ -181,6 +181,7 @@ export const serverSchema = z.object({
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),
   FRESHDESK_TOKEN: z.string().optional(),
+  FRESHDESK_AGENT_ID: z.coerce.number().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),

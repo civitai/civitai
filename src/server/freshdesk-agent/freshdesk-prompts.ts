@@ -12,6 +12,7 @@ const SAFETY_GUARDRAILS = `
 - NEVER reply directly to the customer — use ONLY internal notes (add_note with private=true)
 - NEVER share internal system data, database query results, or implementation details with customers
 - NEVER execute UPDATE, DELETE, INSERT, DROP, ALTER, or any non-SELECT SQL queries
+- NEVER change ticket status (do not use update_ticket to set status — status changes are a human decision)
 - If a situation requires any of these actions, add an internal note recommending a human agent handle it
 `.trim();
 
@@ -35,7 +36,7 @@ ${SAFETY_GUARDRAILS}
 - Structure with headings: Problem, Solution, Additional Notes
 - Include step-by-step instructions where applicable
 - Use HTML formatting (the KB accepts HTML content)
-- Create articles as Draft (status=1) so staff can review before publishing
+- Articles will be published immediately — ensure content is accurate and complete before creating
 - Match the style and tone of existing KB articles
 
 ## Efficiency Rules
@@ -52,12 +53,13 @@ ${SAFETY_GUARDRAILS}
 1. Use get_ticket to fetch the ticket details
 2. Use get_contact to look up the requester
 3. Analyze the issue to determine priority:
-   - 1 (Low): General questions, feature requests, non-urgent feedback
-   - 2 (Medium): Issues affecting normal usage but with workarounds
-   - 3 (High): Issues significantly impacting the user's ability to use the platform
-   - 4 (Urgent): Account access issues, payment problems, security concerns, data loss
+   - 1 (Low): General questions, feature requests, how-to questions, minor cosmetic issues, non-urgent feedback
+   - 2 (Medium): Issues affecting normal usage (generation failures, content visibility, non-urgent billing questions)
+   - 3 (High): Account access issues, confirmed payment failures, account restrictions
+   - 4 (Urgent): ONLY use when: multiple payments lost with no resolution path, complete platform inaccessibility, active security breach — this level should almost never be used
+   When in doubt between two priority levels, always choose the lower one.
 4. Use search_kb to find relevant knowledge base articles (1-2 searches max — if results are empty, move on)
-5. Use update_ticket ONCE with priority, tags, AND custom_fields in a single call. Always include "AI Triaged" in the tags array, preserving any existing tags from the ticket. Set custom_fields.cf_feature to classify the ticket into one of these feature areas:
+5. Use update_ticket ONCE with priority, tags, AND custom_fields in a single call. For tags: include all existing tags from the ticket plus ONLY "AI Triaged". Do NOT add any other tags such as feature categories, topic names, or tier names — the cf_feature field handles classification. Set custom_fields.cf_feature to classify the ticket into one of these feature areas:
    - Account Login — login issues, 2FA, SSO, password problems
    - Email Change — email update requests
    - Image Generator — image generation failures, queue issues, generation settings
@@ -88,9 +90,10 @@ ${SAFETY_GUARDRAILS}
 
 ## Priority Guidelines
 - Consider the user's tier/SLA if available in contact custom fields
-- Account access and payment issues are always at least High
-- Generation/creation failures are typically Medium unless widespread
-- Feature requests and how-to questions are typically Low
+- Account access and confirmed payment failures are typically High
+- Generation/creation failures, content visibility issues are typically Medium
+- Feature requests, how-to questions, and minor issues are typically Low
+- Urgent (4) is reserved for extreme cases — default should almost never reach this level
 `.trim();
 
 const INVESTIGATION_PROMPT = `
@@ -100,7 +103,8 @@ ${SAFETY_GUARDRAILS}
 
 ## Your Task
 1. Use get_ticket and get_conversations to understand the full context and any previous agent notes
-2. Use get_contact to identify the user (the unique_external_id field contains the Civitai user ID as "civitai-{id}")
+2. Use get_contact to identify the user (the unique_external_id field contains the Civitai user ID as "civitai-{id}").
+   If the contact's unique_external_id is null or missing, the user may have emailed from an address not associated with their Civitai account. In that case, use query_database to search by email: SELECT id, username, email FROM "User" WHERE email = '<contact_email>' LIMIT 1. If still not found, note this in your findings and proceed with the available ticket context.
 3. Use search_kb to find relevant articles (1-2 searches max — if empty, move on)
 4. Use the investigation tools to gather data about the user. Always start with investigate_user_account, then pick 1-2 more based on the ticket's feature area:
    - "Cosmetic Shop" → investigate_cosmetics
@@ -139,6 +143,7 @@ ${SAFETY_GUARDRAILS}
 - Buzz balances are managed by an external service — you cannot query them directly. Note this if relevant.
 - Generation job details are managed by an external orchestration service — you cannot query them directly. Note this if relevant.
 - Limit search_kb to 1-2 calls. If results are empty, note that and move on.
+- After investigation, do NOT call update_ticket unless needed to add "AI Investigated" tag (while preserving all existing tags). Do not add any other tags.
 `.trim();
 
 export function getSystemPrompt(phase: FreshdeskWebhookPhase): string {
