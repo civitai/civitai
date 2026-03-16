@@ -163,20 +163,16 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     default: 10,
     min: 3,
-    max: 500,
+    max: 40,
     step: 1,
     overrides: {
-      sd_1_5: { 'ai-toolkit': { max: 40 } },
-      anime: { 'ai-toolkit': { max: 40 } },
-      semi: { 'ai-toolkit': { max: 40 } },
-      realistic: { 'ai-toolkit': { max: 40 } },
-      sdxl: { all: { min: 1 }, 'ai-toolkit': { min: 1, max: 40 } },
-      pony: { all: { min: 1 }, 'ai-toolkit': { min: 1, max: 40 } },
-      illustrious: { all: { min: 1 }, 'ai-toolkit': { min: 1, max: 40 } },
+      sdxl: { all: { min: 1 } },
+      pony: { all: { min: 1 } },
+      illustrious: { all: { min: 1 } },
       flux_dev: {
         kohya: { default: 5 },
         rapid: { default: 1, min: 1, max: 1 },
-        'ai-toolkit': { default: 5, max: 40 },
+        'ai-toolkit': { default: 5 },
       },
       flux2_dev: {
         all: { default: 1, min: 1, max: 1 },
@@ -184,22 +180,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       // flux2_dev_edit: { all: { default: 1, min: 1, max: 1 } }, // Disabled for now
       chroma: {
         all: { default: 5 },
-        'ai-toolkit': { default: 5, max: 40 },
       },
       qwen_image: {
-        all: { default: 5, max: 40 },
-      },
-      zimageturbo: {
-        all: { default: 10, max: 40 },
-      },
-      zimagebase: {
-        all: { default: 10, max: 40 },
-      },
-      flux2klein_4b: {
-        all: { default: 10 },
-      },
-      flux2klein_9b: {
-        all: { default: 10 },
+        all: { default: 5 },
       },
       ltx2: {
         all: { min: 1, max: 20 },

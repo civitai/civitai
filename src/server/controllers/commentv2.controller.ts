@@ -227,19 +227,29 @@ export const toggleHideCommentHandler = async ({
 
   try {
     const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
+    // Comic chapter threads use comicProject relation instead of a direct entity relation
+    const threadSelect =
+      entityType === 'comicChapter'
+        ? { comicChapter: { select: { project: { select: { userId: true } } } } }
+        : { [entityType]: { select: { [ownerField]: true } } };
     const comment = await dbRead.commentV2.findFirst({
       where: { id },
       select: {
         hidden: true,
         userId: true,
-        thread: { select: { [entityType]: { select: { [ownerField]: true } } } },
+        thread: { select: threadSelect },
       },
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+    const threadData = comment.thread as any;
+    const entityOwner =
+      entityType === 'comicChapter'
+        ? threadData.comicChapter?.project?.userId
+        : threadData[entityType]?.[ownerField];
     if (
       !isModerator &&
       // Nasty hack to get around the fact that the thread is not typed
-      (comment.thread[entityType] as any)?.[ownerField] !== userId
+      entityOwner !== userId
     )
       throw throwAuthorizationError();
 

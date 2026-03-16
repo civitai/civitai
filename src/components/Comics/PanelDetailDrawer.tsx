@@ -1,13 +1,13 @@
-import { ActionIcon, Text, Title } from '@mantine/core';
+import { ActionIcon, Badge, Text, Title } from '@mantine/core';
 import {
   IconAlertTriangle,
-  IconPencil,
+  IconMessages,
   IconPlus,
   IconRefreshDot,
+  IconShield,
   IconSparkles,
   IconTrash,
   IconUser,
-  IconWand,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -15,15 +15,21 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { openConfirmModal } from '@mantine/modals';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getNsfwLabel } from '~/components/Comics/PanelCard';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
+import { NsfwLevel } from '~/server/common/enums';
+import { trpc } from '~/utils/trpc';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 interface PanelDetailDrawerProps {
   detailPanelId: number | null;
   setDetailPanelId: (id: number | null) => void;
+  projectId: number;
   detailPanel: {
     id: number;
+    imageId?: number | null;
     imageUrl: string | null;
-    image?: { width: number; height: number } | null;
+    image?: { width: number; height: number; nsfwLevel: number } | null;
     status: string;
     prompt: string;
     enhancedPrompt: string | null;
@@ -37,22 +43,22 @@ interface PanelDetailDrawerProps {
   onRegenerate: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
   onInsertAfter: (index: number) => void;
   onDelete: (panelId: number) => void;
-  onSketchEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
-  onEnhance?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
+  onIterativeEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
 }
 
 export function PanelDetailDrawer({
   detailPanelId,
   setDetailPanelId,
+  projectId,
   detailPanel,
   detailPanelIndex,
   referenceNameMap,
   onRegenerate,
   onInsertAfter,
   onDelete,
-  onSketchEdit,
-  onEnhance,
+  onIterativeEdit,
 }: PanelDetailDrawerProps) {
+  const utils = trpc.useUtils();
   // Lock body scroll when drawer is open
   useEffect(() => {
     if (detailPanelId != null) {
@@ -79,7 +85,7 @@ export function PanelDetailDrawer({
         {detailPanel && (
           <>
             <div className={styles.drawerHeader}>
-              <Title order={4} style={{ fontWeight: 700 }}>
+              <Title order={4} fw={700}>
                 Panel #{detailPanelIndex >= 0 ? detailPanelIndex + 1 : '?'}
               </Title>
               <ActionIcon variant="subtle" c="dimmed" onClick={() => setDetailPanelId(null)}>
@@ -134,11 +140,49 @@ export function PanelDetailDrawer({
                 </Text>
               </div>
 
-              {/* Original prompt */}
-              <div>
-                <div className={styles.detailSectionTitle}>Original Prompt</div>
-                <div className={styles.promptBox}>{detailPanel.prompt}</div>
-              </div>
+              {/* NSFW Rating */}
+              {detailPanel.imageId && detailPanel.image?.nsfwLevel != null && (
+                <div>
+                  <div className={styles.detailSectionTitle}>Content Rating</div>
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const nsfwInfo = getNsfwLabel(detailPanel.image.nsfwLevel);
+                      return nsfwInfo ? (
+                        <Badge size="sm" color={nsfwInfo.color} variant="filled">
+                          {nsfwInfo.label}
+                        </Badge>
+                      ) : (
+                        <Badge size="sm" color="gray" variant="filled">
+                          Unrated
+                        </Badge>
+                      );
+                    })()}
+                    <button
+                      className={styles.subtleBtnSm}
+                      onClick={() => {
+                        openSetBrowsingLevelModal({
+                          imageId: detailPanel.imageId!,
+                          nsfwLevel: detailPanel.image!.nsfwLevel as NsfwLevel,
+                          onSubmit: () => {
+                            void utils.comics.getProject.invalidate({ id: projectId });
+                          },
+                        });
+                      }}
+                    >
+                      <IconShield size={14} />
+                      Change Rating
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Original prompt (hide for imported panels with no prompt) */}
+              {detailPanel.prompt ? (
+                <div>
+                  <div className={styles.detailSectionTitle}>Original Prompt</div>
+                  <div className={styles.promptBox}>{detailPanel.prompt}</div>
+                </div>
+              ) : null}
 
               {/* Enhanced prompt */}
               {detailPanel.enhancedPrompt && (
@@ -171,8 +215,9 @@ export function PanelDetailDrawer({
                 </div>
               )}
 
-              {/* Source Image (for enhanced panels) */}
-              {(detailPanel.metadata as Record<string, any> | null)?.sourceImageUrl && (
+              {/* Source Image (for enhanced panels, not for plain imports) */}
+              {(detailPanel.metadata as Record<string, any> | null)?.sourceImageUrl &&
+                detailPanel.prompt && (
                 <div>
                   <div className={styles.detailSectionTitle}>Source Image</div>
                   <div className={styles.enhanceImagePreview}>
@@ -193,6 +238,24 @@ export function PanelDetailDrawer({
               {(() => {
                 const meta = detailPanel.metadata as Record<string, any> | null;
                 if (!meta) return null;
+
+                // Imported panels have a sourceImageUrl but no prompt and no generation settings
+                const isImported =
+                  !detailPanel.prompt &&
+                  meta.sourceImageUrl &&
+                  meta.enhanceEnabled === undefined;
+
+                if (isImported) {
+                  return (
+                    <div>
+                      <div className={styles.detailSectionTitle}>Settings</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={styles.detailCharacterPill}>Imported image</span>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div>
                     <div className={styles.detailSectionTitle}>Settings</div>
@@ -224,22 +287,14 @@ export function PanelDetailDrawer({
 
               {/* Actions */}
               <div className={styles.detailActions}>
-                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onSketchEdit && (
+                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onIterativeEdit && (
                   <button
                     className={styles.subtleBtn}
-                    onClick={() => onSketchEdit(detailPanel)}
+                    onClick={() => onIterativeEdit(detailPanel)}
+                    title="Iterative Edit"
                   >
-                    <IconPencil size={16} />
-                    Sketch Edit
-                  </button>
-                )}
-                {detailPanel.status === 'Ready' && detailPanel.imageUrl && onEnhance && (
-                  <button
-                    className={styles.subtleBtn}
-                    onClick={() => onEnhance(detailPanel)}
-                  >
-                    <IconWand size={16} />
-                    Enhance
+                    <IconMessages size={16} />
+                    Iterative Edit
                   </button>
                 )}
                 {(detailPanel.status === 'Ready' || detailPanel.status === 'Failed') && (

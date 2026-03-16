@@ -14,7 +14,7 @@ type CivitaiResource = {
 };
 
 // #region [helpers]
-const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const hashesPrefix = ', Hashes: ';
 const civitaiResources = /, Civitai resources:\s*(\[\{.*?\}\])/;
 const civitaiMetadataPrefix = ', Civitai metadata: ';
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
@@ -178,10 +178,10 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     }
 
     // Extract Hashes
-    const hashes = detailsLine?.match(hashesRegex)?.[1];
-    if (hashes && detailsLine) {
-      metadata.hashes = JSON.parse(hashes);
-      detailsLine = detailsLine.replace(hashesRegex, '');
+    const hashesResult = detailsLine ? extractBalancedJson(detailsLine, hashesPrefix) : null;
+    if (hashesResult && detailsLine) {
+      metadata.hashes = JSON.parse(hashesResult.json);
+      detailsLine = detailsLine.slice(0, hashesResult.start) + detailsLine.slice(hashesResult.end);
     }
 
     // Extract Civitai Resources

@@ -20,7 +20,7 @@ export const serverSchema = z.object({
   DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
-  LOGICAL_REPLICA_DB_URL: z.url(),
+  DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
@@ -181,6 +181,7 @@ export const serverSchema = z.object({
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),
   FRESHDESK_TOKEN: z.string().optional(),
+  FRESHDESK_AGENT_ID: z.coerce.number().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
@@ -281,4 +282,7 @@ export const serverSchema = z.object({
   // Storage resolver internal API (for registering B2 uploads)
   STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
   STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
+
+  // BitDex
+  BITDEX_URL: z.string().optional().default(''),
 });

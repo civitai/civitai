@@ -3,17 +3,17 @@ import {
   IconAlertTriangle,
   IconDotsVertical,
   IconEye,
-  IconPencil,
+  IconMessages,
   IconPhoto,
   IconPlus,
   IconRefreshDot,
   IconTrash,
   IconUser,
-  IconWand,
 } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
@@ -41,6 +41,7 @@ export function getNsfwLabel(level: number): { label: string; color: string } | 
 export interface PanelCardProps {
   panel: {
     id: number;
+    imageId: number | null;
     imageUrl: string | null;
     prompt: string;
     status: string;
@@ -53,8 +54,8 @@ export interface PanelCardProps {
   onRegenerate: () => void;
   onInsertAfter: () => void;
   onClick: () => void;
-  onSketchEdit?: () => void;
-  onEnhance?: () => void;
+  onIterativeEdit?: () => void;
+  onRatingChange?: () => void;
 }
 
 export function PanelCard({
@@ -65,8 +66,8 @@ export function PanelCard({
   onRegenerate,
   onInsertAfter,
   onClick,
-  onSketchEdit,
-  onEnhance,
+  onIterativeEdit,
+  onRatingChange,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
   const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
@@ -88,7 +89,22 @@ export function PanelCard({
               <div className="flex items-center gap-1">
                 <span className={styles.panelNumber}>#{position}</span>
                 {nsfwInfo && (
-                  <Badge size="xs" color={nsfwInfo.color} variant="filled">
+                  <Badge
+                    size="xs"
+                    color={nsfwInfo.color}
+                    variant="filled"
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      if (panel.imageId && panel.image?.nsfwLevel != null) {
+                        openSetBrowsingLevelModal({
+                          imageId: panel.imageId,
+                          nsfwLevel: panel.image.nsfwLevel as NsfwLevel,
+                          onSubmit: () => onRatingChange?.(),
+                        });
+                      }
+                    }}
+                  >
                     {nsfwInfo.label}
                   </Badge>
                 )}
@@ -115,26 +131,15 @@ export function PanelCard({
                     >
                       View Details
                     </Menu.Item>
-                    {status === 'Ready' && imageUrl && onSketchEdit && (
+                    {status === 'Ready' && imageUrl && onIterativeEdit && (
                       <Menu.Item
-                        leftSection={<IconPencil size={14} />}
+                        leftSection={<IconMessages size={14} />}
                         onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
-                          onSketchEdit();
+                          onIterativeEdit();
                         }}
                       >
-                        Sketch Edit
-                      </Menu.Item>
-                    )}
-                    {status === 'Ready' && imageUrl && onEnhance && (
-                      <Menu.Item
-                        leftSection={<IconWand size={14} />}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          onEnhance();
-                        }}
-                      >
-                        Enhance
+                        Iterative Edit
                       </Menu.Item>
                     )}
                     {(status === 'Ready' || status === 'Failed') && (
@@ -173,13 +178,18 @@ export function PanelCard({
             </div>
             <div className="flex flex-col gap-1">
               {referenceNames.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {referenceNames.map((name) => (
+                <div className="flex flex-wrap gap-1" style={{ maxHeight: 44, overflow: 'hidden' }}>
+                  {referenceNames.slice(0, 3).map((name) => (
                     <span key={name} className={styles.panelCharacterPill}>
                       <IconUser size={10} />
                       {name}
                     </span>
                   ))}
+                  {referenceNames.length > 3 && (
+                    <span className={styles.panelCharacterPill}>
+                      +{referenceNames.length - 3}
+                    </span>
+                  )}
                 </div>
               )}
               <p className={styles.panelPrompt}>{prompt}</p>
@@ -195,6 +205,52 @@ export function PanelCard({
             </div>
           ) : status === 'Failed' ? (
             <div className={styles.panelFailed}>
+              <div className="absolute top-2 right-2">
+                <div className={styles.panelMenu}>
+                  <Menu position="bottom-end" withinPortal>
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="filled"
+                        color="dark"
+                        size="sm"
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                      >
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        leftSection={<IconRefreshDot size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onRegenerate();
+                        }}
+                      >
+                        Regenerate
+                      </Menu.Item>
+                      <Menu.Item
+                        leftSection={<IconPlus size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onInsertAfter();
+                        }}
+                      >
+                        Insert after
+                      </Menu.Item>
+                      <Menu.Item
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onDelete();
+                        }}
+                      >
+                        Delete
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                </div>
+              </div>
               <IconAlertTriangle size={28} />
               <Text size="xs" c="red">
                 Failed

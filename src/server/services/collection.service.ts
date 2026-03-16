@@ -1102,12 +1102,12 @@ export type CollectionItemsResult = {
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
-  useLogicalReplica = false,
+  useDatapacketRead = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
-  useLogicalReplica?: boolean;
+  useDatapacketRead?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -1410,7 +1410,7 @@ export const getCollectionItemsByCollectionId = async ({
           includeBaseModel: true,
           pending: forReview,
           withMeta: false,
-          useLogicalReplica,
+          useDatapacketRead,
         })
       : { items: [] };
 

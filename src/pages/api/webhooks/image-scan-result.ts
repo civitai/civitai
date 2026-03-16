@@ -17,7 +17,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, MediaMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
@@ -32,6 +32,7 @@ import {
   insertTagsOnImageNew,
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
+import { isExemptFromAiVerification } from '~/server/services/image-scan-result.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -1071,7 +1072,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     // Avoids blocking images that we know are AI generated with some resources.
     resources: hasResource ? [1] : [],
   });
-  if (flags.nsfw && !validAiGeneration) {
+  if (
+    flags.nsfw &&
+    !validAiGeneration &&
+    !(await isExemptFromAiVerification(image.id, image.metadata as MediaMetadata | null))
+  ) {
     data.ingestion = ImageIngestionStatus.Blocked;
     data.blockedFor = BlockedReason.AiNotVerified;
   }

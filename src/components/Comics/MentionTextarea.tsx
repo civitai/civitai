@@ -7,6 +7,7 @@ interface MentionTextareaProps {
   placeholder?: string;
   rows?: number;
   label?: string;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }
 
 export function MentionTextarea({
@@ -16,6 +17,7 @@ export function MentionTextarea({
   placeholder,
   rows = 4,
   label,
+  onKeyDown: externalOnKeyDown,
 }: MentionTextareaProps) {
   const textareaId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -91,8 +93,16 @@ export function MentionTextarea({
     const cursorRect = cursor.getBoundingClientRect();
     const mirrorRect = mirror.getBoundingClientRect();
 
-    // Dynamic line height — parseFloat handles "normal", "20px", etc.
-    const lineHeight = parseFloat(style.lineHeight) || parseInt(style.fontSize) * 1.2 || 20;
+    // Dynamic line height — handle "20px", unitless ratios like "1.5", and "normal"
+    const fontSize = parseFloat(style.fontSize) || 14;
+    const rawLineHeight = style.lineHeight;
+    let lineHeight: number;
+    if (rawLineHeight.endsWith('px')) {
+      lineHeight = parseFloat(rawLineHeight);
+    } else {
+      const lhNum = parseFloat(rawLineHeight);
+      lineHeight = isNaN(lhNum) ? fontSize * 1.5 : lhNum * fontSize;
+    }
 
     // Subtract scrollTop to account for textarea scrolling
     const top = cursorRect.top - mirrorRect.top - textarea.scrollTop + lineHeight;
@@ -136,22 +146,28 @@ export function MentionTextarea({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (!showDropdown || filteredRefs.length === 0) return;
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setSelectedIndex((i) => (i + 1) % filteredRefs.length);
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelectedIndex((i) => (i - 1 + filteredRefs.length) % filteredRefs.length);
-      } else if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        handleSelect(filteredRefs[selectedIndex].name);
-      } else if (e.key === 'Escape') {
-        setShowDropdown(false);
+      if (showDropdown && filteredRefs.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSelectedIndex((i) => (i + 1) % filteredRefs.length);
+          return;
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSelectedIndex((i) => (i - 1 + filteredRefs.length) % filteredRefs.length);
+          return;
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const selected = filteredRefs[selectedIndex];
+          if (selected) handleSelect(selected.name);
+          return;
+        } else if (e.key === 'Escape') {
+          setShowDropdown(false);
+          return;
+        }
       }
+      externalOnKeyDown?.(e);
     },
-    [showDropdown, filteredRefs, selectedIndex, handleSelect]
+    [showDropdown, filteredRefs, selectedIndex, handleSelect, externalOnKeyDown]
   );
 
   // Update dropdown position when visible
@@ -214,6 +230,7 @@ export function MentionTextarea({
           const textarea = textareaRef.current;
           if (!textarea) return;
           checkMention(value, textarea.selectionStart);
+          updateDropdownPosition();
         }}
         placeholder={placeholder}
         rows={rows}

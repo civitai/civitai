@@ -261,6 +261,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   useEffect(() => {
     if (dryRunResult.isLoading) return;
+
+    if (dryRunResult.error) {
+      if (!selectedRun.hasIssue) {
+        updateRun(model.id, thisMediaType, selectedRun.id, { hasIssue: true, buzzCost: -1 });
+        showErrorNotification({
+          title: 'Error computing cost',
+          error: new Error(dryRunResult.error.message),
+          autoClose: false,
+        });
+      }
+      return;
+    }
+
     const cost = dryRunResult.data?.cost;
     if (!isDefined(cost) || cost < 0) {
       if (!selectedRun.hasIssue) {
@@ -278,6 +291,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
   }, [
     dryRunResult.data?.cost,
+    dryRunResult.error,
     dryRunResult.isLoading,
     runs.length,
     selectedRun.hasIssue,

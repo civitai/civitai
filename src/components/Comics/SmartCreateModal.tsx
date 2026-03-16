@@ -1,6 +1,6 @@
 import { ActionIcon, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
 import { IconArrowLeft, IconPlus, IconX } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
@@ -10,9 +10,9 @@ interface SmartCreateModalProps {
   opened: boolean;
   onClose: () => void;
   references: { id: number; name: string }[];
-  planCost: number;
-  panelCost: number;
-  enhanceCost: number;
+  planCost: number | null;
+  panelCost: number | null;
+  enhanceCost: number | null;
   effectiveModel: string;
   activeAspectRatios: { label: string; width: number; height: number }[];
   onModelChange: (value: string | null) => void;
@@ -55,6 +55,7 @@ export function SmartCreateModal({
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
   const [smartEnhance, setSmartEnhance] = useState(true);
   const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   const resetSmartState = () => {
     setSmartStep('input');
@@ -132,10 +133,10 @@ export function SmartCreateModal({
               Cancel
             </Button>
             <BuzzTransactionButton
-              buzzAmount={planCost}
-              label={isPlanningPanels ? 'Planning...' : 'Plan Panels'}
+              buzzAmount={planCost ?? 0}
+              label={planCost == null ? 'Loading cost...' : isPlanningPanels ? 'Planning...' : 'Plan Panels'}
               loading={isPlanningPanels}
-              disabled={!smartStory.trim()}
+              disabled={!smartStory.trim() || planCost == null}
               onPerformTransaction={handlePlanPanels}
               showPurchaseModal
             />
@@ -153,8 +154,8 @@ export function SmartCreateModal({
             {smartPanels.length} panels planned
           </Text>
 
-          <ScrollArea.Autosize mah="50vh">
-            <Stack gap="sm">
+          <ScrollArea.Autosize mah="50vh" viewportRef={scrollViewportRef}>
+            <Stack gap="sm" pr="sm">
               {smartPanels.map((panel, index) => (
                 <div key={index} className="flex gap-2 items-start">
                   <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
@@ -193,7 +194,16 @@ export function SmartCreateModal({
             color="yellow"
             size="xs"
             leftSection={<IconPlus size={14} />}
-            onClick={() => setSmartPanels([...smartPanels, { prompt: '' }])}
+            onClick={() => {
+              setSmartPanels([...smartPanels, { prompt: '' }]);
+              // Scroll to the newly added panel after render
+              requestAnimationFrame(() => {
+                scrollViewportRef.current?.scrollTo({
+                  top: scrollViewportRef.current.scrollHeight,
+                  behavior: 'smooth',
+                });
+              });
+            }}
           >
             Add Panel
           </Button>
@@ -220,13 +230,9 @@ export function SmartCreateModal({
           />
 
           <Text size="sm" c="dimmed">
-            Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
-            {panelCost > 0 ? panelCost + (smartEnhance ? enhanceCost : 0) : '...'} ={' '}
-            {panelCost > 0
-              ? smartPanels.filter((p) => p.prompt.trim()).length *
-                (panelCost + (smartEnhance ? enhanceCost : 0))
-              : 'Estimating...'}{' '}
-            Buzz
+            {panelCost != null
+              ? `Cost: ${smartPanels.filter((p) => p.prompt.trim()).length} panels x ${panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0)} = ${smartPanels.filter((p) => p.prompt.trim()).length * (panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0))} Buzz`
+              : 'Calculating cost...'}
           </Text>
 
           <Group justify="space-between">
@@ -240,11 +246,11 @@ export function SmartCreateModal({
             <BuzzTransactionButton
               buzzAmount={
                 smartPanels.filter((p) => p.prompt.trim()).length *
-                (panelCost + (smartEnhance ? enhanceCost : 0))
+                ((panelCost ?? 0) + (smartEnhance ? (enhanceCost ?? 0) : 0))
               }
-              label={isCreating ? 'Creating...' : 'Create Chapter'}
+              label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
-              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0}
+              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null}
               onPerformTransaction={handleSmartCreate}
               showPurchaseModal
             />

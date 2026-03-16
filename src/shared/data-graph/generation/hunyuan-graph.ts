@@ -21,7 +21,7 @@ import {
   sliderNode,
   enumNode,
   imagesNode,
-  resourcesNode,
+  createResourcesGraph,
   createCheckpointGraph,
 } from './common';
 
@@ -112,15 +112,7 @@ export const hunyuanGraph = new DataGraph<HunyuanCtx, GenerationCtx>()
   )
 
   // Resources node (LoRAs)
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph());
 
 // Export constants for use in components
 export { hunyuanAspectRatios, hunyuanDurations };

@@ -8,6 +8,7 @@ const sharedMetadata = z.object({
   ruleId: z.number().optional(),
   ruleReason: z.string().optional(),
   profilePicture: z.boolean().optional(),
+  coverImage: z.boolean().optional(),
   username: z.string().optional(),
   userId: z.number().optional(),
   nsfwLevelReason: z.string().nullish(),

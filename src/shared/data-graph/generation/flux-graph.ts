@@ -22,7 +22,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
-  resourcesNode,
+  createResourcesGraph,
   seedNode,
   sliderNode,
   type ResourceData,
@@ -135,15 +135,7 @@ const proModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  */
 const standardModeWithResourcesGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
   .merge(standardModeBaseGraph)
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph());
 
 /** Draft mode subgraph: aspectRatio, seed */
 const draftModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()

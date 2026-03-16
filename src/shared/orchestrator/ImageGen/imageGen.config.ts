@@ -24,6 +24,7 @@ import {
   seedreamConfig,
   seedreamModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/seedream.config';
+import { grokConfig, grokModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/grok.config';
 import {
   zImageConfig,
   zImageModelVersionToModelMap,
@@ -39,6 +40,7 @@ export const imageGenConfig = {
   gemini: geminiConfig,
   qwen: qwenConfig,
   seedream: seedreamConfig,
+  grok: grokConfig,
   zImage: zImageConfig,
 };
 
@@ -52,6 +54,7 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
     .concat([...geminiModelVersionMap.keys()].map((key) => [key, 'gemini']))
     .concat([...qwenModelVersionToModelMap.keys()].map((key) => [key, 'qwen']))
     .concat([...seedreamModelVersionToModelMap.keys()].map((key) => [key, 'seedream']))
+    .concat([...grokModelVersionToModelMap.keys()].map((key) => [key, 'grok']))
     .concat([...zImageModelVersionToModelMap.keys()].map((key) => [key, 'zImage']))
 );
 

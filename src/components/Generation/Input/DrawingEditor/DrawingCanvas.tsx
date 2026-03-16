@@ -371,15 +371,16 @@ export function DrawingCanvas({
     onCommit?.();
   }, [selectedId, elements, onElementsChange, onSelectedIdChange, onCommit]);
 
-  // Handle image flip
+  // Handle element flip (images, rectangles, speech bubbles)
   const handleFlipElement = useCallback(
     (axis: 'x' | 'y') => {
       if (!selectedId) return;
+      const flippableTypes = new Set(['image', 'rectangle', 'speechBubble']);
       const updatedElements = elements.map((el) => {
-        if (el.id !== selectedId || el.type !== 'image') return el;
+        if (el.id !== selectedId || !flippableTypes.has(el.type)) return el;
         return axis === 'x'
-          ? { ...el, flipX: !el.flipX }
-          : { ...el, flipY: !el.flipY };
+          ? { ...el, flipX: !(el as any).flipX }
+          : { ...el, flipY: !(el as any).flipY };
       });
       onElementsChange(updatedElements);
       onCommit?.();
@@ -817,6 +818,10 @@ export function DrawingCanvas({
                     strokeWidth={element.strokeWidth}
                     cornerRadius={4}
                     rotation={element.rotation || 0}
+                    scaleX={element.flipX ? -1 : 1}
+                    scaleY={element.flipY ? -1 : 1}
+                    offsetX={element.flipX ? element.width : 0}
+                    offsetY={element.flipY ? element.height : 0}
                     draggable={isDraggable}
                     onClick={(e) => handleShapeClick(e, element)}
                     onTap={(e) => handleShapeClick(e, element)}
@@ -870,6 +875,10 @@ export function DrawingCanvas({
                     x={element.x}
                     y={element.y}
                     rotation={element.rotation || 0}
+                    scaleX={element.flipX ? -1 : 1}
+                    scaleY={element.flipY ? -1 : 1}
+                    offsetX={element.flipX ? element.width : 0}
+                    offsetY={element.flipY ? element.height + (element.tailY - element.y - element.height) : 0}
                     draggable={isDraggable}
                     onClick={(e) => handleShapeClick(e, element)}
                     onTap={(e) => handleShapeClick(e, element)}
@@ -1000,7 +1009,7 @@ export function DrawingCanvas({
       {/* Floating action buttons for selected element */}
       {selectedId && isSelectMode && (() => {
         const selectedElement = elements.find((el) => el.id === selectedId);
-        const isImage = selectedElement?.type === 'image';
+        const isFlippable = selectedElement?.type === 'image' || selectedElement?.type === 'rectangle' || selectedElement?.type === 'speechBubble';
         return (
           <div
             style={{
@@ -1013,7 +1022,7 @@ export function DrawingCanvas({
               gap: 6,
             }}
           >
-            {isImage && (
+            {isFlippable && (
               <>
                 <Tooltip label="Flip horizontal" withArrow position="top">
                   <ActionIcon

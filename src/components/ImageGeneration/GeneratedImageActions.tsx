@@ -190,7 +190,6 @@ export function GeneratedImageActions({
         <div className="flex gap-2">
           <BulkWorkflowMenu
             selected={selected}
-            deselect={deselect}
             actionIconSize={actionIconSize}
             iconSize={iconSize}
           />
@@ -251,12 +250,10 @@ type MantineSpacing = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 function BulkWorkflowMenu({
   selected,
-  deselect,
   actionIconSize,
   iconSize,
 }: {
   selected: BlobData[];
-  deselect: () => void;
   actionIconSize: MantineSpacing;
   iconSize: number;
 }) {
@@ -283,6 +280,16 @@ function BulkWorkflowMenu({
       ),
     [videoWorkflows.groups]
   );
+
+  const deselectImages = (consumed: BlobData[]) => {
+    const consumedKeys = new Set(
+      consumed.map((img) => `${img.workflowId}:${img.stepName}:${img.id}`)
+    );
+    const remaining = selected.filter(
+      (img) => !consumedKeys.has(`${img.workflowId}:${img.stepName}:${img.id}`)
+    );
+    orchestratorImageSelect.setSelected(remaining);
+  };
 
   const hasImageWorkflows = selectedImages.length > 0 && bulkImageWorkflows.length > 0;
   const hasVideoWorkflows = selectedVideos.length > 0 && bulkVideoWorkflows.length > 0;
@@ -312,9 +319,9 @@ function BulkWorkflowMenu({
               return (
                 <Menu.Item
                   key={w.id}
-                  onClick={() => {
-                    applyBulkWorkflow(w.graphKey, selectedImages);
-                    deselect();
+                  onClick={async () => {
+                    const consumed = await applyBulkWorkflow(w.graphKey, selectedImages);
+                    deselectImages(consumed);
                   }}
                 >
                   {label}
@@ -334,9 +341,9 @@ function BulkWorkflowMenu({
               return (
                 <Menu.Item
                   key={w.id}
-                  onClick={() => {
-                    applyBulkWorkflow(w.graphKey, selectedVideos);
-                    deselect();
+                  onClick={async () => {
+                    const consumed = await applyBulkWorkflow(w.graphKey, selectedVideos);
+                    deselectImages(consumed);
                   }}
                 >
                   {label}

@@ -36,9 +36,9 @@ class FreshdeskCaller extends HttpCaller {
     return this.get<FreshdeskConversation[]>(`/tickets/${ticketId}/conversations`);
   }
 
-  async addNote(ticketId: number, body: string, isPrivate = true) {
+  async addNote(ticketId: number, body: string, isPrivate = true, agentId?: number) {
     return this.post<FreshdeskConversation>(`/tickets/${ticketId}/notes`, {
-      payload: { body, private: isPrivate },
+      payload: { body, private: isPrivate, ...(agentId ? { user_id: agentId } : {}) },
     });
   }
 
@@ -73,10 +73,9 @@ class FreshdeskCaller extends HttpCaller {
   // --- KB operations ---
 
   async searchKB(query: string) {
-    return this.get<FreshdeskKBSearchResult[]>(
-      `/search/solutions`,
-      { queryParams: { term: query } }
-    );
+    return this.get<FreshdeskKBSearchResult[]>(`/search/solutions`, {
+      queryParams: { term: query },
+    });
   }
 
   async getArticle(articleId: number) {

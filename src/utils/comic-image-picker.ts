@@ -26,11 +26,13 @@ type GeneratorPickOptions = {
   onSuccess: (id: string) => void;
   onLoadingChange?: (loading: boolean) => void;
   ImageSelectModal: React.ComponentType<any>;
+  /** Max images the user can pick. Defaults to 1 (single-pick). */
+  maxSelections?: number;
 };
 
 /**
- * Open the generator image picker, download the selected image via standard flow,
- * upload to S3, and call onSuccess with the S3 key.
+ * Open the generator image picker, download selected image(s) via standard flow,
+ * upload to S3, and call onSuccess with each S3 key.
  */
 export function openGeneratorImagePicker({
   title,
@@ -39,6 +41,7 @@ export function openGeneratorImagePicker({
   onSuccess,
   onLoadingChange,
   ImageSelectModal,
+  maxSelections = 1,
 }: GeneratorPickOptions) {
   dialogStore.trigger({
     component: ImageSelectModal,
@@ -49,14 +52,27 @@ export function openGeneratorImagePicker({
       importedUrls: [],
       onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
         if (selected.length === 0) return;
+        const items = selected.slice(0, maxSelections);
         try {
           onLoadingChange?.(true);
-          const s3Key = await fetchAndUploadGeneratorImage(selected[0].url, fileNameBase, uploadFn);
-          onSuccess(s3Key);
+          const results = await Promise.allSettled(
+            items.map(async (item) => {
+              const s3Key = await fetchAndUploadGeneratorImage(item.url, fileNameBase, uploadFn);
+              onSuccess(s3Key);
+            })
+          );
+          const failures = results.filter((r) => r.status === 'rejected');
+          if (failures.length > 0) {
+            console.error(`Failed to upload ${failures.length}/${items.length} generator image(s) for ${fileNameBase}`);
+            showErrorNotification({
+              error: new Error(`${failures.length} of ${items.length} image(s) failed to upload. Please try again.`),
+              title: 'Upload Failed',
+            });
+          }
         } catch (err) {
-          console.error(`Failed to upload generator image for ${fileNameBase}:`, err);
+          console.error(`Failed to upload generator image(s) for ${fileNameBase}:`, err);
           showErrorNotification({
-            error: new Error(`Could not upload ${fileNameBase} image. Please try again.`),
+            error: new Error(`Could not upload ${fileNameBase} image(s). Please try again.`),
             title: 'Upload Failed',
           });
         } finally {

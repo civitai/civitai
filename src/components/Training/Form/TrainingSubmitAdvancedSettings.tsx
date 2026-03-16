@@ -166,11 +166,27 @@ export const AdvancedSettings = ({
         ? 'cosine'
         : selectedRun.params.lrScheduler;
 
-    if (
-      newOptimizerArgs !== selectedRun.params.optimizerArgs ||
-      newScheduler !== selectedRun.params.lrScheduler
-    ) {
-      doUpdate({ params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler } });
+    const updatedParams: Record<string, unknown> = {};
+
+    if (newOptimizerArgs !== selectedRun.params.optimizerArgs) {
+      updatedParams.optimizerArgs = newOptimizerArgs;
+    }
+    if (newScheduler !== selectedRun.params.lrScheduler) {
+      updatedParams.lrScheduler = newScheduler;
+    }
+
+    // Prodigy optimizer requires LR values set to 1
+    if (selectedRun.params.optimizerType === 'Prodigy') {
+      if (selectedRun.params.unetLR !== 1) {
+        updatedParams.unetLR = 1;
+      }
+      if (selectedRun.params.textEncoderLR !== 1) {
+        updatedParams.textEncoderLR = 1;
+      }
+    }
+
+    if (Object.keys(updatedParams).length > 0) {
+      doUpdate({ params: updatedParams });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.optimizerType]);

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Button,
   Group,
   Loader,
@@ -14,6 +15,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
+  IconInfoCircle,
   IconPencil,
   IconPhotoUp,
   IconPlus,
@@ -47,6 +49,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
+import { trpc } from '~/utils/trpc';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
@@ -82,9 +85,9 @@ interface PanelModalProps {
   regeneratingPanelId: number | null;
   insertAtPosition: number | null;
   activeChapterPanelCount: number;
-  // Costs
-  panelCost: number;
-  enhanceCost: number;
+  // Costs (null = still loading)
+  panelCost: number | null;
+  enhanceCost: number | null;
   // Submission
   isSubmitting: boolean;
   onGeneratePanel: () => void;
@@ -168,6 +171,20 @@ export function PanelModal({
     uploadToCF: uploadEnhanceToCF,
     resetFiles: resetEnhanceFiles,
   } = useCFImageUpload();
+
+  // Enhance tab cost — uses the actual source image for accurate img2img pricing
+  const { data: enhanceImgCost } = trpc.comics.getIterateCostEstimate.useQuery(
+    {
+      baseModel: effectiveModel,
+      aspectRatio,
+      quantity: 1,
+      sourceImage: enhanceSourceImage
+        ? { url: enhanceSourceImage.url, width: enhanceSourceImage.width, height: enhanceSourceImage.height }
+        : undefined,
+    },
+    { enabled: !!enhanceSourceImage, staleTime: 30_000, retry: 2 }
+  );
+  const enhanceGenCost = enhanceSourceImage ? (enhanceImgCost?.cost ?? null) : panelCost;
 
   // Bulk tab state
   const [bulkItems, setBulkItems] = useState<BulkPanelItem[]>([]);
@@ -447,7 +464,10 @@ export function PanelModal({
   };
 
   const bulkGenerationCount = bulkItems.filter((item) => item.prompt.trim() !== '').length;
-  const bulkTotalCost = bulkGenerationCount * (panelCost + (bulkEnhance ? enhanceCost : 0));
+  const costReady = panelCost != null;
+  const effectivePanelCost = panelCost ?? 0;
+  const effectiveEnhanceCost = enhanceCost ?? 0;
+  const bulkTotalCost = bulkGenerationCount * (effectivePanelCost + (bulkEnhance ? effectiveEnhanceCost : 0));
 
   // ── Import handlers ──
   const handleImportSelect = () => {
@@ -654,16 +674,16 @@ export function PanelModal({
               Cancel
             </Button>
             <Tooltip
-              label={`Generation: ${panelCost} Buzz + Enhance: ${enhanceCost} Buzz`}
-              disabled={!enhancePrompt}
+              label={costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
+              disabled={!enhancePrompt && costReady}
               withArrow
               position="top"
             >
               <BuzzTransactionButton
-                buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
-                label={insertAtPosition != null ? 'Insert' : 'Generate'}
+                buzzAmount={effectivePanelCost + (enhancePrompt ? effectiveEnhanceCost : 0)}
+                label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : 'Generate'}
                 loading={isSubmitting || isCreatePending}
-                disabled={!prompt.trim()}
+                disabled={!prompt.trim() || !costReady}
                 onPerformTransaction={onGeneratePanel}
                 showPurchaseModal
               />
@@ -835,6 +855,14 @@ export function PanelModal({
             onChange={onModelChange}
             size="sm"
           />
+          {(annotationElements.length > 0 || initialEnhanceSource) && (
+            <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />} py="xs">
+              <Text size="xs">
+                Tip: Sketch annotations work best with Nano Banana. Results may vary with other
+                models.
+              </Text>
+            </Alert>
+          )}
           <AspectRatioSelector
             value={aspectRatio}
             onChange={setAspectRatio}
@@ -847,10 +875,10 @@ export function PanelModal({
               Cancel
             </Button>
             <BuzzTransactionButton
-              buzzAmount={panelCost + (prompt.trim() && enhancePrompt ? enhanceCost : 0)}
-              label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
+              buzzAmount={(enhanceGenCost ?? 0) + (prompt.trim() && enhancePrompt ? effectiveEnhanceCost : 0)}
+              label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
               loading={isSubmitting || isEnhancePending}
-              disabled={!enhanceSourceImage}
+              disabled={!enhanceSourceImage || enhanceGenCost == null}
               onPerformTransaction={handleEnhanceSubmit}
               showPurchaseModal
             />
@@ -962,7 +990,7 @@ export function PanelModal({
                 <span>
                   {' '}
                   &middot; {bulkGenerationCount} generation{bulkGenerationCount !== 1 ? 's' : ''}{' '}
-                  = {bulkTotalCost} Buzz
+                  = {costReady ? `${bulkTotalCost} Buzz` : 'Calculating...'}
                 </span>
               )}
               {bulkItems.length - bulkGenerationCount > 0 && (
@@ -979,13 +1007,14 @@ export function PanelModal({
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
-            {bulkTotalCost > 0 ? (
+            {bulkTotalCost > 0 || (bulkGenerationCount > 0 && !costReady) ? (
               <BuzzTransactionButton
                 buzzAmount={bulkTotalCost}
-                label={`Add ${bulkItems.length} Panel${bulkItems.length !== 1 ? 's' : ''}`}
+                label={!costReady ? 'Loading cost...' : `Add ${bulkItems.length} Panel${bulkItems.length !== 1 ? 's' : ''}`}
                 loading={isSubmitting || isBulkPending}
                 disabled={
                   bulkItems.length === 0 ||
+                  !costReady ||
                   bulkItems.some((item) => !item.sourceImage && !item.prompt.trim())
                 }
                 onPerformTransaction={handleBulkSubmit}

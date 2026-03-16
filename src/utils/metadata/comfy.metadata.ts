@@ -1,11 +1,13 @@
-import { samplerMap } from '~/server/common/constants';
 import type {
   ComfyMetaSchema,
   ImageMetaProps,
   CivitaiResource,
 } from '~/server/schema/image.schema';
-import { findKeyForValue } from '~/utils/map-helpers';
-import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
+import {
+  a1111Compatibility,
+  createMetadataProcessor,
+  setGlobalValue,
+} from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';
 import { decodeUserComment } from '~/utils/encoding-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -16,7 +18,7 @@ const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
 function cleanBadJson(str: string) {
   return str
     .replace(/\[NaN\]/g, '[]')
-    .replace(/NaN/g, '0')
+    .replace(/\bNaN\b/g, '0')
     .replace(/\[Infinity\]/g, '[]');
 }
 
@@ -115,7 +117,10 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         });
       }
 
-      if (node.class_type == 'CheckpointLoaderSimple') models.push(node.inputs.ckpt_name as string);
+      if (['CheckpointLoaderSimple', 'CheckpointLoader'].includes(node.class_type))
+        models.push(node.inputs.ckpt_name as string);
+
+      if (node.class_type === 'UNETLoader') models.push(node.inputs.unet_name as string);
 
       if (node.class_type == 'UpscaleModelLoader') upscalers.push(node.inputs.model_name as string);
 
@@ -304,7 +309,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     // Map to automatic1111 terms for compatibility
-    a1111Compatability(metadata);
+    a1111Compatibility(metadata);
 
     return removeEmpty(metadata);
   },
@@ -316,28 +321,20 @@ export const comfyMetadataProcessor = createMetadataProcessor({
   },
 });
 
-function a1111Compatability(metadata: ImageMetaProps) {
-  // Sampler name
-  const samplerName = metadata.sampler;
-  let a1111sampler: string | undefined;
-  if (metadata.scheduler == 'karras') {
-    a1111sampler = findKeyForValue(samplerMap, samplerName + '_karras');
-  }
-  if (!a1111sampler) a1111sampler = findKeyForValue(samplerMap, samplerName);
-  if (a1111sampler) metadata.sampler = a1111sampler;
+const MAX_PROMPT_DEPTH = 20;
 
-  // Model
-  const models = metadata.models as string[];
-  if (models && models.length > 0) {
-    metadata.Model = models[0].replace(/\.[^/.]+$/, '');
-  }
-}
+function getPromptText(
+  node: ComfyNode,
+  target: 'positive' | 'negative' = 'positive',
+  visited = new Set<ComfyNode>()
+): string {
+  if (visited.has(node) || visited.size >= MAX_PROMPT_DEPTH) return '';
+  visited.add(node);
 
-function getPromptText(node: ComfyNode, target: 'positive' | 'negative' = 'positive'): string {
   if (node.class_type === 'ControlNetApply')
-    return getPromptText(node.inputs.conditioning as ComfyNode, target);
+    return getPromptText(node.inputs.conditioning as ComfyNode, target, visited);
   if (node.class_type === 'FluxGuidance')
-    return getPromptText(node.inputs.conditioning as ComfyNode, target);
+    return getPromptText(node.inputs.conditioning as ComfyNode, target, visited);
 
   // Handle wildcard nodes
   if (node.inputs?.populated_text) node.inputs.text = node.inputs.populated_text;
@@ -345,7 +342,7 @@ function getPromptText(node: ComfyNode, target: 'positive' | 'negative' = 'posit
   if (node.inputs?.text) {
     if (typeof node.inputs.text === 'string') return node.inputs.text;
     if (typeof (node.inputs.text as ComfyNode).class_type !== 'undefined')
-      return getPromptText(node.inputs.text as ComfyNode, target);
+      return getPromptText(node.inputs.text as ComfyNode, target, visited);
   }
   if (node.inputs?.text_g) {
     if (!node.inputs?.text_l || node.inputs?.text_l === node.inputs?.text_g)

@@ -16,7 +16,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
-  resourcesNode,
+  createResourcesGraph,
   seedNode,
   sliderNode,
 } from './common';
@@ -69,15 +69,7 @@ export const chromaGraph = new DataGraph<{ ecosystem: string; workflow: string }
       }),
     []
   )
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: chromaAspectRatios, defaultValue: '1:1' }))
   .node(
     'cfgScale',

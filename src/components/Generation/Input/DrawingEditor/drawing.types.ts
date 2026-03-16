@@ -26,6 +26,8 @@ export interface DrawingRectElement extends DrawingElementBase {
   width: number;
   height: number;
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Circle/Ellipse element
@@ -55,6 +57,8 @@ export interface DrawingSpeechBubbleElement extends DrawingElementBase {
   tailX: number; // tail tip position relative to bubble center
   tailY: number;
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Image overlay element

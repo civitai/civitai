@@ -1,15 +1,151 @@
-import { Button, Textarea } from '@mantine/core';
+import { Button, Center, Group, Loader, Stack, Text, Textarea } from '@mantine/core';
 import { IconSend } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { CommentReactions } from '~/components/CommentsV2/Comment/CommentReactions';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { Comment } from '~/components/CommentsV2/Comment/Comment';
+import {
+  CommentsCtx,
+  RootThreadCtx,
+  useNewCommentStore,
+} from '~/components/CommentsV2/CommentsProvider';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { formatRelativeDate } from '~/utils/comic-helpers';
-import { trpc } from '~/utils/trpc';
+import { ThreadSort } from '~/server/common/enums';
+import { queryClient, trpc } from '~/utils/trpc';
 
 export function ChapterComments({
+  projectId,
+  chapterPosition,
+  userId,
+}: {
+  projectId: number;
+  chapterPosition: number;
+  userId: number;
+}) {
+  const currentUser = useCurrentUser();
+  const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
+  const expanded = useNewCommentStore((state) => state.expandedComments);
+  const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
+  const utils = trpc.useUtils();
+
+  const { data: thread, isLoading } = trpc.comics.getChapterThread.useQuery(
+    { projectId, chapterPosition },
+    { enabled: projectId > 0 }
+  );
+
+  // Refetch comic thread data when commentv2 mutations succeed (delete, hide, pin)
+  useEffect(() => {
+    const unsubscribe = queryClient.getMutationCache().subscribe((event) => {
+      if (event.type !== 'updated' || event.action.type !== 'success') return;
+      const mutationKey = event.mutation.options.mutationKey;
+      if (!mutationKey) return;
+      const keyStr = JSON.stringify(mutationKey);
+      if (
+        keyStr.includes('commentv2') &&
+        (keyStr.includes('delete') ||
+          keyStr.includes('toggleHide') ||
+          keyStr.includes('togglePinned'))
+      ) {
+        utils.comics.getChapterThread.invalidate({ projectId, chapterPosition });
+      }
+    });
+    return unsubscribe;
+  }, [projectId, chapterPosition, utils]);
+
+  const comments = thread?.comments ?? [];
+  const commentCount = comments.length;
+  const isLocked = thread?.locked ?? false;
+
+  const setRootThread = useCallback(() => {}, []);
+  const setInitialThread = useCallback(() => {}, []);
+
+  return (
+    <RootThreadCtx.Provider
+      value={{
+        sort,
+        setSort,
+        isInitialThread: true,
+        setInitialThread,
+        setRootThread,
+        expanded,
+        toggleExpanded,
+        activeComment: undefined,
+      }}
+    >
+      <CommentsCtx.Provider
+        value={{
+          entityType: 'comicChapter',
+          entityId: thread?.id ?? 0,
+          data: comments,
+          isLoading,
+          isFetching: false,
+          isFetchingNextPage: false,
+          isLocked,
+          isMuted: currentUser?.muted ?? false,
+          isReadonly: false,
+          created: [],
+          badges: [{ userId, label: 'op', color: 'violet' }],
+          showMore: false,
+          toggleShowMore: () => {},
+          highlighted: undefined,
+          hiddenCount: 0,
+          forceLocked: undefined,
+          sort,
+          setSort,
+          level: 1,
+          parentThreadId: thread?.id,
+        }}
+      >
+        <Stack>
+          <Text fw={500} size="md">
+            Comments {commentCount > 0 ? `(${commentCount})` : ''}
+          </Text>
+
+          {isLoading ? (
+            <Center>
+              <Loader type="bars" />
+            </Center>
+          ) : (
+            <>
+              {isLocked ? (
+                <Text size="sm" c="dimmed">
+                  Comments are locked for this chapter.
+                </Text>
+              ) : currentUser ? (
+                <ComicCreateComment
+                  projectId={projectId}
+                  chapterPosition={chapterPosition}
+                />
+              ) : (
+                <Text size="sm" c="dimmed">
+                  <Link href="/login" className="text-blue-400 hover:underline">
+                    Sign in
+                  </Link>{' '}
+                  to leave a comment.
+                </Text>
+              )}
+
+              {comments.length === 0 && !isLoading ? (
+                <Text size="sm" c="dimmed">
+                  No comments yet. Be the first!
+                </Text>
+              ) : (
+                <Stack gap="xl">
+                  {comments.map((comment) => (
+                    <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
+                  ))}
+                </Stack>
+              )}
+            </>
+          )}
+        </Stack>
+      </CommentsCtx.Provider>
+    </RootThreadCtx.Provider>
+  );
+}
+
+function ComicCreateComment({
   projectId,
   chapterPosition,
 }: {
@@ -18,11 +154,6 @@ export function ChapterComments({
 }) {
   const currentUser = useCurrentUser();
   const [comment, setComment] = useState('');
-
-  const { data: thread, isLoading } = trpc.comics.getChapterThread.useQuery(
-    { projectId, chapterPosition },
-    { enabled: projectId > 0 }
-  );
 
   const utils = trpc.useUtils();
   const createComment = trpc.comics.createChapterComment.useMutation({
@@ -37,70 +168,32 @@ export function ChapterComments({
     createComment.mutate({ projectId, chapterPosition, content: comment.trim() });
   };
 
-  // Use actual comment array length for display count (more reliable than commentCount field)
-  const commentCount = thread?.comments?.length ?? 0;
-
   return (
-    <div>
-      <h3 className="text-base font-medium mb-3">
-        Comments {commentCount > 0 ? `(${commentCount})` : ''}
-      </h3>
-
-      {/* Comment input */}
-      {thread?.locked ? (
-        <p className="text-sm text-gray-400 mb-4">Comments are locked for this chapter.</p>
-      ) : currentUser ? (
-        <div className="flex gap-2 mb-4">
-          <Textarea
-            placeholder="Write a comment..."
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            className="flex-1"
-            size="sm"
-            autosize
-            maxRows={4}
-          />
-          <Button
-            onClick={handleSubmit}
-            loading={createComment.isPending}
-            disabled={!comment.trim()}
-            size="sm"
-            variant="filled"
-          >
-            <IconSend size={16} />
-          </Button>
-        </div>
-      ) : (
-        <p className="text-sm text-gray-400 mb-4">
-          <Link href="/login" className="text-blue-400 hover:underline">
-            Sign in
-          </Link>{' '}
-          to leave a comment.
-        </p>
-      )}
-
-      {/* Comment list */}
-      {isLoading ? (
-        <div className="text-sm text-gray-400">Loading comments...</div>
-      ) : !thread?.comments?.length ? (
-        <div className="text-sm text-gray-400">No comments yet. Be the first!</div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {thread.comments.map((c) => (
-            <div key={c.id} className="flex gap-2">
-              <UserAvatarSimple {...c.user} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-medium">{c.user.username}</span>
-                  <span className="text-xs text-gray-400">{formatRelativeDate(c.createdAt)}</span>
-                </div>
-                <p className="text-sm mt-0.5 whitespace-pre-wrap break-words">{c.content}</p>
-                {c.reactions && <CommentReactions comment={c as any} />}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <Group align="flex-start" wrap="nowrap" gap="sm">
+      <UserAvatar user={currentUser} size="md" />
+      <Textarea
+        placeholder="Type your comment..."
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        className="flex-1"
+        size="sm"
+        autosize
+        maxRows={4}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            handleSubmit();
+          }
+        }}
+      />
+      <Button
+        onClick={handleSubmit}
+        loading={createComment.isPending}
+        disabled={!comment.trim()}
+        size="sm"
+        variant="filled"
+      >
+        <IconSend size={16} />
+      </Button>
+    </Group>
   );
 }

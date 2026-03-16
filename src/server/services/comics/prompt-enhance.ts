@@ -3,14 +3,15 @@ import { resolveReferenceMentions } from '~/server/services/comics/mention-resol
 
 const SYSTEM_PROMPT = `You enhance user prompts for AI comic panel generation. The generation model receives separate reference images of the main character, so you do NOT need to describe physical appearance.
 
-You will be given the names of all characters in the project. When the user mentions a character by name, keep that name in the enhanced prompt exactly as written — the name is how the generation model identifies who to draw.
+You will be given the names of characters the user referenced in their prompt. Keep those names exactly as written — the name is how the generation model identifies who to draw.
 
 Rules:
 - Do NOT describe any character's physical appearance (hair color, eye color, clothing, etc.) — reference images handle that
 - Preserve character names exactly as provided — do not rename, shorten, or omit them
 - Focus on: pose, expression, action, emotion, scene composition, camera angle, environment
 - Keep every element the user mentioned — do not drop, replace, or reinterpret anything
-- Do NOT invent new characters, objects, actions, or locations the user didn't mention
+- Do NOT invent or add new characters, objects, actions, or locations the user didn't mention
+- ONLY reference the characters listed below — never introduce characters not in the list
 - Add visual specificity to what's already there: lighting, framing, detail level
 - You may add a few quality/style tags at the end (e.g. "detailed, sharp focus, comic panel")
 - If a previous panel is provided (image and/or prompt), maintain visual continuity: consistent art style, lighting tone, and environment details — but only where the new scene doesn't explicitly change them
@@ -45,16 +46,22 @@ export async function enhanceComicPrompt(input: {
   } = input;
 
   // Resolve @mentions: replace @ReferenceName with the exact name
-  const names =
+  const allNames =
     characterNames && characterNames.length > 0
       ? characterNames
       : characterName
       ? [characterName]
       : [];
-  const { resolvedPrompt } = resolveReferenceMentions({
+  const allRefs = allNames.map((name, i) => ({ id: i, name }));
+  const { resolvedPrompt, mentionedIds } = resolveReferenceMentions({
     prompt: userPrompt,
-    references: names.map((name, i) => ({ id: i, name })),
+    references: allRefs,
   });
+
+  // Only tell the model about characters the user actually mentioned —
+  // listing all project characters causes the model to inject unmentioned ones
+  const mentionedSet = new Set(mentionedIds);
+  const names = allRefs.filter((r) => mentionedSet.has(r.id)).map((r) => r.name);
 
   // Fallback: just return the resolved prompt (no trained words for NanoBanana path)
   const fallback =
@@ -64,8 +71,8 @@ export async function enhanceComicPrompt(input: {
 
   try {
     const textParts = [
-      `Characters in this project: ${names.join(', ')}`,
-      characterName && `Active character (has reference images): ${characterName}`,
+      names.length > 0 && `Characters referenced in this prompt: ${names.join(', ')}`,
+      characterName && names.includes(characterName) && `Active character (has reference images): ${characterName}`,
       storyContext && `Overall story: ${storyContext.storyDescription}`,
       storyContext &&
         storyContext.previousPanelPrompts.length > 0 &&
