@@ -2099,9 +2099,14 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   // Check BitDex mode (off / shadow / primary)
+  // Pass isModerator context so Flipt segment matching works
   const bitdexMode = await getFliptVariant(
     FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    input.currentUserId?.toString() || 'anonymous'
+    input.currentUserId?.toString() || 'anonymous',
+    {
+      ...(input.currentUserId && { userId: String(input.currentUserId) }),
+      ...(input.isModerator != null && { isModerator: String(!!input.isModerator) }),
+    }
   );
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
