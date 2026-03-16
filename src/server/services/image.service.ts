@@ -2116,10 +2116,18 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const meiliStart = Date.now();
   const result = await searchFn(input);
 
-  // Shadow mode: fire BitDex async alongside Meili for comparison
+  // Shadow mode: fire BitDex async alongside Meili for comparison.
+  // Strip user-specific fields so queries are cacheable (same for all users
+  // with the same browsing level). We're comparing result overlap, not serving.
   if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
-    getImagesFromBitdexPreFilter(input)
+    const shadowInput = {
+      ...input,
+      currentUserId: undefined,
+      isModerator: undefined,
+      excludedUserIds: undefined,
+    };
+    getImagesFromBitdexPreFilter(shadowInput)
       .then((bitdexResult) => {
         if (bitdexResult) {
           compareBitdexResults({
