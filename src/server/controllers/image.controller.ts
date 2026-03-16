@@ -340,10 +340,17 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
-    // Use getAllImagesIndex (old Meilisearch) when feature flag is enabled
-    // Use getAllImages (DB) otherwise
-    // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
-    const fetchFn = features.imageIndexFeed ? getAllImagesIndex : getAllImages;
+
+    // Check BitDex mode — if active, always route through getAllImagesIndex
+    const bitdexMode = await getFliptVariant(
+      FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+      user?.id?.toString() || 'anonymous',
+      buildFliptContext(user)
+    );
+    const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
+    const useIndex = useBitdex || features.imageIndexFeed;
+
+    const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true
       ? ImageResultSearchIndex
       : ImageResultDB;
