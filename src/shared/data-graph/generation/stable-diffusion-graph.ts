@@ -10,13 +10,13 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
+  createVaeGraph,
   imagesNode,
   negativePromptNode,
-  resourcesNode,
   samplerNode,
   seedNode,
   sliderNode,
-  vaeNode,
 } from './common';
 
 // =============================================================================
@@ -78,16 +78,8 @@ export const stableDiffusionGraph = new DataGraph<
     }),
     ['workflow']
   )
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
-  .node('vae', (ctx) => vaeNode({ ecosystem: ctx.ecosystem }), ['ecosystem'])
+  .merge(createResourcesGraph())
+  .merge(createVaeGraph())
   .node(
     'aspectRatio',
     (ctx) => {

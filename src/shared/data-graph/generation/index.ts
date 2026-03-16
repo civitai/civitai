@@ -73,6 +73,8 @@ export {
   imagesNode,
   // Subgraph builders
   createCheckpointGraph,
+  createResourcesGraph,
+  createVaeGraph,
   // Types
   type AspectRatioOption,
   type VersionOption,

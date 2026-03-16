@@ -37,7 +37,7 @@ import {
   sliderNode,
   imagesNode,
   videoNode,
-  resourcesNode,
+  createResourcesGraph,
   createCheckpointGraph,
 } from './common';
 
@@ -336,15 +336,7 @@ export const ltxv23Graph = new DataGraph<LTXV23Ctx, GenerationCtx>()
   })
 
   // Resources node (LoRAs)
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  );
+  .merge(createResourcesGraph());
 
 // Export constants for use in components
 export {

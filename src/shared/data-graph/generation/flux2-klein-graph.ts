@@ -18,9 +18,9 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   imagesNode,
   negativePromptNode,
-  resourcesNode,
   samplerNode,
   schedulerNode,
   seedNode,
@@ -101,15 +101,7 @@ type Flux2KleinModeCtx = {
  * For 9B and 4B distilled variants
  */
 const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
   .node('steps', sliderNode({ min: 4, max: 12, defaultValue: 8 }))
@@ -120,15 +112,7 @@ const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
  * For 9B Base and 4B Base variants
  */
 const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
-  .node(
-    'resources',
-    (ctx, ext) =>
-      resourcesNode({
-        ecosystem: ctx.ecosystem,
-        limit: ext.limits.maxResources,
-      }),
-    ['ecosystem']
-  )
+  .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
   .node('sampler', samplerNode({ options: flux2KleinSamplers, defaultValue: 'euler' }))
