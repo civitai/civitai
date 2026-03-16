@@ -2129,6 +2129,9 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
             meiliTotalMatched: result.data.length,
             bitdexElapsedMs: bitdexResult.elapsed_us / 1000,
             meiliElapsedMs: meiliElapsed,
+            sort: input.sort ?? 'Newest',
+            hasPeriod: !!input.period,
+            hasFilters: !!(input.tags?.length || input.types?.length || input.userId || input.withMeta || input.fromPlatform || input.baseModels?.length || input.postId),
           });
         }
       })
