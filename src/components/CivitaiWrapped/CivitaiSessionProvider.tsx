@@ -30,6 +30,8 @@ export function CivitaiSessionProvider({
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
   const { data: settings } = trpc.user.getSettings.useQuery();
+  const settingsAllowAds = settings?.allowAds;
+  const settingsDisableHidden = settings?.disableHidden;
 
   const sessionUser = useMemo(() => {
     if (!user)
@@ -52,8 +54,8 @@ export function CivitaiSessionProvider({
       settings: {
         showNsfw: user.showNsfw,
         browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : user.browsingLevel,
-        disableHidden: disableHidden ?? true,
-        allowAds: settings?.allowAds ?? !isMember ? true : false,
+        disableHidden: settingsDisableHidden ?? disableHidden ?? true,
+        allowAds: settingsAllowAds ?? !isMember ? true : false,
         autoplayGifs: user.autoplayGifs ?? true,
         blurNsfw: user.blurNsfw,
       },
@@ -63,7 +65,14 @@ export function CivitaiSessionProvider({
     return currentUser;
     // data?.expires seems not used but is needed to remotely kill sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.expires, disableHidden, allowMatureContent]);
+  }, [
+    data?.expires,
+    allowMatureContent,
+    disableHidden,
+    isRestricted,
+    settingsAllowAds,
+    settingsDisableHidden,
+  ]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();

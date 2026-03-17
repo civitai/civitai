@@ -11,6 +11,7 @@ import { devtools } from 'zustand/middleware';
 import type { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 
 const Context = createContext<ContentSettingsStore | null>(null);
 
@@ -18,7 +19,21 @@ const debouncer = createDebouncer(1000);
 export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
   const domain = useDomainColor();
   const { type, settings } = useCivitaiSessionContext();
+  const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
+    onSuccess: (_, variables) => {
+      const changedSettings: Partial<UserSettingsSchema> = {};
+      if (variables.allowAds !== undefined) changedSettings.allowAds = variables.allowAds;
+      if (variables.disableHidden !== undefined)
+        changedSettings.disableHidden = variables.disableHidden;
+
+      if (Object.keys(changedSettings).length === 0) return;
+
+      queryUtils.user.getSettings.setData(undefined, (old) => {
+        if (!old) return old;
+        return { ...old, ...changedSettings } satisfies UserSettingsSchema;
+      });
+    },
     onError: (error) => {
       showErrorNotification({
         title: 'Failed to update settings',
@@ -36,7 +51,26 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (storeRef.current) {
-      storeRef.current.setState({ ...settings });
+      const currentStore = storeRef.current.getState();
+      const prevSnapshot = snapshotRef.current;
+
+      // Smart merge: only apply incoming values for fields the user hasn't changed locally.
+      // A field is "locally dirty" if its store value differs from our last-known snapshot.
+      // This prevents a stale session refresh from reverting a toggle the user just made.
+      const merged: Partial<StoreState> = {};
+      for (const key of Object.keys(settings) as (keyof typeof settings)[]) {
+        const locallyDirty = !isEqual(currentStore[key], prevSnapshot[key]);
+        if (!locallyDirty) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (merged as any)[key] = settings[key];
+        }
+      }
+
+      if (Object.keys(merged).length > 0) {
+        storeRef.current.setState(merged);
+      }
+      // Update snapshot to reflect what the server sent, so future local changes
+      // are correctly detected as dirty against this new baseline.
       snapshotRef.current = settings;
     }
   }, [settings]);
@@ -45,6 +79,11 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
     const store = storeRef.current;
     if (!store || type === 'unauthed') return;
     const unsubscribe = store.subscribe(({ setState, ...curr }, prev) => {
+      // Set disableHidden cookie immediately (outside debouncer) so a page refresh
+      // within the 1s debounce window still preserves the user's choice.
+      // TODO.hiddenPreferences - remove this once `disableHidden` comes in with rest of user settings
+      if (curr.disableHidden !== prev.disableHidden) setCookie('disableHidden', curr.disableHidden);
+
       debouncer(() => {
         const changed = getChanged({ ...curr, domain }, { ...snapshotRef.current, domain });
         if (Object.keys(changed).length > 0) {
@@ -56,16 +95,12 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
           });
           snapshotRef.current = curr;
         }
-
-        // TODO.hiddenPreferences - remove this once `disableHidden` comes in with rest of user settings
-        if (curr.disableHidden !== prev.disableHidden)
-          setCookie('disableHidden', curr.disableHidden);
       });
     });
     return () => {
       unsubscribe();
     };
-  }, [type]);
+  }, [domain, mutate, type]);
 
   return <Context.Provider value={storeRef.current}>{children}</Context.Provider>;
 }
