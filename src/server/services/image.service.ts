@@ -1869,10 +1869,7 @@ export const getAllImagesIndex = async (
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
       metadata: { ...metadata, width: sr.width ?? 0, height: sr.height ?? 0 },
-      // Use sortAt as publishedAt when publishedAtUnix is missing/zero but image is
-      // in the result set (passed isPublished=true filter). Handles BitDex data where
-      // publishedAt=0 for bulk-loaded records that are actually published.
-      publishedAt: publishedAtUnix ? sr.sortAt : (sr.postId ? sr.sortAt : undefined),
+      publishedAt: publishedAtUnix ? sr.sortAt : undefined,
       //
       user: {
         id: sr.userId,
