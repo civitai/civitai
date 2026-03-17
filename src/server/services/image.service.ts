@@ -3044,7 +3044,9 @@ export async function getImagesFromBitdexPreFilter(
   if (nonRemixesOnly) filters.push(_eq('isRemix', _bool(false)));
 
   // --- Tag exclusions ---
-  if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
+  // Per-user hidden tags handled client-side by useApplyHiddenPreferences.
+  // Excluding here breaks BitDex cache (every user gets a unique cache key).
+  // if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
 
   // --- Metadata ---
   if (withMeta) filters.push(_eq('hasMeta', _bool(true)));
@@ -3074,7 +3076,8 @@ export async function getImagesFromBitdexPreFilter(
   if (baseModels?.length) filters.push(_in('baseModel', baseModels.map(_str)));
 
   if (userId) filters.push(_eq('userId', _int(userId)));
-  else if (excludedUserIds?.length) filters.push(_notIn('userId', excludedUserIds.map(_int)));
+  // Per-user hidden users handled client-side by useApplyHiddenPreferences.
+  // else if (excludedUserIds?.length) filters.push(_notIn('userId', excludedUserIds.map(_int)));
 
   // --- Period ---
   // BitDex supports time buckets: Gte on sortAtUnix snaps to pre-computed buckets.
