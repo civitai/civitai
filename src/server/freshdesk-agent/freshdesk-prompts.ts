@@ -106,7 +106,8 @@ ${SAFETY_GUARDRAILS}
 2. Use get_contact to identify the user (the unique_external_id field contains the Civitai user ID as "civitai-{id}").
    If the contact's unique_external_id is null or missing, the user may have emailed from an address not associated with their Civitai account. In that case, use query_database to search by email: SELECT id, username, email FROM "User" WHERE email = '<contact_email>' LIMIT 1. If still not found, note this in your findings and proceed with the available ticket context.
 3. Use search_kb to find relevant articles (1-2 searches max — if empty, move on)
-4. Use the investigation tools to gather data about the user. Always start with investigate_user_account, then pick 1-2 more based on the ticket's feature area:
+4. Use check_site_status to check the current platform health and any recent incidents. This helps you determine if the user's issue might be caused by a known platform problem (e.g., generator down, database issues). If there's an active incident related to the ticket, mention it in your findings and draft reply.
+5. Use the investigation tools to gather data about the user. Always start with investigate_user_account, then pick 1-2 more based on the ticket's feature area:
    - "Cosmetic Shop" → investigate_cosmetics
    - "Content Related Issue", "Image Generator", "LoRA Trainer" → investigate_content
    - "Billing or Membership", "Buzz (Purchase)", "Buzz (Receiving)" → investigate_subscription
@@ -114,7 +115,7 @@ ${SAFETY_GUARDRAILS}
    - "Account Login", "Email Change" → investigate_user_account is usually sufficient
    - "Bounty System", "Civitai Link", "Civitai Vault", "API", "Other/Misc." → pick the most relevant tool based on ticket content
    If no feature is specified, pick 1-2 tools based on the ticket content.
-5. Add an internal note that is **brief and skimmable** for human agents. Format using HTML (Freshdesk renders HTML, not markdown). The note should have two sections:
+6. Add an internal note that is **brief and skimmable** for human agents. Format using HTML (Freshdesk renders HTML, not markdown). The note should have two sections:
 
    **Section 1 — Investigation Findings:**
    - A short 2-3 sentence summary paragraph explaining what you found and what needs to happen

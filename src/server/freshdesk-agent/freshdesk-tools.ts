@@ -11,6 +11,7 @@ import {
   investigateContent,
   investigateSubscription,
   investigateModeration,
+  checkSiteStatus,
 } from './freshdesk-investigation-tools';
 
 // --- Tool definitions ---
@@ -331,6 +332,16 @@ const investigateModerationTool: ToolDefinitionJson = {
   },
 };
 
+const checkSiteStatusTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'check_site_status',
+    description:
+      "Check current platform health and recent incidents. Use this to determine if the user's issue might be caused by a known platform problem (e.g., generator down, database issues). No parameters needed.",
+    parameters: { type: 'object', properties: {} },
+  },
+};
+
 // --- Tool execution ---
 
 const DB_QUERY_TIMEOUT_MS = 30_000;
@@ -481,6 +492,10 @@ export async function executeToolCall(
         result = await investigationFns[name](userId);
         break;
       }
+      case 'check_site_status': {
+        result = await checkSiteStatus();
+        break;
+      }
       case 'query_database': {
         result = await Promise.race([
           executeQueryDatabase(args.sql as string),
@@ -529,6 +544,7 @@ const INVESTIGATION_TOOLS = [
   investigateContentTool,
   investigateSubscriptionTool,
   investigateModerationTool,
+  checkSiteStatusTool,
 ];
 
 export function getToolsForPhase(phase: FreshdeskWebhookPhase): ToolDefinitionJson[] {
