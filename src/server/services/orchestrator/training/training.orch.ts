@@ -236,15 +236,12 @@ export const createTrainingWorkflow = async ({
   features,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
-  console.log('[createTraining] START', { modelVersionId });
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
   const { id: userId, isModerator } = user;
 
   const status = await getTrainingServiceStatus();
-  if (!status.available && !isModerator) {
-    console.log('[createTraining] training disabled', { message: status.message });
+  if (!status.available && !isModerator)
     throw throwBadRequestError(status.message ?? 'Training is currently disabled');
-  }
 
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
@@ -297,14 +294,9 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
-  console.log('[createTraining] presigning URL', {
-    trainingUrl: modelVersion.trainingUrl,
-    isB2: isB2Url(modelVersion.trainingUrl),
-  });
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
     : await getGetUrl(modelVersion.trainingUrl);
-  console.log('[createTraining] presigned OK');
 
   if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
@@ -337,7 +329,6 @@ export const createTrainingWorkflow = async ({
   };
 
   const stepRun = createTrainingStep(runArgs);
-  console.log('[createTraining] submitting workflow');
 
   const workflow = await submitWorkflow({
     token,

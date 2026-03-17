@@ -139,12 +139,6 @@ export async function submitWorkflow({
       message =
         'The prompt has been blocked due to mature content which is not supported by the current model';
 
-    // TODO: remove after B2 training debug
-    console.error('[submitWorkflow] error', {
-      status: response.status,
-      message,
-      error: JSON.stringify(error).slice(0, 1000),
-    });
     if (!isProd) {
       console.log('----Workflow Error----');
       console.log({ token });
