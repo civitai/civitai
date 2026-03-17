@@ -3890,6 +3890,7 @@ export interface ComicProject {
   heroImagePosition: number;
   status: ComicProjectStatus;
   tosViolation: boolean;
+  meta: JsonValue | null;
   baseModel: string | null;
   genre: ComicGenre | null;
   nsfwLevel: number;

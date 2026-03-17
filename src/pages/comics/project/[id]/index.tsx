@@ -105,7 +105,7 @@ function ProjectWorkspace() {
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
-    'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | 'Grok' | null
+    'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
   >(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
@@ -1602,6 +1602,7 @@ function ProjectWorkspace() {
           coverImage: project.coverImage,
           heroImage: (project as any).heroImage,
           heroImagePosition: (project as any).heroImagePosition,
+          meta: (project as any).meta,
         }}
         onSave={(data) => updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })}
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}

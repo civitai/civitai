@@ -5,6 +5,7 @@ import {
   Modal,
   Select,
   Stack,
+  Switch,
   Text,
   Textarea,
   TextInput,
@@ -12,6 +13,7 @@ import {
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import { IconPhoto, IconPhotoUp, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
+import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -40,6 +42,7 @@ interface ProjectSettingsModalProps {
     coverImage?: { id: number; url: string } | null;
     heroImage?: { id: number; url: string } | null;
     heroImagePosition?: number;
+    meta?: ComicProjectMeta | null;
   };
   onSave: (data: {
     name?: string;
@@ -49,6 +52,7 @@ interface ProjectSettingsModalProps {
     coverUrl?: string | null;
     heroUrl?: string | null;
     heroImagePosition?: number;
+    meta?: ComicProjectMeta;
   }) => void;
   onDeleteProject: () => void;
   isSaving: boolean;
@@ -73,6 +77,7 @@ export function ProjectSettingsModal({
   const [pickingCover, setPickingCover] = useState(false);
   const [pickingHero, setPickingHero] = useState(false);
   const [editHeroPosition, setEditHeroPosition] = useState(50);
+  const [editAllowDownload, setEditAllowDownload] = useState(false);
   const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
   const {
     uploadToCF: uploadHeroToCF,
@@ -92,6 +97,7 @@ export function ProjectSettingsModal({
       setEditHeroUrl(project.heroImage?.url ?? null);
       setEditHeroImageId(project.heroImage?.id ?? null);
       setEditHeroPosition(project.heroImagePosition ?? 50);
+      setEditAllowDownload(project.meta?.allowDownload ?? false);
       resetCoverFiles();
       resetHeroFiles();
     }
@@ -166,6 +172,10 @@ export function ProjectSettingsModal({
       heroUrl: editHeroUrl !== (project.heroImage?.url ?? null) ? editHeroUrl : undefined,
       heroImagePosition:
         editHeroPosition !== (project.heroImagePosition ?? 50) ? editHeroPosition : undefined,
+      meta:
+        editAllowDownload !== (project.meta?.allowDownload ?? false)
+          ? { ...project.meta, allowDownload: editAllowDownload }
+          : undefined,
     });
   };
 
@@ -200,6 +210,7 @@ export function ProjectSettingsModal({
             { value: 'NanoBanana', label: 'Nano Banana Pro (Default)' },
             { value: 'Flux2', label: 'Flux.2' },
             { value: 'Seedream', label: 'Seedream v4.5' },
+            { value: 'SeedreamLite', label: 'Seedream 5 Lite' },
             { value: 'OpenAI', label: 'OpenAI GPT-Image' },
             { value: 'Qwen', label: 'Qwen' },
             { value: 'Grok', label: 'Grok Imagine' },
@@ -275,6 +286,13 @@ export function ProjectSettingsModal({
             </Text>
           )}
         </div>
+
+        <Switch
+          label="Allow Downloads"
+          description="Let readers download this comic as PDF or CBZ"
+          checked={editAllowDownload}
+          onChange={(e) => setEditAllowDownload(e.currentTarget.checked)}
+        />
 
         <div>
           <Text size="sm" fw={500} mb={4}>

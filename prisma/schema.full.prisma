@@ -5028,6 +5028,7 @@ model ComicProject {
   heroImagePosition Int                @default(50)
   status            ComicProjectStatus @default(Active)
   tosViolation  Boolean            @default(false)
+  meta          Json?
   baseModel     String?            @db.VarChar(50)
   genre         ComicGenre?
   nsfwLevel     Int                @default(0)

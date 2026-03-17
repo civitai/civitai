@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SessionUser } from 'next-auth';
+import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
   router,
   protectedProcedure,
@@ -126,6 +127,13 @@ const COMIC_MODEL_CONFIG: Record<
     maxReferenceImages: 3,
     sizes: qwenSizes,
   },
+  SeedreamLite: {
+    engine: 'seedream',
+    baseModel: 'Seedream',
+    versionId: 2720141,
+    maxReferenceImages: 7,
+    sizes: seedreamSizes,
+  },
   Grok: {
     engine: 'grok',
     baseModel: 'Grok',
@@ -238,7 +246,7 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen', 'Grok']);
+const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'SeedreamLite', 'OpenAI', 'Qwen', 'Grok']);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -397,6 +405,7 @@ const updateProjectSchema = z.object({
   heroImageId: z.number().int().nullish(),
   heroUrl: z.string().nullish(),
   heroImagePosition: z.number().int().min(0).max(100).optional(),
+  meta: comicProjectMetaSchema.optional(),
 });
 
 const deleteReferenceSchema = z.object({
@@ -716,6 +725,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           userId: true,
+          meta: true,
           chapters: {
             orderBy: { position: 'asc' },
             select: {
@@ -747,6 +757,7 @@ export const comicsRouter = router({
       return {
         id: project.id,
         name: project.name,
+        meta: parseComicProjectMeta(project.meta),
         chapters: project.chapters,
       };
     }),
@@ -961,6 +972,7 @@ export const comicsRouter = router({
           coverImage: { select: { id: true, url: true, nsfwLevel: true } },
           heroImage: { select: { id: true, url: true, nsfwLevel: true } },
           heroImagePosition: true,
+          meta: true,
           genre: true,
           nsfwLevel: true,
           status: true,
@@ -1076,8 +1088,8 @@ export const comicsRouter = router({
           availability: ch.availability,
           earlyAccessConfig: eaConfig,
           earlyAccessEndsAt: ch.earlyAccessEndsAt,
-          isLocked: !!isLocked,
           panelCount: ch.panels.length,
+          // Strip panels server-side for locked EA chapters (security)
           panels: isLocked ? [] : ch.panels,
         };
       });
@@ -1095,6 +1107,7 @@ export const comicsRouter = router({
         name: project.name,
         description: project.description,
         nsfwLevel: project.nsfwLevel,
+        meta: parseComicProjectMeta(project.meta),
         coverImage: project.coverImage,
         heroImage: project.heroImage,
         heroImagePosition: project.heroImagePosition,
@@ -1383,6 +1396,7 @@ export const comicsRouter = router({
       if (input.genre !== undefined) data.genre = input.genre;
       if (input.baseModel !== undefined) data.baseModel = input.baseModel;
       if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
+      if (input.meta !== undefined) data.meta = input.meta;
 
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.coverImageId !== undefined) {

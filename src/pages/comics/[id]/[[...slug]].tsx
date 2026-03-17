@@ -47,6 +47,9 @@ import {
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ChapterComments } from '~/components/Comics/ChapterComments';
+import { ChapterExportButton, ChapterDownloadButton } from '~/components/Comics/ComicExportButton';
+import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
+import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import { Page } from '~/components/AppLayout/Page';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -126,6 +129,137 @@ function PublicComicReader() {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type Project = RouterOutput['comics']['getPublicProjectForReader'];
+type Chapter = Project['chapters'][number];
+
+// ─── Chapter List Item (uses useChapterPermission hook) ─────────────────────
+
+function ChapterListItem({
+  project,
+  chapter: ch,
+  isRead,
+  isBlurred,
+  isNsfw,
+  onToggleBlur,
+  showDownload,
+}: {
+  project: Project;
+  chapter: Chapter;
+  isRead: boolean;
+  isBlurred: boolean;
+  isNsfw: boolean;
+  onToggleBlur: (e: React.MouseEvent, position: number) => void;
+  showDownload?: boolean;
+}) {
+  const { canRead } = useChapterPermission({
+    chapterId: ch.id,
+    projectUserId: project.user.id,
+    earlyAccessEndsAt: ch.earlyAccessEndsAt,
+  });
+
+  const isLocked = !canRead;
+  const projectSlug = slugit(project.name);
+  const thumbUrl = ch.panels[0]?.imageUrl ?? null;
+  const daysUntilFree = ch.earlyAccessEndsAt
+    ? Math.max(
+        0,
+        Math.ceil(
+          (new Date(ch.earlyAccessEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+        )
+      )
+    : 0;
+
+  return (
+    <Link
+      href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`}
+      className={styles.chapterListItem}
+      style={{ fontWeight: isRead ? 'normal' : 'bold' }}
+    >
+      <span className={styles.chapterNumber}>{ch.position + 1}</span>
+      <div className={styles.chapterThumb}>
+        {thumbUrl ? (
+          <>
+            <img
+              src={getEdgeUrl(thumbUrl, { width: 120 })}
+              alt={ch.name}
+              className={isBlurred ? styles.chapterThumbBlurred : undefined}
+            />
+            {isBlurred && (
+              <button
+                className={styles.chapterThumbBadge}
+                onClick={(e) => onToggleBlur(e, ch.position)}
+                title="Click to show"
+              >
+                {getBrowsingLevelLabel(ch.nsfwLevel)}
+              </button>
+            )}
+          </>
+        ) : (
+          <div className={`${styles.chapterThumb} ${styles.chapterThumbEmpty}`}>
+            <IconPhoto size={18} />
+          </div>
+        )}
+      </div>
+      <div className={styles.chapterInfo}>
+        <p className={styles.chapterName}>
+          {!isRead && (
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5" />
+          )}
+          {ch.name}
+          {ch.status === ComicChapterStatus.Draft && (
+            <Badge size="xs" variant="light" color="yellow" ml={4}>
+              Draft
+            </Badge>
+          )}
+          {isLocked && (
+            <Badge
+              size="xs"
+              variant="light"
+              color="yellow"
+              ml={4}
+              leftSection={<IconLock size={10} />}
+            >
+              {ch.earlyAccessConfig?.buzzPrice} Buzz
+            </Badge>
+          )}
+          {isNsfw && (
+            <button
+              className={styles.chapterRatingPill}
+              onClick={(e) => onToggleBlur(e, ch.position)}
+              title={isBlurred ? 'Click to show' : 'Click to hide'}
+            >
+              {getBrowsingLevelLabel(ch.nsfwLevel)}
+            </button>
+          )}
+        </p>
+        <p className={styles.chapterPanelCount}>
+          {isLocked ? (
+            daysUntilFree > 0 ? (
+              <>
+                Early access · free in {daysUntilFree}{' '}
+                {daysUntilFree === 1 ? 'day' : 'days'}
+              </>
+            ) : (
+              <>Early access</>
+            )
+          ) : (
+            <>
+              {ch.panelCount} {ch.panelCount === 1 ? 'page' : 'pages'}
+              {ch.publishedAt && ` · ${formatRelativeDate(ch.publishedAt)}`}
+            </>
+          )}
+        </p>
+      </div>
+      {showDownload && (
+        <ChapterDownloadButton
+          projectName={project.name}
+          projectUserId={project.user.id}
+          chapter={ch}
+        />
+      )}
+      <IconChevronRight size={18} className={styles.chapterArrow} />
+    </Link>
+  );
+}
 
 // ─── Overview / Landing Page ─────────────────────────────────────────────────
 
@@ -133,6 +267,7 @@ function ComicOverview({ project }: { project: Project }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === project.user.id;
+  const projectMeta = project.meta as ComicProjectMeta | null;
   const { blurLevels } = useBrowsingLevelContext();
   const [unblurredChapters, setUnblurredChapters] = useState<Set<number>>(new Set());
   const toggleChapterBlur = useCallback((e: React.MouseEvent, position: number) => {
@@ -481,109 +616,22 @@ function ComicOverview({ project }: { project: Project }) {
           <div className={styles.chapterSection}>
             <p className={styles.chapterSectionTitle}>Chapters</p>
             <div className="flex flex-col gap-2">
-              {project.chapters.map((ch) => {
-                const thumbUrl = ch.panels[0]?.imageUrl ?? null;
-                const isRead = readPositions ? readPositions.includes(ch.position) : false;
-                const isNsfw = ch.nsfwLevel > 0 && Flags.hasFlag(blurLevels, ch.nsfwLevel);
-                const isBlurred = isNsfw && !unblurredChapters.has(ch.position);
-                const daysUntilFree = ch.earlyAccessEndsAt
-                  ? Math.max(
-                      0,
-                      Math.ceil(
-                        (new Date(ch.earlyAccessEndsAt).getTime() - Date.now()) /
-                          (1000 * 60 * 60 * 24)
-                      )
-                    )
-                  : 0;
-
-                return (
-                  <Link
-                    key={`${ch.projectId}-${ch.position}`}
-                    href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(
-                      ch.name
-                    )}`}
-                    className={styles.chapterListItem}
-                    style={{ fontWeight: isRead ? 'normal' : 'bold' }}
-                  >
-                    <span className={styles.chapterNumber}>{ch.position + 1}</span>
-                    <div className={styles.chapterThumb}>
-                      {thumbUrl ? (
-                        <>
-                          <img
-                            src={getEdgeUrl(thumbUrl, { width: 120 })}
-                            alt={ch.name}
-                            className={isBlurred ? styles.chapterThumbBlurred : undefined}
-                          />
-                          {isBlurred && (
-                            <button
-                              className={styles.chapterThumbBadge}
-                              onClick={(e) => toggleChapterBlur(e, ch.position)}
-                              title="Click to show"
-                            >
-                              {getBrowsingLevelLabel(ch.nsfwLevel)}
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <div className={`${styles.chapterThumb} ${styles.chapterThumbEmpty}`}>
-                          <IconPhoto size={18} />
-                        </div>
-                      )}
-                    </div>
-                    <div className={styles.chapterInfo}>
-                      <p className={styles.chapterName}>
-                        {!isRead && (
-                          <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5" />
-                        )}
-                        {ch.name}
-                        {ch.status === ComicChapterStatus.Draft && (
-                          <Badge size="xs" variant="light" color="yellow" ml={4}>
-                            Draft
-                          </Badge>
-                        )}
-                        {ch.isLocked && (
-                          <Badge
-                            size="xs"
-                            variant="light"
-                            color="yellow"
-                            ml={4}
-                            leftSection={<IconLock size={10} />}
-                          >
-                            {ch.earlyAccessConfig?.buzzPrice} Buzz
-                          </Badge>
-                        )}
-                        {isNsfw && (
-                          <button
-                            className={styles.chapterRatingPill}
-                            onClick={(e) => toggleChapterBlur(e, ch.position)}
-                            title={isBlurred ? 'Click to show' : 'Click to hide'}
-                          >
-                            {getBrowsingLevelLabel(ch.nsfwLevel)}
-                          </button>
-                        )}
-                      </p>
-                      <p className={styles.chapterPanelCount}>
-                        {ch.isLocked ? (
-                          daysUntilFree > 0 ? (
-                            <>
-                              Early access · free in {daysUntilFree}{' '}
-                              {daysUntilFree === 1 ? 'day' : 'days'}
-                            </>
-                          ) : (
-                            <>Early access</>
-                          )
-                        ) : (
-                          <>
-                            {ch.panelCount} {ch.panelCount === 1 ? 'page' : 'pages'}
-                            {ch.publishedAt && ` · ${formatRelativeDate(ch.publishedAt)}`}
-                          </>
-                        )}
-                      </p>
-                    </div>
-                    <IconChevronRight size={18} className={styles.chapterArrow} />
-                  </Link>
-                );
-              })}
+              {project.chapters.map((ch) => (
+                <ChapterListItem
+                  key={`${ch.projectId}-${ch.position}`}
+                  project={project}
+                  chapter={ch}
+                  isRead={readPositions ? readPositions.includes(ch.position) : false}
+                  isBlurred={
+                    ch.nsfwLevel > 0 &&
+                    Flags.hasFlag(blurLevels, ch.nsfwLevel) &&
+                    !unblurredChapters.has(ch.position)
+                  }
+                  isNsfw={ch.nsfwLevel > 0 && Flags.hasFlag(blurLevels, ch.nsfwLevel)}
+                  onToggleBlur={toggleChapterBlur}
+                  showDownload={projectMeta?.allowDownload || isOwner}
+                />
+              ))}
             </div>
           </div>
         </Container>
@@ -606,6 +654,12 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const activeChapter = chapters[safeIdx];
   const panels = activeChapter?.panels ?? [];
   const headerRef = useRef<HTMLDivElement>(null);
+  const projectMeta = project.meta as ComicProjectMeta | null;
+  const { canRead, canDownload } = useChapterPermission({
+    chapterId: activeChapter?.id,
+    projectUserId: project.user.id,
+    earlyAccessEndsAt: activeChapter?.earlyAccessEndsAt,
+  });
   const lastScrollTop = useRef(0);
 
   // Reader mode: scroll (default) or pages (bifold page-flip)
@@ -681,11 +735,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Auto-mark chapter as read
   const markRead = trpc.comics.markChapterRead.useMutation();
   useEffect(() => {
-    if (currentUser && activeChapter && !activeChapter.isLocked) {
+    if (currentUser && activeChapter && canRead) {
       markRead.mutate({ projectId: project.id, chapterPosition: activeChapter.position });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChapter?.position, activeChapter?.isLocked, currentUser?.id]);
+  }, [activeChapter?.position, canRead, currentUser?.id]);
 
   const isMod = currentUser?.isModerator === true;
 
@@ -943,6 +997,15 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     </Tooltip>
                   )}
                 </CopyButton>
+                {activeChapter &&
+                  canDownload &&
+                  (projectMeta?.allowDownload || currentUser?.id === project.user.id) && (
+                    <ChapterExportButton
+                      projectName={project.name}
+                      chapterName={activeChapter.name}
+                      panels={activeChapter.panels}
+                    />
+                  )}
                 {currentUser && currentUser.id !== project.user.id && (
                   <LoginRedirect reason="report-comic">
                     <Tooltip label="Report comic">
@@ -1000,7 +1063,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           </Container>
         </div>
 
-        {activeChapter?.isLocked ? (
+        {!canRead ? (
           /* ── Paywall screen ── */
           <Container size="sm" py="xl">
             <Stack align="center" gap="lg" py={60}>
