@@ -21,6 +21,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import {
   IconBellCheck,
   IconBellPlus,
+  IconBolt,
   IconBookmark,
   IconBrush,
   IconClock,
@@ -76,6 +77,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -119,6 +121,7 @@ import {
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
+  ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
@@ -1238,8 +1241,40 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           </Text>
                         </Group>
                       )}
+                      {!!liveMetrics.earnedAmount && (
+                        <Group gap={4}>
+                          <IconBolt size={16} style={{ opacity: 0.5 }} />
+                          <Text size="sm">
+                            <AnimatedCount value={liveMetrics.earnedAmount} />
+                          </Text>
+                        </Group>
+                      )}
                     </Group>
                   </Group>
+                  {/* Generation Popularity */}
+                  {canGenerate &&
+                    features.modelVersionPopularity &&
+                    model.type === ModelType.Checkpoint && (
+                      <Group
+                        justify="space-between"
+                        px="md"
+                        py={10}
+                        style={{
+                          borderBottom: `1px solid ${
+                            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                          }`,
+                        }}
+                      >
+                        <Text size="sm" c="dimmed">
+                          Generation
+                        </Text>
+                        <ModelVersionPopularity
+                          versionId={version.id}
+                          isCheckpoint={model.type === ModelType.Checkpoint}
+                          listenForUpdates
+                        />
+                      </Group>
+                    )}
                   {/* Reviews */}
                   <Group
                     justify="space-between"
