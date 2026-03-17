@@ -2033,10 +2033,12 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     ];
     if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
 
-    // Content-scoping filters — keep second pass results relevant to the current view
+    // Content-scoping filters — keep second pass results relevant to the current view.
+    // Must include postId!=0 to match the main query's filter (excludes comic/orphaned images).
     const scopeFilters: FilterClause[] = [
       _eq('userId', _int(input.currentUserId!)),
       _or(...ownExcludedClauses),
+      _not(_eq('postId', _int(0))),
     ];
     if (input.modelVersionId) {
       scopeFilters.push(_or(
