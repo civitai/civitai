@@ -1741,10 +1741,6 @@ export const comicsRouter = router({
         generationReferenceIds = mentionedReferenceIds;
       }
 
-      if (generationReferenceIds.length === 0) {
-        throw throwBadRequestError('No references available for generation');
-      }
-
       // If inserting at a specific position, shift existing panels and get the
       // panel just before the insertion point for context. Otherwise use the last panel.
       let nextPosition: number;
@@ -1809,7 +1805,7 @@ export const comicsRouter = router({
           : allRefImages
       ).map(({ url, width, height }) => ({ url, width, height }));
 
-      if (combinedRefImages.length === 0) {
+      if (generationReferenceIds.length > 0 && combinedRefImages.length === 0) {
         throw throwBadRequestError('References have no reference images');
       }
 
