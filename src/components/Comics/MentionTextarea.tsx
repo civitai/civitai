@@ -24,7 +24,7 @@ export function MentionTextarea({
   const mirrorRef = useRef<HTMLSpanElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, bottom: 0, left: 0, flipUp: false });
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionStart, setMentionStart] = useState(-1);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -32,8 +32,7 @@ export function MentionTextarea({
   const filteredRefs = useMemo(
     () =>
       references
-        .filter((r) => r.name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
-        .slice(0, 6),
+        .filter((r) => r.name.toLowerCase().startsWith(mentionQuery.toLowerCase())),
     [references, mentionQuery]
   );
 
@@ -105,10 +104,23 @@ export function MentionTextarea({
     }
 
     // Subtract scrollTop to account for textarea scrolling
-    const top = cursorRect.top - mirrorRect.top - textarea.scrollTop + lineHeight;
+    const topBelow = cursorRect.top - mirrorRect.top - textarea.scrollTop + lineHeight;
     const left = cursorRect.left - mirrorRect.left;
 
-    setDropdownPos({ top, left: Math.min(left, textarea.clientWidth - 200) });
+    // Check if dropdown would overflow below the viewport
+    const dropdownMaxHeight = 200;
+    const textareaRect = textarea.getBoundingClientRect();
+    const absoluteDropdownTop = textareaRect.top + topBelow + (label ? 22 : 0);
+    const spaceBelow = window.innerHeight - absoluteDropdownTop;
+    const flipUp = spaceBelow < dropdownMaxHeight;
+
+    // When flipping up, use bottom positioning so the dropdown's bottom edge
+    // sits right at the cursor line regardless of dropdown height
+    const wrapperHeight = textarea.parentElement?.offsetHeight ?? textarea.offsetHeight;
+    const cursorTopInWrapper = cursorRect.top - mirrorRect.top - textarea.scrollTop + (label ? 22 : 0);
+    const bottom = wrapperHeight - cursorTopInWrapper;
+
+    setDropdownPos({ top: topBelow, bottom, left: Math.min(left, textarea.clientWidth - 200), flipUp });
   }, [value]);
 
   const handleInput = useCallback(
@@ -149,11 +161,19 @@ export function MentionTextarea({
       if (showDropdown && filteredRefs.length > 0) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
-          setSelectedIndex((i) => (i + 1) % filteredRefs.length);
+          setSelectedIndex((i) => {
+            const next = (i + 1) % filteredRefs.length;
+            dropdownRef.current?.children[next]?.scrollIntoView({ block: 'nearest' });
+            return next;
+          });
           return;
         } else if (e.key === 'ArrowUp') {
           e.preventDefault();
-          setSelectedIndex((i) => (i - 1 + filteredRefs.length) % filteredRefs.length);
+          setSelectedIndex((i) => {
+            const next = (i - 1 + filteredRefs.length) % filteredRefs.length;
+            dropdownRef.current?.children[next]?.scrollIntoView({ block: 'nearest' });
+            return next;
+          });
           return;
         } else if (e.key === 'Enter' || e.key === 'Tab') {
           e.preventDefault();
@@ -269,7 +289,9 @@ export function MentionTextarea({
           role="listbox"
           style={{
             position: 'absolute',
-            top: dropdownPos.top + (label ? 22 : 0),
+            ...(dropdownPos.flipUp
+              ? { bottom: dropdownPos.bottom }
+              : { top: dropdownPos.top + (label ? 22 : 0) }),
             left: dropdownPos.left,
             background: 'var(--mantine-color-body)',
             border: '1px solid var(--mantine-color-default-border)',
@@ -278,7 +300,8 @@ export function MentionTextarea({
             zIndex: 1000,
             minWidth: 180,
             maxWidth: 280,
-            overflow: 'hidden',
+            maxHeight: 200,
+            overflowY: 'auto',
           }}
         >
           {filteredRefs.map((ref, i) => (

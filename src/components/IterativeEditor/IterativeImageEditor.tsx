@@ -962,6 +962,8 @@ export function IterativeImageEditor({
             References
           </div>
 
+          {/* Scrollable container for reference thumbnails */}
+          <div className={styles.sidebarSectionScrollable}>
           {/* Character reference images from @mentions — grouped by character */}
           {mentionedCharacterRefs.map((charRef) => {
             const images = (charRef.images ?? []) as { image: { id: number; url: string } }[];
@@ -1134,6 +1136,7 @@ export function IterativeImageEditor({
             </>
           )}
 
+          </div>
           <div className="flex gap-1">
             <Button
               variant="light"
