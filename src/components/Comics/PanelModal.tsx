@@ -173,7 +173,7 @@ export function PanelModal({
   } = useCFImageUpload();
 
   // Enhance tab cost — uses the actual source image for accurate img2img pricing
-  const { data: enhanceImgCost } = trpc.comics.getIterateCostEstimate.useQuery(
+  const { data: enhanceImgCost } = trpc.comics.getGenerationCostEstimate.useQuery(
     {
       baseModel: effectiveModel,
       aspectRatio,

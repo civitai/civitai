@@ -166,24 +166,6 @@ export function IterativeImageEditor({
   const { uploadToCF } = useCFImageUpload();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Notify parent when settings change so it can update cost queries
-  useEffect(() => {
-    onSettingsChange?.({
-      baseModel: generationModel,
-      aspectRatio,
-      quantity,
-      sourceImage: currentSource
-        ? { url: currentSource.url, width: currentSource.width, height: currentSource.height }
-        : null,
-      referenceImages: activeUserReferences.map((r) => ({
-        url: r.url,
-        width: r.width,
-        height: r.height,
-      })),
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generationModel, aspectRatio, quantity, currentSource, activeUserReferences, onSettingsChange]);
-
   const effectiveModel = generationModel ?? config.defaultModel;
   const activeAspectRatios =
     config.modelSizes[effectiveModel] ?? config.modelSizes[config.defaultModel] ?? [];
@@ -208,6 +190,31 @@ export function IterativeImageEditor({
     const filtered = selectedImageIds.filter((id) => validIds.has(id));
     return filtered.length > 0 ? filtered : null;
   }, [selectedImageIds, allCharacterImageIds]);
+
+  // Notify parent when settings change so it can update cost queries
+  useEffect(() => {
+    // Extract reference IDs from @mentioned characters for server-side image fetch
+    const mentionedRefIds = mentionedCharacterRefs.length > 0
+      ? mentionedCharacterRefs.map((r) => r.id)
+      : undefined;
+
+    onSettingsChange?.({
+      baseModel: generationModel,
+      aspectRatio,
+      quantity,
+      sourceImage: currentSource
+        ? { url: currentSource.url, width: currentSource.width, height: currentSource.height }
+        : null,
+      referenceImages: activeUserReferences.map((r) => ({
+        url: r.url,
+        width: r.width,
+        height: r.height,
+      })),
+      referenceIds: mentionedRefIds,
+      selectedImageIds: activeSelectedImageIds ?? undefined,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationModel, aspectRatio, quantity, currentSource, activeUserReferences, mentionedCharacterRefs, activeSelectedImageIds, onSettingsChange]);
 
   const effectiveCharacterImageCount = activeSelectedImageIds
     ? activeSelectedImageIds.length

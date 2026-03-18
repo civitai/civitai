@@ -48,6 +48,10 @@ export interface CostEstimateParams {
   sourceImage?: { url: string; width: number; height: number } | null;
   /** User-imported reference images */
   referenceImages?: { url: string; width: number; height: number }[];
+  /** Reference IDs from @mentioned characters (fetched server-side) */
+  referenceIds?: number[];
+  /** Selected image IDs when user manually selected specific images */
+  selectedImageIds?: number[];
 }
 
 export interface ReferenceImage {

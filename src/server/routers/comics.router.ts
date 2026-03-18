@@ -1120,58 +1120,156 @@ export const comicsRouter = router({
     }),
 
   // Dynamic pricing — whatIf cost estimate for panel generation
-  getPanelCostEstimate: comicProtectedProcedure
-    .input(z.object({ baseModel: z.string().nullish() }).optional())
+  /**
+   * Unified cost estimation for all comic generation operations:
+   * - Panel creation (from project page)
+   * - Enhance panel (img2img with source)
+   * - Iterative editor (with references and source images)
+   * - Smart create (bulk panels)
+   */
+  getGenerationCostEstimate: comicProtectedProcedure
+    .input(
+      z
+        .object({
+          baseModel: z.string().nullish(),
+          aspectRatio: z.string().default(DEFAULT_ASPECT_RATIO),
+          quantity: z.number().int().min(1).max(4).default(1),
+          // Reference IDs from @mentioned characters - fetched server-side
+          referenceIds: z.array(z.number().int().positive()).optional(),
+          // Optional filter for specific images when user manually selected
+          selectedImageIds: z.array(z.number().int().positive()).optional(),
+          // Source image for img2img workflow (enhance panel)
+          sourceImage: z
+            .object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+            .nullish(),
+          // User-imported reference images (directly passed, not from @mentions)
+          userReferenceImages: z
+            .array(
+              z.object({
+                url: z.string(),
+                width: z.number().int().positive(),
+                height: z.number().int().positive(),
+              })
+            )
+            .optional(),
+        })
+        .optional()
+    )
     .query(async ({ ctx, input }) => {
-    try {
-      const token = await getOrchestratorToken(ctx.user.id, ctx);
-      const modelConfig = getComicModelConfig(input?.baseModel);
+      try {
+        const token = await getOrchestratorToken(ctx.user.id, ctx);
+        const modelConfig = getComicModelConfig(input?.baseModel);
+        const aspectRatio = input?.aspectRatio ?? DEFAULT_ASPECT_RATIO;
+        const quantity = input?.quantity ?? 1;
+        const hasSourceImage = !!input?.sourceImage;
 
-      const defaultDims = getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, modelConfig);
-      const step = await createImageGenStep({
-        params: {
-          prompt: '',
-          negativePrompt: '',
-          engine: modelConfig.engine,
-          baseModel: modelConfig.baseModel as any,
-          width: defaultDims.width,
-          height: defaultDims.height,
-          aspectRatio: DEFAULT_ASPECT_RATIO,
-          workflow: 'txt2img',
-          sampler: 'Euler',
-          steps: 25,
-          quantity: 1,
-          draft: false,
-          disablePoi: false,
-          priority: 'low',
-          sourceImage: null,
-          images: null,
-        },
-        resources: [{ id: modelConfig.versionId, strength: 1 }],
-        tags: ['comics'],
-        tips: { creators: 0, civitai: 0 },
-        whatIf: true,
-        user: ctx.user! as SessionUser,
-      });
+        // Use img2img version if source image is provided and model supports it
+        const effectiveVersionId =
+          hasSourceImage && modelConfig.img2imgVersionId
+            ? modelConfig.img2imgVersionId
+            : modelConfig.versionId;
 
-      const workflow = await submitWorkflow({
-        token,
-        body: {
-          steps: [step],
-          currencies: ['yellow'],
-        },
-        query: { whatif: true },
-      });
+        const dims = getAspectRatioDimensions(aspectRatio, modelConfig);
 
-      return {
-        cost: workflow.cost?.total ?? 0,
-        ready: true,
-      };
-    } catch (error) {
-      console.error('Comics getPanelCostEstimate failed:', error);
-      throw error;
-    }
-  }),
+        // Build images array for accurate pricing
+        const allImages: { url: string; width: number; height: number }[] = [];
+
+        // 1. Add source image first if present (for img2img)
+        if (input?.sourceImage) {
+          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
+          allImages.push({
+            url: sourceEdgeUrl,
+            width: input.sourceImage.width,
+            height: input.sourceImage.height,
+          });
+        }
+
+        // 2. Fetch reference images server-side from @mentioned characters
+        if (input?.referenceIds && input.referenceIds.length > 0) {
+          const characterRefImages: {
+            imageId: number;
+            url: string;
+            width: number;
+            height: number;
+          }[] = [];
+          for (const refId of input.referenceIds) {
+            const { refImages: imgs } = await getReferenceImages(refId);
+            characterRefImages.push(...imgs);
+          }
+
+          // Filter to user-selected images if specified
+          const selectedImageIdSet =
+            input?.selectedImageIds && input.selectedImageIds.length > 0
+              ? new Set(input.selectedImageIds)
+              : null;
+          const filteredRefImages = selectedImageIdSet
+            ? characterRefImages.filter((img) => selectedImageIdSet.has(img.imageId))
+            : characterRefImages;
+
+          for (const img of filteredRefImages) {
+            const edgeUrl = getEdgeUrl(img.url, { original: true });
+            allImages.push({ url: edgeUrl, width: img.width, height: img.height });
+          }
+        }
+
+        // 3. Add user-imported reference images (directly passed)
+        if (input?.userReferenceImages && input.userReferenceImages.length > 0) {
+          for (const ref of input.userReferenceImages) {
+            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+            allImages.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+          }
+        }
+
+        const cappedImages = capReferenceImages(allImages, modelConfig.maxReferenceImages);
+
+        const step = await createImageGenStep({
+          params: {
+            prompt: '',
+            negativePrompt: '',
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
+            width: dims.width,
+            height: dims.height,
+            aspectRatio,
+            workflow: 'txt2img',
+            sampler: 'Euler',
+            steps: 25,
+            quantity,
+            draft: false,
+            disablePoi: false,
+            priority: 'low',
+            sourceImage: null,
+            images: cappedImages.length > 0 ? cappedImages : null,
+          },
+          resources: [{ id: effectiveVersionId, strength: 1 }],
+          tags: ['comics'],
+          tips: { creators: 0, civitai: 0 },
+          whatIf: true,
+          user: ctx.user! as SessionUser,
+        });
+
+        const workflow = await submitWorkflow({
+          token,
+          body: {
+            steps: [step],
+            currencies: ['yellow'],
+          },
+          query: { whatif: true },
+        });
+
+        return {
+          cost: workflow.cost?.total ?? 0,
+          ready: true,
+        };
+      } catch (error) {
+        console.error('Comics getGenerationCostEstimate failed:', error);
+        throw error;
+      }
+    }),
 
   getPromptEnhanceCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
@@ -1191,97 +1289,6 @@ export const comicsRouter = router({
     }
   }),
 
-  // whatIf cost estimate for iterative generation — uses actual generation params
-  getIterateCostEstimate: comicProtectedProcedure
-    .input(
-      z.object({
-        baseModel: z.string().nullish(),
-        aspectRatio: z.string().default('3:4'),
-        quantity: z.number().int().min(1).max(4).default(1),
-        sourceImage: z
-          .object({
-            url: z.string(),
-            width: z.number().int().positive(),
-            height: z.number().int().positive(),
-          })
-          .nullish(),
-        referenceImages: z
-          .array(
-            z.object({
-              url: z.string(),
-              width: z.number().int().positive(),
-              height: z.number().int().positive(),
-            })
-          )
-          .optional(),
-      })
-    )
-    .query(async ({ ctx, input }) => {
-      try {
-        const token = await getOrchestratorToken(ctx.user.id, ctx);
-        const modelConfig = getComicModelConfig(input.baseModel);
-        const hasSourceImage = !!input.sourceImage;
-        const effectiveVersionId =
-          hasSourceImage && modelConfig.img2imgVersionId
-            ? modelConfig.img2imgVersionId
-            : modelConfig.versionId;
-        const dims = getAspectRatioDimensions(input.aspectRatio, modelConfig);
-
-        // Build real images array for accurate pricing
-        const images: { url: string; width: number; height: number }[] = [];
-        if (input.sourceImage) {
-          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
-          images.push({
-            url: sourceEdgeUrl,
-            width: input.sourceImage.width,
-            height: input.sourceImage.height,
-          });
-        }
-        if (input.referenceImages) {
-          for (const ref of input.referenceImages) {
-            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
-            images.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
-          }
-        }
-
-        const step = await createImageGenStep({
-          params: {
-            prompt: '',
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: dims.width,
-            height: dims.height,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: input.quantity,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: capReferenceImages(images, modelConfig.maxReferenceImages),
-          },
-          resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
-          tips: { creators: 0, civitai: 0 },
-          whatIf: true,
-          user: ctx.user! as SessionUser,
-        });
-
-        const workflow = await submitWorkflow({
-          token,
-          body: { steps: [step], currencies: ['yellow'] },
-          query: { whatif: true },
-        });
-
-        return { cost: workflow.cost?.total ?? 0, ready: true };
-      } catch (error) {
-        console.error('Comics getIterateCostEstimate failed:', error);
-        throw error;
-      }
-    }),
 
   getPlanChapterCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
