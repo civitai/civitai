@@ -31,6 +31,7 @@ import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
   modelName: string;
+  trainedWords: string[] | null;
   trainingUrl: string;
   fileId: number;
   userId: number;

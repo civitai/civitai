@@ -153,6 +153,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     model,
     priority,
     loraName,
+    triggerWord,
     trainingData,
     trainingDataImagesCount,
     samplePrompts,
@@ -190,7 +191,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
     numberOfRepeats: aiToolkitParams.numRepeats ?? undefined,
-    triggerWord: loraName,
+    triggerWord,
   } as AiToolkitTrainingInput & { triggerWord: string };
 
   if (aiToolkitParams.ecosystem === 'sd1') {
@@ -246,6 +247,7 @@ export const createTrainingWorkflow = async ({
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
            mf.id       "fileId",
@@ -309,6 +311,7 @@ export const createTrainingWorkflow = async ({
   const priority = getTrainingFields.getPriority(isPriority);
   const engine = getTrainingFields.getEngine(trainingParams.engine);
   const loraName = modelVersion.modelName;
+  const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
 
   // Don't override the engine field in params - it needs to remain as the literal type
@@ -322,6 +325,7 @@ export const createTrainingWorkflow = async ({
     trainingDataImagesCount,
     engine, // This uses the OrchEngineTypes enum
     loraName,
+    triggerWord,
     samplePrompts,
     negativePrompt,
     modelFileId,
@@ -409,6 +413,7 @@ export const createTrainingWhatIfWorkflow = async ({
     params,
     trainingData: 'https://fake',
     loraName: '',
+    triggerWord: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,
     negativePrompt: '',

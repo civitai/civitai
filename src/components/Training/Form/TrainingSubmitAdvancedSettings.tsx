@@ -183,6 +183,11 @@ export const AdvancedSettings = ({
       if (selectedRun.params.textEncoderLR !== 1) {
         updatedParams.textEncoderLR = 1;
       }
+    } else if (previous?.params.optimizerType === 'Prodigy') {
+      // Restore default LR values when switching away from Prodigy
+      const defaults = getDefaultTrainingParams(runBase, selectedRun.params.engine);
+      updatedParams.unetLR = defaults.unetLR;
+      updatedParams.textEncoderLR = defaults.textEncoderLR;
     }
 
     if (Object.keys(updatedParams).length > 0) {

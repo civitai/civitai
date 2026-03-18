@@ -171,6 +171,7 @@ export type ImageTrainingRouterWhatIfSchema = z.infer<typeof imageTrainingRouter
 const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
   trainingData: z.url(),
   loraName: z.string(),
+  triggerWord: z.string(),
   samplePrompts: z.array(z.string()),
   negativePrompt: z.string().optional(),
   params: z.discriminatedUnion('engine', [
