@@ -9,7 +9,9 @@ import {
 } from '@mantine/core';
 import React, { useCallback, useMemo, useState } from 'react';
 import { getFiatDisplay } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
+import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
 import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -26,11 +28,11 @@ export function useCurrencySelection({
   onFiatChange: (fiat: string) => void;
   onSelect?: (code: string, chain: string) => void;
 }) {
+  const currentUser = useCurrentUser();
   const [selectedTicker, setSelectedTicker] = useState<string>('usdc');
   const [selectedCode, setSelectedCode] = useState<string>('USDCBASE');
 
-  const { data: currencies, isLoading: loadingCurrencies } =
-    trpc.nowPayments.getSupportedCurrencies.useQuery(undefined, { staleTime: 5 * 60 * 1000 });
+  const { data: currencies, isLoading: loadingCurrencies } = useSupportedCurrencies();
 
   // Sync selectedCode when currencies load (hardcoded default may not match API codes)
   React.useEffect(() => {
@@ -72,7 +74,7 @@ export function useCurrencySelection({
 
   const { data: minData, isFetching: loadingMin } = trpc.nowPayments.getMinAmount.useQuery(
     { currencyCode: selectedCode, fiat: selectedFiat },
-    { enabled: !!selectedCode, staleTime: 60 * 1000 }
+    { enabled: !!currentUser && !!selectedCode, staleTime: 60 * 1000 }
   );
 
   const networkLabel = useMemo(() => {

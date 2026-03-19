@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { showNotification } from '@mantine/notifications';
+import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -15,9 +16,7 @@ type CryptoDepositSignalData = {
 
 export const useCryptoDepositSignal = () => {
   const queryUtils = trpc.useUtils();
-  const { data: currencies } = trpc.nowPayments.getSupportedCurrencies.useQuery(undefined, {
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: currencies } = useSupportedCurrencies();
 
   // Build currency code → display name lookup
   const currencyNames = useMemo(() => {
