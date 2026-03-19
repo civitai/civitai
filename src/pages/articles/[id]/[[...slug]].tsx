@@ -2,7 +2,6 @@ import {
   Anchor,
   AspectRatio,
   Badge,
-  Box,
   Center,
   Container,
   Divider,
@@ -15,12 +14,11 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { getHotkeyHandler } from '@mantine/hooks';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -42,7 +40,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
@@ -84,6 +82,15 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    // Redirect old ?imageId= URLs to the clean article URL
+    if (ctx.query.imageId) {
+      const slug = result.data.slug?.join('/');
+      const destination = `/articles/${result.data.id}${slug ? `/${slug}` : ''}`;
+      return {
+        redirect: { destination, permanent: true },
+      };
+    }
+
     if (ssg) {
       await ssg.article.getById.prefetch({ id: result.data.id });
       await ssg.hiddenPreferences.getHidden.prefetch();
@@ -100,7 +107,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
   const mobile = useContainerSmallerThan('sm');
-  const { setImages, onSetImage, images } = useImageViewerCtx();
   const { articles } = useFeatureFlags();
 
   const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
@@ -151,13 +157,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     data: memoizedImageData,
   });
   const [image] = items;
-
-  // Move setState to useEffect to avoid render-phase side effects
-  useEffect(() => {
-    if (image && !images.length) {
-      setImages([image]);
-    }
-  }, [image, images.length, setImages]);
 
   if (isLoading) return <PageLoader />;
   if (!article || isBlocked || disableArticles) return <NotFound />;
@@ -215,12 +214,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       </ShareButton>
     </Group>
   );
-
-  const handleOpenCoverImage =
-    (imageId: number) => (e: React.KeyboardEvent<HTMLElement> | KeyboardEvent) => {
-      e.preventDefault();
-      onSetImage(imageId);
-    };
 
   return (
     <>
@@ -352,15 +345,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <AspectRatio
                     ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
                   >
-                    <Box
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => onSetImage(image.id)}
-                      onKeyDown={getHotkeyHandler([
-                        ['Enter', handleOpenCoverImage(image.id)],
-                        ['Space', handleOpenCoverImage(image.id)],
-                      ])}
-                      style={{ cursor: 'pointer' }}
+                    <RoutedDialogLink
+                      name="imageDetail"
+                      state={{ imageId: image.id }}
+                      className="block size-full cursor-pointer"
                     >
                       <Center className="size-full">
                         <div className="relative size-full">
@@ -393,7 +381,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                           </ImageGuard2>
                         </div>
                       </Center>
-                    </Box>
+                    </RoutedDialogLink>
                   </AspectRatio>
                 )}
 
@@ -440,8 +428,4 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   );
 }
 
-export default Page(ArticleDetailsPage, {
-  InnerLayout: ({ children }) => {
-    return <ImageViewer>{children}</ImageViewer>;
-  },
-});
+export default Page(ArticleDetailsPage);
