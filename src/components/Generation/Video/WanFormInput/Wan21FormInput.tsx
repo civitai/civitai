@@ -14,7 +14,7 @@ import {
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { useEffect, useMemo } from 'react';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,

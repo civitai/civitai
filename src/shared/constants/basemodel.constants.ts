@@ -52,6 +52,8 @@ export type EcosystemSettings = {
     model?: { id: number };
     /** If true, the model cannot be changed by the user (used for video ecosystems) */
     modelLocked?: boolean;
+    /** Orchestrator engine identifier. Used for backwards compatibility with getBaseModelEngine(). */
+    engine?: string;
   };
 };
 
@@ -703,6 +705,10 @@ const fullAddonTypes = [
 const checkpointAndLora = [ModelType.Checkpoint, ModelType.LORA];
 const checkpointOnly = [ModelType.Checkpoint];
 const loraOnly = [ModelType.LORA];
+/** Addon types that cross between SDXL parent ↔ child ecosystems */
+const sdxlCrossAddonTypes = [ModelType.TextualInversion, ModelType.LORA, ModelType.DoRA, ModelType.LoCon, ModelType.VAE];
+/** Addon types that cross between SDXL sibling ecosystems (no VAE) */
+const sdxlSiblingAddonTypes = [ModelType.TextualInversion, ModelType.LORA, ModelType.DoRA, ModelType.LoCon];
 
 export const ecosystemSupport: EcosystemSupport[] = [
   // SD1 - full addon support
@@ -821,6 +827,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // ZImageBase - checkpoint and LORA
   { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: [ModelType.LORA] },
+
+  // LTXV - checkpoint only (parent ecosystem)
+  { ecosystemId: ECO.LTXV, supportType: 'generation', modelTypes: checkpointOnly },
 
   // LTXV2 - checkpoint and LORA
   { ecosystemId: ECO.LTXV2, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -950,18 +959,21 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1314512 },
       modelLocked: true,
+      engine: 'hunyuan',
     },
   },
   {
     ecosystemId: ECO.WanVideo,
     defaults: {
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
     ecosystemId: ECO.WanVideo1_3B_T2V,
     defaults: {
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -969,6 +981,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1707796 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -976,6 +989,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1501125 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -983,6 +997,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1501344 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -990,6 +1005,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2114110 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -997,6 +1013,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2114157 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1004,6 +1021,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2114154 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1011,6 +1029,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2254989 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1018,6 +1037,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2254963 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1032,6 +1052,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1499827 },
       modelLocked: true,
+      engine: 'lightricks',
     },
   },
   {
@@ -1039,6 +1060,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2578325 },
       modelLocked: true,
+      engine: 'ltx2',
     },
   },
   {
@@ -1046,6 +1068,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2749908 },
       modelLocked: true,
+      engine: 'ltx2',
     },
   },
   {
@@ -1053,6 +1076,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1885367 },
       modelLocked: true,
+      engine: 'veo3',
     },
   },
   {
@@ -1116,6 +1140,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2623839 },
       modelLocked: true,
+      engine: 'vidu',
     },
   },
   {
@@ -1129,6 +1154,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2698632 },
       modelLocked: true,
+      engine: 'kling',
     },
   },
   {
@@ -1136,6 +1162,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2623856 },
       modelLocked: true,
+      engine: 'seedance',
     },
   },
   {
@@ -1195,22 +1222,115 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
   },
 
   // ==========================================================================
+  // SDXL ↔ Pony/Illustrious/NoobAI (parent ↔ child)
+  // ==========================================================================
+  // SDXL addons work in Pony/Illustrious/NoobAI and vice versa
+  {
+    sourceEcosystemId: ECO.SDXL,
+    targetEcosystemId: ECO.Pony,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Pony,
+    targetEcosystemId: ECO.SDXL,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.SDXL,
+    targetEcosystemId: ECO.Illustrious,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Illustrious,
+    targetEcosystemId: ECO.SDXL,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.SDXL,
+    targetEcosystemId: ECO.NoobAI,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.NoobAI,
+    targetEcosystemId: ECO.SDXL,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+
+  // ==========================================================================
+  // Pony ↔ Illustrious ↔ NoobAI (siblings)
+  // ==========================================================================
+  {
+    sourceEcosystemId: ECO.Pony,
+    targetEcosystemId: ECO.Illustrious,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Illustrious,
+    targetEcosystemId: ECO.Pony,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Pony,
+    targetEcosystemId: ECO.NoobAI,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.NoobAI,
+    targetEcosystemId: ECO.Pony,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Illustrious,
+    targetEcosystemId: ECO.NoobAI,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.NoobAI,
+    targetEcosystemId: ECO.Illustrious,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+
+  // ==========================================================================
   // Flux Family Cross-Support
   // ==========================================================================
-  // Flux1 LORA works partially in FluxKrea
+  // Flux1 Checkpoint+LORA works partially in FluxKrea
   {
     sourceEcosystemId: ECO.Flux1,
     targetEcosystemId: ECO.FluxKrea,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: checkpointAndLora,
     support: 'partial',
   },
-  // FluxKrea LORA works partially in Flux1
+  // FluxKrea Checkpoint+LORA works partially in Flux1
   {
     sourceEcosystemId: ECO.FluxKrea,
     targetEcosystemId: ECO.Flux1,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: checkpointAndLora,
     support: 'partial',
   },
 
@@ -1985,9 +2105,8 @@ export const baseModelRecords: BaseModelRecord[] = [
     id: BM.Mochi,
     name: 'Mochi',
     description: "Genmo's video generation model with realistic motion synthesis",
-    type: 'video',
+    type: 'image',
     ecosystemId: ECO.Mochi,
-    hidden: true,
     licenseId: 13,
   },
 
@@ -2772,11 +2891,6 @@ export function getGenerationSupport(
   // Same ecosystem = Full
   if (checkpointEcosystemId === addonEcosystemId) return 'full';
 
-  // Check if related (parent/child/sibling)
-  if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
-    return 'partial';
-  }
-
   // Check cross-ecosystem rules
   const crossRule = crossEcosystemRules.find(
     (r) =>
@@ -3069,6 +3183,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ],
     defaultEcosystemId: ECO.Flux2Klein_9B,
     sortOrder: 22,
+  },
+  {
+    id: 'LTXV',
+    displayName: 'LTX Video',
+    ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23],
+    defaultEcosystemId: ECO.LTXV2,
+    sortOrder: 205,
   },
   {
     id: 'Seedance',
@@ -3499,6 +3620,15 @@ export const DEPRECATED_BASE_MODELS: string[] = baseModelRecords
   .filter((x) => x.disabled)
   .map((x) => x.name);
 
+/**
+ * Configuration for base model groups (ecosystems)
+ * Maps ecosystem keys to display names and descriptions
+ */
+export const baseModelGroupConfig: Record<string, { name: string; description?: string }> =
+  Object.fromEntries(
+    ecosystems.map((eco) => [eco.key, { name: eco.displayName ?? eco.key, description: eco.description }])
+  );
+
 // -----------------------------------------------------------------------------
 // Helper Functions
 // -----------------------------------------------------------------------------
@@ -3551,7 +3681,10 @@ export function getBaseModelSeoName(baseModel?: string): string {
   const ecosystem = ecosystemById.get(record.ecosystemId);
   if (!ecosystem) return 'Other';
 
-  // Use ecosystem displayName if available, otherwise use key
+  // If the ecosystem belongs to an ecosystem group, use the group's displayName
+  const group = getEcosystemGroup(record.ecosystemId);
+  if (group) return group.displayName;
+
   return ecosystem.displayName ?? ecosystem.key;
 }
 
@@ -3569,7 +3702,7 @@ export function getBaseModelSeoName(baseModel?: string): string {
 export function getBaseModelEcosystem(baseModel: string): string {
   const record = baseModelByName.get(baseModel);
   if (!record) return 'other';
-  
+
   // Get root ecosystem (walks up parent chain)
   const rootEcosystem = getRootEcosystem(record.ecosystemId);
   return rootEcosystem.name;
@@ -3582,18 +3715,19 @@ export function getBaseModelEcosystem(baseModel: string): string {
  */
 export function getBaseModelMediaType(baseModel: string): MediaType | undefined {
   const record = baseModelByName.get(baseModel);
-  return record?.type;
+  if (!record) return undefined;
+  return Array.isArray(record.type) ? record.type[0] : record.type;
 }
 
 /**
  * Get engine identifier for a base model
  * @param baseModel - Base model name
- * @returns Engine string (e.g., "wan", "hunyuan", "veo3")
+ * @returns Engine string (e.g., "wan", "hunyuan", "veo3") or undefined for models without an engine
  */
 export function getBaseModelEngine(baseModel: string): string | undefined {
   const record = baseModelByName.get(baseModel);
   if (!record) return undefined;
-  return getDefaultEngine(record.ecosystemId);
+  return getEcosystemSetting(record.ecosystemId, 'engine');
 }
 
 /**
@@ -3713,7 +3847,7 @@ export const getBaseModelGenerationConfig = lazy(() =>
  * @returns Array of ecosystem keys with generation support
  */
 export function getGenerationBaseModelConfigs(type?: MediaType): string[] {
-  return ecosystems
+  const result = ecosystems
     .filter((ecosystem) => {
       const genSupport = getEcosystemSupport(ecosystem.id, 'generation');
       if (!genSupport || genSupport.disabled) return false;
@@ -3726,6 +3860,24 @@ export function getGenerationBaseModelConfigs(type?: MediaType): string[] {
       return true;
     })
     .map((ecosystem) => ecosystem.key);
+
+  // Include ecosystem group IDs when any member ecosystem has generation support
+  for (const group of ecosystemGroups) {
+    if (!result.includes(group.id)) {
+      const hasGenSupport = group.ecosystemIds.some((id) => {
+        const support = getEcosystemSupport(id, 'generation');
+        if (!support || support.disabled) return false;
+        if (type) {
+          const models = getBaseModelsByEcosystemId(id, false);
+          return models.some((m) => m.type === type);
+        }
+        return true;
+      });
+      if (hasGenSupport) result.push(group.id);
+    }
+  }
+
+  return result;
 }
 
 /**

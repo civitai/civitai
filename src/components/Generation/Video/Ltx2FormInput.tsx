@@ -17,7 +17,7 @@ import {
   ltx2Duration,
   ltx2ModelToVersionMap,
 } from '~/server/orchestrator/lightricks/lightricks.schema';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
 
 const modelVersionOptions = [
   { label: '19B Dev', value: ltx2ModelToVersionMap['19b-dev'] },

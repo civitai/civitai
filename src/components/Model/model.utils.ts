@@ -27,7 +27,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
 const modelQueryParamSchema = z

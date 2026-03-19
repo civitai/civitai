@@ -98,7 +98,7 @@ import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation-graph.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';

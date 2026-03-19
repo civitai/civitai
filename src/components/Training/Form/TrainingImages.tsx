@@ -78,7 +78,7 @@ import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   IMAGE_MIME_TYPE,
   MIME_TYPES,

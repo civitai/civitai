@@ -1,6 +1,6 @@
 import type { MantineColor } from '@mantine/core';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import type { BaseModel } from './base-model.constants';
+import type { BaseModel } from './basemodel.constants';
 
 // Color mapping for model types (used in badges)
 export const modelTypeColors: Partial<Record<ModelType, MantineColor>> = {

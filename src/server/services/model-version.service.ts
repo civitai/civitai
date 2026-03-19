@@ -73,8 +73,8 @@ import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,

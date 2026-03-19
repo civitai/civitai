@@ -1,7 +1,7 @@
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { constants } from '~/server/common/constants';
-import { activeBaseModels, baseModels } from '~/shared/constants/base-model.constants';
+import { activeBaseModels, baseModels } from '~/shared/constants/basemodel.constants';
 
 export default async function enums(req: NextApiRequest, res: NextApiResponse) {
   return res.status(200).json({

@@ -1,4 +1,4 @@
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createContextAndProvider } from '~/utils/create-context';
 
 type StepContext = {

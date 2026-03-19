@@ -13,13 +13,13 @@ import {
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelEcosystem,
   getBaseModelGroup,
   getBaseModelGroupsByMediaType,
   getBaseModelMediaType,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';

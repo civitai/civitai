@@ -1,5 +1,5 @@
 import type JSZip from 'jszip';
-import { getBaseModelEcosystem, type BaseModel } from '~/shared/constants/base-model.constants';
+import { getBaseModelEcosystem, type BaseModel } from '~/shared/constants/basemodel.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {

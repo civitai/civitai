@@ -8,7 +8,7 @@ import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
 
 export function HunyuanFormInput() {
   const form = useFormContext();

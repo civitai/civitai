@@ -45,7 +45,7 @@ import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 import {
   getBaseModelGroup,
   getCanAuctionForGeneration,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;

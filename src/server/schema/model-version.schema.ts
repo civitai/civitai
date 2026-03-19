@@ -4,7 +4,7 @@ import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';

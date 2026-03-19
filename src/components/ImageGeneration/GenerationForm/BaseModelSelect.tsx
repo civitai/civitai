@@ -4,12 +4,12 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { GenerationConfigKey } from '~/server/common/constants';
 import { generationConfig } from '~/server/common/constants';
-import type { BaseModelFamily, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelFamily, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelFamilyConfig,
   baseModelGroupConfig,
   getGenerationBaseModelConfigs,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useIsMobile } from '~/hooks/useIsMobile';

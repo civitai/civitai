@@ -131,7 +131,7 @@ import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
-import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
+import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 
 export const getServerSideProps = createServerSideProps({
