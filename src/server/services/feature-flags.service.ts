@@ -431,6 +431,18 @@ export const toggleableFeatures = Object.entries(featureFlags)
     default: value.default ?? true,
   }));
 
+export const domainRestrictedToggleableKeys = new Set(
+  Object.entries(featureFlags)
+    .filter(([, value]) => {
+      if (!value.toggleable) return false;
+      const servers = value.availability.filter((x) =>
+        serverAvailability.includes(x as ServerAvailability)
+      );
+      return servers.length > 0;
+    })
+    .map(([key]) => key as FeatureFlagKey)
+);
+
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;
 
