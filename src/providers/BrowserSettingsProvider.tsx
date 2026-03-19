@@ -29,6 +29,9 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
 
       if (Object.keys(changedSettings).length === 0) return;
 
+      // Cancel any in-flight getSettings refetch so a stale response
+      // (e.g. triggered by window focus) can't overwrite this update.
+      queryUtils.user.getSettings.cancel();
       queryUtils.user.getSettings.setData(undefined, (old) => {
         if (!old) return old;
         return { ...old, ...changedSettings } satisfies UserSettingsSchema;
@@ -87,6 +90,9 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       debouncer(() => {
         const changed = getChanged({ ...curr, domain }, { ...snapshotRef.current, domain });
         if (Object.keys(changed).length > 0) {
+          // Cancel any in-flight getSettings refetch so a stale response
+          // (e.g. triggered by window focus) can't overwrite the mutation's cache update.
+          queryUtils.user.getSettings.cancel();
           // The reason why we pass domain it's cause that way we can store the content values on different places depending
           // on how it makes sense. For instance, for RED - Browssing level is stored under the name `redBrowsingLevel` inside the user settings.
           mutate({
