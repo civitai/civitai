@@ -17,7 +17,7 @@ export function BountiesInfinite({ filters: filterOverrides, showEof = true }: P
   const filters = removeEmpty({ ...bountiesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { bounties, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+  const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryBounties(debouncedFilters, { keepPreviousData: true });
 
   //#region [useEffect] cancel debounced filters
@@ -28,7 +28,7 @@ export function BountiesInfinite({ filters: filterOverrides, showEof = true }: P
 
   return (
     <>
-      {isLoading ? (
+      {!bounties.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />
         </Center>
