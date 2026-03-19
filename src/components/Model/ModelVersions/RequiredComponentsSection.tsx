@@ -204,7 +204,6 @@ export function RequiredComponentsSection({
               versionId={versionId}
               userPreferences={userPreferences}
               canDownload={canDownload}
-              downloadPrice={downloadPrice}
               isLoadingAccess={isLoadingAccess}
               archived={archived}
               onPurchase={onPurchase}
@@ -272,19 +271,31 @@ export function RequiredComponentsSection({
                         {formatKBytes(lc.sizeKB)}
                       </Text>
                     ) : null}
-                    <Tooltip label="Download from source model">
+                    <Tooltip
+                      label={canDownload ? 'Download from source model' : 'Purchase to download'}
+                    >
                       <ActionIcon
                         component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: lc.versionId,
-                          type: lc.fileType,
-                          meta: lc.fileMetadata as BasicFileMetadata | undefined,
-                        })}
+                        href={
+                          archived || isLoadingAccess || !canDownload
+                            ? undefined
+                            : createModelFileDownloadUrl({
+                                versionId: lc.versionId,
+                                type: lc.fileType,
+                                meta: lc.fileMetadata as BasicFileMetadata | undefined,
+                              })
+                        }
+                        onClick={(e: React.MouseEvent) => {
+                          if (!canDownload) {
+                            e.preventDefault();
+                            if (onPurchase) onPurchase();
+                          }
+                        }}
                         variant="light"
                         color="gray"
                         size="md"
                         radius="md"
-                        disabled={archived}
+                        disabled={archived || isLoadingAccess}
                       >
                         <IconDownload size={16} />
                       </ActionIcon>
@@ -359,7 +370,6 @@ interface ComponentGroupProps {
   versionId: number;
   userPreferences?: UserFilePreferences;
   canDownload: boolean;
-  downloadPrice?: number;
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
@@ -373,7 +383,6 @@ function ComponentGroup({
   versionId,
   userPreferences,
   canDownload,
-  downloadPrice,
   isLoadingAccess,
   archived,
   onPurchase,

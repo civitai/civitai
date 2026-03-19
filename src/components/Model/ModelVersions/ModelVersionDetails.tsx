@@ -1146,19 +1146,35 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                     {formatKBytes(lc.sizeKB)}
                                   </Text>
                                 ) : null}
-                                <Tooltip label="Download from source model">
+                                <Tooltip
+                                  label={
+                                    canDownload
+                                      ? 'Download from source model'
+                                      : 'Purchase to download'
+                                  }
+                                >
                                   <ActionIcon
                                     component="a"
-                                    href={createModelFileDownloadUrl({
-                                      versionId: lc.versionId,
-                                      type: lc.fileType,
-                                      meta: lc.fileMetadata as BasicFileMetadata | undefined,
-                                    })}
+                                    href={
+                                      archived || isLoadingAccess || !canDownload
+                                        ? undefined
+                                        : createModelFileDownloadUrl({
+                                            versionId: lc.versionId,
+                                            type: lc.fileType,
+                                            meta: lc.fileMetadata as BasicFileMetadata | undefined,
+                                          })
+                                    }
+                                    onClick={(e: React.MouseEvent) => {
+                                      if (!canDownload) {
+                                        e.preventDefault();
+                                        onPurchase('download');
+                                      }
+                                    }}
                                     variant="light"
                                     color="gray"
                                     size="md"
                                     radius="md"
-                                    disabled={archived}
+                                    disabled={archived || isLoadingAccess}
                                   >
                                     <IconDownload size={16} />
                                   </ActionIcon>
@@ -1210,15 +1226,25 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   <VerifiedText file={file} />
                                 </Box>
                               </Group>
-                              <Tooltip label="Download">
+                              <Tooltip label={canDownload ? 'Download' : 'Purchase to download'}>
                                 <ActionIcon
                                   component="a"
-                                  href={downloadUrl}
+                                  href={
+                                    archived || isLoadingAccess || !canDownload
+                                      ? undefined
+                                      : downloadUrl
+                                  }
+                                  onClick={(e: React.MouseEvent) => {
+                                    if (!canDownload) {
+                                      e.preventDefault();
+                                      onPurchase('download');
+                                    }
+                                  }}
                                   variant="light"
                                   color="gray"
                                   size="md"
                                   radius="md"
-                                  disabled={archived}
+                                  disabled={archived || isLoadingAccess}
                                 >
                                   <IconDownload size={16} />
                                 </ActionIcon>
