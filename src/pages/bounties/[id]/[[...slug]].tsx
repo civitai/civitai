@@ -113,8 +113,23 @@ export const getServerSideProps = createServerSideProps({
     if (!result.success) return { notFound: true };
 
     if (ssg) {
-      await ssg.bounty.getById.prefetch({ id: result.data.id });
+      // Fetch bounty to check slug and prefetch for client hydration
+      const bounty = await ssg.bounty.getById.fetch({ id: result.data.id }).catch(() => null);
       await ssg.hiddenPreferences.getHidden.prefetch();
+
+      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (bounty) {
+        const correctSlug = slugit(bounty.name);
+        const currentSlug = result.data.slug?.join('/');
+        if (currentSlug !== correctSlug) {
+          return {
+            redirect: {
+              destination: `/bounties/${result.data.id}/${correctSlug}`,
+              permanent: false,
+            },
+          };
+        }
+      }
     }
 
     return { props: removeEmpty(result.data) };

@@ -92,8 +92,23 @@ export const getServerSideProps = createServerSideProps({
     }
 
     if (ssg) {
-      await ssg.article.getById.prefetch({ id: result.data.id });
+      // Fetch article to check slug and prefetch for client hydration
+      const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
       await ssg.hiddenPreferences.getHidden.prefetch();
+
+      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (article) {
+        const correctSlug = slugit(article.title);
+        const currentSlug = result.data.slug?.join('/');
+        if (currentSlug !== correctSlug) {
+          return {
+            redirect: {
+              destination: `/articles/${result.data.id}/${correctSlug}`,
+              permanent: false,
+            },
+          };
+        }
+      }
     }
 
     return { props: removeEmpty(result.data) };
