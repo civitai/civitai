@@ -23,7 +23,10 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
-      await ssg?.user.getCreator.prefetch({ username });
+      await Promise.all([
+        ssg?.user.getCreator.prefetch({ username }),
+        ssg?.userProfile.get.prefetch({ username }),
+      ]);
     }
 
     return {

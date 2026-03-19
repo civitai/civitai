@@ -89,8 +89,8 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
         />
       ) : (
         <Meta
-          title="Creator Profile | Civitai"
-          description="Learn more about this awesome creator on Civitai."
+          title={`${user?.username ?? username} Creator Profile | Civitai`}
+          description={`Learn more about ${user?.username ?? username} on Civitai.`}
           canonical={pathname}
         />
       )}

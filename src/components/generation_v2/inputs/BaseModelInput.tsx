@@ -352,8 +352,8 @@ function BaseModelListContent({
                     isSelected
                       ? 'bg-blue-0 dark:bg-blue-9/20'
                       : isActive
-                        ? 'bg-gray-1 dark:bg-dark-5'
-                        : 'hover:bg-gray-1 dark:hover:bg-dark-5',
+                      ? 'bg-gray-1 dark:bg-dark-5'
+                      : 'hover:bg-gray-1 dark:hover:bg-dark-5',
                     !item.compatible && 'opacity-60'
                   )}
                 >
@@ -408,8 +408,8 @@ function BaseModelListContent({
                       isSelected
                         ? 'bg-blue-0 dark:bg-blue-9/20'
                         : isActive
-                          ? 'bg-gray-1 dark:bg-dark-5'
-                          : 'hover:bg-gray-1 dark:hover:bg-dark-5',
+                        ? 'bg-gray-1 dark:bg-dark-5'
+                        : 'hover:bg-gray-1 dark:hover:bg-dark-5',
                       !item.compatible && 'opacity-60'
                     )}
                   >

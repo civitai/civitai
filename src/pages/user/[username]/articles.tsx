@@ -22,7 +22,8 @@ import { Page } from '~/components/AppLayout/Page';
 import { dbRead } from '~/server/db/client';
 
 export const getServerSideProps = createServerSideProps({
-  resolver: async ({ ctx, features }) => {
+  useSSG: true,
+  resolver: async ({ ctx, features, ssg }) => {
     const username = ctx.query.username as string;
     if (!features?.articles)
       return {
@@ -37,6 +38,8 @@ export const getServerSideProps = createServerSideProps({
       return {
         redirect: { destination: `/user/${username}`, permanent: true },
       };
+
+    await ssg?.userProfile.get.prefetch({ username });
   },
 });
 

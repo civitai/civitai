@@ -6,7 +6,8 @@ import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
-  resolver: async ({ ctx }) => {
+  useSSG: true,
+  resolver: async ({ ctx, ssg }) => {
     const username = ctx.query.username as string;
     const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
 
@@ -14,6 +15,8 @@ export const getServerSideProps = createServerSideProps({
       return {
         redirect: { destination: `/user/${username}`, permanent: true },
       };
+
+    await ssg?.userProfile.get.prefetch({ username });
   },
 });
 
