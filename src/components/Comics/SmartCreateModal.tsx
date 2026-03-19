@@ -1,10 +1,11 @@
-import { ActionIcon, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
-import { IconArrowLeft, IconPlus, IconX } from '@tabler/icons-react';
+import { ActionIcon, Alert, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
+import { IconArrowLeft, IconClock, IconPlus, IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 
 interface SmartCreateModalProps {
   opened: boolean;
@@ -56,6 +57,12 @@ export function SmartCreateModal({
   const [smartEnhance, setSmartEnhance] = useState(true);
   const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
   const scrollViewportRef = useRef<HTMLDivElement>(null);
+
+  // Queue status for showing warnings
+  const { available, limit, used, isLoading: queueLoading } = useComicsQueueStatus();
+  const validPanelCount = smartPanels.filter((p) => p.prompt.trim()).length;
+  const needsQueueWait = validPanelCount > available && available > 0;
+  const queueFull = available === 0;
 
   const resetSmartState = () => {
     setSmartStep('input');
@@ -234,6 +241,19 @@ export function SmartCreateModal({
               ? `Cost: ${smartPanels.filter((p) => p.prompt.trim()).length} panels x ${panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0)} = ${smartPanels.filter((p) => p.prompt.trim()).length * (panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0))} Buzz`
               : 'Calculating cost...'}
           </Text>
+
+          {/* Queue status warnings */}
+          {!queueLoading && queueFull && (
+            <Alert color="red" title="Queue Full" icon={<IconClock size={16} />}>
+              Your generation queue is full ({used}/{limit} jobs). You need to wait for jobs to complete before creating new panels.
+            </Alert>
+          )}
+          {!queueLoading && needsQueueWait && !queueFull && (
+            <Alert color="yellow" title="Queuing Required" icon={<IconClock size={16} />}>
+              You have {available} of {limit} queue slots available but want to create {validPanelCount} panels.
+              Panels will be created one at a time as slots become available. This may take longer than usual.
+            </Alert>
+          )}
 
           <Group justify="space-between">
             <Button

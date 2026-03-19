@@ -29,6 +29,7 @@ import {
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
+import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
@@ -481,6 +482,9 @@ async function createSinglePanel(args: {
     storyDescription: string;
     previousPanelPrompts: string[];
   };
+  /** When true, creates the panel with Enqueued status and skips orchestrator submission.
+   *  The background job will submit when queue slots are available. */
+  enqueue?: boolean;
 }) {
   const {
     projectId,
@@ -500,6 +504,7 @@ async function createSinglePanel(args: {
     aspectRatio,
     modelConfig,
     storyContext,
+    enqueue,
   } = args;
 
   const token = await getOrchestratorToken(userId, ctx);
@@ -519,7 +524,7 @@ async function createSinglePanel(args: {
     fullPrompt = prompt;
   }
 
-  const metadata = {
+  const metadata: Record<string, any> = {
     previousPanelId: contextPanel?.id ?? null,
     previousPanelPrompt: contextPanel ? contextPanel.enhancedPrompt ?? contextPanel.prompt : null,
     previousPanelImageUrl: contextPanel?.imageUrl ?? null,
@@ -538,6 +543,12 @@ async function createSinglePanel(args: {
     },
   };
 
+  // Store extra fields the job needs to submit generation later
+  if (enqueue) {
+    metadata.aspectRatio = aspectRatio;
+    metadata.maxReferenceImages = modelConfig.maxReferenceImages;
+  }
+
   const panel = await dbWrite.comicPanel.create({
     data: {
       projectId,
@@ -545,7 +556,7 @@ async function createSinglePanel(args: {
       prompt,
       enhancedPrompt: enhance ? fullPrompt : null,
       position,
-      status: ComicPanelStatus.Pending,
+      status: enqueue ? ComicPanelStatus.Enqueued : ComicPanelStatus.Pending,
       metadata,
     },
   });
@@ -557,6 +568,9 @@ async function createSinglePanel(args: {
       skipDuplicates: true,
     });
   }
+
+  // When enqueued, skip orchestrator submission — the job handles it
+  if (enqueue) return panel;
 
   try {
     const result = await createImageGen({
@@ -1826,6 +1840,9 @@ export const comicsRouter = router({
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
+      // Enforce queue limits before generation
+      await assertCanGenerate(token, ctx.user?.tier ?? 'free', 1);
+
       // Build prompt — optionally enhance via LLM
       // Only pass mentioned character names to avoid the enhancer injecting unrelated references
       const mentionedRefIdSet = new Set(mentionedReferenceIds);
@@ -2432,6 +2449,9 @@ export const comicsRouter = router({
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
+      // Enforce queue limits before generation
+      await assertCanGenerate(token, ctx.user?.tier ?? 'free', 1);
+
       // Build prompt — optionally enhance
       const mentionedRefIdSet = new Set(mentionedReferenceIds);
       const mentionedNames = allUserRefs
@@ -2513,16 +2533,23 @@ export const comicsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
-      // Get all user's reference names for story planning
+      // Get all user's references, then filter to only those @mentioned in the story
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
-        select: { name: true },
+        select: { id: true, name: true },
       });
+      const { mentionedIds } = resolveReferenceMentions({
+        prompt: input.storyDescription,
+        references: allUserRefs,
+      });
+      const mentionedNames = allUserRefs
+        .filter((r) => mentionedIds.includes(r.id))
+        .map((r) => r.name);
 
       return planChapterPanels({
         token,
         storyDescription: input.storyDescription,
-        characterNames: allUserRefs.map((r) => r.name),
+        characterNames: mentionedNames,
       });
     }),
 
@@ -2531,6 +2558,14 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      // Check how many queue slots the user has available upfront.
+      // Panels that fit will be submitted immediately; the rest get enqueued
+      // for the background job to process when slots free up.
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+      const userTier = ctx.user?.tier ?? 'free';
+      const queueStatus = await getUserQueueStatus(token, userTier);
+      let remainingSlots = queueStatus.canGenerate ? queueStatus.available : 0;
+
       // Fetch project baseModel for generation config
       const project = await dbRead.comicProject.findUnique({
         where: { id: input.projectId },
@@ -2614,6 +2649,8 @@ export const comicsRouter = router({
           (id) => refImagesByRefId.get(id)?.referenceName ?? ''
         ).filter(Boolean);
 
+        // Submit immediately if slots are available, otherwise enqueue for the job
+        const shouldEnqueue = remainingSlots <= 0;
         const panel = await createSinglePanel({
           projectId: input.projectId,
           chapterPosition: chapter.position,
@@ -2635,7 +2672,9 @@ export const comicsRouter = router({
             storyDescription: input.storyDescription,
             previousPanelPrompts: [...previousPanelPrompts],
           },
+          enqueue: shouldEnqueue,
         });
+        if (!shouldEnqueue) remainingSlots--;
 
         createdPanels.push(panel);
         previousPanelPrompts.push(panel.enhancedPrompt ?? panelInput.prompt);
@@ -3334,6 +3373,9 @@ export const comicsRouter = router({
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
+      // Enforce queue limits before generation
+      await assertCanGenerate(token, ctx.user?.tier ?? 'free', 1);
+
       // Build prompt — optionally enhance
       // Only pass mentioned character names to avoid the enhancer injecting unrelated references
       const mentionedRefIdSet = new Set(mentionedReferenceIds);
@@ -3505,6 +3547,20 @@ export const comicsRouter = router({
       }
 
       const batchToken = await getOrchestratorToken(ctx.user!.id, ctx);
+
+      // Count panels that need generation (Mode 3 and Mode 4)
+      // Mode 1 (existing imageId) and Mode 2 (source only, no prompt) don't use generation
+      // Mode 3 (source + prompt) and Mode 4 (prompt only) need generation
+      const panelsNeedingGeneration = input.panels.filter((p) => {
+        const hasPrompt = !!p.prompt?.trim();
+        const hasExistingImage = p.imageId != null;
+        return !hasExistingImage && hasPrompt;
+      }).length;
+
+      // Check queue limits before creating any panels
+      if (panelsNeedingGeneration > 0) {
+        await assertCanGenerate(batchToken, ctx.user?.tier ?? 'free', panelsNeedingGeneration);
+      }
 
       const createdPanels: any[] = [];
       let contextPanel: {
@@ -4151,4 +4207,19 @@ export const comicsRouter = router({
 
       return comment;
     }),
+
+  // ──── Queue Status ────
+
+  /**
+   * Get the current queue status for the user.
+   * Returns used slots, limit, available slots, and whether the user can generate.
+   */
+  getQueueStatus: comicProtectedProcedure.query(async ({ ctx }) => {
+    const { getUserQueueStatus } = await import(
+      '~/server/services/orchestrator/queue-limits'
+    );
+    const token = await getOrchestratorToken(ctx.user!.id, ctx);
+    const userTier = ctx.user?.tier ?? 'free';
+    return getUserQueueStatus(token, userTier);
+  }),
 });

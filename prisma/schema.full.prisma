@@ -4976,6 +4976,7 @@ enum ComicReferenceStatus {
 
 enum ComicPanelStatus {
   Pending
+  Enqueued
   Generating
   Ready
   Failed

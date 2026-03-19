@@ -362,6 +362,13 @@ function ProjectWorkspace() {
     useCallback(
       (data: Omit<WorkflowStepEvent, '$type'> & { $type: string }) => {
         if (data.$type !== 'step') return;
+
+        // Job submitted an enqueued panel — refetch chapter to pick up new workflowId/status
+        if ((data.status as string) === 'submitted') {
+          void refetch();
+          return;
+        }
+
         if (data.status !== 'succeeded' && data.status !== 'failed') return;
         const panelId = workflowToPanelRef.current.get(data.workflowId);
         if (panelId != null) {
@@ -371,7 +378,7 @@ function ProjectWorkspace() {
           void pollAndUpdatePanels(generatingPanelIds);
         }
       },
-      [pollAndUpdatePanels, generatingPanelIds]
+      [pollAndUpdatePanels, generatingPanelIds, refetch]
     )
   );
 

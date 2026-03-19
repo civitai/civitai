@@ -114,11 +114,19 @@ export async function enhanceComicPrompt(input: {
       ],
     });
 
-    const enhanced = result.content;
+    let enhanced = result.content;
     if (!enhanced) {
       console.warn('Empty response from prompt enhancement — using fallback');
       return fallback;
     }
+
+    // Strip any @mentions the LLM hallucinated that weren't in the original prompt.
+    // The LLM sometimes invents scenes with characters the user never referenced.
+    const originalMentions = new Set(names.map((n) => n.toLowerCase()));
+    enhanced = enhanced.replace(/@([\w\p{L}]+)/gu, (match, name) => {
+      if (originalMentions.has(name.toLowerCase())) return match;
+      return name; // Strip the @ prefix, keep the word
+    });
 
     // Prepend trained words (e.g. trigger words for LoRAs) same as fallback path
     return trainedWords && trainedWords.length > 0
