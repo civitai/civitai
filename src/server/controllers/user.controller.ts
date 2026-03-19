@@ -480,6 +480,8 @@ export const updateUserHandler = async ({
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
+    await refreshSession(id);
+
     return updatedUser;
   } catch (error) {
     if (error instanceof TRPCError) throw error; // Rethrow the error if it's already a TRCPError
