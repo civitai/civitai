@@ -26,7 +26,6 @@ type SchemaError = {
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
   quantType?: ZodErrorSchema;
-  componentType?: ZodErrorSchema;
 };
 
 export type FileFromContextProps = {
@@ -39,7 +38,6 @@ export type FileFromContextProps = {
   fp?: ModelFileFp | null;
   format?: ModelFileFormat | null;
   quantType?: ModelFileQuantType | null;
-  componentType?: ModelFileComponentType | null;
   isRequired?: boolean | null;
   versionId?: number;
   file?: File;
@@ -56,18 +54,17 @@ type FilesContextState = {
   linkedComponents: LinkedComponent[];
   modelId?: number;
   baseModel?: string;
-  fileExtensions: string[];
-  fileTypes: ModelFileType[];
-  acceptedModelFiles: ModelFileType[];
-  maxFiles: number;
+  dropzoneConfig: DropzoneOptions;
   onDrop: (files: File[], defaultType?: ModelFileType) => void;
   startUpload: () => Promise<void>;
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
   validationCheck: () => boolean;
-  addLinkedComponent: (component: LinkedComponent) => void;
-  removeLinkedComponent: (componentType: ModelFileComponentType) => void;
+  addLinkedComponent: (
+    component: LinkedComponent | Omit<LinkedComponent, 'fileId' | 'fileName' | 'sizeKB'>
+  ) => Promise<void>;
+  removeLinkedComponent: (versionId: number) => void;
 };
 
 type FilesProviderProps = {
@@ -99,7 +96,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       fp: file.metadata?.fp,
       format: file.metadata?.format,
       quantType: file.metadata?.quantType,
-      componentType: file.metadata?.componentType,
       isRequired: file.metadata?.isRequired ?? null,
       versionId: version.id,
       uuid: randomId(),
@@ -150,6 +146,15 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
+  const addLinkedComponentMutation = trpc.modelVersion.addLinkedComponent.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to link component',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const persistLinkedComponents = (components: LinkedComponent[]) => {
     if (!version?.id) return;
     setLinkedComponentsMutation.mutate({
@@ -171,17 +176,55 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     });
   };
 
-  const addLinkedComponent = (component: LinkedComponent) => {
-    const updated = [
-      ...linkedComponents.filter((c) => c.componentType !== component.componentType),
-      { ...component, isRequired: component.isRequired ?? true },
-    ];
-    setLinkedComponents(updated);
-    persistLinkedComponents(updated);
+  const addLinkedComponent = async (
+    component: LinkedComponent | Omit<LinkedComponent, 'fileId' | 'fileName' | 'sizeKB'>
+  ) => {
+    // If component already has fileId (e.g., toggling isRequired on existing), use bulk persist
+    if ('fileId' in component && component.fileId) {
+      const updated = [
+        ...linkedComponents.filter((c) => c.versionId !== component.versionId),
+        { ...component, isRequired: component.isRequired ?? true } as LinkedComponent,
+      ];
+      setLinkedComponents(updated);
+      persistLinkedComponents(updated);
+      return;
+    }
+
+    // New link: use the addLinkedComponent mutation which resolves file data server-side
+    if (!version?.id) return;
+    const result = await addLinkedComponentMutation.mutateAsync({
+      id: version.id,
+      targetVersionId: component.versionId,
+      componentType: component.componentType,
+      modelId: component.modelId,
+      modelName: component.modelName,
+      versionName: component.versionName,
+      isRequired: component.isRequired ?? true,
+    });
+
+    const enriched: LinkedComponent = {
+      recommendedResourceId: result.recommendedResourceId,
+      componentType: result.componentType as ModelFileComponentType,
+      modelId: result.modelId,
+      modelName: result.modelName,
+      versionId: result.versionId,
+      versionName: result.versionName,
+      fileId: result.fileId,
+      fileName: result.fileName,
+      sizeKB: result.sizeKB,
+      fileType: result.fileType,
+      fileMetadata: result.fileMetadata ?? undefined,
+      isRequired: result.isRequired,
+    };
+
+    setLinkedComponents((prev) => [
+      ...prev.filter((c) => c.versionId !== component.versionId),
+      enriched,
+    ]);
   };
 
-  const removeLinkedComponent = (componentType: ModelFileComponentType) => {
-    const updated = linkedComponents.filter((c) => c.componentType !== componentType);
+  const removeLinkedComponent = (versionId: number) => {
+    const updated = linkedComponents.filter((c) => c.versionId !== versionId);
     setLinkedComponents(updated);
     persistLinkedComponents(updated);
   };
@@ -412,7 +455,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     fp,
     format,
     quantType,
-    componentType,
     isRequired,
     versionId,
     file,
@@ -429,7 +471,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
-          meta: { versionId, type, size, fp, format, quantType, componentType, isRequired, uuid },
+          meta: { versionId, type, size, fp, format, quantType, isRequired, uuid },
         },
         async ({ meta, size, backend, ...result }) => {
           const { versionId, type, uuid, ...metadata } = meta as {
@@ -486,8 +528,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     await handleUpload(file);
   };
 
-  const { acceptedModelFiles, acceptedFileTypes, maxFiles } =
-    dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
+  const dropzoneConfig = dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
 
   return (
     <FilesContext.Provider
@@ -501,12 +542,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         retry,
         updateFile: handleUpdateFile,
         removeFile,
-        fileExtensions: acceptedFileTypes,
-        fileTypes: acceptedModelFiles,
-        acceptedModelFiles,
+        dropzoneConfig,
         modelId: model?.id,
         baseModel: version?.baseModel ?? undefined,
-        maxFiles,
         validationCheck: checkValidation,
         addLinkedComponent,
         removeLinkedComponent,
@@ -546,14 +584,7 @@ export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   const conflictCount: Record<string, number> = {};
 
   files.forEach((item) => {
-    const key = [
-      item.size,
-      item.type,
-      item.fp,
-      getModelFileFormat(item.name),
-      item.quantType,
-      item.componentType,
-    ]
+    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
       .filter(Boolean)
       .join('-');
     if (conflictCount[key]) conflictCount[key] += 1;
@@ -585,116 +616,129 @@ function inferFileType(fileName: string): ModelFileType | undefined {
   }
 }
 
-type DropzoneOptions = {
-  acceptedFileTypes: string[];
-  acceptedModelFiles: ModelFileType[];
+export type DropzoneSection = {
+  extensions: string[];
+  fileTypes: ModelFileType[];
   maxFiles: number;
 };
 
+export type DropzoneOptions = {
+  primary: DropzoneSection;
+  additional: DropzoneSection;
+};
+
+const modelExts = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'];
+const ggufExts = [...modelExts, '.gguf'];
+const configExts = ['.yaml', '.yml', '.json'];
+const archiveExts = ['.zip'];
+
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
-    acceptedFileTypes: [
-      '.ckpt',
-      '.pt',
-      '.safetensors',
-      '.gguf',
-      '.sft',
-      '.bin',
-      '.zip',
-      '.yaml',
-      '.yml',
-      '.onnx',
-    ],
-    acceptedModelFiles: ['Model', 'Config', 'Training Data'],
-    maxFiles: 11,
-  },
-  MotionModule: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.onnx'],
-    acceptedModelFiles: ['Model'],
-    maxFiles: 2,
+    primary: {
+      extensions: [...ggufExts, '.onnx'],
+      fileTypes: ['Model', 'Pruned Model'],
+      maxFiles: 8,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts, ...modelExts],
+      fileTypes: ['VAE', 'Config', 'Training Data', 'UNet', 'CLIPVision', 'ControlNet'],
+      maxFiles: 6,
+    },
   },
   LORA: {
-    acceptedFileTypes: [
-      '.ckpt',
-      '.pt',
-      '.safetensors',
-      '.sft',
-      '.gguf',
-      '.bin',
-      '.zip',
-      '.yaml',
-      '.yml',
-    ],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 4,
+    primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
+    additional: {
+      extensions: [...modelExts, ...configExts, ...archiveExts],
+      fileTypes: ['Text Encoder', 'Config', 'Training Data', 'UNet', 'CLIPVision'],
+      maxFiles: 5,
+    },
   },
   DoRA: {
-    acceptedFileTypes: [
-      '.ckpt',
-      '.pt',
-      '.safetensors',
-      '.sft',
-      '.gguf',
-      '.bin',
-      '.zip',
-      '.yaml',
-      '.yml',
-    ],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 4,
+    primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
+    additional: {
+      extensions: [...modelExts, ...configExts, ...archiveExts],
+      fileTypes: ['Text Encoder', 'Config', 'Training Data', 'UNet', 'CLIPVision'],
+      maxFiles: 5,
+    },
   },
   LoCon: {
-    acceptedFileTypes: [
-      '.ckpt',
-      '.pt',
-      '.safetensors',
-      '.sft',
-      '.gguf',
-      '.bin',
-      '.zip',
-      '.yaml',
-      '.yml',
-    ],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 4,
-  },
-  Detection: {
-    acceptedFileTypes: ['.pt'],
-    acceptedModelFiles: ['Model'],
-    maxFiles: 4,
+    primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
+    additional: {
+      extensions: [...modelExts, ...configExts, ...archiveExts],
+      fileTypes: ['Text Encoder', 'Config', 'Training Data', 'UNet', 'CLIPVision'],
+      maxFiles: 5,
+    },
   },
   TextualInversion: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Negative', 'Training Data'],
-    maxFiles: 3,
+    primary: { extensions: modelExts, fileTypes: ['Model', 'Negative'], maxFiles: 2 },
+    additional: {
+      extensions: [...archiveExts, ...configExts],
+      fileTypes: ['Training Data', 'Config'],
+      maxFiles: 2,
+    },
   },
   Hypernetwork: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Training Data'],
-    maxFiles: 2,
+    primary: { extensions: modelExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: {
+      extensions: [...archiveExts, ...configExts, ...modelExts],
+      fileTypes: ['Training Data', 'Config'],
+      maxFiles: 2,
+    },
   },
   AestheticGradient: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Training Data'],
-    maxFiles: 2,
+    primary: { extensions: modelExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: {
+      extensions: [...archiveExts, ...configExts, ...modelExts],
+      fileTypes: ['Training Data', 'Config'],
+      maxFiles: 2,
+    },
   },
   Controlnet: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.gguf', '.sft', '.bin', '.yaml', '.yml'],
-    acceptedModelFiles: ['Model', 'Config'],
-    maxFiles: 3,
+    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 2 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Archive', 'Config'],
+      maxFiles: 2,
+    },
+  },
+  MotionModule: {
+    primary: { extensions: [...modelExts, '.onnx'], fileTypes: ['Model'], maxFiles: 2 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Archive', 'Config'],
+      maxFiles: 1,
+    },
+  },
+  Detection: {
+    primary: { extensions: ['.pt'], fileTypes: ['Model'], maxFiles: 4 },
+    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
   },
   Upscaler: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.gguf', '.safetensors', '.sft', '.bin'],
-    acceptedModelFiles: ['Model'],
-    maxFiles: 1,
+    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
   },
   VAE: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.gguf', '.safetensors', '.sft', '.bin'],
-    acceptedModelFiles: ['Model'],
-    maxFiles: 1,
+    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
-  Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
-  Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
-  Workflows: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
-  Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Poses: {
+    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
+    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+  },
+  Wildcards: {
+    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
+    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+  },
+  Workflows: {
+    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
+    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+  },
+  Other: {
+    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
+    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+  },
 };

@@ -15,7 +15,7 @@ import {
   Badge,
   Switch,
 } from '@mantine/core';
-import { Dropzone } from '@mantine/dropzone';
+import { Dropzone, type FileRejection } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
@@ -56,10 +56,27 @@ import { getEcosystem, getCompatibleBaseModels } from '~/shared/constants/basemo
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 
 // Small inline dropzone for adding files within a section
-function InlineDropzone({ label, onDrop }: { label: string; onDrop: (files: File[]) => void }) {
+function InlineDropzone({
+  label,
+  description,
+  onDrop,
+  accept,
+  maxFiles,
+  onReject,
+}: {
+  label: string;
+  description?: string;
+  onDrop: (files: File[]) => void;
+  accept?: Record<string, string[]>;
+  maxFiles?: number;
+  onReject?: (rejectedFiles: FileRejection[]) => void;
+}) {
   return (
     <Dropzone
       onDrop={onDrop}
+      accept={accept}
+      maxFiles={maxFiles}
+      onReject={onReject}
       styles={{
         root: {
           border: '2px dashed var(--mantine-color-dark-4)',
@@ -74,12 +91,19 @@ function InlineDropzone({ label, onDrop }: { label: string; onDrop: (files: File
         },
       }}
     >
-      <Group justify="center" gap="xs">
-        <IconPlus size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
-        <Text size="sm" c="dimmed">
-          {label}
-        </Text>
-      </Group>
+      <Stack gap={4} align="center">
+        <Group justify="center" gap="xs">
+          <IconPlus size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
+          <Text size="sm" c="dimmed">
+            {label}
+          </Text>
+        </Group>
+        {description && (
+          <Text size="xs" c="dimmed">
+            {description}
+          </Text>
+        )}
+      </Stack>
     </Dropzone>
   );
 }
@@ -90,6 +114,7 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
       return 'VAE';
     case ModelType.Controlnet:
       return 'ControlNet';
+    case ModelType.Other:
     default:
       return 'Other';
   }
@@ -101,55 +126,55 @@ export function Files() {
     files,
     linkedComponents,
     onDrop,
-    fileExtensions,
-    maxFiles,
+    dropzoneConfig,
     baseModel,
-    acceptedModelFiles,
     addLinkedComponent,
     removeLinkedComponent,
   } = useFilesContext();
-  const queryUtils = trpc.useUtils();
 
-  // Dynamic 2-way file categorization based on model type
-  const modelFiles = files.filter((f) => acceptedModelFiles.includes(f.type as ModelFileType));
-  const additionalFiles = files.filter(
-    (f) => !acceptedModelFiles.includes(f.type as ModelFileType)
-  );
+  const { primary, additional } = dropzoneConfig;
+  const totalMaxFiles = primary.maxFiles + additional.maxFiles;
+  const primaryTypes = primary.fileTypes;
+  const additionalFileTypes = additional.fileTypes;
 
-  const handleInlineDrop = (droppedFiles: File[], defaultType?: ModelFileType) => {
-    if (files.length + droppedFiles.length > maxFiles) return;
+  const modelFiles = files.filter((f) => primaryTypes.includes(f.type as ModelFileType));
+  const additionalFiles = files.filter((f) => !primaryTypes.includes(f.type as ModelFileType));
+
+  const handleInlineDrop = (
+    droppedFiles: File[],
+    sectionFiles: FileFromContextProps[],
+    sectionMaxFiles: number,
+    defaultType?: ModelFileType
+  ) => {
+    if (sectionFiles.length + droppedFiles.length > sectionMaxFiles) return;
+    if (files.length + droppedFiles.length > totalMaxFiles) return;
     onDrop(droppedFiles, defaultType);
   };
 
-  const handleLinkResource = async (resource: GenerationResource) => {
-    // Map model type to component type
+  const primaryAccept = { 'mime/type': primary.extensions };
+  const additionalAccept = { 'mime/type': additional.extensions };
+  const handleReject = (rejectedFiles: FileRejection[]) => {
+    const errors = removeDuplicates(
+      rejectedFiles.flatMap((file) => file.errors),
+      'code'
+    )
+      .map((error) => error.message)
+      .join('\n');
+    showErrorNotification({ error: new Error(errors) });
+  };
+
+  const handleLinkResource = (resource: GenerationResource) => {
     const componentType = modelTypeToComponentType(resource.model.type);
 
-    // Fetch version details to get file info
-    try {
-      const versionData = await queryUtils.modelVersion.getById.fetch({
-        id: resource.id,
-        withFiles: true,
-      });
-      const primaryFile = versionData?.files?.[0];
-      if (!primaryFile) {
-        showErrorNotification({ error: new Error('No files found for this model version') });
-        return;
-      }
-
-      addLinkedComponent({
-        componentType,
-        modelId: resource.model.id,
-        modelName: resource.model.name,
-        versionId: resource.id,
-        versionName: resource.name,
-        fileId: primaryFile.id,
-        fileName: primaryFile.name,
-        isRequired: true,
-      });
-    } catch {
-      showErrorNotification({ error: new Error('Failed to fetch model version details') });
-    }
+    // Error notification is handled by the mutation's onError callback in FilesProvider
+    addLinkedComponent({
+      componentType,
+      modelId: resource.model.id,
+      modelName: resource.model.name,
+      versionId: resource.id,
+      versionName: resource.name,
+      isRequired: true,
+    }).catch(() => undefined);
   };
 
   const handleOpenResourceSelect = () => {
@@ -190,12 +215,18 @@ export function Files() {
   return (
     <Stack>
       {/* Model Files Section - always visible */}
-      <Card withBorder>
+      <Card
+        withBorder
+        style={{
+          borderColor: 'rgba(34, 139, 230, 0.2)',
+          backgroundColor: 'rgba(34, 139, 230, 0.03)',
+        }}
+      >
         <Card.Section
           withBorder
           inheritPadding
           py="md"
-          style={{ borderColor: 'var(--mantine-color-dark-4)' }}
+          style={{ borderColor: 'rgba(34, 139, 230, 0.2)' }}
         >
           <Group gap="xs">
             <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
@@ -212,30 +243,33 @@ export function Files() {
           {modelFiles.length > 0 ? (
             <>
               {modelFiles.map((file) => (
-                <FileCard key={file.uuid} data={file} index={files.indexOf(file)} />
+                <FileCard
+                  key={file.uuid}
+                  data={file}
+                  index={files.indexOf(file)}
+                  fileTypes={primaryTypes}
+                />
               ))}
               <InlineDropzone
                 label="Add another model file variant"
-                onDrop={(files) => handleInlineDrop(files, 'Model')}
+                onDrop={(dropped) =>
+                  handleInlineDrop(dropped, modelFiles, primary.maxFiles, primaryTypes[0])
+                }
+                accept={primaryAccept}
+                maxFiles={primary.maxFiles}
+                onReject={handleReject}
               />
             </>
           ) : (
             <Dropzone
-              accept={{ 'mime/type': fileExtensions }}
+              accept={primaryAccept}
               onDrop={(droppedFiles) => {
-                if (files.length + droppedFiles.length > maxFiles) return;
-                onDrop(droppedFiles, 'Model');
+                if (modelFiles.length + droppedFiles.length > primary.maxFiles) return;
+                if (files.length + droppedFiles.length > totalMaxFiles) return;
+                onDrop(droppedFiles, primaryTypes[0]);
               }}
-              maxFiles={maxFiles}
-              onReject={(rejectedFiles) => {
-                const errors = removeDuplicates(
-                  rejectedFiles.flatMap((file) => file.errors),
-                  'code'
-                )
-                  .map((error) => error.message)
-                  .join('\n');
-                showErrorNotification({ error: new Error(errors) });
-              }}
+              maxFiles={primary.maxFiles}
+              onReject={handleReject}
               className={classes.dropzoneReject}
               useFsAccessApi={!isAndroidDevice()}
               styles={{
@@ -255,7 +289,7 @@ export function Files() {
                   Drop model files here or click to browse
                 </Text>
                 <Text size="xs" c="dimmed">
-                  {`Supports ${fileExtensions.join(', ')} files`}
+                  {`Supports ${primary.extensions.join(', ')} files`}
                 </Text>
               </Stack>
             </Dropzone>
@@ -298,13 +332,19 @@ export function Files() {
             </Stack>
           )}
           {additionalFiles.map((file) => (
-            <FileCard key={file.uuid} data={file} index={files.indexOf(file)} showRequiredToggle />
+            <FileCard
+              key={file.uuid}
+              data={file}
+              index={files.indexOf(file)}
+              showRequiredToggle
+              fileTypes={additionalFileTypes}
+            />
           ))}
           {linkedComponents.map((component) => (
             <LinkedComponentCard
-              key={`${component.componentType}-${component.versionId}`}
+              key={component.versionId}
               component={component}
-              onRemove={removeLinkedComponent}
+              onRemove={() => removeLinkedComponent(component.versionId)}
               onToggleRequired={(isRequired) => {
                 addLinkedComponent({ ...component, isRequired });
               }}
@@ -312,7 +352,18 @@ export function Files() {
           ))}
           <InlineDropzone
             label="Upload a component file"
-            onDrop={(files) => handleInlineDrop(files)}
+            description={`Supports ${additional.extensions.join(', ')} files`}
+            onDrop={(dropped) =>
+              handleInlineDrop(
+                dropped,
+                additionalFiles,
+                additional.maxFiles,
+                additionalFileTypes[0]
+              )
+            }
+            accept={additionalAccept}
+            maxFiles={additional.maxFiles}
+            onReject={handleReject}
           />
           <Text size="xs" c="dimmed" ta="center">
             or
@@ -332,12 +383,12 @@ export function Files() {
       <Card
         withBorder
         style={{
-          borderColor: 'rgba(34, 139, 230, 0.2)',
-          backgroundColor: 'rgba(34, 139, 230, 0.03)',
+          borderColor: 'rgba(144, 97, 249, 0.2)',
+          backgroundColor: 'rgba(144, 97, 249, 0.03)',
         }}
       >
         <Group align="flex-start" gap="sm" wrap="nowrap">
-          <IconBulb size={24} style={{ color: 'var(--mantine-color-blue-4)', flexShrink: 0 }} />
+          <IconBulb size={24} style={{ color: 'var(--mantine-color-violet-4)', flexShrink: 0 }} />
           <Stack gap={4}>
             <Text fw={500} c="white">
               Tips for better organization
@@ -371,7 +422,7 @@ function LinkedComponentCard({
   onToggleRequired,
 }: {
   component: LinkedComponent;
-  onRemove: (componentType: ModelFileComponentType) => void;
+  onRemove: () => void;
   onToggleRequired: (isRequired: boolean) => void;
 }) {
   const config = componentTypeConfig[component.componentType] ?? componentTypeConfig.Other;
@@ -400,6 +451,13 @@ function LinkedComponentCard({
               Linked: {component.versionName} &rarr; {component.fileName}
             </Text>
           </Group>
+          <Switch
+            size="xs"
+            label="Required"
+            checked={component.isRequired ?? true}
+            onChange={(e) => onToggleRequired(e.currentTarget.checked)}
+            mt={4}
+          />
         </div>
         <Group gap="xs" wrap="nowrap">
           <div>
@@ -425,18 +483,7 @@ function LinkedComponentCard({
               disabled
             />
           </div>
-          <Switch
-            size="xs"
-            label="Required"
-            checked={component.isRequired ?? true}
-            onChange={(e) => onToggleRequired(e.currentTarget.checked)}
-            style={{ marginTop: 18 }}
-          />
-          <LegacyActionIcon
-            color="red"
-            onClick={() => onRemove(component.componentType)}
-            style={{ marginTop: 18 }}
-          >
+          <LegacyActionIcon color="red" onClick={onRemove} style={{ marginTop: 18 }}>
             <IconTrash size={16} />
           </LegacyActionIcon>
         </Group>
@@ -450,12 +497,19 @@ function FileCard({
   data: versionFile,
   index,
   showRequiredToggle,
+  fileTypes: fileTypesProp,
 }: {
   data: FileFromContextProps;
   index: number;
   showRequiredToggle?: boolean;
+  fileTypes?: ModelFileType[];
 }) {
-  const { removeFile, updateFile, fileTypes, modelId } = useFilesContext();
+  const { removeFile, updateFile, dropzoneConfig, modelId } = useFilesContext();
+  const allFileTypes = [
+    ...dropzoneConfig.primary.fileTypes,
+    ...dropzoneConfig.additional.fileTypes,
+  ];
+  const fileTypes = fileTypesProp ?? allFileTypes;
   const queryUtils = trpc.useUtils();
   const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
 
@@ -485,7 +539,6 @@ function FileCard({
 
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
-    componentType: versionFile.componentType,
   });
   const FileIcon = iconConfig.icon;
   const fileSizeStr = versionFile.sizeKB ? formatKBytes(versionFile.sizeKB) : undefined;
@@ -741,7 +794,6 @@ function FileEditForm({
           size: versionFile.size ?? undefined,
           format: versionFile.format ?? undefined,
           quantType: versionFile.quantType ?? undefined,
-          componentType: versionFile.componentType ?? undefined,
           isRequired: versionFile.isRequired ?? undefined,
         },
       });
@@ -754,13 +806,15 @@ function FileEditForm({
     switch (extension) {
       case 'ckpt':
       case 'safetensors':
-        return ['Model', 'Negative', 'VAE'].includes(value);
       case 'pt':
-        return ['Model', 'Negative', 'VAE'].includes(value);
+      case 'gguf':
+      case 'onnx':
+        return ['Model', 'Negative', 'VAE', 'UNet', 'CLIPVision', 'ControlNet'].includes(value);
       case 'zip':
         return ['Training Data', 'Archive', 'Model'].includes(value);
       case 'yml':
       case 'yaml':
+      case 'json':
         return ['Config', 'Text Encoder'].includes(value);
       case 'bin':
         return ['Model', 'Negative'].includes(value);
@@ -775,7 +829,6 @@ function FileEditForm({
       size: initialFile.size,
       fp: initialFile.fp,
       quantType: initialFile.quantType,
-      componentType: initialFile.componentType,
       isRequired: initialFile.isRequired,
     });
   };
@@ -784,11 +837,11 @@ function FileEditForm({
 
   const isCheckpoint = versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint';
   // Component file types that should show precision/quant selects
-  const componentFileTypes = ['VAE', 'Text Encoder', 'Config'] as const;
+  const componentFileTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'] as const;
   const isComponentFileByType =
     versionFile.type &&
     componentFileTypes.includes(versionFile.type as (typeof componentFileTypes)[number]);
-  const isComponentFile = isComponentFileByType || !!versionFile.componentType;
+  const isComponentFile = !!isComponentFileByType;
   const isGguf = versionFile.name.endsWith('.gguf');
   const isZip = versionFile.name.endsWith('.zip');
 
@@ -812,17 +865,11 @@ function FileEditForm({
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;
-            let suggestedComponentType: ModelFileComponentType | null = null;
-            if (newType === 'VAE') suggestedComponentType = 'VAE';
-            else if (newType === 'Text Encoder') suggestedComponentType = 'TextEncoder';
-            else if (newType === 'Config') suggestedComponentType = 'Config';
-
             const requiredTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
             updateFile(versionFile.uuid, {
               type: newType,
               size: null,
               fp: null,
-              componentType: suggestedComponentType,
               isRequired: newType ? requiredTypes.includes(newType) : false,
             });
           }}

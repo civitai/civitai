@@ -123,7 +123,7 @@ export function DownloadVariantDropdown({
         <Stack gap={4}>
           <DownloadButton
             component="a"
-            href={archived || isLoadingAccess ? undefined : downloadUrl}
+            href={archived || isLoadingAccess || !canDownload ? undefined : downloadUrl}
             onClick={handleDownloadClick}
             canDownload={canDownload}
             downloadPrice={downloadPrice}
@@ -360,7 +360,9 @@ export function DownloadVariantDropdown({
       >
         <DownloadButton
           component="a"
-          href={!activeFile || archived || isLoadingAccess ? undefined : downloadUrl}
+          href={
+            !activeFile || archived || isLoadingAccess || !canDownload ? undefined : downloadUrl
+          }
           onClick={handleDownloadClick}
           canDownload={canDownload}
           downloadPrice={downloadPrice}

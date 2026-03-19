@@ -57,7 +57,7 @@ export const fileFormatConfig: Record<string, { icon: typeof IconFile3d; color: 
  */
 export function getFileIconConfig(
   fileName: string,
-  metadata?: { format?: string | null; componentType?: string | null } | null
+  metadata?: { format?: string | null } | null
 ): { icon: typeof IconFile3d; color: string } {
   // ZIP files
   if (fileName.endsWith('.zip')) {
@@ -140,7 +140,7 @@ export function getFileDescription(file: FileForDisplay): string {
   } else {
     if (fp === 'fp32') parts.push('Full precision, largest file');
     else if (fp === 'fp16') parts.push('Half precision, best balance');
-    else if (fp === 'bf16') parts.push('Brain float, good balance');
+    else if (fp === 'bf16') parts.push('BF16, good balance');
     else if (fp === 'fp8') parts.push('8-bit, smaller file');
     else if (fp === 'nf4') parts.push('4-bit normalized');
     else if (fp) parts.push(`${fp} precision`);

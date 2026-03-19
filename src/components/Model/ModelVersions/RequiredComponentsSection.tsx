@@ -15,15 +15,19 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAlertTriangle,
   IconBolt,
   IconCheck,
   IconChevronDown,
   IconDownload,
+  IconExternalLink,
+  IconLayersLinked,
   IconPackage,
+  IconPuzzle,
 } from '@tabler/icons-react';
 import { useMemo, useState, useEffect } from 'react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { getPrimaryFile, type GroupedFileVariants } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
 import {
@@ -47,6 +51,8 @@ interface RequiredComponentsSectionProps {
   onPurchase?: () => void;
   /** When true, this is a component-only model and Download All should be the primary action */
   isPrimary?: boolean;
+  /** Linked components from external models that are required */
+  linkedComponents?: LinkedComponent[];
 }
 
 // Component types are now data-driven via groupedFiles.requiredComponents
@@ -61,6 +67,7 @@ export function RequiredComponentsSection({
   archived,
   onPurchase,
   isPrimary = false,
+  linkedComponents = [],
 }: RequiredComponentsSectionProps) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -152,7 +159,7 @@ export function RequiredComponentsSection({
     });
   };
 
-  if (requiredComponents.length === 0) {
+  if (requiredComponents.length === 0 && linkedComponents.length === 0) {
     return null;
   }
 
@@ -161,15 +168,14 @@ export function RequiredComponentsSection({
       value="required-components"
       style={{
         marginTop: theme.spacing.md,
-        borderColor: 'var(--mantine-color-yellow-6)',
       }}
     >
       <Accordion.Control>
         <Group gap="xs">
-          <IconAlertTriangle size={18} color="var(--mantine-color-yellow-5)" />
+          <IconLayersLinked size={18} color="var(--mantine-color-yellow-5)" />
           <Text fw={500}>Required Components</Text>
           <Badge size="sm" color="yellow" variant="light">
-            {requiredComponents.length}
+            {requiredComponents.length + linkedComponents.length}
           </Badge>
         </Group>
       </Accordion.Control>
@@ -208,6 +214,86 @@ export function RequiredComponentsSection({
               }
             />
           ))}
+
+          {/* Linked components (external models) */}
+          {linkedComponents.map((lc) => {
+            const config = componentTypeConfig[lc.componentType];
+            const Icon = config?.icon ?? IconPuzzle;
+            return (
+              <Box
+                key={`lc-${lc.recommendedResourceId ?? lc.fileId}`}
+                p="sm"
+                style={{
+                  borderBottom: `1px solid ${
+                    colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+                  }`,
+                }}
+              >
+                <Group justify="space-between" wrap="nowrap">
+                  <Group gap="sm" wrap="nowrap">
+                    <ThemeIcon
+                      size={36}
+                      radius="md"
+                      color={config?.color ?? 'gray'}
+                      variant="light"
+                    >
+                      <Icon size={20} />
+                    </ThemeIcon>
+                    <Box>
+                      <Group gap={6}>
+                        <Text
+                          component={Link}
+                          href={`/models/${lc.modelId}`}
+                          size="sm"
+                          fw={500}
+                          td="underline"
+                          style={{ textDecorationStyle: 'dotted' }}
+                        >
+                          {lc.modelName}
+                        </Text>
+                        <Badge size="xs" variant="light" color="gray">
+                          {config?.name ?? lc.componentType}
+                        </Badge>
+                        <Badge size="xs" variant="outline" color="blue">
+                          <Group gap={4}>
+                            <IconExternalLink size={10} />
+                            External
+                          </Group>
+                        </Badge>
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        {lc.versionName} &bull; {lc.fileName}
+                      </Text>
+                    </Box>
+                  </Group>
+                  <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+                    {lc.sizeKB ? (
+                      <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                        {formatKBytes(lc.sizeKB)}
+                      </Text>
+                    ) : null}
+                    <Tooltip label="Download from source model">
+                      <ActionIcon
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: lc.versionId,
+                          type: lc.fileType,
+                          meta: lc.fileMetadata as BasicFileMetadata | undefined,
+                        })}
+                        variant="light"
+                        color="gray"
+                        size="md"
+                        radius="md"
+                        disabled={archived}
+                      >
+                        <IconDownload size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+                </Group>
+              </Box>
+            );
+          })}
 
           {/* Download All button - more prominent when isPrimary */}
           <Box
@@ -509,11 +595,11 @@ function ComponentGroup({
                         onClick={handleDownload}
                         variant="light"
                         color="gray"
-                        size="sm"
+                        size="md"
                         radius="md"
                         disabled={isDownloadDisabled}
                       >
-                        <IconDownload size={14} />
+                        <IconDownload size={16} />
                       </ActionIcon>
                     </Tooltip>
                   </Group>

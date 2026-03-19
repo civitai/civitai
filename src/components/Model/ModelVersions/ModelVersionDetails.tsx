@@ -127,7 +127,7 @@ import {
 import type { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -220,6 +220,16 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
     modelFilesVisible.length === 0 && Object.keys(groupedFiles.requiredComponents).length > 0;
+
+  // Split linked components into required and optional
+  const requiredLinkedComponents = useMemo(
+    () => (version.linkedComponents ?? []).filter((lc) => lc.isRequired),
+    [version.linkedComponents]
+  );
+  const optionalLinkedComponents = useMemo(
+    () => (version.linkedComponents ?? []).filter((lc) => !lc.isRequired),
+    [version.linkedComponents]
+  );
 
   const displayCivitaiLink =
     civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
@@ -1048,101 +1058,179 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               </Accordion.Item>
             )}
             {/* Required Components Section */}
-            {isDownloadable && Object.keys(groupedFiles.requiredComponents).length > 0 && (
-              <RequiredComponentsSection
-                groupedFiles={groupedFiles}
-                versionId={version.id}
-                userPreferences={user?.filePreferences}
-                canDownload={canDownload}
-                downloadPrice={
-                  !hasDownloadPermissions &&
-                  !isLoadingAccess &&
-                  earlyAccessConfig?.chargeForDownload
-                    ? earlyAccessConfig?.downloadPrice
-                    : undefined
-                }
-                isLoadingAccess={isLoadingAccess}
-                archived={archived}
-                onPurchase={() => onPurchase('download')}
-                isPrimary={isComponentOnlyModel}
-              />
-            )}
+            {isDownloadable &&
+              (Object.keys(groupedFiles.requiredComponents).length > 0 ||
+                requiredLinkedComponents.length > 0) && (
+                <RequiredComponentsSection
+                  groupedFiles={groupedFiles}
+                  versionId={version.id}
+                  userPreferences={user?.filePreferences}
+                  canDownload={canDownload}
+                  downloadPrice={
+                    !hasDownloadPermissions &&
+                    !isLoadingAccess &&
+                    earlyAccessConfig?.chargeForDownload
+                      ? earlyAccessConfig?.downloadPrice
+                      : undefined
+                  }
+                  isLoadingAccess={isLoadingAccess}
+                  archived={archived}
+                  onPurchase={() => onPurchase('download')}
+                  isPrimary={isComponentOnlyModel}
+                  linkedComponents={requiredLinkedComponents}
+                />
+              )}
             {/* Optional Files Section */}
-            {isDownloadable && groupedFiles.optionalFiles.length > 0 && (
-              <Accordion.Item value="optional-files">
-                <Accordion.Control>
-                  <Group gap="xs">
-                    <IconFileSettings size={18} style={{ color: theme.colors.dark[2] }} />
-                    <Text fw={500}>Optional Files</Text>
-                    <Badge size="sm" variant="light" color="gray">
-                      {groupedFiles.optionalFiles.length}
-                    </Badge>
-                  </Group>
-                </Accordion.Control>
-                <Accordion.Panel>
-                  <Stack gap={0}>
-                    {groupedFiles.optionalFiles.map((file) => {
-                      const iconConfig = getFileIconConfig(file.name, file.metadata);
-                      const FileIcon = iconConfig.icon;
-                      const ext = file.name.split('.').pop() ?? '';
-                      const downloadUrl = createModelFileDownloadUrl({
-                        versionId: version.id,
-                        type: file.type,
-                        meta: file.metadata,
-                      });
-
-                      return (
-                        <Box
-                          key={file.id}
-                          p="sm"
-                          style={{
-                            borderBottom: `1px solid ${
-                              colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-                            }`,
-                          }}
-                        >
-                          <Group justify="space-between" wrap="nowrap">
-                            <Group gap="sm" wrap="nowrap">
-                              <ThemeIcon
-                                size={36}
-                                radius="md"
-                                color="gray"
-                                variant="light"
-                                style={{ opacity: 0.6 }}
-                              >
-                                <FileIcon size={20} />
-                              </ThemeIcon>
-                              <Box>
-                                <Text size="sm" fw={500}>
-                                  {file.name}
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  .{ext} &bull; {formatKBytes(file.sizeKB)}
-                                </Text>
-                                <VerifiedText file={file} />
-                              </Box>
+            {isDownloadable &&
+              (groupedFiles.optionalFiles.length > 0 || optionalLinkedComponents.length > 0) && (
+                <Accordion.Item value="optional-files">
+                  <Accordion.Control>
+                    <Group gap="xs">
+                      <IconFileSettings size={18} style={{ color: theme.colors.dark[2] }} />
+                      <Text fw={500}>Optional Files</Text>
+                      <Badge size="sm" variant="light" color="gray">
+                        {groupedFiles.optionalFiles.length + optionalLinkedComponents.length}
+                      </Badge>
+                    </Group>
+                  </Accordion.Control>
+                  <Accordion.Panel>
+                    <Stack gap={0}>
+                      {/* Linked components (external resources) */}
+                      {optionalLinkedComponents.map((lc) => {
+                        const config = componentTypeConfig[lc.componentType];
+                        const Icon = config?.icon ?? IconPuzzle;
+                        return (
+                          <Box
+                            key={`lc-${lc.recommendedResourceId ?? lc.fileId}`}
+                            p="sm"
+                            style={{
+                              borderBottom: `1px solid ${
+                                colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+                              }`,
+                            }}
+                          >
+                            <Group justify="space-between" wrap="nowrap">
+                              <Group gap="sm" wrap="nowrap">
+                                <ThemeIcon
+                                  size={36}
+                                  radius="md"
+                                  color={config?.color ?? 'gray'}
+                                  variant="light"
+                                >
+                                  <Icon size={20} />
+                                </ThemeIcon>
+                                <Box>
+                                  <Group gap={6}>
+                                    <Text
+                                      component={Link}
+                                      href={`/models/${lc.modelId}`}
+                                      size="sm"
+                                      fw={500}
+                                      td="underline"
+                                      style={{ textDecorationStyle: 'dotted' }}
+                                    >
+                                      {lc.modelName}
+                                    </Text>
+                                    <Badge size="xs" variant="light" color="gray">
+                                      {config?.name ?? lc.componentType}
+                                    </Badge>
+                                  </Group>
+                                  <Text size="xs" c="dimmed">
+                                    {lc.versionName} &bull; {lc.fileName}
+                                  </Text>
+                                </Box>
+                              </Group>
+                              <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+                                {lc.sizeKB ? (
+                                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                                    {formatKBytes(lc.sizeKB)}
+                                  </Text>
+                                ) : null}
+                                <Tooltip label="Download from source model">
+                                  <ActionIcon
+                                    component="a"
+                                    href={createModelFileDownloadUrl({
+                                      versionId: lc.versionId,
+                                      type: lc.fileType,
+                                      meta: lc.fileMetadata as BasicFileMetadata | undefined,
+                                    })}
+                                    variant="light"
+                                    color="gray"
+                                    size="md"
+                                    radius="md"
+                                    disabled={archived}
+                                  >
+                                    <IconDownload size={16} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              </Group>
                             </Group>
-                            <Tooltip label="Download">
-                              <ActionIcon
-                                component="a"
-                                href={downloadUrl}
-                                variant="light"
-                                color="gray"
-                                size="md"
-                                radius="md"
-                                disabled={archived}
-                              >
-                                <IconDownload size={16} />
-                              </ActionIcon>
-                            </Tooltip>
-                          </Group>
-                        </Box>
-                      );
-                    })}
-                  </Stack>
-                </Accordion.Panel>
-              </Accordion.Item>
-            )}
+                          </Box>
+                        );
+                      })}
+                      {/* Regular optional files */}
+                      {groupedFiles.optionalFiles.map((file) => {
+                        const iconConfig = getFileIconConfig(file.name, file.metadata);
+                        const FileIcon = iconConfig.icon;
+                        const ext = file.name.split('.').pop() ?? '';
+                        const downloadUrl = createModelFileDownloadUrl({
+                          versionId: version.id,
+                          type: file.type,
+                          meta: file.metadata,
+                        });
+
+                        return (
+                          <Box
+                            key={file.id}
+                            p="sm"
+                            style={{
+                              borderBottom: `1px solid ${
+                                colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+                              }`,
+                            }}
+                          >
+                            <Group justify="space-between" wrap="nowrap">
+                              <Group gap="sm" wrap="nowrap">
+                                <ThemeIcon
+                                  size={36}
+                                  radius="md"
+                                  color="gray"
+                                  variant="light"
+                                  style={{ opacity: 0.6 }}
+                                >
+                                  <FileIcon size={20} />
+                                </ThemeIcon>
+                                <Box>
+                                  <Text size="sm" fw={500}>
+                                    {file.name}
+                                  </Text>
+                                  <Text size="xs" c="dimmed">
+                                    .{ext} &bull; {formatKBytes(file.sizeKB)}
+                                  </Text>
+                                  <VerifiedText file={file} />
+                                </Box>
+                              </Group>
+                              <Tooltip label="Download">
+                                <ActionIcon
+                                  component="a"
+                                  href={downloadUrl}
+                                  variant="light"
+                                  color="gray"
+                                  size="md"
+                                  radius="md"
+                                  disabled={archived}
+                                >
+                                  <IconDownload size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                          </Box>
+                        );
+                      })}
+                    </Stack>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
                 <Group justify="space-between">

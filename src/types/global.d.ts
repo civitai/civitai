@@ -131,7 +131,6 @@ declare global {
     size?: ModelFileSize;
     fp?: ModelFileFp;
     quantType?: ModelFileQuantType;
-    componentType?: ModelFileComponentType;
     isRequired?: boolean;
   };
 

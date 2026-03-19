@@ -30,6 +30,7 @@ import {
   modelVersionsGeneratedImagesOnTimeframeSchema,
   modelVersionUpsertSchema2,
   publishVersionSchema,
+  addLinkedComponentSchema,
   setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
@@ -44,6 +45,7 @@ import {
   getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
+  addLinkedComponent,
   setLinkedComponents,
   upsertExplorationPrompt,
   bustMvCache,
@@ -107,6 +109,10 @@ export const modelVersionRouter = router({
     .input(setLinkedComponentsSchema)
     .use(isOwnerOrModerator)
     .mutation(async ({ input }) => setLinkedComponents(input)),
+  addLinkedComponent: guardedProcedure
+    .input(addLinkedComponentSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input }) => addLinkedComponent(input)),
   upsert: guardedProcedure
     .input(modelVersionUpsertSchema2)
     .use(isOwnerOrModerator)

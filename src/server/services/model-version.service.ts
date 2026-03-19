@@ -5,6 +5,7 @@ import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -38,6 +39,7 @@ import type {
   PublishVersionInput,
   QueryModelVersionSchema,
   RecommendedSettingsSchema,
+  AddLinkedComponentInput,
   SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -1733,6 +1735,80 @@ export const setLinkedComponents = async ({ id, components }: SetLinkedComponent
       })
     ),
   ]);
+};
+
+export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
+  // Find all files and pick the primary one using modelFileOrder priority
+  const files = await dbRead.modelFile.findMany({
+    where: { modelVersionId: input.targetVersionId },
+    select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+  });
+
+  if (files.length === 0) {
+    throw new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'No files found for the target model version',
+    });
+  }
+
+  const primaryFile = files.sort(
+    (a, b) =>
+      (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
+      (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
+  )[0];
+
+  const settings = {
+    isLinkedComponent: true as const,
+    componentType: input.componentType,
+    fileId: primaryFile.id,
+    modelId: input.modelId,
+    modelName: input.modelName,
+    versionName: input.versionName,
+    fileName: primaryFile.name,
+    isRequired: input.isRequired ?? true,
+  };
+
+  // Check for existing linked component with same source + target
+  const existing = await dbWrite.recommendedResource.findFirst({
+    where: {
+      sourceId: input.id,
+      resourceId: input.targetVersionId,
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { id: true },
+  });
+
+  const result = existing
+    ? await dbWrite.recommendedResource.update({
+        where: { id: existing.id },
+        data: { settings },
+      })
+    : await dbWrite.recommendedResource.create({
+        data: {
+          sourceId: input.id,
+          resourceId: input.targetVersionId,
+          settings,
+        },
+      });
+
+  const meta = primaryFile.metadata as Record<string, unknown> | null;
+
+  return {
+    recommendedResourceId: result.id,
+    componentType: input.componentType,
+    modelId: input.modelId,
+    modelName: input.modelName,
+    versionId: input.targetVersionId,
+    versionName: input.versionName,
+    fileId: primaryFile.id,
+    fileName: primaryFile.name,
+    sizeKB: primaryFile.sizeKB,
+    fileType: primaryFile.type,
+    fileMetadata: meta
+      ? { format: meta.format as string | null, size: meta.size as string | null, fp: meta.fp as string | null }
+      : undefined,
+    isRequired: input.isRequired ?? true,
+  };
 };
 
 export async function updateModelVersionTrainingStatus({

@@ -178,8 +178,31 @@ export const getModelVersionHandler = async ({
     const linkedComponentResources = allResources.filter((r) => isLinkedComponent(r.settings));
     const regularResources = allResources.filter((r) => !isLinkedComponent(r.settings));
 
+    // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
+    const linkedFileIds = [
+      ...new Set(linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)),
+    ].filter(Boolean);
+    const linkedFileDataMap = new Map<
+      number,
+      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
+    >();
+    if (linkedFileIds.length > 0) {
+      const fileData = await dbRead.modelFile.findMany({
+        where: { id: { in: linkedFileIds } },
+        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+      });
+      for (const f of fileData)
+        linkedFileDataMap.set(f.id, {
+          name: f.name,
+          sizeKB: f.sizeKB,
+          type: f.type,
+          metadata: f.metadata as Record<string, unknown> | null,
+        });
+    }
+
     const linkedComponents = linkedComponentResources.map((r) => {
       const s = r.settings as LinkedComponentSettings;
+      const fileData = linkedFileDataMap.get(s.fileId);
       return {
         recommendedResourceId: r.id,
         componentType: s.componentType,
@@ -188,7 +211,12 @@ export const getModelVersionHandler = async ({
         versionId: r.resource?.id ?? 0,
         versionName: s.versionName,
         fileId: s.fileId,
-        fileName: s.fileName,
+        fileName: fileData?.name ?? s.fileName,
+        sizeKB: fileData?.sizeKB,
+        fileType: fileData?.type,
+        fileMetadata: fileData?.metadata as
+          | { format?: string | null; size?: string | null; fp?: string | null }
+          | undefined,
         isRequired: s.isRequired,
       };
     });

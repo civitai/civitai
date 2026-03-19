@@ -251,6 +251,17 @@ export const setLinkedComponentsSchema = z.object({
 
 export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
 
+export const addLinkedComponentSchema = z.object({
+  id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
+  targetVersionId: z.number(), // linked resource's version ID
+  componentType: z.string(), // ModelFileComponentType
+  modelId: z.number(), // target model ID
+  modelName: z.string(), // target model name
+  versionName: z.string(), // target version name
+  isRequired: z.boolean().optional().default(true),
+});
+export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
+
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
   id: z.number().optional(),

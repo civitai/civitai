@@ -94,7 +94,6 @@ export const modelFileMetadataSchema = z.object({
   size: z.enum(constants.modelFileSizes).nullish(),
   fp: z.enum(constants.modelFileFp).nullish(),
   quantType: z.enum(constants.modelFileQuantTypes).nullish(),
-  componentType: z.enum(constants.modelFileComponentTypes).nullish(),
   isRequired: z.boolean().nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
@@ -160,6 +159,11 @@ export type LinkedComponent = {
   versionName: string;
   fileId: number;
   fileName: string;
+  sizeKB?: number;
+  /** The ModelFile.type of the linked file (e.g. 'Model', 'Negative') — used for download URLs */
+  fileType?: string;
+  /** The ModelFile.metadata of the linked file (format/size/fp) — used for download URLs */
+  fileMetadata?: { format?: string | null; size?: string | null; fp?: string | null };
   isRequired?: boolean;
 };
 

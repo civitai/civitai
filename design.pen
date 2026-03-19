@@ -1,5 +1,5 @@
 {
-  "version": "2.8",
+  "version": "2.9",
   "children": [
     {
       "type": "frame",
@@ -110,11 +110,11 @@
           "id": "fsb3J",
           "name": "Model Files Card",
           "width": "fill_container",
-          "fill": "$bg-surface",
+          "fill": "#228be60d",
           "cornerRadius": "$radius-md",
           "stroke": {
             "thickness": 1,
-            "fill": "$border-default"
+            "fill": "#228be633"
           },
           "layout": "vertical",
           "children": [

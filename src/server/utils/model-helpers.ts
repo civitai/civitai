@@ -227,7 +227,7 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
       }
     } else {
       // Group component files by component type, using isRequired to distinguish
-      const componentType = metadata.componentType ?? inferComponentType(fileType);
+      const componentType = inferComponentType(fileType);
       if (componentType && metadata.isRequired) {
         if (!result.requiredComponents[componentType]) {
           result.requiredComponents[componentType] = [];
@@ -263,6 +263,12 @@ function inferComponentType(fileType: string): ModelFileComponentType | null {
       return 'TextEncoder';
     case 'Config':
       return 'Config';
+    case 'UNet':
+      return 'UNet';
+    case 'CLIPVision':
+      return 'CLIPVision';
+    case 'ControlNet':
+      return 'ControlNet';
     default:
       return null;
   }

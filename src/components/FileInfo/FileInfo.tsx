@@ -36,13 +36,12 @@ export function FileInfo({ file }: Props) {
   // Show quantType for GGUF files
   if (isGGUF && file.metadata?.quantType)
     items.push({ label: 'Quant Type', value: file.metadata.quantType });
-  // Show componentType for component files
-  if (isComponentFile && file.metadata?.componentType) {
-    const componentType = file.metadata.componentType as ModelFileComponentType;
-    items.push({
-      label: 'Component Type',
-      value: componentTypeDisplayNames[componentType] ?? file.metadata.componentType,
-    });
+  // Show component type label for component files (derived from file type)
+  if (isComponentFile && file.type) {
+    const displayName = componentTypeDisplayNames[file.type as ModelFileComponentType];
+    if (displayName) {
+      items.push({ label: 'Component Type', value: displayName });
+    }
   }
 
   return (
