@@ -16,6 +16,9 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const { running, closeTour, activeTour } = useTourContext();
 
   let url = returnUrl ?? router.asPath;
+
+  // Prevent recursive login redirects and strip dialog params
+  if (url.startsWith('/login')) url = '/';
   if (running && activeTour) {
     // Add the active tour to the query string
     const [path, params] = url.split('?');
