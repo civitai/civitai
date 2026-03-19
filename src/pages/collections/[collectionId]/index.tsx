@@ -8,13 +8,16 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ ssg, session = null, features, ctx }) => {
     if (ssg) {
+      const collectionId = Number(ctx.query.collectionId);
+      if (collectionId) {
+        await ssg.collection.getById.prefetch({ id: collectionId });
+      }
       if (session) {
         await ssg.collection.getAllUser.prefetch({
           permission: CollectionContributorPermission.VIEW,
         });
         await ssg.hiddenPreferences.getHidden.prefetch();
       }
-      // TODO - prefetch top user collections and popular collections
     }
 
     if (!features?.collections) return { notFound: true };

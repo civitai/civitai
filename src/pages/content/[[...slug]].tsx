@@ -58,12 +58,12 @@ export default function ContentPage({
     { enabled: slug.length > 0 }
   );
 
+  const slugString = slug.join('/');
+
   if (slug.length === 0 || isLoading) return <PageLoader />;
   if (!content) return null;
 
   const { title, description, lastmod, content: markdownContent } = content;
-
-  const slugString = slug.join('/');
 
   return (
     <>
