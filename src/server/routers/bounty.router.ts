@@ -7,6 +7,7 @@ import {
   updateBountyHandler,
   addBenefactorUnitAmountHandler,
   getBountyBenefactorsHandler,
+  moderatorBlockBountyHandler,
   refundBountyHandler,
   upsertBountyHandler,
 } from '../controllers/bounty.controller';
@@ -96,4 +97,8 @@ export const bountyRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
     .mutation(refundBountyHandler),
+  moderatorBlock: moderatorProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
+    .mutation(moderatorBlockBountyHandler),
 });
