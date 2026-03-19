@@ -164,13 +164,29 @@ function BaseModelListContent({
   const isSearching = searchValue.length > 0;
   const [activeIndex, setActiveIndex] = useState(-1);
 
-  // Auto-focus search input when requested
+  // Auto-focus search input when requested (mobile)
   useEffect(() => {
     if (autoFocusSearch) {
       // Small delay to ensure the input is mounted
       const timer = setTimeout(() => searchRef.current?.focus(), 50);
       return () => clearTimeout(timer);
     }
+  }, [autoFocusSearch]);
+
+  // Auto-focus search input on any keypress while popover is open (desktop)
+  useEffect(() => {
+    if (autoFocusSearch) return; // mobile handles focus via the effect above
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!searchRef.current || document.activeElement === searchRef.current) return;
+      // Only capture printable single characters (allow shift for uppercase)
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        searchRef.current.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [autoFocusSearch]);
 
   // Filter grouped items based on active tab and search query
