@@ -19,7 +19,6 @@ import type {
   ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
-  RecommendedResourceSettings,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';

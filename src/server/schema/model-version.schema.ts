@@ -224,7 +224,7 @@ export const recommendedSettingsSchema = z.object({
 
 export const linkedComponentSettingsSchema = z.object({
   isLinkedComponent: z.literal(true),
-  componentType: z.string(),
+  componentType: z.enum(constants.modelFileComponentTypes),
   fileId: z.number(),
   modelId: z.number(),
   modelName: z.string(),
@@ -254,7 +254,7 @@ export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>
 export const addLinkedComponentSchema = z.object({
   id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
   targetVersionId: z.number(), // linked resource's version ID
-  componentType: z.string(), // ModelFileComponentType
+  componentType: z.enum(constants.modelFileComponentTypes),
   modelId: z.number(), // target model ID
   modelName: z.string(), // target model name
   versionName: z.string(), // target version name

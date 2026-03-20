@@ -228,7 +228,7 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
     } else {
       // Group component files by component type, using isRequired to distinguish
       const componentType = inferComponentType(fileType);
-      if (componentType && metadata.isRequired) {
+      if (componentType && metadata.isRequired !== false) {
         if (!result.requiredComponents[componentType]) {
           result.requiredComponents[componentType] = [];
         }

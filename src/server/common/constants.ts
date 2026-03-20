@@ -387,6 +387,16 @@ export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 export const modelFileQuantTypes = constants.modelFileQuantTypes;
 export const modelFileComponentTypes = constants.modelFileComponentTypes;
 
+/** ModelFileType values that represent component files (not main model weights) */
+export const componentFileTypes = [
+  'VAE',
+  'Text Encoder',
+  'UNet',
+  'CLIPVision',
+  'ControlNet',
+] as const;
+export type ComponentFileType = (typeof componentFileTypes)[number];
+
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
 export const POST_MINIMUM_SCHEDULE_MINUTES = 60;

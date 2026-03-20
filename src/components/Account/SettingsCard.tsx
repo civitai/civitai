@@ -139,6 +139,7 @@ export function SettingsCard() {
               label="Preferred Quant Type"
               name="quantType"
               data={constants.modelFileQuantTypes}
+              allowDeselect={false}
               value={user.filePreferences?.quantType ?? 'Q4_K_M'}
               onChange={(value: string | null) =>
                 mutate({

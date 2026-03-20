@@ -38,7 +38,7 @@ import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
-import { constants, zipModelFileTypes } from '~/server/common/constants';
+import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -836,8 +836,6 @@ function FileEditForm({
   const canManualSave = !!versionFile.id && !isEqual(versionFile, initialFile);
 
   const isCheckpoint = versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint';
-  // Component file types that should show precision/quant selects
-  const componentFileTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'] as const;
   const isComponentFileByType =
     versionFile.type &&
     componentFileTypes.includes(versionFile.type as (typeof componentFileTypes)[number]);
@@ -865,12 +863,13 @@ function FileEditForm({
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;
-            const requiredTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
             updateFile(versionFile.uuid, {
               type: newType,
               size: null,
               fp: null,
-              isRequired: newType ? requiredTypes.includes(newType) : false,
+              isRequired: newType
+                ? (componentFileTypes as readonly string[]).includes(newType)
+                : false,
             });
           }}
         />

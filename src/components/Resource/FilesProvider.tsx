@@ -6,7 +6,7 @@ import * as z from 'zod';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import type { ModelFileType } from '~/server/common/constants';
-import { constants } from '~/server/common/constants';
+import { componentFileTypes, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import type { ModelVersionById } from '~/server/controllers/model-version.controller';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
@@ -306,7 +306,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     // Check component-only model constraint (needs access to linkedComponents)
     const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
     if (modelFiles.length === 0) {
-      const uploadedRequiredComponents = files.filter((f) => f.isRequired === true);
+      const uploadedRequiredComponents = files.filter(
+        (f) =>
+          f.type &&
+          (componentFileTypes as readonly string[]).includes(f.type) &&
+          f.isRequired !== false
+      );
       const requiredLinkedComponents = linkedComponents.filter((c) => c.isRequired !== false);
       const totalComponents = uploadedRequiredComponents.length + requiredLinkedComponents.length;
       if (totalComponents < 2) {
@@ -430,7 +435,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   });
 
   const onDrop = (files: File[], defaultType?: ModelFileType) => {
-    const componentTypes = ['VAE', 'Text Encoder', 'UNet', 'CLIPVision', 'ControlNet'];
     const toUpload = files.map((file) => {
       const inferredType = defaultType ?? inferFileType(file.name);
       return {
@@ -443,7 +447,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         uuid: randomId(),
         isPending: true,
         type: inferredType,
-        isRequired: inferredType ? componentTypes.includes(inferredType) : false,
+        isRequired: inferredType
+          ? (componentFileTypes as readonly string[]).includes(inferredType)
+          : false,
       };
     }) as FileFromContextProps[];
     setFiles((state) => [...state, ...toUpload]);
