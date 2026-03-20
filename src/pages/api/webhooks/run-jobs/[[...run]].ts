@@ -77,6 +77,7 @@ import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-vers
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
+import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -160,6 +161,7 @@ export const jobs: Job[] = [
   expireStrikesJob,
   processTimedUnmutesJob,
   custodySweepJob,
+  processEnqueuedComicPanelsJob,
 ];
 
 const log = createLogger('jobs', 'green');

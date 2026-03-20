@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SessionUser } from 'next-auth';
+import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
   router,
   protectedProcedure,
@@ -28,6 +29,7 @@ import {
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
+import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
@@ -125,6 +127,13 @@ const COMIC_MODEL_CONFIG: Record<
     img2imgVersionId: 2558804,
     maxReferenceImages: 3,
     sizes: qwenSizes,
+  },
+  SeedreamLite: {
+    engine: 'seedream',
+    baseModel: 'Seedream',
+    versionId: 2720141,
+    maxReferenceImages: 7,
+    sizes: seedreamSizes,
   },
   Grok: {
     engine: 'grok',
@@ -238,7 +247,7 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'OpenAI', 'Qwen', 'Grok']);
+const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'SeedreamLite', 'OpenAI', 'Qwen', 'Grok']);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -397,6 +406,7 @@ const updateProjectSchema = z.object({
   heroImageId: z.number().int().nullish(),
   heroUrl: z.string().nullish(),
   heroImagePosition: z.number().int().min(0).max(100).optional(),
+  meta: comicProjectMetaSchema.optional(),
 });
 
 const deleteReferenceSchema = z.object({
@@ -472,6 +482,9 @@ async function createSinglePanel(args: {
     storyDescription: string;
     previousPanelPrompts: string[];
   };
+  /** When true, creates the panel with Enqueued status and skips orchestrator submission.
+   *  The background job will submit when queue slots are available. */
+  enqueue?: boolean;
 }) {
   const {
     projectId,
@@ -491,6 +504,7 @@ async function createSinglePanel(args: {
     aspectRatio,
     modelConfig,
     storyContext,
+    enqueue,
   } = args;
 
   const token = await getOrchestratorToken(userId, ctx);
@@ -510,7 +524,7 @@ async function createSinglePanel(args: {
     fullPrompt = prompt;
   }
 
-  const metadata = {
+  const metadata: Record<string, any> = {
     previousPanelId: contextPanel?.id ?? null,
     previousPanelPrompt: contextPanel ? contextPanel.enhancedPrompt ?? contextPanel.prompt : null,
     previousPanelImageUrl: contextPanel?.imageUrl ?? null,
@@ -529,6 +543,12 @@ async function createSinglePanel(args: {
     },
   };
 
+  // Store extra fields the job needs to submit generation later
+  if (enqueue) {
+    metadata.aspectRatio = aspectRatio;
+    metadata.maxReferenceImages = modelConfig.maxReferenceImages;
+  }
+
   const panel = await dbWrite.comicPanel.create({
     data: {
       projectId,
@@ -536,7 +556,7 @@ async function createSinglePanel(args: {
       prompt,
       enhancedPrompt: enhance ? fullPrompt : null,
       position,
-      status: ComicPanelStatus.Pending,
+      status: enqueue ? ComicPanelStatus.Enqueued : ComicPanelStatus.Pending,
       metadata,
     },
   });
@@ -548,6 +568,9 @@ async function createSinglePanel(args: {
       skipDuplicates: true,
     });
   }
+
+  // When enqueued, skip orchestrator submission — the job handles it
+  if (enqueue) return panel;
 
   try {
     const result = await createImageGen({
@@ -716,6 +739,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           userId: true,
+          meta: true,
           chapters: {
             orderBy: { position: 'asc' },
             select: {
@@ -747,6 +771,7 @@ export const comicsRouter = router({
       return {
         id: project.id,
         name: project.name,
+        meta: parseComicProjectMeta(project.meta),
         chapters: project.chapters,
       };
     }),
@@ -961,6 +986,7 @@ export const comicsRouter = router({
           coverImage: { select: { id: true, url: true, nsfwLevel: true } },
           heroImage: { select: { id: true, url: true, nsfwLevel: true } },
           heroImagePosition: true,
+          meta: true,
           genre: true,
           nsfwLevel: true,
           status: true,
@@ -1076,8 +1102,8 @@ export const comicsRouter = router({
           availability: ch.availability,
           earlyAccessConfig: eaConfig,
           earlyAccessEndsAt: ch.earlyAccessEndsAt,
-          isLocked: !!isLocked,
           panelCount: ch.panels.length,
+          // Strip panels server-side for locked EA chapters (security)
           panels: isLocked ? [] : ch.panels,
         };
       });
@@ -1095,6 +1121,7 @@ export const comicsRouter = router({
         name: project.name,
         description: project.description,
         nsfwLevel: project.nsfwLevel,
+        meta: parseComicProjectMeta(project.meta),
         coverImage: project.coverImage,
         heroImage: project.heroImage,
         heroImagePosition: project.heroImagePosition,
@@ -1107,58 +1134,156 @@ export const comicsRouter = router({
     }),
 
   // Dynamic pricing — whatIf cost estimate for panel generation
-  getPanelCostEstimate: comicProtectedProcedure
-    .input(z.object({ baseModel: z.string().nullish() }).optional())
+  /**
+   * Unified cost estimation for all comic generation operations:
+   * - Panel creation (from project page)
+   * - Enhance panel (img2img with source)
+   * - Iterative editor (with references and source images)
+   * - Smart create (bulk panels)
+   */
+  getGenerationCostEstimate: comicProtectedProcedure
+    .input(
+      z
+        .object({
+          baseModel: z.string().nullish(),
+          aspectRatio: z.string().default(DEFAULT_ASPECT_RATIO),
+          quantity: z.number().int().min(1).max(4).default(1),
+          // Reference IDs from @mentioned characters - fetched server-side
+          referenceIds: z.array(z.number().int().positive()).optional(),
+          // Optional filter for specific images when user manually selected
+          selectedImageIds: z.array(z.number().int().positive()).optional(),
+          // Source image for img2img workflow (enhance panel)
+          sourceImage: z
+            .object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+            .nullish(),
+          // User-imported reference images (directly passed, not from @mentions)
+          userReferenceImages: z
+            .array(
+              z.object({
+                url: z.string(),
+                width: z.number().int().positive(),
+                height: z.number().int().positive(),
+              })
+            )
+            .optional(),
+        })
+        .optional()
+    )
     .query(async ({ ctx, input }) => {
-    try {
-      const token = await getOrchestratorToken(ctx.user.id, ctx);
-      const modelConfig = getComicModelConfig(input?.baseModel);
+      try {
+        const token = await getOrchestratorToken(ctx.user.id, ctx);
+        const modelConfig = getComicModelConfig(input?.baseModel);
+        const aspectRatio = input?.aspectRatio ?? DEFAULT_ASPECT_RATIO;
+        const quantity = input?.quantity ?? 1;
+        const hasSourceImage = !!input?.sourceImage;
 
-      const defaultDims = getAspectRatioDimensions(DEFAULT_ASPECT_RATIO, modelConfig);
-      const step = await createImageGenStep({
-        params: {
-          prompt: '',
-          negativePrompt: '',
-          engine: modelConfig.engine,
-          baseModel: modelConfig.baseModel as any,
-          width: defaultDims.width,
-          height: defaultDims.height,
-          aspectRatio: DEFAULT_ASPECT_RATIO,
-          workflow: 'txt2img',
-          sampler: 'Euler',
-          steps: 25,
-          quantity: 1,
-          draft: false,
-          disablePoi: false,
-          priority: 'low',
-          sourceImage: null,
-          images: null,
-        },
-        resources: [{ id: modelConfig.versionId, strength: 1 }],
-        tags: ['comics'],
-        tips: { creators: 0, civitai: 0 },
-        whatIf: true,
-        user: ctx.user! as SessionUser,
-      });
+        // Use img2img version if source image is provided and model supports it
+        const effectiveVersionId =
+          hasSourceImage && modelConfig.img2imgVersionId
+            ? modelConfig.img2imgVersionId
+            : modelConfig.versionId;
 
-      const workflow = await submitWorkflow({
-        token,
-        body: {
-          steps: [step],
-          currencies: ['yellow'],
-        },
-        query: { whatif: true },
-      });
+        const dims = getAspectRatioDimensions(aspectRatio, modelConfig);
 
-      return {
-        cost: workflow.cost?.total ?? 0,
-        ready: true,
-      };
-    } catch (error) {
-      console.error('Comics getPanelCostEstimate failed:', error);
-      throw error;
-    }
-  }),
+        // Build images array for accurate pricing
+        const allImages: { url: string; width: number; height: number }[] = [];
+
+        // 1. Add source image first if present (for img2img)
+        if (input?.sourceImage) {
+          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
+          allImages.push({
+            url: sourceEdgeUrl,
+            width: input.sourceImage.width,
+            height: input.sourceImage.height,
+          });
+        }
+
+        // 2. Fetch reference images server-side from @mentioned characters
+        if (input?.referenceIds && input.referenceIds.length > 0) {
+          const characterRefImages: {
+            imageId: number;
+            url: string;
+            width: number;
+            height: number;
+          }[] = [];
+          for (const refId of input.referenceIds) {
+            const { refImages: imgs } = await getReferenceImages(refId);
+            characterRefImages.push(...imgs);
+          }
+
+          // Filter to user-selected images if specified
+          const selectedImageIdSet =
+            input?.selectedImageIds && input.selectedImageIds.length > 0
+              ? new Set(input.selectedImageIds)
+              : null;
+          const filteredRefImages = selectedImageIdSet
+            ? characterRefImages.filter((img) => selectedImageIdSet.has(img.imageId))
+            : characterRefImages;
+
+          for (const img of filteredRefImages) {
+            const edgeUrl = getEdgeUrl(img.url, { original: true });
+            allImages.push({ url: edgeUrl, width: img.width, height: img.height });
+          }
+        }
+
+        // 3. Add user-imported reference images (directly passed)
+        if (input?.userReferenceImages && input.userReferenceImages.length > 0) {
+          for (const ref of input.userReferenceImages) {
+            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+            allImages.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+          }
+        }
+
+        const cappedImages = capReferenceImages(allImages, modelConfig.maxReferenceImages);
+
+        const step = await createImageGenStep({
+          params: {
+            prompt: '',
+            negativePrompt: '',
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
+            width: dims.width,
+            height: dims.height,
+            aspectRatio,
+            workflow: 'txt2img',
+            sampler: 'Euler',
+            steps: 25,
+            quantity,
+            draft: false,
+            disablePoi: false,
+            priority: 'low',
+            sourceImage: null,
+            images: cappedImages.length > 0 ? cappedImages : null,
+          },
+          resources: [{ id: effectiveVersionId, strength: 1 }],
+          tags: ['comics'],
+          tips: { creators: 0, civitai: 0 },
+          whatIf: true,
+          user: ctx.user! as SessionUser,
+        });
+
+        const workflow = await submitWorkflow({
+          token,
+          body: {
+            steps: [step],
+            currencies: ['yellow'],
+          },
+          query: { whatif: true },
+        });
+
+        return {
+          cost: workflow.cost?.total ?? 0,
+          ready: true,
+        };
+      } catch (error) {
+        console.error('Comics getGenerationCostEstimate failed:', error);
+        throw error;
+      }
+    }),
 
   getPromptEnhanceCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
@@ -1178,97 +1303,6 @@ export const comicsRouter = router({
     }
   }),
 
-  // whatIf cost estimate for iterative generation — uses actual generation params
-  getIterateCostEstimate: comicProtectedProcedure
-    .input(
-      z.object({
-        baseModel: z.string().nullish(),
-        aspectRatio: z.string().default('3:4'),
-        quantity: z.number().int().min(1).max(4).default(1),
-        sourceImage: z
-          .object({
-            url: z.string(),
-            width: z.number().int().positive(),
-            height: z.number().int().positive(),
-          })
-          .nullish(),
-        referenceImages: z
-          .array(
-            z.object({
-              url: z.string(),
-              width: z.number().int().positive(),
-              height: z.number().int().positive(),
-            })
-          )
-          .optional(),
-      })
-    )
-    .query(async ({ ctx, input }) => {
-      try {
-        const token = await getOrchestratorToken(ctx.user.id, ctx);
-        const modelConfig = getComicModelConfig(input.baseModel);
-        const hasSourceImage = !!input.sourceImage;
-        const effectiveVersionId =
-          hasSourceImage && modelConfig.img2imgVersionId
-            ? modelConfig.img2imgVersionId
-            : modelConfig.versionId;
-        const dims = getAspectRatioDimensions(input.aspectRatio, modelConfig);
-
-        // Build real images array for accurate pricing
-        const images: { url: string; width: number; height: number }[] = [];
-        if (input.sourceImage) {
-          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
-          images.push({
-            url: sourceEdgeUrl,
-            width: input.sourceImage.width,
-            height: input.sourceImage.height,
-          });
-        }
-        if (input.referenceImages) {
-          for (const ref of input.referenceImages) {
-            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
-            images.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
-          }
-        }
-
-        const step = await createImageGenStep({
-          params: {
-            prompt: '',
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: dims.width,
-            height: dims.height,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: input.quantity,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: capReferenceImages(images, modelConfig.maxReferenceImages),
-          },
-          resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
-          tips: { creators: 0, civitai: 0 },
-          whatIf: true,
-          user: ctx.user! as SessionUser,
-        });
-
-        const workflow = await submitWorkflow({
-          token,
-          body: { steps: [step], currencies: ['yellow'] },
-          query: { whatif: true },
-        });
-
-        return { cost: workflow.cost?.total ?? 0, ready: true };
-      } catch (error) {
-        console.error('Comics getIterateCostEstimate failed:', error);
-        throw error;
-      }
-    }),
 
   getPlanChapterCostEstimate: comicProtectedProcedure.query(async ({ ctx }) => {
     try {
@@ -1383,6 +1417,7 @@ export const comicsRouter = router({
       if (input.genre !== undefined) data.genre = input.genre;
       if (input.baseModel !== undefined) data.baseModel = input.baseModel;
       if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
+      if (input.meta !== undefined) data.meta = input.meta;
 
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.coverImageId !== undefined) {
@@ -1727,10 +1762,6 @@ export const comicsRouter = router({
         generationReferenceIds = mentionedReferenceIds;
       }
 
-      if (generationReferenceIds.length === 0) {
-        throw throwBadRequestError('No references available for generation');
-      }
-
       // If inserting at a specific position, shift existing panels and get the
       // panel just before the insertion point for context. Otherwise use the last panel.
       let nextPosition: number;
@@ -1795,7 +1826,7 @@ export const comicsRouter = router({
           : allRefImages
       ).map(({ url, width, height }) => ({ url, width, height }));
 
-      if (combinedRefImages.length === 0) {
+      if (generationReferenceIds.length > 0 && combinedRefImages.length === 0) {
         throw throwBadRequestError('References have no reference images');
       }
 
@@ -1808,6 +1839,9 @@ export const comicsRouter = router({
       );
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
+
+      // Enforce queue limits before generation
+      await assertCanGenerate(token, ctx.user?.tier ?? 'free', 1);
 
       // Build prompt — optionally enhance via LLM
       // Only pass mentioned character names to avoid the enhancer injecting unrelated references
@@ -2415,6 +2449,9 @@ export const comicsRouter = router({
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
+      // Enforce queue limits before generation
+      await assertCanGenerate(token, ctx.user?.tier ?? 'free', 1);
+
       // Build prompt — optionally enhance
       const mentionedRefIdSet = new Set(mentionedReferenceIds);
       const mentionedNames = allUserRefs
@@ -2496,16 +2533,23 @@ export const comicsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
-      // Get all user's reference names for story planning
+      // Get all user's references, then filter to only those @mentioned in the story
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
-        select: { name: true },
+        select: { id: true, name: true },
       });
+      const { mentionedIds } = resolveReferenceMentions({
+        prompt: input.storyDescription,
+        references: allUserRefs,
+      });
+      const mentionedNames = allUserRefs
+        .filter((r) => mentionedIds.includes(r.id))
+        .map((r) => r.name);
 
       return planChapterPanels({
         token,
         storyDescription: input.storyDescription,
-        characterNames: allUserRefs.map((r) => r.name),
+        characterNames: mentionedNames,
       });
     }),
 
@@ -2514,6 +2558,14 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      // Check how many queue slots the user has available upfront.
+      // Panels that fit will be submitted immediately; the rest get enqueued
+      // for the background job to process when slots free up.
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+      const userTier = ctx.user?.tier ?? 'free';
+      const queueStatus = await getUserQueueStatus(token, userTier);
+      let remainingSlots = queueStatus.canGenerate ? queueStatus.available : 0;
+
       // Fetch project baseModel for generation config
       const project = await dbRead.comicProject.findUnique({
         where: { id: input.projectId },
@@ -2597,6 +2649,8 @@ export const comicsRouter = router({
           (id) => refImagesByRefId.get(id)?.referenceName ?? ''
         ).filter(Boolean);
 
+        // Submit immediately if slots are available, otherwise enqueue for the job
+        const shouldEnqueue = remainingSlots <= 0;
         const panel = await createSinglePanel({
           projectId: input.projectId,
           chapterPosition: chapter.position,
@@ -2618,7 +2672,9 @@ export const comicsRouter = router({
             storyDescription: input.storyDescription,
             previousPanelPrompts: [...previousPanelPrompts],
           },
+          enqueue: shouldEnqueue,
         });
+        if (!shouldEnqueue) remainingSlots--;
 
         createdPanels.push(panel);
         previousPanelPrompts.push(panel.enhancedPrompt ?? panelInput.prompt);
@@ -3317,6 +3373,9 @@ export const comicsRouter = router({
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
+      // Enforce queue limits before generation
+      await assertCanGenerate(token, ctx.user?.tier ?? 'free', 1);
+
       // Build prompt — optionally enhance
       // Only pass mentioned character names to avoid the enhancer injecting unrelated references
       const mentionedRefIdSet = new Set(mentionedReferenceIds);
@@ -3488,6 +3547,20 @@ export const comicsRouter = router({
       }
 
       const batchToken = await getOrchestratorToken(ctx.user!.id, ctx);
+
+      // Count panels that need generation (Mode 3 and Mode 4)
+      // Mode 1 (existing imageId) and Mode 2 (source only, no prompt) don't use generation
+      // Mode 3 (source + prompt) and Mode 4 (prompt only) need generation
+      const panelsNeedingGeneration = input.panels.filter((p) => {
+        const hasPrompt = !!p.prompt?.trim();
+        const hasExistingImage = p.imageId != null;
+        return !hasExistingImage && hasPrompt;
+      }).length;
+
+      // Check queue limits before creating any panels
+      if (panelsNeedingGeneration > 0) {
+        await assertCanGenerate(batchToken, ctx.user?.tier ?? 'free', panelsNeedingGeneration);
+      }
 
       const createdPanels: any[] = [];
       let contextPanel: {
@@ -4134,4 +4207,16 @@ export const comicsRouter = router({
 
       return comment;
     }),
+
+  // ──── Queue Status ────
+
+  /**
+   * Get the current queue status for the user.
+   * Returns used slots, limit, available slots, and whether the user can generate.
+   */
+  getQueueStatus: comicProtectedProcedure.query(async ({ ctx }) => {
+    const token = await getOrchestratorToken(ctx.user!.id, ctx);
+    const userTier = ctx.user?.tier ?? 'free';
+    return getUserQueueStatus(token, userTier);
+  }),
 });

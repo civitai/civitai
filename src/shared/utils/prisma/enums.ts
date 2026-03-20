@@ -893,6 +893,7 @@ export type ComicReferenceStatus = (typeof ComicReferenceStatus)[keyof typeof Co
 
 export const ComicPanelStatus = {
   Pending: 'Pending',
+  Enqueued: 'Enqueued',
   Generating: 'Generating',
   Ready: 'Ready',
   Failed: 'Failed',
