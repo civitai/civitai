@@ -222,6 +222,46 @@ export const recommendedSettingsSchema = z.object({
   strength: z.coerce.number().nullish(),
 });
 
+export const linkedComponentSettingsSchema = z.object({
+  isLinkedComponent: z.literal(true),
+  componentType: z.enum(constants.modelFileComponentTypes),
+  fileId: z.number(),
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
+  fileName: z.string(),
+  isRequired: z.boolean().optional(),
+});
+
+export type LinkedComponentSettings = z.infer<typeof linkedComponentSettingsSchema>;
+
+/** Union type for casting the RecommendedResource.settings JSON field from DB reads */
+export type RecommendedResourceSettings = RecommendedSettingsSchema | LinkedComponentSettings;
+
+export const setLinkedComponentsSchema = z.object({
+  id: z.number(), // modelVersionId
+  components: z.array(
+    z.object({
+      id: z.number().optional(), // RecommendedResource.id for existing entries
+      resourceId: z.number(), // target ModelVersion ID
+      settings: linkedComponentSettingsSchema,
+    })
+  ),
+});
+
+export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
+
+export const addLinkedComponentSchema = z.object({
+  id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
+  targetVersionId: z.number(), // linked resource's version ID
+  componentType: z.enum(constants.modelFileComponentTypes),
+  modelId: z.number(), // target model ID
+  modelName: z.string(), // target model name
+  versionName: z.string(), // target version name
+  isRequired: z.boolean().optional().default(true),
+});
+export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
+
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
   id: z.number().optional(),

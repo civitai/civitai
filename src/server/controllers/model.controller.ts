@@ -17,6 +17,7 @@ import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
+  LinkedComponentSettings,
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
@@ -207,10 +208,46 @@ export const getModelHandler = async ({
       userId: ctx.user?.id,
     });
 
-    const recommendedResourceIds =
-      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.resource.id)) ??
-      [];
-    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
+    const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
+      (settings as LinkedComponentSettings)?.isLinkedComponent === true;
+
+    // Only pass non-linked-component resources to getResourceData
+    const regularResourceIds =
+      model.modelVersions.flatMap((version) =>
+        version?.recommendedResources
+          .filter((x) => !isLinkedComponent(x.settings))
+          .map((x) => x.resource.id)
+      ) ?? [];
+    const generationResources = await getResourceData(regularResourceIds, ctx?.user);
+
+    // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
+    const allLinkedFileIds = [
+      ...new Set(
+        model.modelVersions.flatMap((version) =>
+          version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => (r.settings as LinkedComponentSettings).fileId)
+            .filter(isDefined)
+        )
+      ),
+    ];
+    const linkedFileDataMap = new Map<
+      number,
+      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
+    >();
+    if (allLinkedFileIds.length > 0) {
+      const fileData = await dbRead.modelFile.findMany({
+        where: { id: { in: allLinkedFileIds } },
+        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+      });
+      for (const f of fileData)
+        linkedFileDataMap.set(f.id, {
+          name: f.name,
+          sizeKB: f.sizeKB,
+          type: f.type,
+          metadata: f.metadata as Record<string, unknown> | null,
+        });
+    }
 
     return {
       ...model,
@@ -329,12 +366,35 @@ export const getModelHandler = async ({
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
           recommendedResources: version.recommendedResources
+            .filter((item) => !isLinkedComponent(item.settings))
             .map((item) => {
               const match = generationResources.find((x) => x.id === item.resource.id);
               if (!match) return null;
               return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
             })
             .filter(isDefined),
+          linkedComponents: version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => {
+              const s = r.settings as LinkedComponentSettings;
+              const fileData = linkedFileDataMap.get(s.fileId);
+              return {
+                recommendedResourceId: r.id,
+                componentType: s.componentType as ModelFileComponentType,
+                modelId: s.modelId,
+                modelName: s.modelName,
+                versionId: r.resource?.id ?? 0,
+                versionName: s.versionName,
+                fileId: s.fileId,
+                fileName: fileData?.name ?? s.fileName,
+                sizeKB: fileData?.sizeKB,
+                fileType: fileData?.type,
+                fileMetadata: fileData?.metadata as
+                  | { format?: string | null; size?: string | null; fp?: string | null }
+                  | undefined,
+                isRequired: s.isRequired,
+              };
+            }),
         };
       }),
     };

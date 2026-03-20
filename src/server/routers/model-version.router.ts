@@ -30,6 +30,8 @@ import {
   modelVersionsGeneratedImagesOnTimeframeSchema,
   modelVersionUpsertSchema2,
   publishVersionSchema,
+  addLinkedComponentSchema,
+  setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
 } from '~/server/schema/model-version.schema';
@@ -43,6 +45,8 @@ import {
   getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
+  addLinkedComponent,
+  setLinkedComponents,
   upsertExplorationPrompt,
   bustMvCache,
 } from '~/server/services/model-version.service';
@@ -101,6 +105,14 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('earlyAccessModel'))
     .mutation(toggleNotifyEarlyAccessHandler),
+  setLinkedComponents: guardedProcedure
+    .input(setLinkedComponentsSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input }) => setLinkedComponents(input)),
+  addLinkedComponent: guardedProcedure
+    .input(addLinkedComponentSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input }) => addLinkedComponent(input)),
   upsert: guardedProcedure
     .input(modelVersionUpsertSchema2)
     .use(isOwnerOrModerator)

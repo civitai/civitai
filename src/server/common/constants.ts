@@ -58,6 +58,9 @@ export const constants = {
     'VAE',
     'Config',
     'Archive',
+    'UNet',
+    'CLIPVision',
+    'ControlNet',
   ],
   trainingMediaTypes: ['image', 'video'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
@@ -65,6 +68,16 @@ export const constants = {
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
+  modelFileQuantTypes: ['Q8_0', 'Q6_K', 'Q5_K_M', 'Q4_K_M', 'Q4_K_S', 'Q3_K_M', 'Q2_K'],
+  modelFileComponentTypes: [
+    'VAE',
+    'TextEncoder',
+    'UNet',
+    'CLIPVision',
+    'ControlNet',
+    'Config',
+    'Other',
+  ],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
@@ -81,6 +94,9 @@ export const constants = {
     VAE: 5,
     Negative: 6,
     Archive: 7,
+    UNet: 8,
+    CLIPVision: 9,
+    ControlNet: 10,
   },
   cardSizes: {
     model: 320,
@@ -367,6 +383,19 @@ export function isOrchestratorUrl(url: string) {
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
+
+export const modelFileQuantTypes = constants.modelFileQuantTypes;
+export const modelFileComponentTypes = constants.modelFileComponentTypes;
+
+/** ModelFileType values that represent component files (not main model weights) */
+export const componentFileTypes = [
+  'VAE',
+  'Text Encoder',
+  'UNet',
+  'CLIPVision',
+  'ControlNet',
+] as const;
+export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;

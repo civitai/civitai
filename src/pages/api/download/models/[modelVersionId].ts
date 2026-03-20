@@ -20,6 +20,7 @@ const schema = z.object({
   format: z.enum(constants.modelFileFormats).optional(),
   size: z.enum(constants.modelFileSizes).optional(),
   fp: z.enum(constants.modelFileFp).optional(),
+  quantType: z.enum(constants.modelFileQuantTypes).optional(),
 });
 
 const downloadLimiter = createLimiter({
