@@ -25,7 +25,7 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { isAbortError, trpc } from '~/utils/trpc';
+import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/base-model.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
@@ -160,7 +160,6 @@ export const useQueryModels = (
       trpc: { context: { skipBatch: true } },
       keepPreviousData: true,
       onError: (error) => {
-        if (isAbortError(error)) return;
         queryUtils.model.getAll.setInfiniteData(
           { ..._filters, browsingLevel },
           (oldData) => oldData ?? data

@@ -25,21 +25,11 @@ const headers: RequestHeaders = {
   'x-client': 'web',
 };
 
-/** Check if an error is from an aborted request (expected with abortOnUnmount) */
-export function isAbortError(error: unknown): boolean {
-  if (error instanceof Error && error.name === 'AbortError') return true;
-  if (error instanceof Error && error.message.includes('aborted')) return true;
-  return false;
-}
-
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: (failureCount, error) => {
-        if (isAbortError(error)) return false;
-        return failureCount < 1;
-      },
+      retry: 1,
       staleTime: Infinity,
     },
   },
@@ -79,7 +69,7 @@ export const trpcVanilla = createTRPCProxyClient<AppRouter>({
     loggerLink({
       enabled: (opts) =>
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
-        (opts.direction === 'down' && opts.result instanceof Error && !isAbortError(opts.result)),
+        (opts.direction === 'down' && opts.result instanceof Error),
     }),
     httpLink({
       url,
@@ -94,7 +84,6 @@ export const trpc = createTRPCNext<AppRouter>({
     const isClient = typeof window !== 'undefined';
 
     return {
-      abortOnUnmount: true,
       queryClient,
       transformer: superjson,
       links: [
@@ -102,9 +91,7 @@ export const trpc = createTRPCNext<AppRouter>({
         loggerLink({
           enabled: (opts) =>
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
-            (opts.direction === 'down' &&
-              opts.result instanceof Error &&
-              !isAbortError(opts.result)),
+            (opts.direction === 'down' && opts.result instanceof Error),
         }),
         httpLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
