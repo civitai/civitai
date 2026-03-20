@@ -19,7 +19,7 @@ import {
   sourceImageSchema,
   negativePromptSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { type BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { type BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   findClosestAspectRatio,
   getResolutionsFromAspectRatios,

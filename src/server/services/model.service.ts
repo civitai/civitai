@@ -15,7 +15,7 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
+import { DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
@@ -137,7 +137,7 @@ import type {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';

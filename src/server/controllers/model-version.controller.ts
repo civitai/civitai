@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { BaseModelType } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
+import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context } from '~/server/createContext';

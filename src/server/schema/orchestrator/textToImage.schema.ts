@@ -5,7 +5,6 @@ import type { Sampler } from '~/server/common/constants';
 import { generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { baseModelGroups } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
@@ -56,7 +55,7 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
-  baseModel: z.enum(baseModelGroups),
+  baseModel: z.string(),
   width: z.number(),
   height: z.number(),
   // temp props?

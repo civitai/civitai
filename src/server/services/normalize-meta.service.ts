@@ -2,7 +2,7 @@ import {
   wanBaseModelGroupIdMap,
   wanGeneralBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
-import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { getWanVersion } from '../orchestrator/wan/wan.schema';

@@ -11,6 +11,8 @@
  */
 
 import { ModelType, type MediaType } from '~/shared/utils/prisma/enums';
+import { lazy } from '~/shared/utils/lazy';
+import { isDefined } from '~/utils/type-guards';
 
 // =============================================================================
 // Types
@@ -50,6 +52,8 @@ export type EcosystemSettings = {
     model?: { id: number };
     /** If true, the model cannot be changed by the user (used for video ecosystems) */
     modelLocked?: boolean;
+    /** Orchestrator engine identifier. Used for backwards compatibility with getBaseModelEngine(). */
+    engine?: string;
   };
 };
 
@@ -701,6 +705,10 @@ const fullAddonTypes = [
 const checkpointAndLora = [ModelType.Checkpoint, ModelType.LORA];
 const checkpointOnly = [ModelType.Checkpoint];
 const loraOnly = [ModelType.LORA];
+/** Addon types that cross between SDXL parent ↔ child ecosystems */
+const sdxlCrossAddonTypes = [ModelType.TextualInversion, ModelType.LORA, ModelType.DoRA, ModelType.LoCon, ModelType.VAE];
+/** Addon types that cross between SDXL sibling ecosystems (no VAE) */
+const sdxlSiblingAddonTypes = [ModelType.TextualInversion, ModelType.LORA, ModelType.DoRA, ModelType.LoCon];
 
 export const ecosystemSupport: EcosystemSupport[] = [
   // SD1 - full addon support
@@ -819,6 +827,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // ZImageBase - checkpoint and LORA
   { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: [ModelType.LORA] },
+
+  // LTXV - checkpoint only (parent ecosystem)
+  { ecosystemId: ECO.LTXV, supportType: 'generation', modelTypes: checkpointOnly },
 
   // LTXV2 - checkpoint and LORA
   { ecosystemId: ECO.LTXV2, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -948,18 +959,21 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1314512 },
       modelLocked: true,
+      engine: 'hunyuan',
     },
   },
   {
     ecosystemId: ECO.WanVideo,
     defaults: {
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
     ecosystemId: ECO.WanVideo1_3B_T2V,
     defaults: {
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -967,6 +981,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1707796 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -974,6 +989,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1501125 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -981,6 +997,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1501344 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -988,6 +1005,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2114110 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -995,6 +1013,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2114157 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1002,6 +1021,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2114154 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1009,6 +1029,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2254989 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1016,6 +1037,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2254963 },
       modelLocked: true,
+      engine: 'wan',
     },
   },
   {
@@ -1030,6 +1052,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1499827 },
       modelLocked: true,
+      engine: 'lightricks',
     },
   },
   {
@@ -1037,6 +1060,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2578325 },
       modelLocked: true,
+      engine: 'ltx2',
     },
   },
   {
@@ -1044,6 +1068,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2749908 },
       modelLocked: true,
+      engine: 'ltx2',
     },
   },
   {
@@ -1051,6 +1076,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 1885367 },
       modelLocked: true,
+      engine: 'veo3',
     },
   },
   {
@@ -1114,6 +1140,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2623839 },
       modelLocked: true,
+      engine: 'vidu',
     },
   },
   {
@@ -1127,6 +1154,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2698632 },
       modelLocked: true,
+      engine: 'kling',
     },
   },
   {
@@ -1134,6 +1162,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2623856 },
       modelLocked: true,
+      engine: 'seedance',
     },
   },
   {
@@ -1193,22 +1222,115 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
   },
 
   // ==========================================================================
+  // SDXL ↔ Pony/Illustrious/NoobAI (parent ↔ child)
+  // ==========================================================================
+  // SDXL addons work in Pony/Illustrious/NoobAI and vice versa
+  {
+    sourceEcosystemId: ECO.SDXL,
+    targetEcosystemId: ECO.Pony,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Pony,
+    targetEcosystemId: ECO.SDXL,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.SDXL,
+    targetEcosystemId: ECO.Illustrious,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Illustrious,
+    targetEcosystemId: ECO.SDXL,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.SDXL,
+    targetEcosystemId: ECO.NoobAI,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.NoobAI,
+    targetEcosystemId: ECO.SDXL,
+    supportType: 'generation',
+    modelTypes: sdxlCrossAddonTypes,
+    support: 'partial',
+  },
+
+  // ==========================================================================
+  // Pony ↔ Illustrious ↔ NoobAI (siblings)
+  // ==========================================================================
+  {
+    sourceEcosystemId: ECO.Pony,
+    targetEcosystemId: ECO.Illustrious,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Illustrious,
+    targetEcosystemId: ECO.Pony,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Pony,
+    targetEcosystemId: ECO.NoobAI,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.NoobAI,
+    targetEcosystemId: ECO.Pony,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.Illustrious,
+    targetEcosystemId: ECO.NoobAI,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+  {
+    sourceEcosystemId: ECO.NoobAI,
+    targetEcosystemId: ECO.Illustrious,
+    supportType: 'generation',
+    modelTypes: sdxlSiblingAddonTypes,
+    support: 'partial',
+  },
+
+  // ==========================================================================
   // Flux Family Cross-Support
   // ==========================================================================
-  // Flux1 LORA works partially in FluxKrea
+  // Flux1 Checkpoint+LORA works partially in FluxKrea
   {
     sourceEcosystemId: ECO.Flux1,
     targetEcosystemId: ECO.FluxKrea,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: checkpointAndLora,
     support: 'partial',
   },
-  // FluxKrea LORA works partially in Flux1
+  // FluxKrea Checkpoint+LORA works partially in Flux1
   {
     sourceEcosystemId: ECO.FluxKrea,
     targetEcosystemId: ECO.Flux1,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: checkpointAndLora,
     support: 'partial',
   },
 
@@ -1758,7 +1880,7 @@ export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f
 // Base Models (with ecosystemId)
 // =============================================================================
 
-export const baseModels: BaseModelRecord[] = [
+export const baseModelRecords: BaseModelRecord[] = [
   // Anima
   {
     id: BM.Anima,
@@ -1983,7 +2105,7 @@ export const baseModels: BaseModelRecord[] = [
     id: BM.Mochi,
     name: 'Mochi',
     description: "Genmo's video generation model with realistic motion synthesis",
-    type: 'video',
+    type: 'image',
     ecosystemId: ECO.Mochi,
     licenseId: 13,
   },
@@ -2518,8 +2640,8 @@ export const baseModels: BaseModelRecord[] = [
   },
 ];
 
-export const baseModelById = new Map(baseModels.map((m) => [m.id, m]));
-export const baseModelByName = new Map(baseModels.map((m) => [m.name, m]));
+export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
+export const baseModelByName = new Map(baseModelRecords.map((m) => [m.name, m]));
 
 export function getEcosystem(baseModel: string) {
   const model = baseModelByName.get(baseModel);
@@ -2548,7 +2670,7 @@ export function isEcosystemExperimental(ecosystemKey: string): boolean {
   if (!ecosystem) return false;
 
   // Check if any base model in this ecosystem is experimental
-  return baseModels.some((m) => m.ecosystemId === ecosystem.id && m.experimental);
+  return baseModelRecords.some((m) => m.ecosystemId === ecosystem.id && m.experimental);
 }
 
 // =============================================================================
@@ -2769,11 +2891,6 @@ export function getGenerationSupport(
   // Same ecosystem = Full
   if (checkpointEcosystemId === addonEcosystemId) return 'full';
 
-  // Check if related (parent/child/sibling)
-  if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
-    return 'partial';
-  }
-
   // Check cross-ecosystem rules
   const crossRule = crossEcosystemRules.find(
     (r) =>
@@ -2802,9 +2919,9 @@ export function getGenerationSupport(
 }
 
 /**
- * Get the ecosystem for a base model
+ * Get the ecosystem for a base model by ID
  */
-export function getBaseModelEcosystem(baseModelId: number): EcosystemRecord | undefined {
+export function getBaseModelEcosystemById(baseModelId: number): EcosystemRecord | undefined {
   const model = baseModelById.get(baseModelId);
   if (!model) return undefined;
 
@@ -2830,7 +2947,7 @@ export function getBaseModelsByEcosystemId(
   }
 
   // Find all base models in these ecosystems
-  return baseModels.filter((m) => ecosystemIds.has(m.ecosystemId));
+  return baseModelRecords.filter((m) => ecosystemIds.has(m.ecosystemId));
 }
 
 /**
@@ -2883,14 +3000,14 @@ export function getEcosystemDefaults(
  * Moderators see all base models; regular users see only non-hidden ones.
  */
 export function getActiveBaseModels(isModerator?: boolean): BaseModelRecord[] {
-  return isModerator ? baseModels : baseModels.filter((m) => !m.hidden);
+  return isModerator ? baseModelRecords : baseModelRecords.filter((m) => !m.hidden);
 }
 
 /**
- * Get base models available for generation (not hidden, not disabled, has generation support)
+ * Get base model records available for generation (not hidden, not disabled, has generation support)
  */
-export function getGenerationBaseModels(): BaseModelRecord[] {
-  return baseModels.filter((m) => {
+export function getGenerationBaseModelRecords(): BaseModelRecord[] {
+  return baseModelRecords.filter((m) => {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'generation');
   });
@@ -2900,7 +3017,7 @@ export function getGenerationBaseModels(): BaseModelRecord[] {
  * Get base models available for training
  */
 export function getTrainingBaseModels(): BaseModelRecord[] {
-  return baseModels.filter((m) => {
+  return baseModelRecords.filter((m) => {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'training');
   });
@@ -2910,7 +3027,7 @@ export function getTrainingBaseModels(): BaseModelRecord[] {
  * Get disabled base models
  */
 export function getDisabledBaseModels(): BaseModelRecord[] {
-  return baseModels.filter((m) => m.disabled);
+  return baseModelRecords.filter((m) => m.disabled);
 }
 
 /**
@@ -2930,7 +3047,7 @@ export function getEcosystemsByFamilyId(familyId: number): EcosystemRecord[] {
  */
 export function getGenerationEcosystemsForMediaType(mediaType: MediaType): string[] {
   // Get all base models that support generation and match the media type
-  const validModels = baseModels.filter((m) => {
+  const validModels = baseModelRecords.filter((m) => {
     if (m.disabled) return false;
     if (Array.isArray(m.type) ? !m.type.includes(mediaType) : m.type !== mediaType) return false;
     // Check if ecosystem supports generation
@@ -2961,7 +3078,7 @@ export function getDefaultEcosystemForMediaType(mediaType: MediaType): string | 
  * Get base models available for auction
  */
 export function getAuctionBaseModels(): BaseModelRecord[] {
-  return baseModels.filter((m) => {
+  return baseModelRecords.filter((m) => {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'auction');
   });
@@ -2987,7 +3104,7 @@ export function getCompatibleBaseModels(
   const full: BaseModelRecord[] = [];
   const partial: BaseModelRecord[] = [];
 
-  for (const model of baseModels) {
+  for (const model of baseModelRecords) {
     if (model.disabled) continue;
 
     const modelEcosystem = ecosystemById.get(model.ecosystemId);
@@ -3066,6 +3183,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ],
     defaultEcosystemId: ECO.Flux2Klein_9B,
     sortOrder: 22,
+  },
+  {
+    id: 'LTXV',
+    displayName: 'LTX Video',
+    ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23],
+    defaultEcosystemId: ECO.LTXV2,
+    sortOrder: 205,
   },
   {
     id: 'Seedance',
@@ -3440,4 +3564,462 @@ export function checkGenerationCompatibility(
     incompatible,
     alternativeEcosystems,
   };
+}
+
+// =============================================================================
+// Compatibility Layer for base-model.constants.ts Migration
+// =============================================================================
+//
+// This section provides backward-compatible exports matching the old base-model.constants.ts API.
+// All functions work with string keys/names (not numeric IDs), keeping IDs as internal implementation detail.
+
+// -----------------------------------------------------------------------------
+// Type Exports (String-based for backward compatibility)
+// -----------------------------------------------------------------------------
+
+/**
+ * Base model name (e.g., "SDXL 1.0", "Flux.1 D")
+ * @deprecated Use string directly. This type alias exists for backward compatibility.
+ */
+export type BaseModel = string;
+
+/**
+ * Ecosystem key (e.g., "SDXL", "Flux1", "SD1")
+ * @deprecated Use string directly. This type alias exists for backward compatibility.
+ */
+export type BaseModelGroup = string;
+
+// -----------------------------------------------------------------------------
+// Array Exports (All return strings, not IDs)
+// -----------------------------------------------------------------------------
+
+/**
+ * Array of all base model names (including hidden)
+ */
+export const baseModels: string[] = baseModelRecords.map((x) => x.name);
+
+/**
+ * Array of all ecosystem keys
+ */
+export const baseModelGroups: string[] = [...new Set(ecosystems.map((x) => x.key))];
+
+/**
+ * Array of active (non-hidden, non-disabled) base model names
+ */
+export const activeBaseModels: string[] = getActiveBaseModels().map((x) => x.name);
+
+// -----------------------------------------------------------------------------
+// Constant Exports
+// -----------------------------------------------------------------------------
+
+/**
+ * Base models that are deprecated and should not be published or updated
+ * Derived from baseModelRecords with disabled=true
+ */
+export const DEPRECATED_BASE_MODELS: string[] = baseModelRecords
+  .filter((x) => x.disabled)
+  .map((x) => x.name);
+
+/**
+ * Configuration for base model groups (ecosystems)
+ * Maps ecosystem keys to display names and descriptions
+ */
+export const baseModelGroupConfig: Record<string, { name: string; description?: string }> =
+  Object.fromEntries(
+    ecosystems.map((eco) => [eco.key, { name: eco.displayName ?? eco.key, description: eco.description }])
+  );
+
+// -----------------------------------------------------------------------------
+// Helper Functions
+// -----------------------------------------------------------------------------
+
+/**
+ * Get base model configuration by name or ecosystem key
+ * @param baseModel - Base model name or ecosystem key
+ * @returns Base model record or fallback to "Other"
+ */
+export function getBaseModelConfig(baseModel: string): BaseModelRecord {
+  // Try to find by name first
+  let record = baseModelByName.get(baseModel);
+  if (record) return record;
+
+  // Try to find by ecosystem key
+  const ecosystem = ecosystemByKey.get(baseModel);
+  if (ecosystem) {
+    // Return first model in this ecosystem
+    const models = getBaseModelsByEcosystemId(ecosystem.id, false);
+    if (models.length > 0) return models[0];
+  }
+
+  // Fallback to "Other"
+  return baseModelByName.get('Other') ?? baseModelRecords[0];
+}
+
+/**
+ * Get ecosystem key for a base model
+ * @param baseModel - Base model name
+ * @returns Ecosystem key (e.g., "SDXL", "Flux1")
+ */
+export function getBaseModelGroup(baseModel: string): string {
+  const record = baseModelByName.get(baseModel);
+  if (!record) return 'Other';
+  const ecosystem = ecosystemById.get(record.ecosystemId);
+  return ecosystem?.key ?? 'Other';
+}
+
+/**
+ * Get SEO-friendly display name for a base model
+ * @param baseModel - Base model name
+ * @returns SEO-friendly display name
+ */
+export function getBaseModelSeoName(baseModel?: string): string {
+  if (!baseModel) return 'Stable Diffusion';
+
+  const record = baseModelByName.get(baseModel);
+  if (!record) return 'Other';
+
+  const ecosystem = ecosystemById.get(record.ecosystemId);
+  if (!ecosystem) return 'Other';
+
+  // If the ecosystem belongs to an ecosystem group, use the group's displayName
+  const group = getEcosystemGroup(record.ecosystemId);
+  if (group) return group.displayName;
+
+  return ecosystem.displayName ?? ecosystem.key;
+}
+
+/**
+ * Get ecosystem name (lowercase) for a base model
+ * @param baseModel - Base model name
+ * @returns Ecosystem name (lowercase)
+ */
+/**
+ * Get ecosystem name (lowercase) for a base model
+ * Returns the root ecosystem name for child ecosystems (e.g., Pony returns "sdxl")
+ * @param baseModel - Base model name
+ * @returns Root ecosystem name (lowercase)
+ */
+export function getBaseModelEcosystem(baseModel: string): string {
+  const record = baseModelByName.get(baseModel);
+  if (!record) return 'other';
+
+  // Get root ecosystem (walks up parent chain)
+  const rootEcosystem = getRootEcosystem(record.ecosystemId);
+  return rootEcosystem.name;
+}
+
+/**
+ * Get media type for a base model
+ * @param baseModel - Base model name
+ * @returns Media type ('image' or 'video')
+ */
+export function getBaseModelMediaType(baseModel: string): MediaType | undefined {
+  const record = baseModelByName.get(baseModel);
+  if (!record) return undefined;
+  return Array.isArray(record.type) ? record.type[0] : record.type;
+}
+
+/**
+ * Get engine identifier for a base model
+ * @param baseModel - Base model name
+ * @returns Engine string (e.g., "wan", "hunyuan", "veo3") or undefined for models without an engine
+ */
+export function getBaseModelEngine(baseModel: string): string | undefined {
+  const record = baseModelByName.get(baseModel);
+  if (!record) return undefined;
+  return getEcosystemSetting(record.ecosystemId, 'engine');
+}
+
+/**
+ * Get all base model configs for an ecosystem
+ * @param group - Ecosystem key
+ * @returns Array of base model records
+ */
+export function getBaseModelConfigsByGroup(group: string): BaseModelRecord[] {
+  const ecosystem = ecosystemByKey.get(group);
+  if (!ecosystem) return [];
+  return getBaseModelsByEcosystemId(ecosystem.id, false);
+}
+
+/**
+ * Get all base model names for an ecosystem
+ * @param group - Ecosystem key
+ * @returns Array of base model names
+ */
+export function getBaseModelsByGroup(group: string): string[] {
+  return getBaseModelConfigsByGroup(group).map((x) => x.name);
+}
+
+/**
+ * Get all base model configs for a media type
+ * @param type - Media type ('image' or 'video')
+ * @returns Array of base model records
+ */
+export function getBaseModelConfigsByMediaType(type: MediaType): BaseModelRecord[] {
+  return baseModelRecords.filter((x) => x.type === type);
+}
+
+/**
+ * Get all base model names for a media type
+ * @param type - Media type ('image' or 'video')
+ * @returns Array of base model names
+ */
+export function getBaseModelByMediaType(type: MediaType): string[] {
+  return getBaseModelConfigsByMediaType(type).map((x) => x.name);
+}
+
+/**
+ * Get all ecosystem keys for a media type
+ * @param type - Media type ('image' or 'video')
+ * @returns Array of ecosystem keys
+ */
+export function getBaseModelGroupsByMediaType(type: MediaType): string[] {
+  return [...new Set(getBaseModelConfigsByMediaType(type).map((x) => {
+    const ecosystem = ecosystemById.get(x.ecosystemId);
+    return ecosystem?.key ?? 'Other';
+  }))];
+}
+
+// -----------------------------------------------------------------------------
+// Generation Support Functions
+// -----------------------------------------------------------------------------
+
+type BaseModelSupport = { modelTypes: ModelType[]; baseModels: string[] };
+type BaseModelGenerationConfig = {
+  group: string;
+  support: BaseModelSupport[];
+  partialSupport?: BaseModelSupport[];
+};
+
+type BaseModelSupportType = 'full' | 'partial';
+type BaseModelSupportMapped = { baseModel: string; support: BaseModelSupportType };
+
+/**
+ * Get generation support configuration for all ecosystems.
+ * This is a lazy-computed cache of ecosystem support mapped to the old format.
+ */
+export const getBaseModelGenerationConfig = lazy(() =>
+  ecosystems.map((ecosystem) => {
+    const ecosystemModels = getBaseModelsByEcosystemId(ecosystem.id, false);
+    const supportMap = new Map<ModelType, BaseModelSupportMapped[]>();
+
+    // Build support map from ecosystem support configuration
+    const genSupport = getEcosystemSupport(ecosystem.id, 'generation');
+    if (genSupport && !genSupport.disabled) {
+      for (const modelType of genSupport.modelTypes) {
+        const supported: BaseModelSupportMapped[] = [];
+
+        // Add full support for models in this ecosystem
+        for (const model of ecosystemModels) {
+          if (!model.hidden && !model.disabled) {
+            supported.push({ baseModel: model.name, support: 'full' });
+          }
+        }
+
+        // Check for cross-ecosystem partial support
+        for (const otherEco of ecosystems) {
+          if (otherEco.id === ecosystem.id) continue;
+
+          const otherModels = getBaseModelsByEcosystemId(otherEco.id, false);
+          for (const otherModel of otherModels) {
+            if (otherModel.hidden || otherModel.disabled) continue;
+
+            const crossSupport = getGenerationSupport(ecosystem.id, otherEco.id, modelType);
+            if (crossSupport === 'partial') {
+              supported.push({ baseModel: otherModel.name, support: 'partial' });
+            }
+          }
+        }
+
+        if (supported.length > 0) {
+          supportMap.set(modelType, supported);
+        }
+      }
+    }
+
+    return { group: ecosystem.key, supportMap };
+  })
+);
+
+/**
+ * Get ecosystem keys that have generation support
+ * @param type - Optional media type filter
+ * @returns Array of ecosystem keys with generation support
+ */
+export function getGenerationBaseModelConfigs(type?: MediaType): string[] {
+  const result = ecosystems
+    .filter((ecosystem) => {
+      const genSupport = getEcosystemSupport(ecosystem.id, 'generation');
+      if (!genSupport || genSupport.disabled) return false;
+
+      if (type) {
+        const models = getBaseModelsByEcosystemId(ecosystem.id, false);
+        return models.some((m) => m.type === type);
+      }
+
+      return true;
+    })
+    .map((ecosystem) => ecosystem.key);
+
+  // Include ecosystem group IDs when any member ecosystem has generation support
+  for (const group of ecosystemGroups) {
+    if (!result.includes(group.id)) {
+      const hasGenSupport = group.ecosystemIds.some((id) => {
+        const support = getEcosystemSupport(id, 'generation');
+        if (!support || support.disabled) return false;
+        if (type) {
+          const models = getBaseModelsByEcosystemId(id, false);
+          return models.some((m) => m.type === type);
+        }
+        return true;
+      });
+      if (hasGenSupport) result.push(group.id);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get base model names that support generation for a media type
+ * @param type - Media type ('image' or 'video')
+ * @returns Array of base model names
+ */
+export function getGenerationBaseModelsByMediaType(type: MediaType): string[] {
+  const allModels = getBaseModelByMediaType(type);
+  const generationModels = getBaseModelGenerationConfig().flatMap(({ supportMap }) =>
+    [...supportMap.values()].flatMap((entry) => entry.map((x) => x.baseModel))
+  );
+  return allModels.filter((baseModel) => generationModels.includes(baseModel));
+}
+
+/**
+ * Get generation configuration for an ecosystem (by key or base model name)
+ * @param baseModel - Ecosystem key or base model name
+ * @param missedMatch - Internal flag for recursion
+ * @returns Generation config or undefined
+ */
+export function getGenerationBaseModelGroup(
+  baseModel: string,
+  missedMatch?: boolean
+): { group: string; supportMap: Map<ModelType, BaseModelSupportMapped[]> } | undefined {
+  const group = getBaseModelGenerationConfig().find((x) => x.group === baseModel);
+  if (!group && !missedMatch) {
+    // Try to find by base model name
+    const record = baseModelByName.get(baseModel);
+    if (record) {
+      const ecosystem = ecosystemById.get(record.ecosystemId);
+      if (ecosystem) return getGenerationBaseModelGroup(ecosystem.key, true);
+    }
+  }
+  return group;
+}
+
+/**
+ * Resource options for generation (per model type)
+ */
+export type GenerationBaseModelResourceOptions = {
+  type: ModelType;
+  baseModels: string[];
+  partialSupport: string[];
+};
+
+/**
+ * Get generation resource options for an ecosystem
+ * @param groupName - Ecosystem key
+ * @returns Array of resource options per model type
+ */
+export function getGenerationBaseModelResourceOptions(
+  groupName: string
+): GenerationBaseModelResourceOptions[] {
+  const group = getGenerationBaseModelGroup(groupName);
+  if (!group) return [];
+
+  return [...group.supportMap.entries()].map(([modelType, mapped]) => ({
+    type: modelType,
+    baseModels: [...new Set(mapped.filter((x) => x.support === 'full').map((x) => x.baseModel))],
+    partialSupport: [
+      ...new Set(mapped.filter((x) => x.support === 'partial').map((x) => x.baseModel)),
+    ],
+  }));
+}
+
+/**
+ * Get generation-compatible base models for an ecosystem and model type
+ * @param group - Ecosystem key
+ * @param modelType - Model type (e.g., LORA, Checkpoint)
+ * @returns Array of compatible base model names
+ */
+export function getGenerationBaseModels(group: string, modelType: ModelType): string[] {
+  const match = getGenerationBaseModelGroup(group);
+  return match?.supportMap.get(modelType)?.map((x) => x.baseModel) ?? [];
+}
+
+/**
+ * Check if a base model supports generation for a model type
+ * @param baseModel - Base model name
+ * @param modelType - Model type (e.g., LORA, Checkpoint)
+ * @returns True if generation is supported
+ */
+export function getBaseModelGenerationSupported(baseModel: string, modelType: ModelType): boolean {
+  const record = baseModelByName.get(baseModel);
+  if (!record) return false;
+  return isModelSupported(record.id, 'generation', modelType);
+}
+
+/**
+ * Get associated ecosystem keys for generation
+ * @param group - Ecosystem key
+ * @param modelType - Model type
+ * @returns Array of associated ecosystem keys
+ */
+export function getGenerationBaseModelAssociatedGroups(group: string, modelType: ModelType): string[] {
+  const baseModelNames = getGenerationBaseModels(group, modelType);
+  return [
+    ...new Set(
+      baseModelNames
+        .map((name) => {
+          const record = baseModelByName.get(name);
+          if (!record) return undefined;
+          const ecosystem = ecosystemById.get(record.ecosystemId);
+          return ecosystem?.key;
+        })
+        .filter(isDefined)
+    ),
+  ];
+}
+
+/**
+ * Group base models by model type
+ * @param args - Array of {modelType, baseModel} pairs
+ * @returns Record mapping model type to base model names
+ */
+export function getBaseModelsByModelType(
+  args: { modelType: ModelType; baseModel: string }[]
+): Record<ModelType, string[]> {
+  return args.reduce(
+    (acc, { modelType, baseModel }) => ({
+      ...acc,
+      [modelType]: [...(acc[modelType] ?? []), baseModel],
+    }),
+    {} as Record<ModelType, string[]>
+  );
+}
+
+/**
+ * Check if a base model can be used for auction generation
+ * @param baseModel - Base model name
+ * @returns True if auction is supported
+ */
+export function getCanAuctionForGeneration(baseModel?: string): boolean {
+  if (!baseModel) return false;
+  const record = baseModelByName.get(baseModel);
+  if (!record) return false;
+
+  const ecosystem = ecosystemById.get(record.ecosystemId);
+  if (!ecosystem) return false;
+
+  // Ecosystems that don't support auction
+  const noAuctionEcosystems = ['Qwen', 'ZImageTurbo', 'ZImageBase', 'Other'];
+  return !noAuctionEcosystems.includes(ecosystem.key);
 }

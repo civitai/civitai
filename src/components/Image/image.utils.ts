@@ -11,7 +11,7 @@ import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';

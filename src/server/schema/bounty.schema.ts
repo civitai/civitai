@@ -15,7 +15,6 @@ import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
-import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -29,7 +28,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     sort: z.enum(BountySort).default(BountySort.Newest),
     engagement: z.enum(constants.bounties.engagementTypes).optional(),
     userId: z.number().optional(),
-    baseModels: z.enum(baseModels).array().optional(),
+    baseModels: z.string().array().optional(),
     limit: z.coerce.number().min(1).max(200).default(60),
     excludedUserIds: z.number().array().optional(),
   })
@@ -37,7 +36,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
 
 export type BountyDetailsSchema = z.infer<typeof bountyDetailsSchema>;
 export const bountyDetailsSchema = z.object({
-  baseModel: z.enum(baseModels),
+  baseModel: z.string(),
   modelSize: z.enum(constants.modelFileSizes),
   modelFormat: z.enum(constants.modelFileFormats),
   profanityMatches: z.string().array().optional(),

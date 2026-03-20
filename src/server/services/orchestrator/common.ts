@@ -66,7 +66,7 @@ import { isDefined } from '~/utils/type-guards';
 import {
   getBaseModelByMediaType,
   getGenerationBaseModelResourceOptions,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import type {
   ResourceInput,
   SourceImageProps,

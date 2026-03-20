@@ -4,12 +4,14 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { GenerationConfigKey } from '~/server/common/constants';
 import { generationConfig } from '~/server/common/constants';
-import type { BaseModelFamily, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelFamilyRecord, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
-  baseModelFamilyConfig,
   baseModelGroupConfig,
+  ecosystemByKey,
+  ecosystemFamilies,
+  getEcosystemFamily,
   getGenerationBaseModelConfigs,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -25,7 +27,11 @@ export function BaseModelSelect({ value, type }: { value?: string; type: MediaTy
   const configs = getGenerationBaseModelConfigs(type);
   const items = configs
     .filter((group) => !!generationConfig[group as GenerationConfigKey])
-    .map((group) => ({ group, ...baseModelGroupConfig[group] }));
+    .map((group) => ({
+      group,
+      ...baseModelGroupConfig[group],
+      familyId: ecosystemByKey.get(group)?.familyId,
+    }));
   const readableName = items.find((x) => x.group === value)?.name ?? value ?? 'BaseModel';
 
   return (
@@ -47,15 +53,12 @@ export function BaseModelSelect({ value, type }: { value?: string; type: MediaTy
 type GroupedItem = {
   group: BaseModelGroup;
   name: string;
-  description: string;
-  family?: BaseModelFamily;
-  selector?: string;
+  description?: string;
+  familyId?: number;
 };
 
 type FamilyGroup = {
-  family: BaseModelFamily | null;
-  familyName: string | null;
-  familyDescription: string | null;
+  family: BaseModelFamilyRecord | null;
   items: GroupedItem[];
 };
 
@@ -65,62 +68,42 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
   const configs = getGenerationBaseModelConfigs(type);
   const items: GroupedItem[] = configs
     .filter((group) => !!generationConfig[group as GenerationConfigKey])
-    .map((group) => ({ group, ...baseModelGroupConfig[group] }));
+    .map((group) => ({
+      group,
+      ...baseModelGroupConfig[group],
+      familyId: ecosystemByKey.get(group)?.familyId,
+    }));
 
   // Group items by family
   const groupedByFamily = useMemo(() => {
-    // Deduplicate by selector: items sharing a selector collapse into one entry
-    const deduped = items.reduce<GroupedItem[]>((acc, item) => {
-      if (item.selector) {
-        if (acc.some((x) => x.selector === item.selector)) return acc;
-        return [...acc, { ...item, name: item.selector }];
-      }
-      return [...acc, item];
-    }, []);
+    const familyMap = new Map<number | null, GroupedItem[]>();
 
-    const familyMap = new Map<BaseModelFamily | null, GroupedItem[]>();
-
-    for (const item of deduped) {
-      const family = item.family ?? null;
-      const existing = familyMap.get(family) ?? [];
-      familyMap.set(family, [...existing, item]);
+    for (const item of items) {
+      const key = item.familyId ?? null;
+      const existing = familyMap.get(key) ?? [];
+      familyMap.set(key, [...existing, item]);
     }
 
     // Convert to array and sort: families first (alphabetically), then standalone items
     const result: FamilyGroup[] = [];
 
-    // Add family groups first (excluding disabled families)
     const families = [...familyMap.entries()]
-      .filter(([family]) => family !== null && !baseModelFamilyConfig[family!].disabled)
+      .filter(([id]) => id !== null)
       .sort(([a], [b]) => {
-        const nameA = baseModelFamilyConfig[a!].name;
-        const nameB = baseModelFamilyConfig[b!].name;
-        return nameA.localeCompare(nameB);
+        const famA = ecosystemFamilies.find((f) => f.id === a);
+        const famB = ecosystemFamilies.find((f) => f.id === b);
+        return (famA?.name ?? '').localeCompare(famB?.name ?? '');
       });
 
-    for (const [family, familyItems] of families) {
-      result.push({
-        family,
-        familyName: baseModelFamilyConfig[family!].name,
-        familyDescription: baseModelFamilyConfig[family!].description,
-        items: familyItems,
-      });
+    for (const [familyId, familyItems] of families) {
+      const family = ecosystemFamilies.find((f) => f.id === familyId) ?? null;
+      result.push({ family, items: familyItems });
     }
 
-    // Items from disabled families go to standalone
-    const disabledFamilyItems = [...familyMap.entries()]
-      .filter(([family]) => family !== null && baseModelFamilyConfig[family!].disabled)
-      .flatMap(([, items]) => items);
-
-    // Add standalone items (no family + items from disabled families) at the end
-    const standalone = [...(familyMap.get(null) ?? []), ...disabledFamilyItems];
+    // Add standalone items (no family) at the end
+    const standalone = familyMap.get(null) ?? [];
     if (standalone.length) {
-      result.push({
-        family: null,
-        familyName: null,
-        familyDescription: null,
-        items: standalone,
-      });
+      result.push({ family: null, items: standalone });
     }
 
     return result;
@@ -138,16 +121,17 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
     <Modal {...dialog} fullScreen={isMobile} title="Select Base Model">
       <div className="flex flex-col gap-4">
         {groupedByFamily.map((familyGroup) => (
-          <div key={familyGroup.family ?? 'standalone'}>
-            {familyGroup.familyName && (
-              <Text className="mb-1 font-bold">{familyGroup.familyName}</Text>
+          <div key={familyGroup.family?.id ?? 'standalone'}>
+            {familyGroup.family ? (
+              <Text className="mb-1 font-bold">{familyGroup.family.name}</Text>
+            ) : (
+              familyGroup.items.length > 0 && (
+                <Text className="mb-1 font-bold">Other Models</Text>
+              )
             )}
-            {!familyGroup.familyName && familyGroup.items.length > 0 && (
-              <Text className="mb-1 font-bold">Other Models</Text>
-            )}
-            {familyGroup.familyDescription && (
+            {familyGroup.family?.description && (
               <Text size="xs" c="dimmed" className="mb-2">
-                {familyGroup.familyDescription}
+                {familyGroup.family.description}
               </Text>
             )}
             <div className="flex flex-wrap gap-2">

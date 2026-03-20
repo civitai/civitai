@@ -14,7 +14,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,

@@ -24,7 +24,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   Availability,
@@ -34,7 +34,7 @@ import {
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)

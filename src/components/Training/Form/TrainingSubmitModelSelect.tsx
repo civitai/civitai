@@ -56,7 +56,7 @@ import {
   type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
-import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { useTrainingImageStore } from '~/store/training.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
