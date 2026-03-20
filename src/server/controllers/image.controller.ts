@@ -274,7 +274,11 @@ export const getInfiniteImagesHandler = async ({
 
   // Check BitDex mode first — if active (shadow or primary), always route through
   // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
-  const bitdexMode = await getFliptVariant(
+  // Skip BitDex for queries that need features it doesn't support:
+  // - collectionId: requires relational joins through CollectionItem table
+  // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
+  const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+  const bitdexMode = skipBitdex ? null : await getFliptVariant(
     FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
     user?.id?.toString() || 'anonymous',
     buildFliptContext(user)
@@ -341,8 +345,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
   try {
     const { user, features } = ctx;
 
-    // Check BitDex mode — if active, always route through getAllImagesIndex
-    const bitdexMode = await getFliptVariant(
+    // Check BitDex mode — if active, always route through getAllImagesIndex.
+    // Skip BitDex for unsupported query types (collections, prioritized users).
+    const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+    const bitdexMode = skipBitdex ? null : await getFliptVariant(
       FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
       user?.id?.toString() || 'anonymous',
       buildFliptContext(user)

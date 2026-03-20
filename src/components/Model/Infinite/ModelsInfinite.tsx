@@ -43,7 +43,7 @@ export function ModelsInfinite({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+  const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryModels({ ...debouncedFilters, browsingLevel });
 
   //#region [useEffect] cancel debounced filters
@@ -56,7 +56,7 @@ export function ModelsInfinite({
     <ModelCardContextProvider
       useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || !!filters?.clubId}
     >
-      {isLoading ? (
+      {!models.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />
         </Center>

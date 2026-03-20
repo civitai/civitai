@@ -26,10 +26,10 @@ export const getServerSideProps = createServerSideProps({
     if (session) {
       const { callbackUrl, error, reason } = ctx.query;
       if (reason !== 'switch-accounts') {
-        const destinationURL = new URL(
-          typeof callbackUrl === 'string' ? callbackUrl : '/',
-          getBaseUrl()
-        );
+        const rawCallback = typeof callbackUrl === 'string' ? callbackUrl : '/';
+        // Prevent recursive login redirects
+        const safeCallback = rawCallback.startsWith('/login') ? '/' : rawCallback;
+        const destinationURL = new URL(safeCallback, getBaseUrl());
         if (error) destinationURL.searchParams.set('error', error as string);
         const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
 

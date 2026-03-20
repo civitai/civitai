@@ -216,7 +216,7 @@ export const getModelHandler = async ({
       model.modelVersions.flatMap((version) =>
         version?.recommendedResources
           .filter((x) => !isLinkedComponent(x.settings))
-          .map((x) => x.id)
+          .map((x) => x.resource.id)
       ) ?? [];
     const generationResources = await getResourceData(regularResourceIds, ctx?.user);
 

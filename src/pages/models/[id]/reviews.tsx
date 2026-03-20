@@ -52,6 +52,17 @@ export const getServerSideProps = createServerSideProps({
     const result = getResourceReviewPagedSchema.safeParse({ modelId: params.id, ...ctx.query });
     if (!result.success) return { notFound: true };
 
+    // Redirect resourceReview dialog URLs to the clean reviews page
+    if (ctx.query.dialog === 'resourceReview') {
+      const { modelVersionId } = result.data;
+      const destination = `/models/${params.id}/reviews${
+        modelVersionId ? `?modelVersionId=${modelVersionId}` : ''
+      }`;
+      return {
+        redirect: { destination, permanent: true },
+      };
+    }
+
     const { modelId, modelVersionId } = result.data;
 
     await Promise.all([

@@ -54,6 +54,10 @@ export function RoutedDialogProvider() {
   }, [router]); // eslint-disable-line
 
   useEffect(() => {
+    // Don't open routed dialogs on the login page — dialog params may leak
+    // from returnUrl query strings and shouldn't trigger dialogs there
+    if (router.pathname === '/login') return;
+
     const counts = {} as Record<DialogKey, number>;
     const names = ([] as DialogKey[]).concat((browserRouter.query.dialog as any) ?? []);
     const keyNamePairs = names.map((name) => {

@@ -161,6 +161,7 @@ const featureFlags = createFeatureFlags({
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
+  prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -430,6 +431,18 @@ export const toggleableFeatures = Object.entries(featureFlags)
     description: value.description,
     default: value.default ?? true,
   }));
+
+export const domainRestrictedToggleableKeys = new Set(
+  Object.entries(featureFlags)
+    .filter(([, value]) => {
+      if (!value.toggleable) return false;
+      const servers = value.availability.filter((x) =>
+        serverAvailability.includes(x as ServerAvailability)
+      );
+      return servers.length > 0;
+    })
+    .map(([key]) => key as FeatureFlagKey)
+);
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;

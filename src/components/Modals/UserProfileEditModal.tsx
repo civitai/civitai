@@ -127,7 +127,8 @@ export default function UserProfileEditModal() {
     onSuccess: async () => {
       if (currentUser) {
         await currentUser?.refresh();
-        await utils.userProfile.get.invalidate({ username: currentUser.username });
+        // Invalidate all userProfile queries since username may have changed
+        await utils.userProfile.get.invalidate();
       }
       dialog.onClose();
     },

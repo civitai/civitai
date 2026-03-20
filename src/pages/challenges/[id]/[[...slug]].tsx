@@ -172,7 +172,22 @@ export const getServerSideProps = createServerSideProps({
     if (!result.success) return { notFound: true };
 
     if (ssg) {
-      await ssg.challenge.getById.prefetch({ id: result.data.id });
+      // Fetch challenge to check slug and prefetch for client hydration
+      const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (challenge) {
+        const correctSlug = slugit(challenge.title);
+        const currentSlug = result.data.slug?.join('/');
+        if (currentSlug !== correctSlug) {
+          return {
+            redirect: {
+              destination: `/challenges/${result.data.id}/${correctSlug}`,
+              permanent: false,
+            },
+          };
+        }
+      }
     }
 
     return { props: removeEmpty(result.data) };

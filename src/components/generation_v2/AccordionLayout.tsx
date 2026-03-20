@@ -9,7 +9,7 @@ import { ActionIcon, Card, Collapse, Group, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export interface AccordionLayoutProps {
   children: ReactNode;
@@ -39,10 +39,23 @@ export function AccordionLayout({
     }
   };
 
-  // Hide accordion when content has no visible children using :has() with child selector
-  // Shows only when .accordion-content has at least one child element
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [hasContent, setHasContent] = useState(true);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+
+    const checkContent = () => setHasContent(el.childElementCount > 0);
+    checkContent();
+
+    const observer = new MutationObserver(checkContent);
+    observer.observe(el, { childList: true });
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <Card withBorder padding={0} className="hidden has-[.accordion-content>*]:block">
+    <Card withBorder padding={0} style={hasContent ? undefined : { display: 'none' }}>
       <Card.Section
         withBorder={opened}
         inheritPadding
@@ -66,7 +79,9 @@ export function AccordionLayout({
 
       <Collapse in={opened}>
         <Card.Section inheritPadding py="sm" px="sm">
-          <div className="accordion-content flex flex-col gap-3">{children}</div>
+          <div ref={contentRef} className="accordion-content flex flex-col gap-3">
+            {children}
+          </div>
         </Card.Section>
       </Collapse>
     </Card>

@@ -145,6 +145,29 @@ export async function getMyPurchasedCodes({ userId }: { userId: number }) {
   });
 }
 
+export async function getMyConsumedMembershipCodes({ userId }: { userId: number }) {
+  return dbRead.redeemableCode.findMany({
+    where: {
+      userId,
+      type: RedeemableCodeType.Membership,
+      redeemedAt: { not: null },
+    },
+    select: {
+      code: true,
+      unitValue: true,
+      redeemedAt: true,
+      price: {
+        select: {
+          product: {
+            select: { metadata: true },
+          },
+        },
+      },
+    },
+    orderBy: { redeemedAt: 'asc' },
+  });
+}
+
 export async function createRedeemableCodes({
   unitValue,
   type,

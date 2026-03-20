@@ -72,6 +72,7 @@ export const getBuzzTransactionResponse = z.object({
   amount: z.coerce.number(),
   description: z.coerce.string().nullish(),
   details: buzzTransactionDetails.nullish(),
+  externalTransactionId: z.string().nullish(),
 });
 
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
