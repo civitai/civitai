@@ -21,14 +21,12 @@ export function CollectionsInfinite({
 
   const filters = removeEmpty({ ...collectionFilters, ...filterOverrides });
 
-  const { collections, isLoading, isRefetching, fetchNextPage, hasNextPage } = useQueryCollections(
-    filters,
-    { enabled, keepPreviousData: true }
-  );
+  const { collections, isRefetching, isFetching, fetchNextPage, hasNextPage } =
+    useQueryCollections(filters, { enabled, keepPreviousData: true });
 
   return (
     <>
-      {isLoading ? (
+      {!collections.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />
         </Center>

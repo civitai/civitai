@@ -19,7 +19,11 @@ export default function LoginModal({
   return (
     <Modal {...dialog} withCloseButton={false}>
       <CloseButton className="absolute right-1 top-1" onClick={dialog.onClose} />
-      <LoginContent returnUrl={returnUrl ?? router.asPath} message={message} reason={reason} />
+      <LoginContent
+        returnUrl={returnUrl ?? (router.asPath.startsWith('/login') ? '/' : router.asPath)}
+        message={message}
+        reason={reason}
+      />
     </Modal>
   );
 }

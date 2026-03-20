@@ -124,7 +124,10 @@ import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { verifyCaptchaToken } from '../recaptcha/client';
 import { createBuzzTransaction } from '../services/buzz.service';
 import type { FeatureAccess } from '../services/feature-flags.service';
-import { toggleableFeatures } from '../services/feature-flags.service';
+import {
+  domainRestrictedToggleableKeys,
+  toggleableFeatures,
+} from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
@@ -479,6 +482,8 @@ export const updateUserHandler = async ({
     await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();
+
+    await refreshSession(id);
 
     return updatedUser;
   } catch (error) {
@@ -1272,10 +1277,19 @@ export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: DeepNonNullable
       {} as FeatureAccess
     );
 
-    return {
+    const result = {
       ...defaultToggleableFeatures,
       ...filteredUserFeatures,
     } as FeatureAccess;
+
+    // Don't let toggleable defaults override domain restrictions
+    for (const key of domainRestrictedToggleableKeys) {
+      if (key in result && !ctx.features[key]) {
+        delete result[key];
+      }
+    }
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }

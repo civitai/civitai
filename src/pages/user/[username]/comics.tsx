@@ -16,7 +16,8 @@ import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
-  resolver: async ({ ctx, features }) => {
+  useSSG: true,
+  resolver: async ({ ctx, features, ssg }) => {
     if (!features?.comicCreator) return { notFound: true };
 
     const username = ctx.query.username as string;
@@ -25,6 +26,8 @@ export const getServerSideProps = createServerSideProps({
       return {
         redirect: { destination: `/user/${username}`, permanent: true },
       };
+
+    await ssg?.userProfile.get.prefetch({ username });
   },
 });
 
