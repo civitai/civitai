@@ -21,8 +21,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       '@civitai/client':
-        specifier: 0.2.0-beta.41
-        version: 0.2.0-beta.41
+        specifier: 0.2.0-beta.42
+        version: 0.2.0-beta.42
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -1153,8 +1153,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@civitai/client@0.2.0-beta.41':
-    resolution: {integrity: sha512-/46/Dwx45WUbZWwJZ8vmqrNeNqOrbxNq8rIMPW9MJsSVzpowyLRqL59RBSGBKHGFtncdQzAVp9KTBEev8Hk9xg==}
+  '@civitai/client@0.2.0-beta.42':
+    resolution: {integrity: sha512-Cy7w9Pe+KFYXTTaI828yqnF/4ITsq6csnNgHgknzfa6/0QZiNZH4hJPIXkwp25jSZe+5T9c+uc/abfaPhl1WLA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -8550,8 +8550,8 @@ packages:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
 
-  rfc6902@5.1.2:
-    resolution: {integrity: sha512-zxcb+PWlE8PwX0tiKE6zP97THQ8/lHmeiwucRrJ3YFupWEmp25RmFSlB1dNTqjkovwqG4iq+u1gzJMBS3um8mA==}
+  rfc6902@5.2.0:
+    resolution: {integrity: sha512-ZNQpVnWsdLMTCcLZcUY9ZBhxWuj7/H13EM7NL2gvbAMBXfLeN3iOLi3TWT1+8Or7OTLYXRDCy7sTEStk3j4KBA==}
 
   rfdc@1.4.1:
     resolution: {integrity: sha512-q1b3N5QkRUWUl7iyylaaj3kOpIT0N2i9MqIEQXP73GVsN9cw3fdx8X63cEmWhJGi2PPCF23Ijp7ktmd39rawIA==}
@@ -10728,10 +10728,10 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@civitai/client@0.2.0-beta.41':
+  '@civitai/client@0.2.0-beta.42':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
-      rfc6902: 5.1.2
+      rfc6902: 5.2.0
       tslib: 2.8.1
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -19276,7 +19276,7 @@ snapshots:
 
   reusify@1.1.0: {}
 
-  rfc6902@5.1.2: {}
+  rfc6902@5.2.0: {}
 
   rfdc@1.4.1: {}
 

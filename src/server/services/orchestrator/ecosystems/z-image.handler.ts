@@ -9,6 +9,7 @@
 import type {
   ZImageTurboCreateImageGenInput,
   ZImageBaseCreateImageGenInput,
+  ImageGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -32,7 +33,7 @@ const baseModelToModel: Record<string, 'turbo' | 'base'> = {
  * Creates imageGen input for ZImage ecosystems (ZImageTurbo and ZImageBase).
  * Uses SdCpp samplers/schedulers. Supports LoRA resources.
  */
-export const createZImageInput = defineHandler<ZImageCtx, ZImageInput>((data, ctx) => {
+export const createZImageInput = defineHandler<ZImageCtx, [ImageGenStepTemplate]>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImage workflows');
 
   const quantity = data.quantity ?? 1;
@@ -46,21 +47,26 @@ export const createZImageInput = defineHandler<ZImageCtx, ZImageInput>((data, ct
     }
   }
 
-  return removeEmpty({
-    engine: 'sdcpp',
-    ecosystem: 'zImage',
-    model,
-    operation: 'createImage' as const,
-    prompt: data.prompt,
-    negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
-    width: data.aspectRatio.width,
-    height: data.aspectRatio.height,
-    cfgScale: data.cfgScale ?? 1,
-    steps: data.steps ?? 4,
-    sampleMethod: 'sampler' in data ? data.sampler : 'euler',
-    schedule: 'scheduler' in data ? data.scheduler : 'simple',
-    quantity,
-    seed: data.seed,
-    loras: Object.keys(loras).length > 0 ? loras : undefined,
-  }) as ZImageInput;
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        engine: 'sdcpp',
+        ecosystem: 'zImage',
+        model,
+        operation: 'createImage' as const,
+        prompt: data.prompt,
+        negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+        width: data.aspectRatio.width,
+        height: data.aspectRatio.height,
+        cfgScale: data.cfgScale ?? 1,
+        steps: data.steps ?? 4,
+        sampleMethod: 'sampler' in data ? data.sampler : 'euler',
+        schedule: 'scheduler' in data ? data.scheduler : 'simple',
+        quantity,
+        seed: data.seed,
+        loras: Object.keys(loras).length > 0 ? loras : undefined,
+      }) as ZImageInput,
+    },
+  ];
 });

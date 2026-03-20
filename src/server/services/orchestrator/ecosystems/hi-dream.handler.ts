@@ -21,7 +21,7 @@ type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
  * Creates step input for HiDream ecosystem.
  * Uses HiDream-specific input transformation for variant handling.
  */
-export const createHiDreamInput = defineHandler<HiDreamCtx, TextToImageStepTemplate>(
+export const createHiDreamInput = defineHandler<HiDreamCtx, [TextToImageStepTemplate]>(
   (data, ctx) => {
     if (!data.aspectRatio) throw new Error('Aspect ratio is required for HiDream workflows');
     if (!data.model) throw new Error('Model is required for HiDream workflows');
@@ -68,25 +68,27 @@ export const createHiDreamInput = defineHandler<HiDreamCtx, TextToImageStepTempl
       (params.sampler ?? 'Euler') as keyof typeof samplersToSchedulers
     ] as Scheduler;
 
-    return {
-      $type: 'textToImage',
-      input: {
-        model: ctx.airs.getOrThrow(data.model.id),
-        additionalNetworks,
-        scheduler,
-        prompt: params.prompt ?? data.prompt,
-        negativePrompt:
-          params.negativePrompt ?? ('negativePrompt' in data ? data.negativePrompt : undefined),
-        steps: params.steps ?? ('steps' in data ? data.steps : undefined) ?? 25,
-        cfgScale: params.cfgScale ?? ('cfgScale' in data ? data.cfgScale : undefined) ?? 7,
-        clipSkip: 'clipSkip' in data ? data.clipSkip : undefined,
-        seed,
-        width: params.width ?? data.aspectRatio.width,
-        height: params.height ?? data.aspectRatio.height,
-        quantity,
-        batchSize: 1,
-        outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
-      },
-    } as TextToImageStepTemplate;
+    return [
+      {
+        $type: 'textToImage',
+        input: {
+          model: ctx.airs.getOrThrow(data.model.id),
+          additionalNetworks,
+          scheduler,
+          prompt: params.prompt ?? data.prompt,
+          negativePrompt:
+            params.negativePrompt ?? ('negativePrompt' in data ? data.negativePrompt : undefined),
+          steps: params.steps ?? ('steps' in data ? data.steps : undefined) ?? 25,
+          cfgScale: params.cfgScale ?? ('cfgScale' in data ? data.cfgScale : undefined) ?? 7,
+          clipSkip: 'clipSkip' in data ? data.clipSkip : undefined,
+          seed,
+          width: params.width ?? data.aspectRatio.width,
+          height: params.height ?? data.aspectRatio.height,
+          quantity,
+          batchSize: 1,
+          outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
+        },
+      } as TextToImageStepTemplate,
+    ];
   }
 );

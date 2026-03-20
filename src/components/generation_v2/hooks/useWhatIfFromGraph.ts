@@ -21,6 +21,7 @@ import type { NodeError } from '~/libs/data-graph/data-graph';
 import { useGraph } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
@@ -152,6 +153,17 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       enabled && !isNoSubmit && !!currentUser && !!queryPayload && !resourcesLoading && !imagesPending,
   });
 
+  const data = useMemo(
+    () =>
+      queryResult.data ?? {
+        cost: defaultWorkflowCost,
+        ready: false,
+        allowMatureContent: false,
+        transactions: undefined,
+      },
+    [queryResult.data]
+  );
+
   const validationErrors =
     validationResult && !validationResult.success ? validationResult.errors : null;
 
@@ -163,6 +175,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
   return {
     ...queryResult,
+    data,
     isLoading: queryResult.isFetching || imagesPending,
     isPromptDirty,
     canEstimateCost,
