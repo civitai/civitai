@@ -12,7 +12,12 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { getChainConfig, getChainForNetwork, isDepositComplete, outcomeAmountToBuzz } from '~/server/common/chain-config';
+import {
+  getChainConfig,
+  getChainForNetwork,
+  isDepositComplete,
+  outcomeAmountToBuzz,
+} from '~/server/common/chain-config';
 
 /** IPN callback URL — configurable for dev (webhook.site) vs prod */
 const getIpnCallbackUrl = () =>
@@ -25,7 +30,7 @@ const log = async (data: MixedObject) => {
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
-export const getDepositAddress = async (userId: number, chain: string = 'evm') => {
+export const getDepositAddress = async (userId: number, chain = 'evm') => {
   const config = getChainConfig(chain);
   if (!config) throw new Error(`Unsupported chain: ${chain}`);
 
@@ -255,9 +260,7 @@ export const reprocessDeposit = async (paymentId: number) => {
   }
 
   if (payment.payment_status !== 'finished') {
-    throw new Error(
-      `Payment ${paymentId} is not finished (status: ${payment.payment_status})`
-    );
+    throw new Error(`Payment ${paymentId} is not finished (status: ${payment.payment_status})`);
   }
 
   const orderId = payment.order_id;
@@ -267,9 +270,10 @@ export const reprocessDeposit = async (paymentId: number) => {
 
   // Build a webhook-like event from the GET response
   const event: NOWPayments.WebhookEvent = {
-    payment_id: typeof payment.payment_id === 'string'
-      ? parseInt(payment.payment_id, 10)
-      : payment.payment_id,
+    payment_id:
+      typeof payment.payment_id === 'string'
+        ? parseInt(payment.payment_id, 10)
+        : payment.payment_id,
     payment_status: payment.payment_status,
     order_id: payment.order_id,
     outcome_amount: payment.outcome_amount,
@@ -285,11 +289,7 @@ export const reprocessDeposit = async (paymentId: number) => {
 /** Hard cap on perPage to prevent abuse */
 const MAX_PER_PAGE = 25;
 
-export const getDepositHistory = async (
-  userId: number,
-  page: number = 1,
-  perPage: number = 3
-) => {
+export const getDepositHistory = async (userId: number, page = 1, perPage = 3) => {
   page = Math.max(1, page);
   perPage = Math.min(Math.max(1, perPage), MAX_PER_PAGE);
 
@@ -387,9 +387,7 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
     return [];
   }
 
-  const selectedCodes = new Set(
-    merchantCoins.selectedCurrencies.map((c) => c.toLowerCase())
-  );
+  const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
 
   // Filter full currencies to only our selected ones, and only those on supported chains
   const selectedCurrencies = fullCurrencies.currencies
@@ -445,8 +443,7 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
 };
 
 export const getBuzzConversionRate = async (fiat: string) => {
-  const cacheKey =
-    `${REDIS_KEYS.CACHES.CRYPTO_CONVERSION_RATE}:${fiat}` as RedisKeyTemplateCache;
+  const cacheKey = `${REDIS_KEYS.CACHES.CRYPTO_CONVERSION_RATE}:${fiat}` as RedisKeyTemplateCache;
   return fetchThroughCache(
     cacheKey,
     async () => {
@@ -498,7 +495,9 @@ export const getMinAmount = async (currencyCode: string, fiat: string) => {
       return {
         minAmount: rawMin != null ? rawMin * (1 + MIN_AMOUNT_BUFFER) : null,
         fiatEquivalent:
-          rawFiat != null ? Math.max(rawFiat * (1 + MIN_AMOUNT_BUFFER), MIN_AMOUNT_FLOOR_USD) : null,
+          rawFiat != null
+            ? Math.max(rawFiat * (1 + MIN_AMOUNT_BUFFER), MIN_AMOUNT_FLOOR_USD)
+            : null,
       };
     },
     { ttl: CacheTTL.md }
