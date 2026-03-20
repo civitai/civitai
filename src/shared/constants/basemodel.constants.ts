@@ -3638,7 +3638,7 @@ export const baseModelGroupConfig: Record<string, { name: string; description?: 
  * @param baseModel - Base model name or ecosystem key
  * @returns Base model record or fallback to "Other"
  */
-function getBaseModelConfig(baseModel: string): BaseModelRecord {
+export function getBaseModelConfig(baseModel: string): BaseModelRecord {
   // Try to find by name first
   let record = baseModelByName.get(baseModel);
   if (record) return record;
