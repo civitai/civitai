@@ -52,7 +52,6 @@ import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { getEcosystem, getCompatibleBaseModels } from '~/shared/constants/basemodel.constants';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 
 // Small inline dropzone for adding files within a section
@@ -179,24 +178,17 @@ export function Files() {
 
   const handleOpenResourceSelect = () => {
     // Compute compatible base models from the version's base model
-    const ecosystem = baseModel ? getEcosystem(baseModel) : undefined;
     const resourceTypes = [
       ModelType.VAE,
       ModelType.Controlnet,
+      ModelType.Poses,
       ModelType.TextualInversion,
       ModelType.Hypernetwork,
     ] as const;
 
     const resources = resourceTypes.map((type) => {
-      if (!ecosystem) return { type };
-      const compat = getCompatibleBaseModels(ecosystem.id, type);
-      const fullNames = compat.full.map((m) => m.name);
-      const partialNames = compat.partial.map((m) => m.name);
-      return {
-        type,
-        ...(fullNames.length > 0 && { baseModels: fullNames }),
-        ...(partialNames.length > 0 && { partialSupport: partialNames }),
-      };
+      if (!baseModel) return { type };
+      return { type, baseModels: [baseModel] };
     });
 
     openResourceSelectModal({
