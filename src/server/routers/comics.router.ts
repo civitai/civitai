@@ -4215,9 +4215,6 @@ export const comicsRouter = router({
    * Returns used slots, limit, available slots, and whether the user can generate.
    */
   getQueueStatus: comicProtectedProcedure.query(async ({ ctx }) => {
-    const { getUserQueueStatus } = await import(
-      '~/server/services/orchestrator/queue-limits'
-    );
     const token = await getOrchestratorToken(ctx.user!.id, ctx);
     const userTier = ctx.user?.tier ?? 'free';
     return getUserQueueStatus(token, userTier);

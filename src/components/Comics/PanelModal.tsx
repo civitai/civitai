@@ -158,8 +158,9 @@ export function PanelModal({
   );
 
   // Queue status for disabling generation when full
-  const { canGenerate, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
-  const queueFull = !canGenerate && !queueLoading;
+  const { canGenerate, available, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
 
   // Enhance tab state
   const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
@@ -681,14 +682,19 @@ export function PanelModal({
               Queue full ({used}/{limit} jobs). Wait for jobs to complete.
             </Alert>
           )}
+          {generationDisabled && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
 
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
             <Tooltip
-              label={queueFull ? `Queue full (${used}/${limit})` : costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
-              disabled={!queueFull && !enhancePrompt && costReady}
+              label={queueFull ? `Queue full (${used}/${limit})` : generationDisabled ? 'Generation unavailable' : costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
+              disabled={!queueFull && !generationDisabled && !enhancePrompt && costReady}
               withArrow
               position="top"
             >
@@ -696,7 +702,7 @@ export function PanelModal({
                 buzzAmount={effectivePanelCost + (enhancePrompt ? effectiveEnhanceCost : 0)}
                 label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : 'Generate'}
                 loading={isSubmitting || isCreatePending}
-                disabled={!prompt.trim() || !costReady || queueFull}
+                disabled={!prompt.trim() || !costReady || queueFull || generationDisabled}
                 onPerformTransaction={onGeneratePanel}
                 showPurchaseModal
               />
@@ -889,14 +895,19 @@ export function PanelModal({
               Queue full ({used}/{limit} jobs). Wait for jobs to complete.
             </Alert>
           )}
+          {generationDisabled && prompt.trim() && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
 
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
             <Tooltip
-              label={queueFull && prompt.trim() ? `Queue full (${used}/${limit})` : undefined}
-              disabled={!(queueFull && prompt.trim())}
+              label={queueFull && prompt.trim() ? `Queue full (${used}/${limit})` : generationDisabled && prompt.trim() ? 'Generation unavailable' : undefined}
+              disabled={!((queueFull || generationDisabled) && prompt.trim())}
               withArrow
               position="top"
             >
@@ -904,7 +915,7 @@ export function PanelModal({
                 buzzAmount={(enhanceGenCost ?? 0) + (prompt.trim() && enhancePrompt ? effectiveEnhanceCost : 0)}
                 label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
                 loading={isSubmitting || isEnhancePending}
-                disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && queueFull)}
+                disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && (queueFull || generationDisabled))}
                 onPerformTransaction={handleEnhanceSubmit}
                 showPurchaseModal
               />

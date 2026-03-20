@@ -285,9 +285,9 @@ getQueueStatus: comicProtectedProcedure
    - `enhancePanel` - fail immediately if no slots
    - `iterateGenerate` - fail immediately if no slots
 
-3. **Update multi-panel endpoints with wait-and-retry**
-   - `smartCreateChapter` - wait for slot before each panel (via `createSinglePanel`)
-   - `bulkCreatePanels` - wait for slot before each generation mode (Mode 3 & 4)
+3. **Update multi-panel endpoints with fail-fast checks**
+   - `smartCreateChapter` - check all required slots upfront via `assertCanGenerate(panelCount)`
+   - `bulkCreatePanels` - check all required slots upfront for panels needing generation
 
 4. **Add `getQueueStatus` endpoint** - expose status to frontend
 
@@ -305,8 +305,8 @@ getQueueStatus: comicProtectedProcedure
 | `createPanel` | 1 | Single panel generation |
 | `enhancePanel` | 1 | Re-generate existing panel |
 | `iterateGenerate` | 1 | Iterative panel editing |
-| `smartCreateChapter` | N (panel count) | Creates multiple panels - **waits for each slot** |
-| `bulkCreatePanels` | N (panel count) | Creates multiple panels - **waits for each slot** |
+| `smartCreateChapter` | N (panel count) | Creates multiple panels - **fail-fast check upfront** |
+| `bulkCreatePanels` | N (panel count) | Creates multiple panels - **fail-fast check upfront** |
 
 ### Non-Generation Endpoints (No Queue Check)
 - `createPanelFromImage` - Uses existing image, no generation
@@ -343,9 +343,7 @@ getQueueStatus: comicProtectedProcedure
 
 ## Questions for Review
 
-1. ~~Which Smart Create approach (A or B)?~~ **→ Option B (Wait-and-Retry) selected**
+1. ~~Which Smart Create approach (A or B)?~~ **→ Option A (Fail-Fast) selected** — check all slots upfront before starting any generation
 2. Should comics have its own queue or share with main generator?
 3. Do we need real-time queue status updates (WebSocket)?
 4. Should we add queue status to the comics project header/sidebar?
-5. **NEW**: What timeout should we use for waiting on slots? (Currently proposed: 5 minutes per panel)
-6. **NEW**: Should we emit SSE/WebSocket events for "waiting for slot" status updates to the UI?

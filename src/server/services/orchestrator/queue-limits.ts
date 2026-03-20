@@ -94,6 +94,14 @@ export async function assertCanGenerate(
 ): Promise<QueueStatus> {
   const status = await getUserQueueStatus(token, userTier);
 
+  // Check if generation is globally disabled (separate from queue fullness)
+  if (!status.canGenerate && status.available >= requestedSlots) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Image generation is currently unavailable. Please try again later.',
+    });
+  }
+
   if (status.available < requestedSlots) {
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',

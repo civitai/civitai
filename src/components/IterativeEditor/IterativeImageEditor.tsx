@@ -1,4 +1,5 @@
 import {
+  Alert,
   Badge,
   Button,
   Group,
@@ -13,6 +14,7 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconBolt,
   IconCheck,
+  IconClock,
   IconMessages,
   IconPencil,
   IconPhotoPlus,
@@ -39,6 +41,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
 import { getImageDimensions } from '~/utils/image-utils';
 
+import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import { AspectRatioSelector } from './AspectRatioSelector';
 import { IterationMessage } from './IterationMessage';
 import type {
@@ -119,6 +122,11 @@ export function IterativeImageEditor({
   onRetryCost,
   mode = 'page',
 }: IterativeImageEditorProps) {
+  // ── Queue status ──
+  const { canGenerate, available, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
+
   // ── Core state ──
   const [iterations, setIterations] = useState<IterationEntry[]>([]);
   const [currentSource, setCurrentSource] = useState<SourceImage | null>(
@@ -793,6 +801,18 @@ export function IterativeImageEditor({
           )}
         </div>
 
+        {/* ── Queue / generation status warnings ── */}
+        {queueFull && (
+          <Alert color="red" icon={<IconClock size={16} />} mx="sm" mb={0}>
+            Queue full ({used}/{limit} jobs). Wait for jobs to complete.
+          </Alert>
+        )}
+        {generationDisabled && (
+          <Alert color="red" icon={<IconClock size={16} />} mx="sm" mb={0}>
+            Image generation is currently unavailable. Please try again later.
+          </Alert>
+        )}
+
         {/* ── Input area ── */}
         <div className={styles.inputArea}>
           {renderInput ? (
@@ -837,11 +857,15 @@ export function IterativeImageEditor({
               )}
               <Tooltip
                 label={
-                  costFailed
-                    ? 'Cost estimation failed'
-                    : costLoading || estimatedCost == null
-                      ? 'Calculating cost…'
-                      : `~${estimatedCost} Buzz (Ctrl+Enter)`
+                  queueFull
+                    ? `Queue full (${used}/${limit})`
+                    : generationDisabled
+                      ? 'Generation unavailable'
+                      : costFailed
+                        ? 'Cost estimation failed'
+                        : costLoading || estimatedCost == null
+                          ? 'Calculating cost…'
+                          : `~${estimatedCost} Buzz (Ctrl+Enter)`
                 }
                 withArrow
                 position="top"
@@ -857,7 +881,7 @@ export function IterativeImageEditor({
                       </span>
                     }
                     loading={isGenerating || (costLoading && !costFailed)}
-                    disabled={!prompt.trim() || isGenerating || estimatedCost == null}
+                    disabled={!prompt.trim() || isGenerating || estimatedCost == null || queueFull || generationDisabled}
                     onPerformTransaction={handleSend}
                     showPurchaseModal
                     size="compact-sm"

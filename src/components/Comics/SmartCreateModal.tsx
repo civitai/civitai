@@ -59,10 +59,11 @@ export function SmartCreateModal({
   const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   // Queue status for showing warnings
-  const { available, limit, used, isLoading: queueLoading } = useComicsQueueStatus();
+  const { canGenerate, available, limit, used, isLoading: queueLoading } = useComicsQueueStatus();
   const validPanelCount = smartPanels.filter((p) => p.prompt.trim()).length;
   const needsQueueWait = validPanelCount > available && available > 0;
-  const queueFull = available === 0;
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
 
   const resetSmartState = () => {
     setSmartStep('input');
@@ -243,12 +244,17 @@ export function SmartCreateModal({
           </Text>
 
           {/* Queue status warnings */}
-          {!queueLoading && queueFull && (
+          {generationDisabled && (
+            <Alert color="red" title="Generation Unavailable" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
+          {!queueLoading && queueFull && !generationDisabled && (
             <Alert color="red" title="Queue Full" icon={<IconClock size={16} />}>
               Your generation queue is full ({used}/{limit} jobs). You need to wait for jobs to complete before creating new panels.
             </Alert>
           )}
-          {!queueLoading && needsQueueWait && !queueFull && (
+          {!queueLoading && needsQueueWait && !queueFull && !generationDisabled && (
             <Alert color="yellow" title="Queuing Required" icon={<IconClock size={16} />}>
               You have {available} of {limit} queue slots available but want to create {validPanelCount} panels.
               Panels will be created one at a time as slots become available. This may take longer than usual.
@@ -270,7 +276,7 @@ export function SmartCreateModal({
               }
               label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
-              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null}
+              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null || generationDisabled}
               onPerformTransaction={handleSmartCreate}
               showPurchaseModal
             />
