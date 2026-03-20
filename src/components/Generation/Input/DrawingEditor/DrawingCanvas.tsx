@@ -195,16 +195,15 @@ export function DrawingCanvas({
           case 'circle':
             return { ...el, x: newX, y: newY };
           case 'arrow': {
-            // For arrows, newX/newY are the drag offset (node starts at 0,0)
-            // Simply add the offset to all points
+            // Arrow uses Group wrapper at (minX, minY), calculate delta from old position
+            const [x1, y1, x2, y2] = el.points;
+            const oldMinX = Math.min(x1, x2);
+            const oldMinY = Math.min(y1, y2);
+            const dx = newX - oldMinX;
+            const dy = newY - oldMinY;
             return {
               ...el,
-              points: [
-                el.points[0] + newX,
-                el.points[1] + newY,
-                el.points[2] + newX,
-                el.points[3] + newY,
-              ],
+              points: [x1 + dx, y1 + dy, x2 + dx, y2 + dy],
             };
           }
           case 'line': {
@@ -229,8 +228,9 @@ export function DrawingCanvas({
 
       onElementsChange(updatedElements);
 
-      // Reset node position for arrows and lines (they use points, not x/y)
-      if (element.type === 'arrow' || element.type === 'line') {
+      // Reset node position for lines (they use points, not x/y)
+      // Arrows now use Group wrapper so they don't need reset
+      if (element.type === 'line') {
         node.x(0);
         node.y(0);
       }
@@ -279,22 +279,32 @@ export function DrawingCanvas({
             };
           }
           case 'arrow': {
-            // For arrows, transform affects scale - we apply it to points
+            // Arrow uses Group wrapper - transform affects the Group
             const scaleX = node.scaleX();
             const scaleY = node.scaleY();
             node.scaleX(1);
             node.scaleY(1);
             const arrowEl = el as DrawingArrowElement;
             const [x1, y1, x2, y2] = arrowEl.points;
-            const cx = (x1 + x2) / 2;
-            const cy = (y1 + y2) / 2;
+            // Calculate old Group position (minX, minY)
+            const oldMinX = Math.min(x1, x2);
+            const oldMinY = Math.min(y1, y2);
+            // Get new Group position
+            const newGroupX = node.x();
+            const newGroupY = node.y();
+            // Calculate local points (relative to old min)
+            const localX1 = x1 - oldMinX;
+            const localY1 = y1 - oldMinY;
+            const localX2 = x2 - oldMinX;
+            const localY2 = y2 - oldMinY;
+            // Scale local points and convert to absolute
             return {
               ...el,
               points: [
-                cx + (x1 - cx) * scaleX,
-                cy + (y1 - cy) * scaleY,
-                cx + (x2 - cx) * scaleX,
-                cy + (y2 - cy) * scaleY,
+                newGroupX + localX1 * scaleX,
+                newGroupY + localY1 * scaleY,
+                newGroupX + localX2 * scaleX,
+                newGroupY + localY2 * scaleY,
               ],
               rotation: node.rotation(),
             };
@@ -371,11 +381,11 @@ export function DrawingCanvas({
     onCommit?.();
   }, [selectedId, elements, onElementsChange, onSelectedIdChange, onCommit]);
 
-  // Handle element flip (images, rectangles, speech bubbles)
+  // Handle element flip (images, rectangles, speech bubbles, circles, arrows)
   const handleFlipElement = useCallback(
     (axis: 'x' | 'y') => {
       if (!selectedId) return;
-      const flippableTypes = new Set(['image', 'rectangle', 'speechBubble']);
+      const flippableTypes = new Set(['image', 'rectangle', 'speechBubble', 'circle', 'arrow']);
       const updatedElements = elements.map((el) => {
         if (el.id !== selectedId || !flippableTypes.has(el.type)) return el;
         return axis === 'x'
@@ -842,6 +852,8 @@ export function DrawingCanvas({
                     stroke={element.color}
                     strokeWidth={element.strokeWidth}
                     rotation={element.rotation || 0}
+                    scaleX={element.flipX ? -1 : 1}
+                    scaleY={element.flipY ? -1 : 1}
                     draggable={isDraggable}
                     onClick={(e) => handleShapeClick(e, element)}
                     onTap={(e) => handleShapeClick(e, element)}
@@ -849,25 +861,52 @@ export function DrawingCanvas({
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
                   />
                 );
-              case 'arrow':
+              case 'arrow': {
+                // Calculate arrow bounds for flip offset
+                const [x1, y1, x2, y2] = element.points;
+                const minX = Math.min(x1, x2);
+                const minY = Math.min(y1, y2);
+                const arrowWidth = Math.abs(x2 - x1);
+                const arrowHeight = Math.abs(y2 - y1);
+                // Translate points to local coordinates (relative to minX, minY)
+                const localPoints = [x1 - minX, y1 - minY, x2 - minX, y2 - minY];
                 return (
-                  <Arrow
+                  <Group
                     key={element.id}
                     ref={(node) => setShapeRef(element.id, node)}
-                    points={element.points}
-                    stroke={element.color}
-                    strokeWidth={element.strokeWidth}
-                    pointerLength={element.strokeWidth * 2}
-                    pointerWidth={element.strokeWidth * 2}
+                    x={minX}
+                    y={minY}
                     rotation={element.rotation || 0}
                     draggable={isDraggable}
                     onClick={(e) => handleShapeClick(e, element)}
                     onTap={(e) => handleShapeClick(e, element)}
                     onDragEnd={(e) => handleDragEnd(e, element)}
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
-                  />
+                  >
+                    {/* Invisible hit rect for reliable Transformer bounds detection */}
+                    <Rect
+                      width={arrowWidth || 1}
+                      height={arrowHeight || 1}
+                      fill="transparent"
+                    />
+                    <Arrow
+                      points={localPoints}
+                      stroke={element.color}
+                      strokeWidth={element.strokeWidth}
+                      pointerLength={element.strokeWidth * 2}
+                      pointerWidth={element.strokeWidth * 2}
+                      x={element.flipX ? arrowWidth : 0}
+                      y={element.flipY ? arrowHeight : 0}
+                      scaleX={element.flipX ? -1 : 1}
+                      scaleY={element.flipY ? -1 : 1}
+                    />
+                  </Group>
                 );
-              case 'speechBubble':
+              }
+              case 'speechBubble': {
+                // Calculate total height including tail for proper bounds
+                const tailExtension = element.tailY - element.y - element.height;
+                const totalHeight = element.height + Math.max(0, tailExtension);
                 return (
                   <Group
                     key={element.id}
@@ -875,16 +914,18 @@ export function DrawingCanvas({
                     x={element.x}
                     y={element.y}
                     rotation={element.rotation || 0}
-                    scaleX={element.flipX ? -1 : 1}
-                    scaleY={element.flipY ? -1 : 1}
-                    offsetX={element.flipX ? element.width : 0}
-                    offsetY={element.flipY ? element.height + (element.tailY - element.y - element.height) : 0}
                     draggable={isDraggable}
                     onClick={(e) => handleShapeClick(e, element)}
                     onTap={(e) => handleShapeClick(e, element)}
                     onDragEnd={(e) => handleDragEnd(e, element)}
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
                   >
+                    {/* Invisible hit rect for reliable Transformer bounds detection */}
+                    <Rect
+                      width={element.width}
+                      height={totalHeight}
+                      fill="transparent"
+                    />
                     <Shape
                       sceneFunc={(context, shape) => {
                         const w = element.width;
@@ -911,9 +952,14 @@ export function DrawingCanvas({
                       fill="#ffffff"
                       stroke={element.color}
                       strokeWidth={element.strokeWidth}
+                      x={element.flipX ? element.width : 0}
+                      y={element.flipY ? element.height : 0}
+                      scaleX={element.flipX ? -1 : 1}
+                      scaleY={element.flipY ? -1 : 1}
                     />
                   </Group>
                 );
+              }
               case 'text':
                 return (
                   <KonvaText
@@ -1009,7 +1055,7 @@ export function DrawingCanvas({
       {/* Floating action buttons for selected element */}
       {selectedId && isSelectMode && (() => {
         const selectedElement = elements.find((el) => el.id === selectedId);
-        const isFlippable = selectedElement?.type === 'image' || selectedElement?.type === 'rectangle' || selectedElement?.type === 'speechBubble';
+        const isFlippable = selectedElement?.type === 'image' || selectedElement?.type === 'rectangle' || selectedElement?.type === 'speechBubble' || selectedElement?.type === 'circle' || selectedElement?.type === 'arrow';
         return (
           <div
             style={{

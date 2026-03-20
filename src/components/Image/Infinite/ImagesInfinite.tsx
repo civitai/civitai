@@ -61,11 +61,10 @@ export function ImagesInfiniteContent({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryImages(
-      { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
-      { keepPreviousData: true }
-    );
+  const { images, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryImages(
+    { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
+    { keepPreviousData: true }
+  );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -75,7 +74,7 @@ export function ImagesInfiniteContent({
 
   return (
     <>
-      {isLoading ? (
+      {!images.length && isFetching ? (
         <Center p="xl">
           <Loader />
         </Center>

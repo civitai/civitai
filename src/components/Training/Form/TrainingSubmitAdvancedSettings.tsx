@@ -175,19 +175,37 @@ export const AdvancedSettings = ({
       updatedParams.lrScheduler = newScheduler;
     }
 
+    // Check if textEncoderLR is disabled for this base model (non-SD1/SDXL models)
+    const textEncoderSetting = trainingSettings.find((ts) => ts.name === 'textEncoderLR');
+    const textEncoderOverride =
+      textEncoderSetting?.overrides?.[runBase]?.all ??
+      textEncoderSetting?.overrides?.[runBase]?.[selectedRun.params.engine];
+    const isTextEncoderDisabled = textEncoderOverride?.disabled === true;
+
     // Prodigy optimizer requires LR values set to 1
     if (selectedRun.params.optimizerType === 'Prodigy') {
       if (selectedRun.params.unetLR !== 1) {
         updatedParams.unetLR = 1;
       }
-      if (selectedRun.params.textEncoderLR !== 1) {
+      // Only set textEncoderLR for models that support text encoder training
+      if (!isTextEncoderDisabled && selectedRun.params.textEncoderLR !== 1) {
         updatedParams.textEncoderLR = 1;
       }
-    } else if (previous?.params.optimizerType === 'Prodigy') {
-      // Restore default LR values when switching away from Prodigy
+    } else {
+      // For non-Prodigy optimizers, LR=1 is dangerously high and produces noise.
+      // Reset to defaults if LR values are at Prodigy levels (e.g. after switching away).
       const defaults = getDefaultTrainingParams(runBase, selectedRun.params.engine);
-      updatedParams.unetLR = defaults.unetLR;
-      updatedParams.textEncoderLR = defaults.textEncoderLR;
+      if (selectedRun.params.unetLR >= 0.1) {
+        updatedParams.unetLR = defaults.unetLR;
+      }
+      if (selectedRun.params.textEncoderLR >= 0.1) {
+        updatedParams.textEncoderLR = defaults.textEncoderLR;
+      }
+    }
+
+    // Ensure textEncoderLR is 0 for models that don't support text encoder training
+    if (isTextEncoderDisabled && selectedRun.params.textEncoderLR !== 0) {
+      updatedParams.textEncoderLR = 0;
     }
 
     if (Object.keys(updatedParams).length > 0) {

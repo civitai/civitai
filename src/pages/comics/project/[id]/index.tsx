@@ -105,7 +105,7 @@ function ProjectWorkspace() {
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
-    'NanoBanana' | 'Flux2' | 'Seedream' | 'OpenAI' | 'Qwen' | 'Grok' | null
+    'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
   >(null);
   const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
@@ -144,11 +144,6 @@ function ProjectWorkspace() {
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana';
   const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
 
-  const { data: costEstimate, isLoading: isCostLoading, error: costError } = trpc.comics.getPanelCostEstimate.useQuery(
-    { baseModel: effectiveModel },
-    { staleTime: 5 * 60 * 1000, retry: 2 }
-  );
-  const panelCost = costEstimate?.cost ?? null;
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
@@ -286,6 +281,22 @@ function ProjectWorkspace() {
   const needsImageSelection =
     mentionedReferences.length > 0 && mentionedRefImageCount > refImageBudget;
 
+  // Extract reference IDs for cost estimation (images fetched server-side)
+  const mentionedReferenceIds = useMemo(
+    () => (mentionedReferences.length > 0 ? mentionedReferences.map((r) => r.id) : undefined),
+    [mentionedReferences]
+  );
+
+  const { data: costEstimate, isLoading: isCostLoading, error: costError } = trpc.comics.getGenerationCostEstimate.useQuery(
+    {
+      baseModel: effectiveModel,
+      referenceIds: mentionedReferenceIds,
+      selectedImageIds: selectedImageIds ?? undefined,
+    },
+    { staleTime: 30_000, retry: 2 }
+  );
+  const panelCost = costEstimate?.cost ?? null;
+
   const mentionRefs = useMemo(
     () => activeReferences.map((c) => ({ id: c.id, name: c.name })),
     [activeReferences]
@@ -351,6 +362,13 @@ function ProjectWorkspace() {
     useCallback(
       (data: Omit<WorkflowStepEvent, '$type'> & { $type: string }) => {
         if (data.$type !== 'step') return;
+
+        // Job submitted an enqueued panel — refetch chapter to pick up new workflowId/status
+        if ((data.status as string) === 'submitted') {
+          void refetch();
+          return;
+        }
+
         if (data.status !== 'succeeded' && data.status !== 'failed') return;
         const panelId = workflowToPanelRef.current.get(data.workflowId);
         if (panelId != null) {
@@ -360,7 +378,7 @@ function ProjectWorkspace() {
           void pollAndUpdatePanels(generatingPanelIds);
         }
       },
-      [pollAndUpdatePanels, generatingPanelIds]
+      [pollAndUpdatePanels, generatingPanelIds, refetch]
     )
   );
 
@@ -1602,6 +1620,7 @@ function ProjectWorkspace() {
           coverImage: project.coverImage,
           heroImage: (project as any).heroImage,
           heroImagePosition: (project as any).heroImagePosition,
+          meta: (project as any).meta,
         }}
         onSave={(data) => updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })}
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}

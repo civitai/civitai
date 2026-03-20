@@ -216,15 +216,6 @@ export const getServerSideProps = createServerSideProps({
     // }
 
     if (ssg) {
-      // if (version)
-      //   await ssg.image.getInfinite.prefetchInfinite({
-      //     modelVersionId: version.id,
-      //     prioritizedUserIds: [version.model.userId],
-      //     period: 'AllTime',
-      //     sort: ImageSort.MostReactions,
-      //     limit: CAROUSEL_LIMIT,
-      //     pending: true,
-      //   });
       await ssg.hiddenPreferences.getHidden.prefetch();
 
       if (modelVersionIdParsed) {
@@ -232,18 +223,32 @@ export const getServerSideProps = createServerSideProps({
           entityId: modelVersionIdParsed as number,
           entityType: 'ModelVersion',
         });
-
-        // await ssg.common.getEntityClubRequirement.prefetch({
-        //   entityId: modelVersionIdParsed as number,
-        //   entityType: 'ModelVersion',
-        // });
-        // await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
-      await ssg.model.getById.prefetch({ id, excludeTrainingData: true });
+
+      // Fetch model to check slug and prefetch for client hydration
+      const model = await ssg.model.getById
+        .fetch({ id, excludeTrainingData: true })
+        .catch(() => null);
+
       await ssg.model.getCollectionShowcase.prefetch({ id });
       if (session) {
         await ssg.user.getEngagedModelVersions.prefetch({ id });
         await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
+      }
+
+      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (model) {
+        const correctSlug = slugit(model.name);
+        const currentSlug = params.slug?.join('/');
+        if (currentSlug !== correctSlug) {
+          const queryString = modelVersionId ? `?modelVersionId=${modelVersionId}` : '';
+          return {
+            redirect: {
+              destination: `/models/${id}/${correctSlug}${queryString}`,
+              permanent: false,
+            },
+          };
+        }
       }
     }
 

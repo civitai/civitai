@@ -91,6 +91,9 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
   private options: Required<LocalStorageAdapterOptions>;
   // Track which graph instances have been initialized (by their createdAt timestamp)
   private initializedGraphs = new Set<number>();
+  // In-memory cache of storage values, snapshotted at init time and updated on local writes.
+  // Prevents cross-tab pollution when subgraphs mount and read values via the valueProvider.
+  private storageCache = new Map<string, string>();
 
   constructor(options: LocalStorageAdapterOptions) {
     this.options = {
@@ -134,7 +137,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
         continue;
       }
 
-      const stored = this.options.storage.getItem(storageKey);
+      const stored = this.cachedGetItem(storageKey);
       if (stored) {
         try {
           const values = JSON.parse(stored);
@@ -183,6 +186,31 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
       return;
     }
     this.markInitialized();
+  }
+
+  /** Read a storage key from the in-memory cache (falls back to live storage on cache miss). */
+  private cachedGetItem(key: string): string | null {
+    if (this.storageCache.has(key)) {
+      return this.storageCache.get(key)!;
+    }
+    // Cache miss: read from storage and cache for future reads
+    const value = this.options.storage.getItem(key);
+    if (value !== null) {
+      this.storageCache.set(key, value);
+    }
+    return value;
+  }
+
+  /** Write to both live storage and the in-memory cache. */
+  private cachedSetItem(key: string, value: string): void {
+    this.options.storage.setItem(key, value);
+    this.storageCache.set(key, value);
+  }
+
+  /** Remove from both live storage and the in-memory cache. */
+  private cachedRemoveItem(key: string): void {
+    this.options.storage.removeItem(key);
+    this.storageCache.delete(key);
   }
 
   save(inputValues?: Record<string, unknown>): void {
@@ -247,7 +275,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
       // Start with existing values to retain keys from inactive nodes
       let values: Record<string, unknown> = {};
-      const stored = this.options.storage.getItem(storageKey);
+      const stored = this.cachedGetItem(storageKey);
       if (stored) {
         try {
           values = JSON.parse(stored);
@@ -290,7 +318,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
       // Only save if we have values to save
       if (Object.keys(values).length > 0) {
-        this.options.storage.setItem(storageKey, JSON.stringify(values));
+        this.cachedSetItem(storageKey, JSON.stringify(values));
       }
     }
   }
@@ -301,7 +329,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     for (const group of this.options.groups) {
       const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
       if (storageKey) {
-        this.options.storage.removeItem(storageKey);
+        this.cachedRemoveItem(storageKey);
       }
     }
   }
@@ -347,7 +375,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
         const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
         if (!storageKey) continue;
-        const stored = this.options.storage.getItem(storageKey);
+        const stored = this.cachedGetItem(storageKey);
         if (stored) {
           try {
             const values = JSON.parse(stored);
@@ -372,7 +400,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
         const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
         if (!storageKey) continue;
-        const stored = this.options.storage.getItem(storageKey);
+        const stored = this.cachedGetItem(storageKey);
         if (stored) {
           try {
             const values = JSON.parse(stored);
@@ -398,7 +426,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
 
         const storageKey = this.buildStorageKey(group.name, undefined, ctx);
         if (!storageKey) continue;
-        const stored = this.options.storage.getItem(storageKey);
+        const stored = this.cachedGetItem(storageKey);
         if (stored) {
           try {
             const values = JSON.parse(stored);

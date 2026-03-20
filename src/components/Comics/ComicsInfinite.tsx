@@ -22,7 +22,7 @@ export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false 
   const [debouncedFilters, cancel] = useDebouncedValue(filterOverrides, 500);
   const browsingLevel = useBrowsingSettings((s) => s.browsingLevel);
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+  const { data, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.comics.getPublicProjects.useInfiniteQuery(
       {
         limit: 20,
@@ -49,7 +49,7 @@ export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false 
 
   return (
     <>
-      {isLoading ? (
+      {!items.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />
         </Center>

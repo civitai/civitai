@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
+import { ChapterExportButton } from '~/components/Comics/ComicExportButton';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -144,6 +145,13 @@ function ComicReader() {
                 >
                   <IconChevronRight size={18} />
                 </ActionIcon>
+                {project && activeChapter && (
+                  <ChapterExportButton
+                    projectName={project.name}
+                    chapterName={activeChapter.name}
+                    panels={activeChapter.panels}
+                  />
+                )}
               </Group>
             </Group>
           </Container>

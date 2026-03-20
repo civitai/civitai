@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetDepositAddressInput } from '~/server/schema/nowpayments.schema';
 import { trpc } from '~/utils/trpc';
 import { DepositCardContent } from './DepositCardContent';
@@ -19,12 +20,13 @@ export function DepositAddressCard({
   chain?: GetDepositAddressInput['chain'];
   onCurrencySelect?: (code: string, chain: string) => void;
 }) {
+  const currentUser = useCurrentUser();
   const {
     data: walletData,
     isLoading: loading,
     error,
     refetch,
-  } = trpc.nowPayments.getDepositAddress.useQuery({ chain });
+  } = trpc.nowPayments.getDepositAddress.useQuery({ chain }, { enabled: !!currentUser });
 
   const depositAddress = walletData?.address ?? '';
 

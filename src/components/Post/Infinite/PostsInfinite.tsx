@@ -55,7 +55,7 @@ function PostsInfiniteContent({
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryPosts(
+  const { posts, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
     debouncedFilters,
     { keepPreviousData: true }
   );
@@ -68,7 +68,7 @@ function PostsInfiniteContent({
 
   return (
     <>
-      {isLoading ? (
+      {!posts.length && isFetching ? (
         <Center p="xl">
           <Loader />
         </Center>

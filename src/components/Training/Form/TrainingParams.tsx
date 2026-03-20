@@ -163,7 +163,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     default: 10,
     min: 3,
-    max: 40,
+    max: 50,
     step: 1,
     overrides: {
       sdxl: { all: { min: 1 } },

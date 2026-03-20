@@ -14,6 +14,7 @@ import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generat
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import {
   allEcosystemDefaultVersionIds,
+  baseModelByName,
   ecosystemByKey,
   ecosystemById,
   getEcosystem,
@@ -460,8 +461,30 @@ function InnerProvider({
           }
         }
 
+        // If all incoming resources have full or partial compatibility with the
+        // current ecosystem, preserve it. Only switch ecosystem when a resource
+        // is incompatible (no compatibility).
+        const currentEcosystem = snapshot.ecosystem as string | undefined;
+        const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
+        const allCompatible =
+          currentEco &&
+          data.resources.length > 0 &&
+          data.resources.every((r) => {
+            if (!r.baseModel) return true;
+            const resourceBaseModel = baseModelByName.get(r.baseModel);
+            if (!resourceBaseModel) return true;
+            return (
+              getGenerationSupport(
+                currentEco.id,
+                resourceBaseModel.ecosystemId,
+                r.model.type as ModelType
+              ) !== null
+            );
+          });
+
+        const { ecosystem: _incomingEco, ...paramsWithoutEcosystem } = data.params;
         const values = {
-          ...data.params,
+          ...(allCompatible ? paramsWithoutEcosystem : data.params),
           ...(targetWorkflow && { workflow: targetWorkflow }),
           resources: mergedResources,
           // Only include model/vae when present — otherwise we'd nullify the current value

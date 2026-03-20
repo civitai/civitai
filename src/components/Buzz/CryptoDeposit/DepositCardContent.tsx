@@ -33,6 +33,7 @@ import {
 import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   useCurrentUserSettings,
   useMutateUserSettings,
@@ -47,6 +48,7 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
 });
 
 export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
+  const currentUser = useCurrentUser();
   const clipboard = useClipboard({ timeout: 2000 });
   const userSettings = useCurrentUserSettings();
   const updateSettings = useMutateUserSettings();
@@ -98,7 +100,7 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
   const { data: conversionRate, isFetching: loadingRate } =
     trpc.nowPayments.getBuzzConversionRate.useQuery(
       { fiat: selectedFiat },
-      { staleTime: 60 * 1000 }
+      { staleTime: 60 * 1000, enabled: !!currentUser }
     );
 
   const isEmpty = !depositAddress;

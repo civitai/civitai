@@ -16,7 +16,9 @@ const imageTrainingBaseSchema = z.object({
 });
 
 // AI Toolkit specific parameters - uses discriminated union for proper modelVariant validation
-const aiToolkitMaxEpochs = 40;
+const aiToolkitMaxEpochs = 50;
+const prodigyOptimizers = ['prodigy', 'prodigy8bit'];
+const maxLrForNonProdigy = 0.1;
 const aiToolkitBaseParams = z.object({
   engine: z.literal(OrchEngineTypes.AiToolkit),
   epochs: z.number().max(aiToolkitMaxEpochs),
@@ -95,7 +97,16 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('flux2klein'),
     modelVariant: z.enum(['4b', '9b']),
   }),
-]);
+]).refine(
+  (data) => {
+    if (prodigyOptimizers.includes(data.optimizerType)) return true;
+    return data.lr < maxLrForNonProdigy;
+  },
+  {
+    message: `Learning rate must be less than ${maxLrForNonProdigy} for non-Prodigy optimizers`,
+    path: ['lr'],
+  }
+);
 
 export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParams>;
 
@@ -162,10 +173,19 @@ const whatIfAiToolkitParams = z.object({
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
-export const imageTrainingRouterWhatIfSchema = z.discriminatedUnion('engine', [
-  whatIfKohyaParams,
-  whatIfAiToolkitParams,
-]);
+export const imageTrainingRouterWhatIfSchema = z
+  .discriminatedUnion('engine', [whatIfKohyaParams, whatIfAiToolkitParams])
+  .refine(
+    (data) => {
+      if (!('optimizerType' in data)) return true; // Kohya params don't have optimizerType
+      if (prodigyOptimizers.includes(data.optimizerType)) return true;
+      return data.lr < maxLrForNonProdigy;
+    },
+    {
+      message: `Learning rate must be less than ${maxLrForNonProdigy} for non-Prodigy optimizers`,
+      path: ['lr'],
+    }
+  );
 export type ImageTrainingRouterWhatIfSchema = z.infer<typeof imageTrainingRouterWhatIfSchema>;
 
 const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
