@@ -334,6 +334,14 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     }
   }
 
+  /**
+   * Remove a storage key from both live storage and the in-memory cache.
+   * Use this instead of direct localStorage.removeItem() to keep the cache in sync.
+   */
+  removeKey(key: string): void {
+    this.cachedRemoveItem(key);
+  }
+
   getStorageKeys(): string[] {
     const ctx = this.graph.ctx;
     const keys: string[] = [];
