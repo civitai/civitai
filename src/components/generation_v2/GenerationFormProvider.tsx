@@ -61,11 +61,13 @@ const STORAGE_KEY = 'generation-graph';
  * ecosystems used by workflows of that output type.
  */
 export function clearStorageForOutput(outputType: 'image' | 'video') {
+  const remove = (key: string) => storageAdapter.removeKey(key);
+
   // Global key (prompt, seed, quantity, outputFormat, etc.)
-  localStorage.removeItem(STORAGE_KEY);
+  remove(STORAGE_KEY);
 
   // Output-scoped ecosystem
-  localStorage.removeItem(`${STORAGE_KEY}.output.${outputType}`);
+  remove(`${STORAGE_KEY}.output.${outputType}`);
 
   // Collect all ecosystem IDs used by workflows of this output type
   const ecosystemIds = new Set<number>();
@@ -73,7 +75,7 @@ export function clearStorageForOutput(outputType: 'image' | 'video') {
   // Workflow-scoped keys
   for (const [key] of workflowConfigByKey) {
     if (getOutputTypeForWorkflow(key) === outputType) {
-      localStorage.removeItem(`${STORAGE_KEY}.workflow.${key}`);
+      remove(`${STORAGE_KEY}.workflow.${key}`);
       for (const ecoId of getEcosystemsForWorkflow(key)) {
         ecosystemIds.add(ecoId);
       }
@@ -87,12 +89,12 @@ export function clearStorageForOutput(outputType: 'image' | 'video') {
     if (!eco) continue;
 
     // Individual ecosystem key
-    localStorage.removeItem(`${STORAGE_KEY}.ecosystem.${eco.key}`);
+    remove(`${STORAGE_KEY}.ecosystem.${eco.key}`);
 
     // Ecosystem group key (shared settings across group variants)
     const group = getEcosystemGroup(ecoId);
     if (group && !clearedGroups.has(group.id)) {
-      localStorage.removeItem(`${STORAGE_KEY}.ecosystem.${group.id}`);
+      remove(`${STORAGE_KEY}.ecosystem.${group.id}`);
       clearedGroups.add(group.id);
     }
   }

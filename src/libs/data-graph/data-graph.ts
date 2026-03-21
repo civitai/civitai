@@ -98,6 +98,8 @@ export interface StorageAdapter<Ctx extends Record<string, unknown> = Record<str
   getValues(): Partial<Ctx>;
   onBeforeEvaluate?(): void;
   onInit(): void;
+  /** Remove a storage key from both live storage and the in-memory cache */
+  removeKey(key: string): void;
 }
 
 // ============================================================================
