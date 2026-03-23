@@ -1,0 +1,460 @@
+import {
+  Badge,
+  Button,
+  Group,
+  Select,
+  Stack,
+  Text,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
+import { IconBrush, IconDownload, IconLock } from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useState } from 'react';
+import { BidModelButton } from '~/components/Auction/BidModelButton';
+import cardClasses from '~/components/Cards/Cards.module.css';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
+import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
+import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { TwCard } from '~/components/TwCard/TwCard';
+import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { fetchGenerationData } from '~/store/generation-graph.store';
+import { aDayAgo, formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
+import type { ResourceSelectSource } from '../resource-select.types';
+import { TopRightIcons } from './TopRightIcons';
+
+const IMAGE_CARD_WIDTH = 450;
+
+export function ResourceSelectCard({
+  data,
+  height,
+  isFavorite,
+  selectSource,
+}: {
+  data: SearchIndexDataMap['models'][number];
+  height?: number;
+  isFavorite: boolean;
+  selectSource?: ResourceSelectSource;
+}) {
+  const { onSelect } = useResourceSelectContext();
+  const currentUser = useCurrentUser();
+  const [loading, setLoading] = useState(false);
+
+  const image = data.images[0];
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+
+  const versions = data.versions;
+  const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const _selectedIndex = selectedIndex < versions.length ? selectedIndex : 0;
+  const selectedVersion = versions[_selectedIndex];
+  const [flipped, setFlipped] = useState(false);
+
+  const handleSelect = async () => {
+    const version = selectedVersion;
+    if (!version) return;
+    const { id } = version;
+
+    setLoading(true);
+    await fetchGenerationData({
+      type: 'modelVersion',
+      id,
+      generation: selectSource !== 'generation' ? false : undefined,
+    }).then((data) => {
+      // Find the specific resource that was requested by ID
+      const resource = data.resources.find((r) => r.id === id) ?? data.resources[0];
+      if (!resource) {
+        showErrorNotification({
+          error: new Error('Resource not found'),
+        });
+        return;
+      }
+      const previewImage = resource.image ?? image;
+      if (selectSource !== 'generation') {
+        onSelect({ ...resource, image: previewImage });
+      } else {
+        if (resource?.canGenerate || resource?.substitute?.canGenerate)
+          onSelect({ ...resource, image: previewImage });
+        else
+          showErrorNotification({
+            error: new Error('This model is no longer available for generation'),
+          });
+      }
+    });
+    setLoading(false);
+  };
+
+  const favoriteMutation = useToggleFavoriteMutation();
+  const handleToggleFavorite = ({ versionId, setTo }: { versionId?: number; setTo: boolean }) => {
+    if (favoriteMutation.isLoading) return;
+    favoriteMutation.mutate({
+      modelId: data.id,
+      modelVersionId: versionId,
+      setTo,
+    });
+  };
+
+  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
+  const isUpdated =
+    data.lastVersionAt &&
+    data.publishedAt &&
+    data.lastVersionAt > aDayAgo &&
+    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+
+  const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
+  const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
+
+  return (
+    <TwCosmeticWrapper cosmetic={data.cosmetic?.data} style={height ? { height } : undefined}>
+      <TwCard
+        className={clsx(cardClasses.root, 'justify-between')}
+        style={{ display: versions.length === 0 ? 'none' : undefined }}
+      >
+        <>
+          {image &&
+            (!flipped ? (
+              <ImageGuard2 image={image} connectType="model" connectId={data.id}>
+                {(safe) => {
+                  return (
+                    <div className="relative overflow-hidden aspect-portrait">
+                      {safe ? (
+                        <Link
+                          href={`/models/${data.id}?modelVersionId=${selectedVersion.id}`}
+                          target="_blank"
+                        >
+                          <EdgeMedia
+                            src={image.url}
+                            name={image.name ?? image.id.toString()}
+                            alt={image.name ?? undefined}
+                            type={image.type}
+                            width={width}
+                            placeholder="empty"
+                            className={cardClasses.image}
+                            loading="lazy"
+                          />
+                        </Link>
+                      ) : (
+                        <MediaHash {...image} />
+                      )}
+                      <div className="absolute left-2 top-2 flex items-center gap-1">
+                        <ImageGuard2.BlurToggle />
+                        <ModelTypeBadge
+                          className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                          type={data.type}
+                          baseModel={data.version.baseModel}
+                        />
+
+                        {(isNew || isUpdated) && (
+                          <Badge
+                            className={cardClasses.chip}
+                            variant="filled"
+                            radius="xl"
+                            style={{
+                              backgroundColor: isUpdated ? '#1EBD8E' : theme.colors.blue[4],
+                            }}
+                          >
+                            <Text c="white" size="xs" tt="capitalize">
+                              {isUpdated ? 'Updated' : 'New'}
+                            </Text>
+                          </Badge>
+                        )}
+                      </div>
+                      <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
+                      <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                        {data.availability === Availability.Private && (
+                          <Tooltip
+                            label="This is a private model which requires permission to generate with."
+                            position="top"
+                            withArrow
+                            withinPortal
+                            multiline
+                            maw={250}
+                          >
+                            <Badge
+                              color="gray"
+                              variant="filled"
+                              h={30}
+                              w={30}
+                              className="flex items-center justify-center"
+                              p={0}
+                            >
+                              <IconLock size={16} />
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {selectSource !== 'auction' && (
+                          <BidModelButton
+                            actionIconProps={{
+                              size: 'md',
+                              variant: colorScheme === 'light' ? undefined : 'light',
+                              px: 4,
+                            }}
+                            entityData={{
+                              ...selectedVersion,
+                              model: {
+                                ...data,
+                                cannotPromote: data.cannotPromote ?? false,
+                              },
+                              image,
+                            }}
+                          />
+                        )}
+                        {!!currentUser && (
+                          <Tooltip
+                            label={isFavorite ? 'Unlike' : 'Like'}
+                            position="top"
+                            withArrow
+                            withinPortal
+                          >
+                            <Button
+                              onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                              color={isFavorite ? 'green' : 'gray'}
+                              px={4}
+                              size="xs"
+                              variant={colorScheme === 'light' ? undefined : 'light'}
+                            >
+                              <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
+                            </Button>
+                          </Tooltip>
+                        )}
+                      </Group>
+                    </div>
+                  );
+                }}
+              </ImageGuard2>
+            ) : (
+              <div className="relative overflow-auto aspect-portrait">
+                <ModelDetailsPanel
+                  data={data}
+                  selectedVersion={selectedVersion}
+                  selectSource={selectSource}
+                />
+                <TopRightIcons data={data} setFlipped={setFlipped} />
+              </div>
+            ))}
+
+          <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
+            <Text size="sm" fw={700} lineClamp={1} lh={1} data-testid="resource-select-name">
+              {data.name}
+            </Text>
+            <div className="flex justify-between gap-2">
+              <Select
+                className="flex-1"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                readOnly={versions.length <= 1}
+                value={_selectedIndex?.toString()}
+                data={versions.map((version, index) => ({
+                  label: version.name,
+                  value: index.toString(),
+                }))}
+                onChange={(index) => setSelectedIndex(Number(index ?? 0))}
+                styles={{
+                  input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
+                }}
+              />
+              <Button
+                loading={loading}
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSelect();
+                }}
+              >
+                Select
+              </Button>
+            </div>
+          </div>
+        </>
+      </TwCard>
+    </TwCosmeticWrapper>
+  );
+}
+
+function ModelDetailsPanel({
+  data,
+  selectedVersion,
+  selectSource,
+}: {
+  data: SearchIndexDataMap['models'][number];
+  selectedVersion: SearchIndexDataMap['models'][number]['versions'][number];
+  selectSource?: ResourceSelectSource;
+}) {
+  const features = useFeatureFlags();
+
+  const modelDetails: DescriptionTableProps['items'] = [
+    {
+      label: 'Type',
+      value: (
+        <Badge radius="sm" px={5}>
+          {getDisplayName(data.type)} {data.checkpointType}
+        </Badge>
+      ),
+    },
+    {
+      label: 'Stats',
+      value: (
+        <Group gap={4}>
+          <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+            <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
+          </IconBadge>
+          {selectedVersion.canGenerate && (
+            <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+              <Text>{(selectedVersion.metrics?.generationCount ?? 0).toLocaleString()}</Text>
+            </IconBadge>
+          )}
+        </Group>
+      ),
+    },
+    {
+      label: 'Reviews',
+      value: (
+        <ModelVersionReview
+          modelId={data.id}
+          versionId={selectedVersion.id}
+          thumbsUpCount={selectedVersion.metrics?.thumbsUpCount ?? 0}
+          thumbsDownCount={selectedVersion.metrics?.thumbsDownCount ?? 0}
+        />
+      ),
+    },
+    {
+      label: 'Generation',
+      value: (
+        <ModelVersionPopularity
+          versionId={selectedVersion.id}
+          isCheckpoint={data.type === ModelType.Checkpoint}
+          listenForUpdates={false}
+        />
+      ),
+      visible:
+        selectSource === 'generation' &&
+        data.type === ModelType.Checkpoint &&
+        features.modelVersionPopularity,
+    },
+    { label: 'Created', value: formatDate(selectedVersion.createdAt) },
+    {
+      label: 'Base Model',
+      value:
+        selectedVersion.baseModel === 'ODOR' ? (
+          <Text component={Link} href="/product/odor" target="_blank">
+            {selectedVersion.baseModel}{' '}
+          </Text>
+        ) : (
+          <Text>
+            {selectedVersion.baseModel}{' '}
+            {selectedVersion.baseModelType && selectedVersion.baseModelType === 'Standard'
+              ? ''
+              : selectedVersion.baseModelType}
+          </Text>
+        ),
+    },
+    {
+      label: 'Training',
+      value: (
+        <Group gap={4}>
+          {selectedVersion.steps && (
+            <Badge size="sm" radius="sm" color="teal">
+              Steps: {selectedVersion.steps.toLocaleString()}
+            </Badge>
+          )}
+          {selectedVersion.epochs && (
+            <Badge size="sm" radius="sm" color="teal">
+              Epochs: {selectedVersion.epochs.toLocaleString()}
+            </Badge>
+          )}
+        </Group>
+      ),
+      visible: !!selectedVersion.steps || !!selectedVersion.epochs,
+    },
+    {
+      label: 'Usage Tips',
+      value: (
+        <Group gap={4}>
+          {selectedVersion.clipSkip && (
+            <Badge size="sm" radius="sm" color="cyan">
+              Clip Skip: {selectedVersion.clipSkip.toLocaleString()}
+            </Badge>
+          )}
+          {!!selectedVersion.settings?.strength && (
+            <Badge size="sm" radius="sm" color="cyan">
+              {`Strength: ${selectedVersion.settings.strength}`}
+            </Badge>
+          )}
+        </Group>
+      ),
+      visible: isDefined(selectedVersion.clipSkip) || isDefined(selectedVersion.settings?.strength),
+    },
+    {
+      label: 'Trigger Words',
+      visible: !!selectedVersion.trainedWords?.length,
+      value: <TrainedWords trainedWords={selectedVersion.trainedWords} type={data.type} />,
+    },
+    {
+      label: 'Hash',
+      value: <ModelHash hashes={selectedVersion.hashData ?? []} width={80} />,
+      visible: !!(selectedVersion.hashData ?? []).length,
+    },
+    {
+      label: (
+        <Group gap="xs">
+          <Text fw={500}>AIR</Text>
+          <URNExplanation size={20} />
+        </Group>
+      ),
+      value: (
+        <ModelURN
+          baseModel={selectedVersion.baseModel}
+          type={data.type}
+          modelId={data.id}
+          modelVersionId={selectedVersion.id}
+          withCopy={false}
+        />
+      ),
+      visible: features.air,
+    },
+    {
+      label: 'Restrictions',
+      value: <PermissionIndicator permissions={data.permissions} showNone={true} />,
+      visible: !!data.permissions,
+    },
+  ];
+
+  return (
+    <Stack className="size-full">
+      <DescriptionTable
+        title="Model Details"
+        items={modelDetails}
+        labelWidth="80px"
+        withBorder
+        fz="xs"
+      />
+    </Stack>
+  );
+}

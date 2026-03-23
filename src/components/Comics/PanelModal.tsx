@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
+  IconClock,
   IconInfoCircle,
   IconPencil,
   IconPhotoUp,
@@ -50,6 +51,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
 import { trpc } from '~/utils/trpc';
+import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
@@ -155,6 +157,11 @@ export function PanelModal({
     'generate'
   );
 
+  // Queue status for disabling generation when full
+  const { canGenerate, available, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
+
   // Enhance tab state
   const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
     url: string;
@@ -173,7 +180,7 @@ export function PanelModal({
   } = useCFImageUpload();
 
   // Enhance tab cost — uses the actual source image for accurate img2img pricing
-  const { data: enhanceImgCost } = trpc.comics.getIterateCostEstimate.useQuery(
+  const { data: enhanceImgCost } = trpc.comics.getGenerationCostEstimate.useQuery(
     {
       baseModel: effectiveModel,
       aspectRatio,
@@ -669,13 +676,25 @@ export function PanelModal({
             description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
           />
 
+          {/* Queue full warning */}
+          {queueFull && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Queue full ({used}/{limit} jobs). Wait for jobs to complete.
+            </Alert>
+          )}
+          {generationDisabled && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
+
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
             <Tooltip
-              label={costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
-              disabled={!enhancePrompt && costReady}
+              label={queueFull ? `Queue full (${used}/${limit})` : generationDisabled ? 'Generation unavailable' : costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
+              disabled={!queueFull && !generationDisabled && !enhancePrompt && costReady}
               withArrow
               position="top"
             >
@@ -683,7 +702,7 @@ export function PanelModal({
                 buzzAmount={effectivePanelCost + (enhancePrompt ? effectiveEnhanceCost : 0)}
                 label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : 'Generate'}
                 loading={isSubmitting || isCreatePending}
-                disabled={!prompt.trim() || !costReady}
+                disabled={!prompt.trim() || !costReady || queueFull || generationDisabled}
                 onPerformTransaction={onGeneratePanel}
                 showPurchaseModal
               />
@@ -870,18 +889,37 @@ export function PanelModal({
             description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
           />
 
+          {/* Queue full warning */}
+          {queueFull && prompt.trim() && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Queue full ({used}/{limit} jobs). Wait for jobs to complete.
+            </Alert>
+          )}
+          {generationDisabled && prompt.trim() && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
+
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
-            <BuzzTransactionButton
-              buzzAmount={(enhanceGenCost ?? 0) + (prompt.trim() && enhancePrompt ? effectiveEnhanceCost : 0)}
-              label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
-              loading={isSubmitting || isEnhancePending}
-              disabled={!enhanceSourceImage || enhanceGenCost == null}
-              onPerformTransaction={handleEnhanceSubmit}
-              showPurchaseModal
-            />
+            <Tooltip
+              label={queueFull && prompt.trim() ? `Queue full (${used}/${limit})` : generationDisabled && prompt.trim() ? 'Generation unavailable' : undefined}
+              disabled={!((queueFull || generationDisabled) && prompt.trim())}
+              withArrow
+              position="top"
+            >
+              <BuzzTransactionButton
+                buzzAmount={(enhanceGenCost ?? 0) + (prompt.trim() && enhancePrompt ? effectiveEnhanceCost : 0)}
+                label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
+                loading={isSubmitting || isEnhancePending}
+                disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && (queueFull || generationDisabled))}
+                onPerformTransaction={handleEnhanceSubmit}
+                showPurchaseModal
+              />
+            </Tooltip>
           </Group>
         </Stack>
       ) : panelMode === 'bulk' ? (

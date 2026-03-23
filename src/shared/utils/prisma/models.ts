@@ -188,7 +188,7 @@ export type ComicProjectStatus = "Active" | "Deleted";
 
 export type ComicReferenceStatus = "Pending" | "Ready" | "Failed";
 
-export type ComicPanelStatus = "Pending" | "Generating" | "Ready" | "Failed";
+export type ComicPanelStatus = "Pending" | "Enqueued" | "Generating" | "Ready" | "Failed";
 
 export type ComicChapterStatus = "Draft" | "Published" | "Scheduled";
 
@@ -2945,8 +2945,8 @@ export interface ChallengeWinner {
   challenge?: Challenge;
   userId: number;
   user?: User;
-  imageId: number;
-  image?: Image;
+  imageId: number | null;
+  image?: Image | null;
   place: number;
   buzzAwarded: number;
   pointsAwarded: number;
@@ -3890,6 +3890,7 @@ export interface ComicProject {
   heroImagePosition: number;
   status: ComicProjectStatus;
   tosViolation: boolean;
+  meta: JsonValue | null;
   baseModel: string | null;
   genre: ComicGenre | null;
   nsfwLevel: number;

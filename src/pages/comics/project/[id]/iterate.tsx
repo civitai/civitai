@@ -67,13 +67,15 @@ function ComicIteratePage() {
     data: iterateCostEstimate,
     isFetching: isCostFetching,
     refetch: refetchCost,
-  } = trpc.comics.getIterateCostEstimate.useQuery(
+  } = trpc.comics.getGenerationCostEstimate.useQuery(
     {
       baseModel: costParams.baseModel,
       aspectRatio: costParams.aspectRatio,
       quantity: costParams.quantity,
       sourceImage: costParams.sourceImage ?? undefined,
-      referenceImages: costParams.referenceImages,
+      userReferenceImages: costParams.referenceImages,
+      referenceIds: costParams.referenceIds,
+      selectedImageIds: costParams.selectedImageIds,
     },
     { staleTime: 30_000, enabled: !!project, keepPreviousData: true }
   );

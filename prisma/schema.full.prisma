@@ -3923,8 +3923,8 @@ model ChallengeWinner {
   challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
   userId      Int
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  imageId     Int
-  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId     Int?
+  image       Image?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
 
   place         Int // 1, 2, 3, etc. (ties allowed - same place, different users)
   buzzAwarded   Int
@@ -4976,6 +4976,7 @@ enum ComicReferenceStatus {
 
 enum ComicPanelStatus {
   Pending
+  Enqueued
   Generating
   Ready
   Failed
@@ -5028,6 +5029,7 @@ model ComicProject {
   heroImagePosition Int                @default(50)
   status            ComicProjectStatus @default(Active)
   tosViolation  Boolean            @default(false)
+  meta          Json?
   baseModel     String?            @db.VarChar(50)
   genre         ComicGenre?
   nsfwLevel     Int                @default(0)

@@ -38,6 +38,8 @@ export interface DrawingCircleElement extends DrawingElementBase {
   radiusX: number; // horizontal radius
   radiusY: number; // vertical radius (allows ellipse)
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Arrow element
@@ -45,6 +47,8 @@ export interface DrawingArrowElement extends DrawingElementBase {
   type: 'arrow';
   points: number[]; // [startX, startY, endX, endY]
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Speech bubble element

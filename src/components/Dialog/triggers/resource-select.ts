@@ -3,7 +3,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 
 const ResourceSelectModal = dynamic(
-  () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal2'),
+  () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal'),
   { ssr: false }
 );
 

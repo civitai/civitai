@@ -235,7 +235,7 @@ export const getServerSideProps = createServerSideProps({
       if (model) {
         const correctSlug = slugit(model.name);
         const currentSlug = params.slug?.join('/');
-        if (currentSlug !== correctSlug) {
+        if (correctSlug && currentSlug !== correctSlug) {
           const queryString = modelVersionId ? `?modelVersionId=${modelVersionId}` : '';
           return {
             redirect: {

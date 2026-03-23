@@ -12,7 +12,12 @@ export type ChainConfig = {
 };
 
 export const CHAIN_CONFIGS: ChainConfig[] = [
-  { chain: 'evm', displayName: 'Ethereum', networks: ['base', 'eth', 'polygon', 'arb', 'bsc', 'op', 'matic'], targetCurrency: 'usdcbase' },
+  {
+    chain: 'evm',
+    displayName: 'Ethereum',
+    networks: ['base', 'eth', 'polygon', 'arb', 'bsc', 'op', 'matic'],
+    targetCurrency: 'usdcbase',
+  },
   { chain: 'sol', displayName: 'Solana', networks: ['sol'], targetCurrency: 'usdcsol' },
   { chain: 'trx', displayName: 'Tron', networks: ['trx'], targetCurrency: 'usdttrc20' },
   { chain: 'btc', displayName: 'Bitcoin', networks: ['btc'], targetCurrency: 'btc' },

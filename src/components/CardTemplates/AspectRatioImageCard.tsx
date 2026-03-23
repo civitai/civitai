@@ -1,7 +1,6 @@
 import { Text } from '@mantine/core';
 import clsx from 'clsx';
 import React, { type Key } from 'react';
-import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog/registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -11,18 +10,12 @@ import type { ConnectType } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { useInView } from '~/hooks/useInView';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { MediaType } from '~/shared/utils/prisma/enums';
+import { AspectRatioCard } from './AspectRatioCard';
+import cardStyles from './AspectRatioCard.module.scss';
 import styles from './AspectRatioImageCard.module.scss';
-
-type AspectRatio = keyof typeof aspectRatioMap;
-const aspectRatioMap = {
-  portrait: '7/9',
-  landscape: '9/7',
-  square: '1',
-} as const;
 
 type ContentTypeProps =
   | {
@@ -53,7 +46,7 @@ type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> }
 
 export type AspectRatioImageCardProps<T extends DialogKey> = {
   href?: string;
-  aspectRatio?: AspectRatio;
+  aspectRatio?: 'portrait' | 'landscape' | 'square';
   onClick?: React.MouseEventHandler;
   cosmetic?: ContentDecorationCosmetic['data'];
   className?: string;
@@ -88,132 +81,136 @@ export function AspectRatioImageCard<T extends DialogKey>({
   isRemix,
   explain,
 }: AspectRatioImageCardProps<T>) {
-  const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
-
-  // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const wrapperStyle = { aspectRatio: aspectRatioMap[aspectRatio] };
 
   return (
-    <CosmeticCard
+    <AspectRatioCard
+      aspectRatio={aspectRatio}
       cosmetic={cosmetic}
-      cosmeticStyle={cosmetic ? wrapperStyle : undefined}
-      ref={ref}
-      style={!cosmetic ? wrapperStyle : undefined}
-      className={clsx(className)}
-    >
-      <div className={clsx(styles.content, { [styles.inView]: inView })}>
-        {inView && (
-          <>
-            {image ? (
-              <ImageGuard2
-                connectId={contentId as any}
-                connectType={contentType as any}
-                image={image}
-                explain={explain}
+      className={className}
+      render={({ inView }) => {
+        if (!inView) return null;
+
+        if (!image) {
+          return (
+            <>
+              <LinkOrClick
+                href={href}
+                onClick={onClick}
+                routedDialog={routedDialog}
+                className={styles.linkOrClick}
               >
-                {(safe) => (
-                  <>
-                    <LinkOrClick
-                      href={href}
-                      onClick={onClick}
-                      routedDialog={routedDialog}
-                      className={styles.linkOrClick}
-                      target={target}
-                    >
-                      {!safe ? (
-                        image.hash ? (
-                          <MediaHash {...image} />
-                        ) : (
-                          <EdgeMedia2
-                            metadata={image.metadata as MixedObject}
-                            src={image.url}
-                            name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
-                            type={image.type}
-                            imageId={image.id}
-                            thumbnailUrl={image.thumbnailUrl}
-                            placeholder="empty"
-                            className={clsx(styles.image, styles.blurred, {
-                              [styles.top]: originalAspectRatio < 1,
-                            })}
-                            wrapperProps={{ className: 'flex-1 h-full' }}
-                            width={IMAGE_CARD_WIDTH}
-                            contain
-                          />
-                        )
-                      ) : (
-                        <EdgeMedia2
-                          metadata={image.metadata as MixedObject}
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
-                          type={image.type}
-                          imageId={image.id}
-                          thumbnailUrl={image.thumbnailUrl}
-                          placeholder="empty"
-                          className={clsx(styles.image, {
-                            [styles.top]: originalAspectRatio < 1,
-                          })}
-                          wrapperProps={{ className: 'flex-1 h-full' }}
-                          width={
-                            originalAspectRatio > 1
-                              ? IMAGE_CARD_WIDTH * originalAspectRatio
-                              : IMAGE_CARD_WIDTH
-                          }
-                          skip={
-                            image.type === 'video'
-                              ? getSkipValue({
-                                  type: image.type,
-                                  metadata: image.metadata as VideoMetadata,
-                                })
-                              : undefined
-                          }
-                          contain
-                        />
-                      )}
-                    </LinkOrClick>
-                    <div className={styles.header}>
-                      <ImageGuard2.BlurToggle className={styles.chip} />
-                      {typeof header === 'function' ? header({ safe }) : header}
-                    </div>
-                    {footer && (
-                      <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>
-                        {typeof footer === 'function' ? footer({ safe }) : footer}
-                      </div>
-                    )}
-                  </>
-                )}
-              </ImageGuard2>
-            ) : (
+                <div className="flex h-full items-center justify-center">
+                  <Text c="dimmed">No Image</Text>
+                </div>
+              </LinkOrClick>
+              {header && (
+                <div className={cardStyles.header}>
+                  {typeof header === 'function' ? header({}) : header}
+                </div>
+              )}
+              {footer && (
+                <div
+                  className={clsx(cardStyles.footer, {
+                    [cardStyles.gradient]: footerGradient,
+                  })}
+                >
+                  {typeof footer === 'function' ? footer({}) : footer}
+                </div>
+              )}
+              {onSite && <OnsiteIndicator isRemix={isRemix} />}
+            </>
+          );
+        }
+
+        return (
+          <ImageGuard2
+            connectId={contentId as any}
+            connectType={contentType as any}
+            image={image}
+            explain={explain}
+          >
+            {(safe) => (
               <>
                 <LinkOrClick
                   href={href}
                   onClick={onClick}
                   routedDialog={routedDialog}
                   className={styles.linkOrClick}
+                  target={target}
                 >
-                  <div className="flex h-full items-center justify-center">
-                    <Text c="dimmed">No Image</Text>
-                  </div>
+                  {!safe ? (
+                    image.hash ? (
+                      <MediaHash {...image} />
+                    ) : (
+                      <EdgeMedia2
+                        metadata={image.metadata as MixedObject}
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        imageId={image.id}
+                        thumbnailUrl={image.thumbnailUrl}
+                        placeholder="empty"
+                        className={clsx(styles.image, styles.blurred, {
+                          [styles.top]: originalAspectRatio < 1,
+                        })}
+                        wrapperProps={{ className: 'flex-1 h-full' }}
+                        width={IMAGE_CARD_WIDTH}
+                        contain
+                      />
+                    )
+                  ) : (
+                    <EdgeMedia2
+                      metadata={image.metadata as MixedObject}
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      type={image.type}
+                      imageId={image.id}
+                      thumbnailUrl={image.thumbnailUrl}
+                      placeholder="empty"
+                      className={clsx(styles.image, {
+                        [styles.top]: originalAspectRatio < 1,
+                      })}
+                      wrapperProps={{ className: 'flex-1 h-full' }}
+                      width={
+                        originalAspectRatio > 1
+                          ? IMAGE_CARD_WIDTH * originalAspectRatio
+                          : IMAGE_CARD_WIDTH
+                      }
+                      skip={
+                        image.type === 'video'
+                          ? getSkipValue({
+                              type: image.type,
+                              metadata: image.metadata as VideoMetadata,
+                            })
+                          : undefined
+                      }
+                      contain
+                    />
+                  )}
                 </LinkOrClick>
-                {header && (
-                  <div className={styles.header}>
-                    {typeof header === 'function' ? header({}) : header}
-                  </div>
-                )}
+                <div className={cardStyles.header}>
+                  <ImageGuard2.BlurToggle className={cardStyles.chip} />
+                  {typeof header === 'function' ? header({ safe }) : header}
+                </div>
                 {footer && (
-                  <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>
-                    {typeof footer === 'function' ? footer({}) : footer}
+                  <div
+                    className={clsx(cardStyles.footer, {
+                      [cardStyles.gradient]: footerGradient,
+                    })}
+                  >
+                    {typeof footer === 'function' ? footer({ safe }) : footer}
                   </div>
                 )}
+                {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </>
             )}
-            {onSite && <OnsiteIndicator isRemix={isRemix} />}
-          </>
-        )}
-      </div>
-    </CosmeticCard>
+          </ImageGuard2>
+        );
+      }}
+    />
   );
 }
 

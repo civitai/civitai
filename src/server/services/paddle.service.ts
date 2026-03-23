@@ -208,7 +208,7 @@ export const processCompleteBuzzTransaction = async (
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
-    description: `Purchase of ${amount} Buzz. ${
+    description: `Purchase of ${amount} Buzz via Paddle. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
     }A total of ${numberWithCommas(totalCustomBuzz)} Buzz was added to your account.`,
     details: {
