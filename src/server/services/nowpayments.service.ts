@@ -369,7 +369,7 @@ async function fetchPaymentsByDateRange(
   dateTo: string
 ): Promise<NOWPayments.CreatePaymentResponse[]> {
   const PAGE_SIZE = 100;
-  let page = 1;
+  let page = 0;
   const allPayments: NOWPayments.CreatePaymentResponse[] = [];
 
   while (true) {
