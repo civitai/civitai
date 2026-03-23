@@ -14,11 +14,11 @@ import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generat
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import {
   allEcosystemDefaultVersionIds,
-  baseModelByName,
   ecosystemByKey,
   ecosystemById,
   getEcosystem,
-  getGenerationSupport,
+  areResourcesCompatible,
+  filterCompatibleResources,
   getBaseModelsByEcosystemId,
   ecosystemGroups,
   getEcosystemGroup,
@@ -29,7 +29,6 @@ import {
   getEcosystemsForWorkflow,
   getOutputTypeForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
-import type { ModelType } from '~/shared/utils/prisma/enums';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
@@ -408,29 +407,15 @@ function InnerProvider({
         const existingResources = (snapshot.resources ?? []) as ResourceData[];
         const incomingIds = new Set(split.resources.map((r) => r.id));
 
-        // Determine incoming ecosystem for compatibility filtering
+        // Determine whether to preserve the current ecosystem or switch to the incoming one.
+        // Preserve when ALL incoming resources are compatible (full or partial) with the current
+        // ecosystem. Switch only when an incoming resource is truly incompatible.
+        const currentEcosystem = snapshot.ecosystem as string | undefined;
+        const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
+        const allCompatible =
+          currentEco && areResourcesCompatible(currentEco.id, data.resources);
+
         const incomingEcosystem = data.params.ecosystem as string | undefined;
-        const checkpointEcosystem = incomingEcosystem
-          ? ecosystemByKey.get(incomingEcosystem)
-          : undefined;
-
-        // Filter existing resources: keep only those compatible with the incoming ecosystem
-        const compatibleExisting = existingResources.filter((r) => {
-          // Skip resources that are being replaced by incoming ones
-          if (incomingIds.has(r.id)) return false;
-          // If no checkpoint ecosystem to check against, keep the resource
-          if (!checkpointEcosystem || !r.baseModel) return true;
-          const resourceEcosystem = ecosystemByKey.get(r.baseModel);
-          if (!resourceEcosystem) return true;
-          const support = getGenerationSupport(
-            checkpointEcosystem.id,
-            resourceEcosystem.id,
-            r.model.type as ModelType
-          );
-          return support !== null;
-        });
-
-        const mergedResources = [...compatibleExisting, ...split.resources];
 
         // If current workflow doesn't support ecosystems (e.g. img2meta),
         // switch to the user's last used workflow that supports the resource's ecosystem
@@ -463,26 +448,93 @@ function InnerProvider({
           }
         }
 
-        // If all incoming resources have full or partial compatibility with the
-        // current ecosystem, preserve it. Only switch ecosystem when a resource
-        // is incompatible (no compatibility).
-        const currentEcosystem = snapshot.ecosystem as string | undefined;
-        const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
-        const allCompatible =
-          currentEco &&
-          data.resources.length > 0 &&
-          data.resources.every((r) => {
-            if (!r.baseModel) return true;
-            const resourceBaseModel = baseModelByName.get(r.baseModel);
-            if (!resourceBaseModel) return true;
-            return (
-              getGenerationSupport(
-                currentEco.id,
-                resourceBaseModel.ecosystemId,
-                r.model.type as ModelType
-              ) !== null
-            );
-          });
+        // When no current ecosystem is available (not in graph, not in localStorage) and
+        // the incoming resources are compatible with multiple ecosystems, show the
+        // compatibility modal so the user can choose rather than silently picking one.
+        if (!currentEco && !allCompatible) {
+          const resolvedWorkflow = targetWorkflow ?? currentWorkflow ?? 'txt2img';
+          const workflowEcosystemIds = getEcosystemsForWorkflow(resolvedWorkflow);
+
+          // Filter to ecosystems that are compatible with ALL incoming resources
+          const compatibleEcosystemIds = workflowEcosystemIds.filter((ecoId) =>
+            areResourcesCompatible(ecoId, data.resources)
+          );
+
+          if (compatibleEcosystemIds.length > 1) {
+            // Multiple compatible ecosystems — let the user choose.
+            // Default to the most recently used ecosystem if it's in the compatible list.
+            const lastUsed = workflowPreferences.getLastUsedWorkflow();
+            const lastUsedEco = lastUsed?.ecosystem
+              ? ecosystemByKey.get(lastUsed.ecosystem)
+              : undefined;
+            const lastUsedIsCompatible =
+              lastUsedEco && compatibleEcosystemIds.includes(lastUsedEco.id);
+
+            const resolvedDefault =
+              (lastUsedIsCompatible ? lastUsed!.ecosystem : undefined) ??
+              (compatibleEcosystemIds[0]
+                ? ecosystemById.get(compatibleEcosystemIds[0])?.key
+                : undefined) ??
+              '';
+
+            openCompatibilityConfirmModal({
+              pendingChange: {
+                type: 'workflow',
+                value: resolvedWorkflow,
+                optionId: resolvedWorkflow,
+                currentEcosystem: incomingEcosystem ?? '',
+                compatibleEcosystemIds,
+                defaultEcosystemKey: resolvedDefault,
+              },
+              onConfirm: (selectedEcosystemKey) => {
+                if (selectedEcosystemKey) {
+                  // Step 1: Switch workflow and ecosystem so the graph restores stored
+                  // resources via the storage adapter's valueProvider (on img2meta the
+                  // snapshot has no resources — they live in localStorage).
+                  const { ecosystem: _, ...restParams } = data.params;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  graph.set({
+                    ...restParams,
+                    ecosystem: selectedEcosystemKey,
+                    workflow: resolvedWorkflow,
+                  } as any);
+
+                  // Step 2: Read the restored resources and merge incoming on top.
+                  const restored = graph.getSnapshot() as Record<string, unknown>;
+                  const restoredResources = (restored.resources ?? []) as ResourceData[];
+                  const selectedEco = ecosystemByKey.get(selectedEcosystemKey);
+                  const filtered = selectedEco
+                    ? filterCompatibleResources(selectedEco.id, restoredResources, incomingIds)
+                    : restoredResources.filter((r) => !incomingIds.has(r.id));
+                  const merged = [...filtered, ...split.resources];
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  graph.set({
+                    resources: merged,
+                    ...(split.model && { model: split.model }),
+                    ...(split.vae && { vae: split.vae }),
+                  } as any);
+                }
+              },
+            });
+            generationGraphStore.clearData();
+            return;
+          }
+        }
+
+        // Use the effective ecosystem (current if preserved, incoming if switching) to filter
+        // existing resources. This prevents removing compatible resources when the ecosystem
+        // isn't actually changing (e.g. adding a cross-ecosystem TextualInversion).
+        const effectiveEcosystemKey = allCompatible ? currentEcosystem : incomingEcosystem;
+        const effectiveEcosystem = effectiveEcosystemKey
+          ? ecosystemByKey.get(effectiveEcosystemKey)
+          : undefined;
+
+        // Filter existing resources: keep only those compatible with the effective ecosystem
+        const compatibleExisting = effectiveEcosystem
+          ? filterCompatibleResources(effectiveEcosystem.id, existingResources, incomingIds)
+          : existingResources.filter((r) => !incomingIds.has(r.id));
+
+        const mergedResources = [...compatibleExisting, ...split.resources];
 
         const { ecosystem: _incomingEco, ...paramsWithoutEcosystem } = data.params;
         const values = {

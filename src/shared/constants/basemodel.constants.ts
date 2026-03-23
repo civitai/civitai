@@ -2760,21 +2760,22 @@ export function getGenerationSupport(
 
   if (!checkpointEcosystem || !addonEcosystem) return null;
 
-  // Check if model type is supported for generation
-  const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
-  if (!support || support.disabled || !support.modelTypes.includes(addonModelType)) {
-    return null;
-  }
-
-  // Same ecosystem = Full
+  // Same ecosystem = always Full (same-ecosystem resources are inherently compatible)
   if (checkpointEcosystemId === addonEcosystemId) return 'full';
 
-  // Check if related (parent/child/sibling)
-  if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
-    return 'partial';
+  // Check if generation is supported at all
+  const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
+  if (!support || support.disabled) return null;
+
+  // For related ecosystems, require the model type to be in the ecosystem's supported types
+  if (support.modelTypes.includes(addonModelType)) {
+    if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
+      return 'partial';
+    }
   }
 
-  // Check cross-ecosystem rules
+  // Check cross-ecosystem rules — these define their own modelTypes so they bypass
+  // the ecosystem's primary modelTypes list (e.g. SD1 TextualInversion → SDXL family)
   const crossRule = crossEcosystemRules.find(
     (r) =>
       r.sourceEcosystemId === addonEcosystemId &&
@@ -2783,9 +2784,11 @@ export function getGenerationSupport(
       (!r.modelTypes || r.modelTypes.includes(addonModelType))
   );
 
+  if (crossRule) return crossRule.support;
+
   // Also check if the target is a child of the rule's target
-  if (!crossRule) {
-    const targetRoot = getRootEcosystem(checkpointEcosystemId);
+  const targetRoot = getRootEcosystem(checkpointEcosystemId);
+  if (targetRoot.id !== checkpointEcosystemId) {
     const matchingRule = crossEcosystemRules.find(
       (r) =>
         r.sourceEcosystemId === addonEcosystemId &&
@@ -2796,9 +2799,60 @@ export function getGenerationSupport(
     if (matchingRule) return matchingRule.support;
   }
 
-  if (crossRule) return crossRule.support;
-
   return null;
+}
+
+/**
+ * Check if a single resource (by baseModel name and model type) is compatible with an ecosystem.
+ * Returns the support level or null if incompatible.
+ */
+export function getResourceEcosystemCompatibility(
+  ecosystemId: number,
+  resourceBaseModel: string,
+  resourceModelType: ModelType
+): SupportLevel | null {
+  const bm = baseModelByName.get(resourceBaseModel);
+  if (!bm) return null;
+  return getGenerationSupport(ecosystemId, bm.ecosystemId, resourceModelType);
+}
+
+/** Minimal shape required for ecosystem compatibility checks */
+interface ResourceLikeForCompat {
+  baseModel?: string;
+  model: { type: string };
+}
+
+/**
+ * Check if ALL resources are compatible with a given ecosystem.
+ */
+export function areResourcesCompatible(
+  ecosystemId: number,
+  resources: ResourceLikeForCompat[]
+): boolean {
+  return resources.every((r) => {
+    if (!r.baseModel) return true;
+    const bm = baseModelByName.get(r.baseModel);
+    if (!bm) return true;
+    return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
+  });
+}
+
+/**
+ * Filter resources to keep only those compatible with a given ecosystem.
+ * Optionally exclude specific resource IDs (e.g. incoming replacements).
+ */
+export function filterCompatibleResources<T extends ResourceLikeForCompat & { id: number }>(
+  ecosystemId: number,
+  resources: T[],
+  excludeIds?: Set<number>
+): T[] {
+  return resources.filter((r) => {
+    if (excludeIds?.has(r.id)) return false;
+    if (!r.baseModel) return true;
+    const bm = baseModelByName.get(r.baseModel);
+    if (!bm) return true;
+    return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
+  });
 }
 
 /**
