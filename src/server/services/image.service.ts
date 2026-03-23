@@ -3426,8 +3426,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   requestTotal.inc({ route }); // count every request up front
 
   // Iterative fetching with adaptive batch sizing to handle post-filtering
-  const MAX_ITERATIONS = 10;
-  const MAX_TOTAL_PROCESSED = limit * 100; // Safety limit to prevent excessive processing
+  const MAX_ITERATIONS = 5;
+  const MAX_TOTAL_PROCESSED = limit * 20; // Safety limit to prevent excessive processing
   const MIN_BATCH_SIZE = limit * 2;
   const MAX_BATCH_SIZE = limit * 10;
 
@@ -3436,6 +3436,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   let batchSize = MIN_BATCH_SIZE;
   let iteration = 0;
   let totalProcessed = 0;
+  let consecutiveEmptyBatches = 0;
   let nextCursor: number | undefined;
   const request: SearchParams = {
     filter: filters.join(' AND '),
@@ -3499,6 +3500,16 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
       // Calculate filter ratio and adjust batch size for next iteration
       const filterRatio = results.length > 0 ? 1 - batchFilteredHits.length / results.length : 0;
+
+      // Track consecutive batches where everything was filtered out.
+      // If this happens 3 times in a row, the filter likely has too few qualifying
+      // results — bail out to avoid hammering Meilisearch.
+      if (batchFilteredHits.length === 0) {
+        consecutiveEmptyBatches++;
+        if (consecutiveEmptyBatches >= 3) break;
+      } else {
+        consecutiveEmptyBatches = 0;
+      }
 
       // If more than 80% of results are filtered out, increase batch size
       if (filterRatio > 0.8 && batchSize < MAX_BATCH_SIZE) {
