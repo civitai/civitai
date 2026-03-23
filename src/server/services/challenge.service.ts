@@ -1382,7 +1382,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
     let winningEntries: Array<{
       userId: number;
-      imageId: number;
+      imageId: number | null;
       position: number;
       prize: number;
       reason: string | null;
@@ -1461,7 +1461,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         await createChallengeWinner({
           challengeId,
           userId: entry.userId,
-          imageId: entry.imageId,
+          imageId: entry.imageId!, // always non-null on fresh winner path
           place: entry.position,
           buzzAwarded: entry.prize,
           pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
@@ -2345,9 +2345,9 @@ export async function getCompletedChallengesWithWinners(
       place: number;
       userId: number;
       username: string;
-      imageId: number;
-      imageUrl: string;
-      imageNsfwLevel: number;
+      imageId: number | null;
+      imageUrl: string | null;
+      imageNsfwLevel: number | null;
       imageHash: string | null;
       buzzAwarded: number;
       reason: string | null;
@@ -2368,7 +2368,7 @@ export async function getCompletedChallengesWithWinners(
       ci.note as "collectionItemNote"
     FROM "ChallengeWinner" cw
     JOIN "User" u ON u.id = cw."userId"
-    JOIN "Image" i ON i.id = cw."imageId"
+    LEFT JOIN "Image" i ON i.id = cw."imageId"
     JOIN "Challenge" c ON c.id = cw."challengeId"
     LEFT JOIN "CollectionItem" ci ON ci."collectionId" = c."collectionId"
       AND ci."imageId" = cw."imageId"
