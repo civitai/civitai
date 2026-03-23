@@ -21,6 +21,7 @@ const schema = z.object({
   size: z.enum(constants.modelFileSizes).optional(),
   fp: z.enum(constants.modelFileFp).optional(),
   quantType: z.enum(constants.modelFileQuantTypes).optional(),
+  fileId: z.preprocess((val) => (val ? Number(val) : undefined), z.number().optional()),
 });
 
 const downloadLimiter = createLimiter({
@@ -133,15 +134,17 @@ export default PublicEndpoint(
 
     if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
 
-    // Check for misalignment
-    for (const key of Object.keys(input)) {
-      if (
-        input[key as keyof typeof input] &&
-        fileResult.metadata[key as keyof typeof fileResult.metadata] &&
-        fileResult.metadata[key as keyof typeof fileResult.metadata] !==
-          input[key as keyof typeof input]
-      )
-        return errorResponse(404, 'File not found');
+    // Check for misalignment (skip when fileId is used — we already found the exact file)
+    if (!input.fileId) {
+      for (const key of Object.keys(input)) {
+        if (
+          input[key as keyof typeof input] &&
+          fileResult.metadata[key as keyof typeof fileResult.metadata] &&
+          fileResult.metadata[key as keyof typeof fileResult.metadata] !==
+            input[key as keyof typeof input]
+        )
+          return errorResponse(404, 'File not found');
+      }
     }
 
     // Track download

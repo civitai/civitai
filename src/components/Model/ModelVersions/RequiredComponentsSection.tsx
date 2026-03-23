@@ -141,11 +141,7 @@ export function RequiredComponentsSection({
     requiredComponents.forEach((component, index) => {
       const selectedFile = selectedFiles[component.type] || component.files[0];
       if (selectedFile) {
-        const url = createModelFileDownloadUrl({
-          versionId,
-          type: selectedFile.type,
-          meta: selectedFile.metadata,
-        });
+        const url = createModelFileDownloadUrl({ versionId, fileId: selectedFile.id });
         setTimeout(() => {
           const a = document.createElement('a');
           a.href = url;
@@ -281,7 +277,7 @@ export function RequiredComponentsSection({
                             ? undefined
                             : createModelFileDownloadUrl({
                                 versionId: lc.versionId,
-                                primary: true,
+                                fileId: lc.fileId,
                               })
                         }
                         onClick={(e: React.MouseEvent) => {
@@ -403,11 +399,7 @@ function ComponentGroup({
   const isDownloadDisabled = archived || isLoadingAccess;
 
   const downloadUrl = activeFile
-    ? createModelFileDownloadUrl({
-        versionId,
-        type: activeFile.type,
-        meta: activeFile.metadata,
-      })
+    ? createModelFileDownloadUrl({ versionId, fileId: activeFile.id })
     : undefined;
 
   const handleDownload = (e: React.MouseEvent) => {
@@ -540,6 +532,7 @@ function ComponentGroup({
             const isBestMatch = file.id === bestMatch?.id;
             const fileDownloadUrl = createModelFileDownloadUrl({
               versionId,
+              fileId: file.id,
               type: file.type,
               meta: file.metadata,
             });

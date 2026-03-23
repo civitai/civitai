@@ -136,6 +136,7 @@ export const getFileForModelVersion = async ({
   quantType,
   user,
   noAuth,
+  fileId,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -150,6 +151,7 @@ export const getFileForModelVersion = async ({
     filePreferences?: UserFilePreferences;
   };
   noAuth?: boolean;
+  fileId?: number;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
@@ -236,7 +238,24 @@ export const getFileForModelVersion = async ({
 
   // Get the correct file
   let file: FileResult | null = null;
-  if (type === 'VAE') {
+  if (fileId) {
+    // Direct file lookup by ID — bypasses type-based resolution
+    const fileWhere: Prisma.ModelFileWhereInput = { id: fileId, modelVersionId };
+    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
+    const found = await dbRead.modelFile.findFirst({
+      where: fileWhere,
+      select: {
+        id: true,
+        url: true,
+        name: true,
+        overrideName: true,
+        type: true,
+        metadata: true,
+        hashes: { select: { hash: true }, where: { type: 'SHA256' } },
+      },
+    });
+    file = found as FileResult | null;
+  } else if (type === 'VAE') {
     if (!modelVersion.vaeId) return { status: 'not-found' };
     const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
     if (!vae.length) return { status: 'not-found' };

@@ -1160,6 +1160,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                         ? undefined
                                         : createModelFileDownloadUrl({
                                             versionId: lc.versionId,
+                                            fileId: lc.fileId,
                                             type: lc.fileType,
                                             meta: lc.fileMetadata as BasicFileMetadata | undefined,
                                           })
@@ -1191,6 +1192,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         const ext = file.name.split('.').pop() ?? '';
                         const downloadUrl = createModelFileDownloadUrl({
                           versionId: version.id,
+                          fileId: file.id,
                           type: file.type,
                           meta: file.metadata,
                         });
