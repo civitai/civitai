@@ -632,13 +632,20 @@ async function createStepInputs(
 
     // Standard: build imageMetadata from merged step metadata.
     // Don't store full params/resources on step — they live on workflow.metadata.
+    // Preserve handler-set metadata fields (e.g. suppressOutput for multi-step workflows).
+    const handlerMeta =
+      additionalMetadata && typeof additionalMetadata === 'object'
+        ? Object.fromEntries(
+            Object.entries(additionalMetadata).filter(([k]) => k !== 'params' && k !== 'resources')
+          )
+        : {};
     return {
       ...rest,
       input: {
         ...(rest.input as object),
         imageMetadata: buildImageMetadata(mergedMeta.params, mergedMeta.resources),
       },
-      metadata: {},
+      metadata: handlerMeta,
     };
   });
 }
