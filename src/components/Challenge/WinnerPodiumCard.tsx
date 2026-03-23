@@ -18,9 +18,9 @@ export type WinnerPodiumData = {
   place: number;
   userId: number;
   username: string;
-  imageId: number;
-  imageUrl: string;
-  imageNsfwLevel?: number;
+  imageId: number | null;
+  imageUrl: string | null;
+  imageNsfwLevel?: number | null;
   imageHash?: string | null;
   buzzAwarded: number;
   reason?: string | null;
@@ -142,7 +142,7 @@ export function WinnerPodiumCard({
         >
           <ImageGuard2
             image={{
-              id: winner.imageId,
+              id: winner.imageId!,
               nsfwLevel: winner.imageNsfwLevel ?? 0,
               url: winner.imageUrl,
             }}
@@ -152,9 +152,9 @@ export function WinnerPodiumCard({
                 <Link href={`/images/${winner.imageId}`} className="block size-full">
                   {safe ? (
                     <EdgeMedia2
-                      src={winner.imageUrl}
+                      src={winner.imageUrl!}
                       type={MediaType.image}
-                      imageId={winner.imageId}
+                      imageId={winner.imageId!}
                       width={450}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
                     />
@@ -164,7 +164,7 @@ export function WinnerPodiumCard({
                 </Link>
                 <div className="absolute left-2 top-2 z-10 flex items-center gap-1">
                   <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
-                  {safe && winner.judgeScore && (
+                  {safe && winner.judgeScore && winner.imageId && (
                     <JudgeScoreBadge
                       score={winner.judgeScore}
                       imageId={winner.imageId}

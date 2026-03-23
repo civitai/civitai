@@ -1392,13 +1392,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
-      winningEntries = existingWinners.map((w) => ({
-        userId: w.userId,
-        imageId: w.imageId,
-        position: w.place,
-        prize: w.buzzAwarded,
-        reason: w.reason,
-      }));
+      winningEntries = existingWinners
+        .filter((w) => w.imageId != null)
+        .map((w) => ({
+          userId: w.userId,
+          imageId: w.imageId!,
+          position: w.place,
+          prize: w.buzzAwarded,
+          reason: w.reason,
+        }));
     } else {
       // Get judged entries
       if (!challenge.collectionId) {
@@ -2345,9 +2347,9 @@ export async function getCompletedChallengesWithWinners(
       place: number;
       userId: number;
       username: string;
-      imageId: number;
-      imageUrl: string;
-      imageNsfwLevel: number;
+      imageId: number | null;
+      imageUrl: string | null;
+      imageNsfwLevel: number | null;
       imageHash: string | null;
       buzzAwarded: number;
       reason: string | null;
@@ -2368,7 +2370,7 @@ export async function getCompletedChallengesWithWinners(
       ci.note as "collectionItemNote"
     FROM "ChallengeWinner" cw
     JOIN "User" u ON u.id = cw."userId"
-    JOIN "Image" i ON i.id = cw."imageId"
+    LEFT JOIN "Image" i ON i.id = cw."imageId"
     JOIN "Challenge" c ON c.id = cw."challengeId"
     LEFT JOIN "CollectionItem" ci ON ci."collectionId" = c."collectionId"
       AND ci."imageId" = cw."imageId"

@@ -2945,8 +2945,8 @@ export interface ChallengeWinner {
   challenge?: Challenge;
   userId: number;
   user?: User;
-  imageId: number;
-  image?: Image;
+  imageId: number | null;
+  image?: Image | null;
   place: number;
   buzzAwarded: number;
   pointsAwarded: number;

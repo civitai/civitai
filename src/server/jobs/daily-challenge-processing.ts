@@ -1103,13 +1103,15 @@ export async function pickWinnersForChallenge(
 
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
-      winningEntries = existingWinners.map((w) => ({
-        userId: w.userId,
-        imageId: w.imageId,
-        position: w.place,
-        prize: w.buzzAwarded,
-        reason: w.reason,
-      }));
+      winningEntries = existingWinners
+        .filter((w) => w.imageId != null)
+        .map((w) => ({
+          userId: w.userId,
+          imageId: w.imageId!,
+          position: w.place,
+          prize: w.buzzAwarded,
+          reason: w.reason,
+        }));
 
       // Still close the collection if not already closed
       await endChallenge(currentChallenge);

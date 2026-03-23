@@ -448,9 +448,9 @@ export async function getChallengeWinners(challengeId: number): Promise<
     id: number;
     userId: number;
     username: string;
-    imageId: number;
-    imageUrl: string;
-    imageNsfwLevel: number;
+    imageId: number | null;
+    imageUrl: string | null;
+    imageNsfwLevel: number | null;
     imageHash: string | null;
     place: number;
     buzzAwarded: number;
@@ -464,9 +464,9 @@ export async function getChallengeWinners(challengeId: number): Promise<
       id: number;
       userId: number;
       username: string;
-      imageId: number;
-      imageUrl: string;
-      imageNsfwLevel: number;
+      imageId: number | null;
+      imageUrl: string | null;
+      imageNsfwLevel: number | null;
       imageHash: string | null;
       place: number;
       buzzAwarded: number;
@@ -490,7 +490,7 @@ export async function getChallengeWinners(challengeId: number): Promise<
       ci.note as "collectionItemNote"
     FROM "ChallengeWinner" cw
     JOIN "User" u ON u.id = cw."userId"
-    JOIN "Image" i ON i.id = cw."imageId"
+    LEFT JOIN "Image" i ON i.id = cw."imageId"
     JOIN "Challenge" c ON c.id = cw."challengeId"
     LEFT JOIN "CollectionItem" ci ON ci."collectionId" = c."collectionId"
       AND ci."imageId" = cw."imageId"
@@ -512,7 +512,7 @@ export async function getChallengeWinners(challengeId: number): Promise<
 export async function getExistingWinnersForRetry(challengeId: number): Promise<
   Array<{
     userId: number;
-    imageId: number;
+    imageId: number | null;
     place: number;
     buzzAwarded: number;
     pointsAwarded: number;
