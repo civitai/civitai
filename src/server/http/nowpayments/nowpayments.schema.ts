@@ -164,9 +164,14 @@ export namespace NOWPayments {
 
   // Payments List
   export type PaymentsListResponse = z.infer<typeof paymentsListResponseSchema>;
-  export const paymentsListResponseSchema = z.object({
-    payments: z.array(z.lazy(() => createPaymentResponseSchema)),
-  });
+  export const paymentsListResponseSchema = z
+    .object({
+      data: z.array(z.lazy(() => createPaymentResponseSchema)),
+      total: z.number().optional(),
+      limit: z.number().optional(),
+      page: z.number().optional(),
+    })
+    .passthrough();
 
   // Merchant Coins
   export type MerchantCoinsResponse = z.infer<typeof merchantCoinsResponseSchema>;

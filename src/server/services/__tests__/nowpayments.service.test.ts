@@ -7,6 +7,8 @@ const {
   mockDbWrite,
   mockNowpaymentsCaller,
   mockGrantBuzzPurchase,
+  mockGetTransactionByExternalId,
+  mockGetMultipliersForUser,
   mockSignalClient,
   mockWithDistributedLock,
 } = vi.hoisted(() => {
@@ -27,11 +29,14 @@ const {
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
       getPaymentStatus: vi.fn(),
+      getListPayments: vi.fn(),
       getMerchantCoins: vi.fn(),
       getFullCurrencies: vi.fn(),
       getMinimumPaymentAmount: vi.fn(),
     },
     mockGrantBuzzPurchase: vi.fn().mockResolvedValue('tx_123'),
+    mockGetTransactionByExternalId: vi.fn().mockResolvedValue(null),
+    mockGetMultipliersForUser: vi.fn().mockResolvedValue({ purchasesMultiplier: 1 }),
     mockSignalClient: {
       send: vi.fn().mockResolvedValue(undefined),
     },
@@ -41,11 +46,15 @@ const {
 
 // Mock modules
 vi.mock('~/env/server', () => ({
-  env: { NEXTAUTH_URL: 'https://civitai.com' },
+  env: { NEXTAUTH_URL: 'https://civitai.com', LOGGING: '' },
 }));
 
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/server/services/notification.service', () => ({
+  createNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -59,6 +68,8 @@ vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
 
 vi.mock('~/server/services/buzz.service', () => ({
   grantBuzzPurchase: mockGrantBuzzPurchase,
+  getTransactionByExternalId: mockGetTransactionByExternalId,
+  getMultipliersForUser: mockGetMultipliersForUser,
 }));
 
 vi.mock('~/utils/signal-client', () => ({
@@ -71,6 +82,7 @@ vi.mock('~/server/utils/distributed-lock', () => ({
 
 vi.mock('~/server/common/enums', () => ({
   SignalMessages: { CryptoDepositUpdate: 'crypto-deposit:update' },
+  NotificationCategory: { Buzz: 'buzz' },
 }));
 
 vi.mock('~/server/redis/client', () => ({
@@ -101,6 +113,7 @@ import {
   getDepositAddress,
   processDeposit,
   getDepositHistory,
+  reconcileDeposits,
 } from '~/server/services/nowpayments.service';
 
 // Helper to build a webhook event
@@ -481,5 +494,272 @@ describe('getDepositHistory', () => {
         take: 25, // perPage clamped to MAX_PER_PAGE
       })
     );
+  });
+});
+
+// ─── reconcileDeposits ────────────────────────────────────────────────────────
+
+// Helper to build a NP payment response (as returned by the list API)
+function makePayment(
+  overrides: Partial<NOWPayments.CreatePaymentResponse> = {}
+): NOWPayments.CreatePaymentResponse {
+  return {
+    payment_id: 12345,
+    payment_status: 'finished',
+    pay_address: '0xTestAddr',
+    price_amount: 10,
+    price_currency: 'usd',
+    pay_amount: 10,
+    pay_currency: 'btc',
+    order_id: 'user:42',
+    created_at: new Date('2026-03-15'),
+    updated_at: new Date('2026-03-15'),
+    outcome_amount: 5.0,
+    actually_paid: 10,
+    parent_payment_id: null,
+    ...overrides,
+  } as NOWPayments.CreatePaymentResponse;
+}
+
+describe('reconcileDeposits', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
+    mockGetTransactionByExternalId.mockResolvedValue(null);
+  });
+
+  it('processes completed payments that have not been granted buzz', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 111, outcome_amount: 5.0 })],
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.totalPayments).toBe(1);
+    expect(result.completedPayments).toBe(1);
+    expect(result.newlyProcessed).toBe(1);
+    expect(result.alreadyProcessed).toBe(0);
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionId: 'np-deposit-111',
+        amount: 5000,
+      })
+    );
+  });
+
+  it('skips payments already granted buzz', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 222 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ transactionId: 'existing_tx' });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.alreadyProcessed).toBe(1);
+    expect(result.newlyProcessed).toBe(0);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  it('skips payments with invalid order_id', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 333, order_id: 'bad-format' })],
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.skipped).toBe(1);
+    expect(result.newlyProcessed).toBe(0);
+    expect(result.details[0]).toMatchObject({
+      action: 'skipped',
+      error: expect.stringContaining('Invalid order_id'),
+    });
+  });
+
+  it('filters out non-completed payment statuses', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [
+        makePayment({ payment_id: 444, payment_status: 'waiting' }),
+        makePayment({ payment_id: 445, payment_status: 'confirming' }),
+        makePayment({ payment_id: 446, payment_status: 'finished', outcome_amount: 2.0 }),
+      ],
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.totalPayments).toBe(3);
+    expect(result.completedPayments).toBe(1);
+    expect(result.newlyProcessed).toBe(1);
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles partially_paid status', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 555, payment_status: 'partially_paid', outcome_amount: 3.0 })],
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.completedPayments).toBe(1);
+    expect(result.newlyProcessed).toBe(1);
+  });
+
+  it('paginates through multiple pages', async () => {
+    // First page: 100 items (full page → triggers next page fetch)
+    const page1 = Array.from({ length: 100 }, (_, i) =>
+      makePayment({ payment_id: 1000 + i, outcome_amount: 1.0 })
+    );
+    // Second page: 2 items (< PAGE_SIZE → last page)
+    const page2 = [
+      makePayment({ payment_id: 2000, outcome_amount: 1.0 }),
+      makePayment({ payment_id: 2001, outcome_amount: 1.0 }),
+    ];
+
+    mockNowpaymentsCaller.getListPayments
+      .mockResolvedValueOnce({ data: page1 })
+      .mockResolvedValueOnce({ data: page2 });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(mockNowpaymentsCaller.getListPayments).toHaveBeenCalledTimes(2);
+    expect(result.totalPayments).toBe(102);
+    expect(result.newlyProcessed).toBe(102);
+  });
+
+  it('returns empty results when no payments found', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({ data: [] });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.totalPayments).toBe(0);
+    expect(result.completedPayments).toBe(0);
+    expect(result.newlyProcessed).toBe(0);
+    expect(result.details).toEqual([]);
+  });
+
+  it('handles null response from NP API gracefully', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce(null);
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.totalPayments).toBe(0);
+  });
+
+  it('records failed deposits without stopping the batch', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [
+        makePayment({ payment_id: 666, outcome_amount: 5.0 }),
+        makePayment({ payment_id: 667, outcome_amount: 2.0 }),
+      ],
+    });
+    // First call (payment 666) will fail at grantBuzzPurchase
+    mockGrantBuzzPurchase
+      .mockRejectedValueOnce(new Error('Buzz API error'))
+      .mockResolvedValueOnce('tx_ok');
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.failed).toBe(1);
+    expect(result.newlyProcessed).toBe(1);
+    expect(result.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ paymentId: 666, action: 'failed' }),
+        expect.objectContaining({ paymentId: 667, action: 'processed' }),
+      ])
+    );
+  });
+
+  it('is idempotent: second run shows all as already_processed', async () => {
+    const payments = [
+      makePayment({ payment_id: 777, outcome_amount: 5.0 }),
+      makePayment({ payment_id: 778, outcome_amount: 3.0 }),
+    ];
+
+    // First run: nothing exists yet
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({ data: payments });
+    mockGetTransactionByExternalId.mockResolvedValue(null);
+    const firstRun = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+    expect(firstRun.newlyProcessed).toBe(2);
+
+    // Second run: all transactions now exist
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({ data: payments });
+    mockGetTransactionByExternalId.mockResolvedValue({ transactionId: 'existing' });
+    vi.clearAllMocks();
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({ data: payments });
+    mockGetTransactionByExternalId.mockResolvedValue({ transactionId: 'existing' });
+
+    const secondRun = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+    expect(secondRun.alreadyProcessed).toBe(2);
+    expect(secondRun.newlyProcessed).toBe(0);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  it('passes correct date params to NP API', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({ data: [] });
+
+    await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-23' });
+
+    expect(mockNowpaymentsCaller.getListPayments).toHaveBeenCalledWith({
+      limit: 100,
+      page: 1,
+      dateFrom: '2026-03-01',
+      dateTo: '2026-03-23',
+      sortBy: 'created_at',
+      orderBy: 'asc',
+    });
+  });
+
+  // ─── paymentIds mode ──────────────────────────────────────────────────────
+
+  it('fetches individual payments by ID when paymentIds provided', async () => {
+    mockNowpaymentsCaller.getPaymentStatus
+      .mockResolvedValueOnce(makePayment({ payment_id: 111, outcome_amount: 5.0 }))
+      .mockResolvedValueOnce(makePayment({ payment_id: 222, outcome_amount: 3.0 }));
+
+    const result = await reconcileDeposits({ paymentIds: [111, 222] });
+
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(2);
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(111);
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(222);
+    expect(mockNowpaymentsCaller.getListPayments).not.toHaveBeenCalled();
+    expect(result.totalPayments).toBe(2);
+    expect(result.newlyProcessed).toBe(2);
+  });
+
+  it('skips not-found payments when fetching by ID', async () => {
+    mockNowpaymentsCaller.getPaymentStatus
+      .mockResolvedValueOnce(null) // payment not found
+      .mockResolvedValueOnce(makePayment({ payment_id: 222, outcome_amount: 3.0 }));
+
+    const result = await reconcileDeposits({ paymentIds: [999, 222] });
+
+    expect(result.totalPayments).toBe(1);
+    expect(result.newlyProcessed).toBe(1);
+  });
+
+  it('processes non-finished payments fetched by ID correctly', async () => {
+    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce(
+      makePayment({ payment_id: 333, payment_status: 'waiting', outcome_amount: 5.0 })
+    );
+
+    const result = await reconcileDeposits({ paymentIds: [333] });
+
+    expect(result.totalPayments).toBe(1);
+    expect(result.completedPayments).toBe(0);
+    expect(result.newlyProcessed).toBe(0);
+  });
+
+  it('prefers paymentIds over dateFrom/dateTo when both provided', async () => {
+    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce(
+      makePayment({ payment_id: 444, outcome_amount: 2.0 })
+    );
+
+    await reconcileDeposits({
+      dateFrom: '2026-03-01',
+      dateTo: '2026-03-31',
+      paymentIds: [444],
+    });
+
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(444);
+    expect(mockNowpaymentsCaller.getListPayments).not.toHaveBeenCalled();
   });
 });

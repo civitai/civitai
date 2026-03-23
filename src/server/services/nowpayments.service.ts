@@ -1,6 +1,10 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
-import { getMultipliersForUser, grantBuzzPurchase } from './buzz.service';
+import {
+  getMultipliersForUser,
+  getTransactionByExternalId,
+  grantBuzzPurchase,
+} from './buzz.service';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -259,8 +263,8 @@ export const reprocessDeposit = async (paymentId: number) => {
     throw new Error(`Payment ${paymentId} not found on NowPayments`);
   }
 
-  if (payment.payment_status !== 'finished') {
-    throw new Error(`Payment ${paymentId} is not finished (status: ${payment.payment_status})`);
+  if (!isDepositComplete(payment.payment_status)) {
+    throw new Error(`Payment ${paymentId} is not complete (status: ${payment.payment_status})`);
   }
 
   const orderId = payment.order_id;
@@ -283,8 +287,173 @@ export const reprocessDeposit = async (paymentId: number) => {
     parent_payment_id: payment.parent_payment_id,
   };
 
-  return processDeposit(paymentId, 'finished', event);
+  return processDeposit(paymentId, payment.payment_status, event);
 };
+
+/** Max concurrent requests to NP API when fetching individual payments */
+const RECONCILE_FETCH_CONCURRENCY = 5;
+/** Max concurrent deposit processing (buzz grants, DB writes, notifications) */
+const RECONCILE_PROCESS_CONCURRENCY = 3;
+
+type ReconcileDetail = {
+  paymentId: string | number;
+  status: string;
+  action: 'already_processed' | 'processed' | 'failed' | 'skipped';
+  error?: string;
+  userId?: number;
+  buzzAmount?: number;
+};
+
+/**
+ * Reconcile NOWPayments deposits by date range or specific payment IDs.
+ * Fetches payments from the NP API, checks if buzz was granted,
+ * and processes any missed deposits. Safe to re-run (idempotent).
+ */
+export const reconcileDeposits = async ({
+  dateFrom,
+  dateTo,
+  paymentIds,
+}: {
+  dateFrom?: string;
+  dateTo?: string;
+  paymentIds?: number[];
+}) => {
+  // 1. Fetch payments from NP API
+  const allPayments = paymentIds?.length
+    ? await fetchPaymentsByIds(paymentIds)
+    : dateFrom && dateTo
+    ? await fetchPaymentsByDateRange(dateFrom, dateTo)
+    : [];
+
+  // 2. Filter for completed payments only
+  const completedPayments = allPayments.filter((p) => isDepositComplete(p.payment_status));
+
+  // 3. Process each completed payment with bounded concurrency
+  const details = await mapWithConcurrency(
+    completedPayments,
+    RECONCILE_PROCESS_CONCURRENCY,
+    (payment) => reconcileSinglePayment(payment)
+  );
+
+  const results = {
+    totalPayments: allPayments.length,
+    completedPayments: completedPayments.length,
+    alreadyProcessed: 0,
+    newlyProcessed: 0,
+    failed: 0,
+    skipped: 0,
+    details,
+  };
+
+  for (const d of details) {
+    if (d.action === 'already_processed') results.alreadyProcessed++;
+    else if (d.action === 'processed') results.newlyProcessed++;
+    else if (d.action === 'failed') results.failed++;
+    else if (d.action === 'skipped') results.skipped++;
+  }
+
+  return results;
+};
+
+/** Fetch individual payments by ID with bounded concurrency. */
+async function fetchPaymentsByIds(ids: number[]): Promise<NOWPayments.CreatePaymentResponse[]> {
+  const results = await mapWithConcurrency(ids, RECONCILE_FETCH_CONCURRENCY, (id) =>
+    nowpaymentsCaller.getPaymentStatus(id)
+  );
+  return results.filter((p): p is NOWPayments.CreatePaymentResponse => p != null);
+}
+
+/** Paginate through NP list API for a date range. Pages are fetched sequentially. */
+async function fetchPaymentsByDateRange(
+  dateFrom: string,
+  dateTo: string
+): Promise<NOWPayments.CreatePaymentResponse[]> {
+  const PAGE_SIZE = 100;
+  let page = 1;
+  const allPayments: NOWPayments.CreatePaymentResponse[] = [];
+
+  while (true) {
+    const result = await nowpaymentsCaller.getListPayments({
+      limit: PAGE_SIZE,
+      page,
+      dateFrom,
+      dateTo,
+      sortBy: 'created_at',
+      orderBy: 'asc',
+    });
+
+    if (!result || result.data.length === 0) break;
+    allPayments.push(...result.data);
+
+    if (result.data.length < PAGE_SIZE) break;
+    page++;
+  }
+
+  return allPayments;
+}
+
+/** Process a single payment: check idempotency, validate, grant buzz. */
+async function reconcileSinglePayment(
+  payment: NOWPayments.CreatePaymentResponse
+): Promise<ReconcileDetail> {
+  const paymentId = payment.payment_id;
+  const externalId = `np-deposit-${paymentId}`;
+
+  // Check if buzz already granted
+  try {
+    const existing = await getTransactionByExternalId(externalId);
+    if (existing) {
+      return { paymentId, status: payment.payment_status, action: 'already_processed' };
+    }
+  } catch {
+    // If lookup fails, proceed to process (processDeposit is idempotent)
+  }
+
+  // Validate order_id format
+  if (!payment.order_id?.startsWith('user:')) {
+    return {
+      paymentId,
+      status: payment.payment_status,
+      action: 'skipped',
+      error: `Invalid order_id: ${payment.order_id}`,
+    };
+  }
+
+  // Process the deposit
+  try {
+    const event: NOWPayments.WebhookEvent = {
+      payment_id: typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
+      payment_status: payment.payment_status,
+      order_id: payment.order_id,
+      outcome_amount: payment.outcome_amount ?? undefined,
+      actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+      pay_currency: payment.pay_currency,
+      pay_address: payment.pay_address,
+      parent_payment_id: payment.parent_payment_id,
+    };
+
+    const depositResult = await processDeposit(
+      typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
+      payment.payment_status,
+      event
+    );
+
+    return {
+      paymentId,
+      status: payment.payment_status,
+      action: 'processed',
+      userId: depositResult.userId,
+      buzzAmount: depositResult.buzzAmount,
+    };
+  } catch (e) {
+    return {
+      paymentId,
+      status: payment.payment_status,
+      action: 'failed',
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
 
 /** Hard cap on perPage to prevent abuse */
 const MAX_PER_PAGE = 25;

@@ -162,6 +162,24 @@ class NOWPaymentsCaller extends HttpCaller {
     return NOWPayments.createPaymentResponseSchema.parse(data);
   }
 
+  async getListPayments(params: {
+    limit?: number;
+    page?: number;
+    sortBy?: string;
+    orderBy?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<NOWPayments.PaymentsListResponse | null> {
+    const response = await this.getRaw(`/payment/`, { queryParams: params });
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get payments list', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.paymentsListResponseSchema.parse(data);
+  }
+
   async getMerchantCoins(): Promise<NOWPayments.MerchantCoinsResponse | null> {
     const response = await this.getRaw(`/merchant/coins`);
     if (response.status === 404) return null;
