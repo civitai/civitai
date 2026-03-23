@@ -169,6 +169,15 @@ function ResourceSelectModalContent() {
   const { refine } = useClearRefinements();
   // TODO this refine isn't working perfectly
 
+  // For modelVersion linking, always start on 'all' tab since 'recent' depends on
+  // recommended models which are often empty for new uploads
+  React.useEffect(() => {
+    if (selectSource === 'modelVersion') {
+      setSelectedTab('all');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const { filters: selectFilters, setFilters: setSelectFilters } = useResourceSelectContext();
   const popularBaseModels: BaseModel[] = [
     'Pony',
@@ -335,9 +344,7 @@ function ResourceSelectModalContent() {
         const usedResources = uniq(
           generationData.flatMap((wf) =>
             wf.steps.flatMap((step) =>
-              step.resources?.map(
-                (r: any) => (r.model as { id?: number }).id
-              )
+              step.resources?.map((r: any) => (r.model as { id?: number }).id)
             )
           )
         );
@@ -361,7 +368,7 @@ function ResourceSelectModalContent() {
         meiliFilters.push(`id IN [${uniq(customModels).join(',')}]`);
       }
     } else if (selectSource === 'modelVersion') {
-      if (!!recommendedModels) {
+      if (recommendedModels && recommendedModels.length > 0) {
         meiliFilters.push(`id IN [${recommendedModels.join(',')}]`);
       }
     } else if (selectSource === 'auction') {

@@ -281,8 +281,7 @@ export function RequiredComponentsSection({
                             ? undefined
                             : createModelFileDownloadUrl({
                                 versionId: lc.versionId,
-                                type: lc.fileType,
-                                meta: lc.fileMetadata as BasicFileMetadata | undefined,
+                                primary: true,
                               })
                         }
                         onClick={(e: React.MouseEvent) => {

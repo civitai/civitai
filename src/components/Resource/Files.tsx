@@ -145,8 +145,20 @@ export function Files() {
     sectionMaxFiles: number,
     defaultType?: ModelFileType
   ) => {
-    if (sectionFiles.length + droppedFiles.length > sectionMaxFiles) return;
-    if (files.length + droppedFiles.length > totalMaxFiles) return;
+    if (sectionFiles.length + droppedFiles.length > sectionMaxFiles) {
+      showErrorNotification({
+        title: 'Too many files',
+        error: new Error(`Maximum ${sectionMaxFiles} files allowed in this section.`),
+      });
+      return;
+    }
+    if (files.length + droppedFiles.length > totalMaxFiles) {
+      showErrorNotification({
+        title: 'Too many files',
+        error: new Error(`Maximum ${totalMaxFiles} total files allowed per version.`),
+      });
+      return;
+    }
     onDrop(droppedFiles, defaultType);
   };
 
@@ -159,7 +171,15 @@ export function Files() {
     )
       .map((error) => error.message)
       .join('\n');
-    showErrorNotification({ error: new Error(errors) });
+    const supportedTypes = [...new Set([...primary.extensions, ...additional.extensions])].join(
+      ', '
+    );
+    showErrorNotification({
+      title: 'File not accepted',
+      error: new Error(
+        `${errors}\n\nSupported file types: ${supportedTypes}. If uploading a variant of the same model, ensure the file format matches.`
+      ),
+    });
   };
 
   const handleLinkResource = (resource: GenerationResource) => {
