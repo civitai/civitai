@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Group, Text, useComputedColorScheme } from '@mantine/core';
-import { IconCrown, IconSparkles, IconTrophy } from '@tabler/icons-react';
+import { IconCrown, IconPhotoOff, IconSparkles, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -128,7 +128,7 @@ export function WinnerPodiumCard({
       </div>
 
       {/* Winner Image */}
-      {winner.imageId && winner.imageUrl && (
+      {winner.imageId && winner.imageUrl ? (
         <div
           className={`relative w-full overflow-hidden ${
             compact
@@ -142,7 +142,7 @@ export function WinnerPodiumCard({
         >
           <ImageGuard2
             image={{
-              id: winner.imageId!,
+              id: winner.imageId,
               nsfwLevel: winner.imageNsfwLevel ?? 0,
               url: winner.imageUrl,
             }}
@@ -164,10 +164,10 @@ export function WinnerPodiumCard({
                 </Link>
                 <div className="absolute left-2 top-2 z-10 flex items-center gap-1">
                   <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
-                  {safe && winner.judgeScore && winner.imageId && (
+                  {safe && winner.judgeScore && (
                     <JudgeScoreBadge
                       score={winner.judgeScore}
-                      imageId={winner.imageId}
+                      imageId={winner.imageId!}
                       judgeInfo={judgeInfo}
                       size={compact ? 'xs' : 'sm'}
                     />
@@ -176,6 +176,25 @@ export function WinnerPodiumCard({
               </>
             )}
           </ImageGuard2>
+        </div>
+      ) : (
+        <div
+          className={`relative flex w-full items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-5 ${
+            compact
+              ? isFirst
+                ? 'aspect-[5/6]'
+                : 'aspect-square'
+              : isFirst
+              ? 'aspect-square'
+              : 'aspect-[4/3]'
+          }`}
+        >
+          <div className="flex flex-col items-center gap-1 text-gray-400 dark:text-dark-3">
+            <IconPhotoOff size={compact ? 24 : 36} stroke={1.5} />
+            <Text size={compact ? 'xs' : 'sm'} c="dimmed">
+              Image removed
+            </Text>
+          </div>
         </div>
       )}
 
