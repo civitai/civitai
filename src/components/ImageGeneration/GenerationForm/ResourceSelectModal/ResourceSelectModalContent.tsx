@@ -1,6 +1,6 @@
 import { Box, Center, CloseButton, Loader, SegmentedControl, Text } from '@mantine/core';
 import { IconSettings } from '@tabler/icons-react';
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { Configure, useClearRefinements } from 'react-instantsearch';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import {
@@ -40,6 +40,16 @@ export function ResourceSelectModalContent() {
     getInitialValueInEffect: false,
   });
   const { refine } = useClearRefinements();
+  const { selectSource } = useResourceSelectContext();
+
+  // For modelVersion linking, always start on 'all' tab since 'recent' depends on
+  // recommended models which are often empty for new uploads
+  React.useEffect(() => {
+    if (selectSource === 'modelVersion') {
+      setSelectedTab('all');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const {
     likedModels,
