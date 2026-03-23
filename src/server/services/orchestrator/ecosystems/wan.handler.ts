@@ -172,8 +172,15 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
     }
 
     case 'v2.2': {
-      if (await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP)) {
-        // Multi-step comfy workflow: 12fps videoGen + frame interpolation
+      // Use multi-step if the user toggled it on AND the flipt kill-switch allows it
+      const useMultiStep =
+        'multiStep' in data &&
+        data.multiStep === true &&
+        (await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP));
+
+      if (useMultiStep) {
+        // Multi-step comfy workflow: 12fps videoGen + VFIMamba fr
+        // ame interpolation
         const resolution = 'resolution' in data ? (data.resolution as string) : '480p';
         const ratioEntries = v22AspectRatioEntries(resolution);
         const dims = hasImages
@@ -187,8 +194,8 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
             frameRate: 12,
             width: dims?.width,
             height: dims?.height,
-            duration: 5,
-            steps: 20,
+            duration: 'duration' in data ? data.duration : 5,
+            steps: 'steps' in data ? data.steps : 20,
             negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
             shift: 'shift' in data ? data.shift : undefined,
             images: hasImages ? data.images?.map((x) => x.url) : undefined,
@@ -206,7 +213,7 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
         return [videoGenStep, videoInterpolationStep];
       }
 
-      // Single-step fal workflow
+      // Legacy single-step fal workflow
       const operation = hasImages ? 'image-to-video' : 'text-to-video';
       const input = {
         ...baseInput,

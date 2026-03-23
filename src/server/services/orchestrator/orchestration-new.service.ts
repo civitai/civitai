@@ -52,6 +52,7 @@ import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { maxRandomSeed } from '~/server/common/constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
@@ -196,7 +197,8 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
  * @returns GenerationCtx with limits and user info, plus status for availability checks
  */
 export async function buildGenerationContext(
-  userTier: GenerationCtx['user']['tier'] = 'free'
+  userTier: GenerationCtx['user']['tier'] = 'free',
+  flags?: Partial<FeatureAccess>
 ): Promise<GenerationContextResult> {
   const status = await getGenerationStatus();
   const limits = status.limits[userTier];
@@ -211,6 +213,7 @@ export async function buildGenerationContext(
         isMember: userTier !== 'free',
         tier: userTier,
       },
+      flags,
     },
     status: {
       available: status.available,

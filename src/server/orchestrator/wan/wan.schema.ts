@@ -144,10 +144,12 @@ type Wan22Schema = z.infer<typeof wan22Schema>;
 const wan22Schema = z.object({
   ...baseSchema.shape,
   version: z.literal('v2.2'),
+  multiStep: z.boolean().optional(),
   negativePrompt: negativePromptSchema,
   resolution: z.enum(wan22Resolutions).catch(wan22Resolutions[0]),
   aspectRatio: z.enum(wan22AspectRatios).optional().catch('1:1'),
   shift: z.number().default(8).catch(8),
+  steps: z.number().optional(),
   interpolatorModel: z.enum(wan22InterpolatorModels).optional(),
   useTurbo: z.boolean().optional(),
   frameRate: z.literal(24).optional().catch(24),
