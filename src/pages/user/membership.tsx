@@ -38,6 +38,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PrepaidBuzzTransactions } from '~/components/Subscriptions/PrepaidBuzzTransactions';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -445,6 +446,7 @@ export default function UserMembership() {
               </Paper>
 
               <PrepaidTimelineProgress subscription={subscription} />
+              <PrepaidBuzzTransactions subscription={subscription} />
 
               {benefits && (
                 <div

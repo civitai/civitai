@@ -25,7 +25,7 @@ export const dialogs = dialogFactory({
   },
   'resource-select': {
     component: dynamic(
-      () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal2')
+      () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal')
     ),
   },
   'collection-select': {

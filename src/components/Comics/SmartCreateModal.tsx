@@ -1,18 +1,19 @@
-import { ActionIcon, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
-import { IconArrowLeft, IconPlus, IconX } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { ActionIcon, Alert, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
+import { IconArrowLeft, IconClock, IconPlus, IconX } from '@tabler/icons-react';
+import { useEffect, useRef, useState } from 'react';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 
 interface SmartCreateModalProps {
   opened: boolean;
   onClose: () => void;
   references: { id: number; name: string }[];
-  planCost: number;
-  panelCost: number;
-  enhanceCost: number;
+  planCost: number | null;
+  panelCost: number | null;
+  enhanceCost: number | null;
   effectiveModel: string;
   activeAspectRatios: { label: string; width: number; height: number }[];
   onModelChange: (value: string | null) => void;
@@ -55,6 +56,14 @@ export function SmartCreateModal({
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
   const [smartEnhance, setSmartEnhance] = useState(true);
   const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+
+  // Queue status for showing warnings
+  const { canGenerate, available, limit, used, isLoading: queueLoading } = useComicsQueueStatus();
+  const validPanelCount = smartPanels.filter((p) => p.prompt.trim()).length;
+  const needsQueueWait = validPanelCount > available && available > 0;
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
 
   const resetSmartState = () => {
     setSmartStep('input');
@@ -132,10 +141,10 @@ export function SmartCreateModal({
               Cancel
             </Button>
             <BuzzTransactionButton
-              buzzAmount={planCost}
-              label={isPlanningPanels ? 'Planning...' : 'Plan Panels'}
+              buzzAmount={planCost ?? 0}
+              label={planCost == null ? 'Loading cost...' : isPlanningPanels ? 'Planning...' : 'Plan Panels'}
               loading={isPlanningPanels}
-              disabled={!smartStory.trim()}
+              disabled={!smartStory.trim() || planCost == null}
               onPerformTransaction={handlePlanPanels}
               showPurchaseModal
             />
@@ -153,8 +162,8 @@ export function SmartCreateModal({
             {smartPanels.length} panels planned
           </Text>
 
-          <ScrollArea.Autosize mah="50vh">
-            <Stack gap="sm">
+          <ScrollArea.Autosize mah="50vh" viewportRef={scrollViewportRef}>
+            <Stack gap="sm" pr="sm">
               {smartPanels.map((panel, index) => (
                 <div key={index} className="flex gap-2 items-start">
                   <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
@@ -193,7 +202,16 @@ export function SmartCreateModal({
             color="yellow"
             size="xs"
             leftSection={<IconPlus size={14} />}
-            onClick={() => setSmartPanels([...smartPanels, { prompt: '' }])}
+            onClick={() => {
+              setSmartPanels([...smartPanels, { prompt: '' }]);
+              // Scroll to the newly added panel after render
+              requestAnimationFrame(() => {
+                scrollViewportRef.current?.scrollTo({
+                  top: scrollViewportRef.current.scrollHeight,
+                  behavior: 'smooth',
+                });
+              });
+            }}
           >
             Add Panel
           </Button>
@@ -220,14 +238,28 @@ export function SmartCreateModal({
           />
 
           <Text size="sm" c="dimmed">
-            Cost: {smartPanels.filter((p) => p.prompt.trim()).length} panels x{' '}
-            {panelCost > 0 ? panelCost + (smartEnhance ? enhanceCost : 0) : '...'} ={' '}
-            {panelCost > 0
-              ? smartPanels.filter((p) => p.prompt.trim()).length *
-                (panelCost + (smartEnhance ? enhanceCost : 0))
-              : 'Estimating...'}{' '}
-            Buzz
+            {panelCost != null
+              ? `Cost: ${smartPanels.filter((p) => p.prompt.trim()).length} panels x ${panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0)} = ${smartPanels.filter((p) => p.prompt.trim()).length * (panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0))} Buzz`
+              : 'Calculating cost...'}
           </Text>
+
+          {/* Queue status warnings */}
+          {generationDisabled && (
+            <Alert color="red" title="Generation Unavailable" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
+          {!queueLoading && queueFull && !generationDisabled && (
+            <Alert color="red" title="Queue Full" icon={<IconClock size={16} />}>
+              Your generation queue is full ({used}/{limit} jobs). You need to wait for jobs to complete before creating new panels.
+            </Alert>
+          )}
+          {!queueLoading && needsQueueWait && !queueFull && !generationDisabled && (
+            <Alert color="yellow" title="Queuing Required" icon={<IconClock size={16} />}>
+              You have {available} of {limit} queue slots available but want to create {validPanelCount} panels.
+              Panels will be created one at a time as slots become available. This may take longer than usual.
+            </Alert>
+          )}
 
           <Group justify="space-between">
             <Button
@@ -240,11 +272,11 @@ export function SmartCreateModal({
             <BuzzTransactionButton
               buzzAmount={
                 smartPanels.filter((p) => p.prompt.trim()).length *
-                (panelCost + (smartEnhance ? enhanceCost : 0))
+                ((panelCost ?? 0) + (smartEnhance ? (enhanceCost ?? 0) : 0))
               }
-              label={isCreating ? 'Creating...' : 'Create Chapter'}
+              label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
-              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0}
+              disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null || generationDisabled}
               onPerformTransaction={handleSmartCreate}
               showPurchaseModal
             />

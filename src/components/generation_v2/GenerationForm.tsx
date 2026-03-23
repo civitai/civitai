@@ -99,6 +99,15 @@ import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { MetadataExtractionPanel } from './inputs/MetadataExtractionPanel';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
+import { useTourContext } from '~/components/Tours/ToursProvider';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useGenerationGraphStore } from '~/store/generation-graph.store';
+import { useRemixStore } from '~/store/remix.store';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 
 // =============================================================================
 // Component
@@ -129,6 +138,54 @@ export function GenerationForm() {
       unsubModel();
     };
   }, [graph]);
+
+  // Tour initialization
+  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
+  const status = useGenerationStatus();
+  const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.data?.remixOfId);
+  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
+    state.requestsLoading,
+    state.hasGeneratedImages,
+  ]);
+
+  // Trigger tour when form is ready
+  useEffect(() => {
+    if (!status.available || status.isLoading || loadingGeneratorData) return;
+    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+  }, [
+    status.isLoading,
+    status.available,
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    loadingGeneratorData,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Configure tour steps based on user state
+  useEffect(() => {
+    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    const isRemix = remixOfId && activeTour === 'remix-content-generation';
+    let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
+
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
+    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+
+    const alreadyReviewedTerms =
+      window?.localStorage?.getItem('review-generation-terms') === 'true';
+    if (alreadyReviewedTerms)
+      genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
+
+    setSteps(genSteps);
+  }, [
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    currentUser,
+    running,
+    activeTour,
+    loadingGeneratorData,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Get compatibility info based on current workflow and ecosystem
   const compatibility = useCompatibilityInfo({
@@ -614,6 +671,7 @@ export function GenerationForm() {
                   <Paper
                     radius="md"
                     withBorder
+                    data-tour="gen:prompt"
                     className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
                   >
                     <PromptInput

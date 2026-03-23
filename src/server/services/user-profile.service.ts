@@ -287,6 +287,7 @@ export const updateUserProfile = async ({
                       create: {
                         ...coverImage,
                         meta: (coverImage?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                        metadata: { coverImage: true, userId },
                         userId,
                         resources: undefined,
                       },

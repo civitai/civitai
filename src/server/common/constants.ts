@@ -571,6 +571,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
   LTXV2: baseLicenses['ltxv2'],
+  'LTXV 2.3': baseLicenses['ltxv2'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],

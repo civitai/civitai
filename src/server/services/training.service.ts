@@ -24,13 +24,22 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { deleteObject, getGetUrl, getPutUrl, getS3Client, parseKey } from '~/utils/s3-utils';
+import {
+  deleteObject,
+  getB2S3Client,
+  getGetUrl,
+  getPutUrl,
+  getS3Client,
+  isB2Url,
+  parseKey,
+} from '~/utils/s3-utils';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
   modelName: string;
+  trainedWords: string[] | null;
   trainingUrl: string;
   fileId: number;
   userId: number;
@@ -280,7 +289,9 @@ export const autoTagHandler = async ({
 }: AutoTagInput & {
   userId: number;
 }) => {
-  const { url: getUrl } = await getGetUrl(url);
+  const { url: getUrl } = isB2Url(url)
+    ? await getGetUrl(url, { s3: getB2S3Client() })
+    : await getGetUrl(url);
   const { key, bucket } = parseKey(url);
   if (!bucket) throw throwBadRequestError('Invalid URL');
 
@@ -323,7 +334,9 @@ export const autoCaptionHandler = async ({
 }: AutoCaptionInput & {
   userId: number;
 }) => {
-  const { url: getUrl } = await getGetUrl(url);
+  const { url: getUrl } = isB2Url(url)
+    ? await getGetUrl(url, { s3: getB2S3Client() })
+    : await getGetUrl(url);
   const { key, bucket } = parseKey(url);
   if (!bucket) throw throwBadRequestError('Invalid URL');
 

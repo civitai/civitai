@@ -166,11 +166,50 @@ export const AdvancedSettings = ({
         ? 'cosine'
         : selectedRun.params.lrScheduler;
 
-    if (
-      newOptimizerArgs !== selectedRun.params.optimizerArgs ||
-      newScheduler !== selectedRun.params.lrScheduler
-    ) {
-      doUpdate({ params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler } });
+    const updatedParams: Record<string, unknown> = {};
+
+    if (newOptimizerArgs !== selectedRun.params.optimizerArgs) {
+      updatedParams.optimizerArgs = newOptimizerArgs;
+    }
+    if (newScheduler !== selectedRun.params.lrScheduler) {
+      updatedParams.lrScheduler = newScheduler;
+    }
+
+    // Check if textEncoderLR is disabled for this base model (non-SD1/SDXL models)
+    const textEncoderSetting = trainingSettings.find((ts) => ts.name === 'textEncoderLR');
+    const textEncoderOverride =
+      textEncoderSetting?.overrides?.[runBase]?.all ??
+      textEncoderSetting?.overrides?.[runBase]?.[selectedRun.params.engine];
+    const isTextEncoderDisabled = textEncoderOverride?.disabled === true;
+
+    // Prodigy optimizer requires LR values set to 1
+    if (selectedRun.params.optimizerType === 'Prodigy') {
+      if (selectedRun.params.unetLR !== 1) {
+        updatedParams.unetLR = 1;
+      }
+      // Only set textEncoderLR for models that support text encoder training
+      if (!isTextEncoderDisabled && selectedRun.params.textEncoderLR !== 1) {
+        updatedParams.textEncoderLR = 1;
+      }
+    } else {
+      // For non-Prodigy optimizers, LR=1 is dangerously high and produces noise.
+      // Reset to defaults if LR values are at Prodigy levels (e.g. after switching away).
+      const defaults = getDefaultTrainingParams(runBase, selectedRun.params.engine);
+      if (selectedRun.params.unetLR >= 0.1) {
+        updatedParams.unetLR = defaults.unetLR;
+      }
+      if (selectedRun.params.textEncoderLR >= 0.1) {
+        updatedParams.textEncoderLR = defaults.textEncoderLR;
+      }
+    }
+
+    // Ensure textEncoderLR is 0 for models that don't support text encoder training
+    if (isTextEncoderDisabled && selectedRun.params.textEncoderLR !== 0) {
+      updatedParams.textEncoderLR = 0;
+    }
+
+    if (Object.keys(updatedParams).length > 0) {
+      doUpdate({ params: updatedParams });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.optimizerType]);

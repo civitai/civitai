@@ -197,6 +197,8 @@ type GetObjectOptions = {
 };
 
 const s3Host = new URL(env.S3_UPLOAD_ENDPOINT).host;
+const b2Host = env.S3_UPLOAD_B2_ENDPOINT ? new URL(env.S3_UPLOAD_B2_ENDPOINT).host : null;
+
 export function parseKey(fileUrl: string) {
   let url: URL;
   try {
@@ -205,7 +207,7 @@ export function parseKey(fileUrl: string) {
     return { key: fileUrl };
   }
 
-  const bucketInPath = url.hostname === s3Host;
+  const bucketInPath = url.hostname === s3Host || (b2Host !== null && url.hostname === b2Host);
   if (bucketInPath) {
     const pathParts = url.pathname.split('/');
     return {
@@ -218,6 +220,15 @@ export function parseKey(fileUrl: string) {
     key: url.pathname.split('/').slice(1).join('/'),
     bucket: url.hostname.replace('.' + s3Host, ''),
   };
+}
+
+export function isB2Url(url: string): boolean {
+  if (!b2Host) return false;
+  try {
+    return new URL(url).hostname === b2Host;
+  } catch {
+    return false;
+  }
 }
 
 export async function getGetUrl(

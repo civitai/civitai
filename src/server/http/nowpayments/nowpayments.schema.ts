@@ -71,8 +71,8 @@ export namespace NOWPayments {
       order_id: z.string().nullish(),
       order_description: z.string().nullish(),
       ipn_callback_url: z.string().nullish(),
-      created_at: z.string(),
-      updated_at: z.string(),
+      created_at: z.coerce.date(),
+      updated_at: z.coerce.date(),
       purchase_id: z.union([z.string(), z.number()]).nullish(),
       amount_received: z.number().nullish(),
       payin_extra_id: z.string().nullish(),
@@ -257,6 +257,6 @@ export namespace NOWPayments {
     price_amount: z.number().nullish(),
     price_currency: z.string().nullish(),
     purchase_id: z.string().nullish(),
-    updated_at: z.number().nullish(),
+    updated_at: z.coerce.date().nullish(),
   });
 }

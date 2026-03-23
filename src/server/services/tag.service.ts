@@ -8,7 +8,7 @@ import {
   type TagVotableEntityType,
   type VotableTagModel,
 } from '~/libs/tags';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
@@ -33,6 +33,7 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
@@ -50,6 +51,88 @@ export const getTagWithModelCount = ({ name }: { name: string }) => {
     LIMIT 1 OFFSET 0;
   `;
 };
+
+export type TagPageSeoData = {
+  count: number;
+  models: {
+    id: number;
+    name: string;
+    type: string;
+    creator: string;
+    stats: { downloadCount: number; thumbsUpCount: number };
+  }[];
+};
+
+export async function getTagPageSeoData({ name }: { name: string }): Promise<TagPageSeoData> {
+  const cacheKey = `${
+    REDIS_KEYS.CACHES.TAG_PAGE_SEO
+  }:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${string}`;
+
+  return fetchThroughCache(
+    cacheKey,
+    async () => {
+      const tag = await dbRead.tag.findFirst({
+        where: { name },
+        select: { id: true },
+      });
+
+      if (!tag) return { count: 0, models: [] };
+
+      const [countResult, models] = await Promise.all([
+        dbRead.$queryRaw<[{ count: bigint }]>`
+          SELECT COUNT(*) as count
+          FROM "TagsOnModels" tom
+          JOIN "Model" m ON m."id" = tom."modelId"
+          WHERE tom."tagId" = ${tag.id}
+            AND m."status" = 'Published'::"ModelStatus"
+            AND m."availability" != 'Unsearchable'::"Availability"
+        `,
+        dbRead.$queryRaw<
+          {
+            id: number;
+            name: string;
+            type: string;
+            creator: string;
+            downloadCount: number;
+            thumbsUpCount: number;
+          }[]
+        >`
+          SELECT
+            m."id",
+            m."name",
+            m."type",
+            u."username" as "creator",
+            COALESCE(mm."downloadCount", 0)::int as "downloadCount",
+            COALESCE(mm."thumbsUpCount", 0)::int as "thumbsUpCount"
+          FROM "TagsOnModels" tom
+          JOIN "Model" m ON m."id" = tom."modelId"
+          JOIN "User" u ON u."id" = m."userId"
+          LEFT JOIN "ModelMetric" mm ON mm."modelId" = m."id"
+          WHERE tom."tagId" = ${tag.id}
+            AND m."status" = 'Published'::"ModelStatus"
+            AND m."availability" != 'Unsearchable'::"Availability"
+          ORDER BY COALESCE(mm."downloadCount", 0) DESC
+          LIMIT 20
+        `,
+      ]);
+
+      return {
+        count: Number(countResult[0]?.count ?? 0),
+        models: models.map((m) => ({
+          id: m.id,
+          name: m.name,
+          type: m.type,
+          creator: m.creator,
+          stats: {
+            downloadCount: m.downloadCount,
+            thumbsUpCount: m.thumbsUpCount,
+          },
+        })),
+      };
+    },
+    { ttl: CacheTTL.day }
+  );
+}
 
 export const getTag = ({ id }: { id: number }) => {
   return dbRead.tag.findUnique({

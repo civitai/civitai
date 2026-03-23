@@ -25,8 +25,10 @@ export function ArticlesInfinite({
     : removeEmpty({ ...articlesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { articles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryArticles(debouncedFilters, { keepPreviousData: true });
+  const { articles, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryArticles(
+    debouncedFilters,
+    { keepPreviousData: true }
+  );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -36,7 +38,7 @@ export function ArticlesInfinite({
 
   return (
     <>
-      {isLoading ? (
+      {!articles.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />
         </Center>

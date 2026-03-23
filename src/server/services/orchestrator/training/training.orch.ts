@@ -25,7 +25,7 @@ import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { getGetUrl } from '~/utils/s3-utils';
+import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import {
   getTrainingFields,
@@ -153,6 +153,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     model,
     priority,
     loraName,
+    triggerWord,
     trainingData,
     trainingDataImagesCount,
     samplePrompts,
@@ -190,7 +191,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
     numberOfRepeats: aiToolkitParams.numRepeats ?? undefined,
-    triggerWord: loraName,
+    triggerWord,
   } as AiToolkitTrainingInput & { triggerWord: string };
 
   if (aiToolkitParams.ecosystem === 'sd1') {
@@ -246,6 +247,7 @@ export const createTrainingWorkflow = async ({
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
            mf.id       "fileId",
@@ -294,7 +296,9 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
-  const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
+  const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
+    ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
+    : await getGetUrl(modelVersion.trainingUrl);
 
   if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
@@ -307,6 +311,7 @@ export const createTrainingWorkflow = async ({
   const priority = getTrainingFields.getPriority(isPriority);
   const engine = getTrainingFields.getEngine(trainingParams.engine);
   const loraName = modelVersion.modelName;
+  const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
 
   // Don't override the engine field in params - it needs to remain as the literal type
@@ -320,6 +325,7 @@ export const createTrainingWorkflow = async ({
     trainingDataImagesCount,
     engine, // This uses the OrchEngineTypes enum
     loraName,
+    triggerWord,
     samplePrompts,
     negativePrompt,
     modelFileId,
@@ -407,6 +413,7 @@ export const createTrainingWhatIfWorkflow = async ({
     params,
     trainingData: 'https://fake',
     loraName: '',
+    triggerWord: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,
     negativePrompt: '',

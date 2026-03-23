@@ -9,6 +9,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+
+import { ChapterExportButton } from '~/components/Comics/ComicExportButton';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -94,7 +97,6 @@ function ComicReader() {
       <div
         ref={scrollRef}
         style={{
-          height: '100dvh',
           overflow: 'auto',
           background: 'var(--mantine-color-dark-8)',
         }}
@@ -143,6 +145,13 @@ function ComicReader() {
                 >
                   <IconChevronRight size={18} />
                 </ActionIcon>
+                {project && activeChapter && (
+                  <ChapterExportButton
+                    projectName={project.name}
+                    chapterName={activeChapter.name}
+                    panels={activeChapter.panels}
+                  />
+                )}
               </Group>
             </Group>
           </Container>
@@ -163,7 +172,7 @@ function ComicReader() {
               {panels.map((panel) => (
                 <img
                   key={panel.id}
-                  src={panel.imageUrl!}
+                  src={getEdgeUrl(panel.imageUrl!, { original: true })}
                   alt={panel.prompt}
                   loading="lazy"
                   style={{
@@ -204,4 +213,4 @@ function ComicReader() {
   );
 }
 
-export default Page(ComicReader, { header: null });
+export default Page(ComicReader);

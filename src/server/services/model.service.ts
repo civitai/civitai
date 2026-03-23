@@ -411,8 +411,7 @@ export const getModelsRaw = async ({
   if (username || user) {
     const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
     const targetUser =
-      (await dbRead.user.findUnique(userFindArgs)) ??
-      (await dbWrite.user.findUnique(userFindArgs));
+      (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw new Error('User not found');
 
@@ -783,83 +782,85 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: withSpan('model:getAll:transform', () => models
-      .map(({ rank, cursorId, ...model }) => {
-        const data = modelData[model.id.toString()];
-        if (!data) return null;
+    items: withSpan('model:getAll:transform', () =>
+      models
+        .map(({ rank, cursorId, ...model }) => {
+          const data = modelData[model.id.toString()];
+          if (!data) return null;
 
-        let modelVersions = data.versions;
+          let modelVersions = data.versions;
 
-        // Apply version filters
-        if (!sessionUser?.isModerator || !status?.length) {
-          modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
-        }
+          // Apply version filters
+          if (!sessionUser?.isModerator || !status?.length) {
+            modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
+          }
 
-        if (baseModels) {
-          modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
-        }
+          if (baseModels) {
+            modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
+          }
 
-        if (!!modelVersionIds?.length) {
-          modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
-        }
+          if (!!modelVersionIds?.length) {
+            modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
+          }
 
-        // Filter out NSFW versions for license-restricted base models
-        // Models with nsfwLevel > R cannot use base models with restricted licenses
-        if (nsfwRestrictedBaseModels.length > 0) {
-          modelVersions = modelVersions.filter(
-            (mv) =>
-              !(
-                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
-                nsfwRestrictedBaseModels.includes(mv.baseModel)
-              )
-          );
-        }
+          // Filter out NSFW versions for license-restricted base models
+          // Models with nsfwLevel > R cannot use base models with restricted licenses
+          if (nsfwRestrictedBaseModels.length > 0) {
+            modelVersions = modelVersions.filter(
+              (mv) =>
+                !(
+                  (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                  nsfwRestrictedBaseModels.includes(mv.baseModel)
+                )
+            );
+          }
 
-        if (hidePrivateModels) {
-          modelVersions = modelVersions.filter(
-            (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
-          );
-        }
+          if (hidePrivateModels) {
+            modelVersions = modelVersions.filter(
+              (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
+            );
+          }
 
-        // eject if no versions
-        if (modelVersions.length === 0) return null;
+          // eject if no versions
+          if (modelVersions.length === 0) return null;
 
-        // If not getting full details, only return the latest version
-        if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
+          // If not getting full details, only return the latest version
+          if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
 
-        if (!!input.excludedTagIds && input.excludedTagIds.length) {
-          // Support for excluded tags
-          const hasExcludedTag = data.tags.some((tag) =>
-            (input.excludedTagIds ?? []).includes(tag.tagId)
-          );
-          if (hasExcludedTag) return null;
-        }
+          if (!!input.excludedTagIds && input.excludedTagIds.length) {
+            // Support for excluded tags
+            const hasExcludedTag = data.tags.some((tag) =>
+              (input.excludedTagIds ?? []).includes(tag.tagId)
+            );
+            if (hasExcludedTag) return null;
+          }
 
-        return {
-          ...model,
-          rank: {
-            [`downloadCount${input.period}`]: rank.downloadCount,
-            [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
-            [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
-            [`commentCount${input.period}`]: rank.commentCount,
-            [`collectedCount${input.period}`]: rank.collectedCount,
-            [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
-          },
-          modelVersions,
-          hashes: data.hashes,
-          tagsOnModels: data.tags,
-          user: {
-            id: model.userId,
-            username: userBasicData[model.userId]?.username ?? null,
-            deletedAt: userBasicData[model.userId]?.deletedAt ?? null,
-            image: userBasicData[model.userId]?.image ?? null,
-            profilePicture: profilePictures?.[model.userId] ?? null,
-            cosmetics: userCosmetics[model.userId] ?? [],
-          },
-          cosmetic: cosmetics[model.id] ?? null,
-        };
-      })
-      .filter(isDefined)),
+          return {
+            ...model,
+            rank: {
+              [`downloadCount${input.period}`]: rank.downloadCount,
+              [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
+              [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
+              [`commentCount${input.period}`]: rank.commentCount,
+              [`collectedCount${input.period}`]: rank.collectedCount,
+              [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
+            },
+            modelVersions,
+            hashes: data.hashes,
+            tagsOnModels: data.tags,
+            user: {
+              id: model.userId,
+              username: userBasicData[model.userId]?.username ?? null,
+              deletedAt: userBasicData[model.userId]?.deletedAt ?? null,
+              image: userBasicData[model.userId]?.image ?? null,
+              profilePicture: profilePictures?.[model.userId] ?? null,
+              cosmetics: userCosmetics[model.userId] ?? [],
+            },
+            cosmetic: cosmetics[model.id] ?? null,
+          };
+        })
+        .filter(isDefined)
+    ),
     nextCursor,
     isPrivate,
   };
@@ -3126,7 +3127,11 @@ export async function getFeaturedModels() {
           select: {
             position: true,
             modelVersion: {
-              select: { modelId: true, baseModel: true },
+              select: {
+                modelId: true,
+                baseModel: true,
+                model: { select: { type: true } },
+              },
             },
           },
           orderBy: { position: 'asc' },
@@ -3138,21 +3143,32 @@ export async function getFeaturedModels() {
             modelId: row.modelVersion.modelId,
             position: row.position,
             baseModel: row.modelVersion.baseModel as BaseModel,
+            type: row.modelVersion.model.type,
           }));
         }
       }
 
       // if nothing found, get from the collection
-      const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
+      const query = await dbWrite.$queryRaw<{ modelId: number; baseModel: string; type: string }[]>`
         SELECT
-          ci."modelId"
+          ci."modelId",
+          mv."baseModel",
+          m."type"
         FROM "CollectionItem" ci
+        JOIN "Model" m ON m.id = ci."modelId"
+        JOIN "ModelVersion" mv ON mv."modelId" = m.id
         WHERE
           ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
-        ORDER BY "createdAt" desc
+          AND mv.status = 'Published'
+        ORDER BY ci."createdAt" desc, mv."createdAt" desc
         LIMIT 500
       `;
-      return query.map((row) => ({ modelId: row.modelId, position: 0, baseModel: '' }));
+      return query.map((row) => ({
+        modelId: row.modelId,
+        position: 0,
+        baseModel: row.baseModel as BaseModel,
+        type: row.type as ModelType,
+      }));
     });
   } catch (e) {
     const error = e as Error;

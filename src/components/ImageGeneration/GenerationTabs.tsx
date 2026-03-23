@@ -31,6 +31,9 @@ import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { getAllEcosystemVersionIdsForPrefetch } from '~/components/generation_v2/GenerationFormProvider';
 import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { useTourContext } from '~/components/Tours/ToursProvider';
+import { useRemixStore } from '~/store/remix.store';
 
 type GenerationPanelView = 'queue' | 'generate' | 'feed';
 
@@ -53,6 +56,8 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   const useLegacy = useLegacyGeneratorStore((state) => state.useLegacy);
   const hasExplicitPreference = useLegacyGeneratorStore((state) => state.hasExplicitPreference);
   const toggleGenerator = useLegacyGeneratorStore((state) => state.toggle);
+  const { runTour } = useTourContext();
+  const remixOfId = useRemixStore((state) => state.data?.remixOfId);
   const [bannerDismissed] = useLocalStorage({
     key: 'dismiss-generator-toggle-banner',
   });
@@ -119,7 +124,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
         <div className="flex w-full items-center justify-between gap-2">
           <div className="relative flex flex-1 flex-nowrap items-center gap-2">
             {features.challengePlatform && <ChallengeIndicator />}
-            {/* {features.appTour && (
+            {features.appTour && (
               <HelpButton
                 data-tour="gen:reset"
                 tooltip="Need help? Start the tour!"
@@ -132,7 +137,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
                   });
                 }}
               />
-            )} */}
+            )}
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl

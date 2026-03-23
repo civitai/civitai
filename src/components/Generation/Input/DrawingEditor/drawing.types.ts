@@ -26,6 +26,8 @@ export interface DrawingRectElement extends DrawingElementBase {
   width: number;
   height: number;
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Circle/Ellipse element
@@ -36,6 +38,8 @@ export interface DrawingCircleElement extends DrawingElementBase {
   radiusX: number; // horizontal radius
   radiusY: number; // vertical radius (allows ellipse)
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Arrow element
@@ -43,6 +47,8 @@ export interface DrawingArrowElement extends DrawingElementBase {
   type: 'arrow';
   points: number[]; // [startX, startY, endX, endY]
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Speech bubble element
@@ -55,6 +61,8 @@ export interface DrawingSpeechBubbleElement extends DrawingElementBase {
   tailX: number; // tail tip position relative to bubble center
   tailY: number;
   rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 // Image overlay element

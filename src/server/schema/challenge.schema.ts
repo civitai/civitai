@@ -173,9 +173,9 @@ export type ChallengeDetail = {
     place: number;
     userId: number;
     username: string;
-    imageId: number;
-    imageUrl: string;
-    imageNsfwLevel: number;
+    imageId: number | null;
+    imageUrl: string | null;
+    imageNsfwLevel: number | null;
     imageHash: string | null;
     buzzAwarded: number;
     reason: string | null;
@@ -408,9 +408,9 @@ export type ChallengeWinnerSummary = {
   place: number;
   userId: number;
   username: string;
-  imageId: number;
-  imageUrl: string;
-  imageNsfwLevel: number;
+  imageId: number | null;
+  imageUrl: string | null;
+  imageNsfwLevel: number | null;
   imageHash: string | null;
   buzzAwarded: number;
   reason?: string | null;

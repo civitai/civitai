@@ -140,8 +140,21 @@ function ResourceCard({
         options={options}
         actions={
           <>
-            {/* Show Revert to Default button when resource is disabled */}
-            {resourceIsDisabled && onRevertToDefault && (
+            {/* Show Use Substitute button when resource has an available substitute */}
+            {resourceIsDisabled && resource.substitute?.canGenerate && onChange && (
+              <Button
+                variant="light"
+                color="blue"
+                radius="xl"
+                size="compact-xs"
+                onClick={() => onChange({ ...value, ...resource.substitute! })}
+                leftSection={<IconRotate size={14} />}
+              >
+                Use Substitute
+              </Button>
+            )}
+            {/* Show Revert to Default button when resource is disabled and no substitute */}
+            {resourceIsDisabled && !resource.substitute?.canGenerate && onRevertToDefault && (
               <Button
                 variant="light"
                 radius="xl"

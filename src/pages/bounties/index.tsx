@@ -5,9 +5,16 @@ import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite'
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { constants } from '~/server/common/constants';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import styles from './index.module.css';
 import type { BountyEngagementTypeQueryParam } from '~/components/Bounty/bounty.utils';
 import { useBountyQueryParams } from '~/components/Bounty/bounty.utils';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.bounties) return { notFound: true };
+  },
+});
 
 function BountiesPage() {
   const { query, replace } = useBountyQueryParams();

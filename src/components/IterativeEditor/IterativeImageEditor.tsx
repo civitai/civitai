@@ -1,6 +1,8 @@
 import {
+  Alert,
   Badge,
   Button,
+  Group,
   Loader,
   NumberInput,
   Select,
@@ -12,6 +14,7 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconBolt,
   IconCheck,
+  IconClock,
   IconMessages,
   IconPencil,
   IconPhotoPlus,
@@ -38,6 +41,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
 import { getImageDimensions } from '~/utils/image-utils';
 
+import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import { AspectRatioSelector } from './AspectRatioSelector';
 import { IterationMessage } from './IterationMessage';
 import type {
@@ -118,6 +122,11 @@ export function IterativeImageEditor({
   onRetryCost,
   mode = 'page',
 }: IterativeImageEditorProps) {
+  // ── Queue status ──
+  const { canGenerate, available, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
+
   // ── Core state ──
   const [iterations, setIterations] = useState<IterationEntry[]>([]);
   const [currentSource, setCurrentSource] = useState<SourceImage | null>(
@@ -165,24 +174,6 @@ export function IterativeImageEditor({
   const { uploadToCF } = useCFImageUpload();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Notify parent when settings change so it can update cost queries
-  useEffect(() => {
-    onSettingsChange?.({
-      baseModel: generationModel,
-      aspectRatio,
-      quantity,
-      sourceImage: currentSource
-        ? { url: currentSource.url, width: currentSource.width, height: currentSource.height }
-        : null,
-      referenceImages: activeUserReferences.map((r) => ({
-        url: r.url,
-        width: r.width,
-        height: r.height,
-      })),
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generationModel, aspectRatio, quantity, currentSource, activeUserReferences, onSettingsChange]);
-
   const effectiveModel = generationModel ?? config.defaultModel;
   const activeAspectRatios =
     config.modelSizes[effectiveModel] ?? config.modelSizes[config.defaultModel] ?? [];
@@ -198,8 +189,43 @@ export function IterativeImageEditor({
     }
     return ids;
   }, [mentionedCharacterRefs]);
-  const effectiveCharacterImageCount = selectedImageIds
-    ? selectedImageIds.length
+
+  // Filter selectedImageIds to only include IDs from currently-mentioned characters.
+  // This prevents stale selections from counting when @mentions are removed from the prompt.
+  const activeSelectedImageIds = useMemo(() => {
+    if (!selectedImageIds || allCharacterImageIds.length === 0) return null;
+    const validIds = new Set(allCharacterImageIds);
+    const filtered = selectedImageIds.filter((id) => validIds.has(id));
+    return filtered.length > 0 ? filtered : null;
+  }, [selectedImageIds, allCharacterImageIds]);
+
+  // Notify parent when settings change so it can update cost queries
+  useEffect(() => {
+    // Extract reference IDs from @mentioned characters for server-side image fetch
+    const mentionedRefIds = mentionedCharacterRefs.length > 0
+      ? mentionedCharacterRefs.map((r) => r.id)
+      : undefined;
+
+    onSettingsChange?.({
+      baseModel: generationModel,
+      aspectRatio,
+      quantity,
+      sourceImage: currentSource
+        ? { url: currentSource.url, width: currentSource.width, height: currentSource.height }
+        : null,
+      referenceImages: activeUserReferences.map((r) => ({
+        url: r.url,
+        width: r.width,
+        height: r.height,
+      })),
+      referenceIds: mentionedRefIds,
+      selectedImageIds: activeSelectedImageIds ?? undefined,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationModel, aspectRatio, quantity, currentSource, activeUserReferences, mentionedCharacterRefs, activeSelectedImageIds, onSettingsChange]);
+
+  const effectiveCharacterImageCount = activeSelectedImageIds
+    ? activeSelectedImageIds.length
     : allCharacterImageIds.length;
 
   const usedImageSlots =
@@ -402,7 +428,7 @@ export function IterativeImageEditor({
               sourceImageHeight: currentSource.height,
             }
           : {}),
-        ...(selectedImageIds ? { selectedImageIds } : {}),
+        ...(activeSelectedImageIds ? { selectedImageIds: activeSelectedImageIds } : {}),
         ...(activeUserReferences.length > 0 ? { referenceImages: activeUserReferences } : {}),
       };
 
@@ -775,6 +801,18 @@ export function IterativeImageEditor({
           )}
         </div>
 
+        {/* ── Queue / generation status warnings ── */}
+        {queueFull && (
+          <Alert color="red" icon={<IconClock size={16} />} mx="sm" mb={0}>
+            Queue full ({used}/{limit} jobs). Wait for jobs to complete.
+          </Alert>
+        )}
+        {generationDisabled && (
+          <Alert color="red" icon={<IconClock size={16} />} mx="sm" mb={0}>
+            Image generation is currently unavailable. Please try again later.
+          </Alert>
+        )}
+
         {/* ── Input area ── */}
         <div className={styles.inputArea}>
           {renderInput ? (
@@ -802,25 +840,6 @@ export function IterativeImageEditor({
           )}
           <div className={styles.inputActions}>
             <div className={styles.inputActionsLeft}>
-              {currentSource && (
-                <Tooltip label="Annotate current source image">
-                  <Button
-                    variant="light"
-                    size="compact-sm"
-                    leftSection={<IconPencil size={14} />}
-                    onClick={handleAnnotateSource}
-                    disabled={isGenerating}
-                  >
-                    Annotate
-                  </Button>
-                </Tooltip>
-              )}
-              {annotationElements.length > 0 && (
-                <Badge size="sm" color="blue" variant="light">
-                  <IconPencil size={10} style={{ marginRight: 4 }} />
-                  Annotated
-                </Badge>
-              )}
             </div>
             <div className="flex items-center gap-1">
               {costFailed && onRetryCost && (
@@ -838,11 +857,15 @@ export function IterativeImageEditor({
               )}
               <Tooltip
                 label={
-                  costFailed
-                    ? 'Cost estimation failed'
-                    : costLoading || estimatedCost == null
-                      ? 'Calculating cost…'
-                      : `~${estimatedCost} Buzz (Ctrl+Enter)`
+                  queueFull
+                    ? `Queue full (${used}/${limit})`
+                    : generationDisabled
+                      ? 'Generation unavailable'
+                      : costFailed
+                        ? 'Cost estimation failed'
+                        : costLoading || estimatedCost == null
+                          ? 'Calculating cost…'
+                          : `~${estimatedCost} Buzz (Ctrl+Enter)`
                 }
                 withArrow
                 position="top"
@@ -858,7 +881,7 @@ export function IterativeImageEditor({
                       </span>
                     }
                     loading={isGenerating || (costLoading && !costFailed)}
-                    disabled={!prompt.trim() || isGenerating || estimatedCost == null}
+                    disabled={!prompt.trim() || isGenerating || estimatedCost == null || queueFull || generationDisabled}
                     onPerformTransaction={handleSend}
                     showPurchaseModal
                     size="compact-sm"
@@ -916,6 +939,28 @@ export function IterativeImageEditor({
               Reset to original
             </Button>
           )}
+          <Group gap="xs" mt={4}>
+            {currentSource && (
+              <Tooltip label="Annotate / sketch on the source image">
+                <Button
+                  variant="light"
+                  size="compact-xs"
+                  leftSection={<IconPencil size={14} />}
+                  onClick={handleAnnotateSource}
+                  disabled={isGenerating}
+                  flex={1}
+                >
+                  Annotate
+                </Button>
+              </Tooltip>
+            )}
+            {annotationElements.length > 0 && (
+              <Badge size="sm" color="blue" variant="light">
+                <IconPencil size={10} style={{ marginRight: 4 }} />
+                Annotated
+              </Badge>
+            )}
+          </Group>
         </div>
 
         {/* Model selector */}
@@ -948,6 +993,8 @@ export function IterativeImageEditor({
             References
           </div>
 
+          {/* Scrollable container for reference thumbnails */}
+          <div className={styles.sidebarSectionScrollable}>
           {/* Character reference images from @mentions — grouped by character */}
           {mentionedCharacterRefs.map((charRef) => {
             const images = (charRef.images ?? []) as { image: { id: number; url: string } }[];
@@ -1120,6 +1167,7 @@ export function IterativeImageEditor({
             </>
           )}
 
+          </div>
           <div className="flex gap-1">
             <Button
               variant="light"

@@ -1,5 +1,6 @@
 import type { ToolDefinitionJson } from '@openrouter/sdk/models';
 import { Prisma } from '@prisma/client';
+import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 import type { FreshdeskWebhookPhase } from '~/server/http/freshdesk/freshdesk.schema';
@@ -10,6 +11,7 @@ import {
   investigateContent,
   investigateSubscription,
   investigateModeration,
+  checkSiteStatus,
 } from './freshdesk-investigation-tools';
 
 // --- Tool definitions ---
@@ -81,7 +83,7 @@ const updateTicketTool: ToolDefinitionJson = {
   function: {
     name: 'update_ticket',
     description:
-      'Update ticket properties like tags, priority, or status. Only include the fields you want to change.',
+      'Update ticket properties like tags or priority. Do NOT set status — never change ticket status. Only include the fields you want to change.',
     parameters: {
       type: 'object',
       properties: {
@@ -89,15 +91,12 @@ const updateTicketTool: ToolDefinitionJson = {
         tags: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Replace all tags on the ticket with this list',
+          description:
+            "Update the ticket's process tags. Only add from this exact list: 'AI Triaged' (triage phase), 'AI Investigated' (investigation phase), 'Add to KB' (mark for KB creation), 'KB Updated' (KB phase complete). Always preserve ALL existing tags. Never create new tags not in this list.",
         },
         priority: {
           type: 'number',
           description: 'Ticket priority: 1=Low, 2=Medium, 3=High, 4=Urgent',
-        },
-        status: {
-          type: 'number',
-          description: 'Ticket status: 2=Open, 3=Pending, 4=Resolved, 5=Closed',
         },
         custom_fields: {
           type: 'object',
@@ -333,6 +332,16 @@ const investigateModerationTool: ToolDefinitionJson = {
   },
 };
 
+const checkSiteStatusTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'check_site_status',
+    description:
+      "Check current platform health and recent incidents. Use this to determine if the user's issue might be caused by a known platform problem (e.g., generator down, database issues). No parameters needed.",
+    parameters: { type: 'object', properties: {} },
+  },
+};
+
 // --- Tool execution ---
 
 const DB_QUERY_TIMEOUT_MS = 30_000;
@@ -404,7 +413,13 @@ export async function executeToolCall(
         break;
       }
       case 'add_note': {
-        const res = await freshdeskCaller.addNote(args.ticket_id as number, args.body as string);
+        const agentId = env.FRESHDESK_AGENT_ID ? Number(env.FRESHDESK_AGENT_ID) : undefined;
+        const res = await freshdeskCaller.addNote(
+          args.ticket_id as number,
+          args.body as string,
+          true,
+          agentId
+        );
         result = formatResponse(res);
         break;
       }
@@ -477,6 +492,10 @@ export async function executeToolCall(
         result = await investigationFns[name](userId);
         break;
       }
+      case 'check_site_status': {
+        result = await checkSiteStatus();
+        break;
+      }
       case 'query_database': {
         result = await Promise.race([
           executeQueryDatabase(args.sql as string),
@@ -525,6 +544,7 @@ const INVESTIGATION_TOOLS = [
   investigateContentTool,
   investigateSubscriptionTool,
   investigateModerationTool,
+  checkSiteStatusTool,
 ];
 
 export function getToolsForPhase(phase: FreshdeskWebhookPhase): ToolDefinitionJson[] {

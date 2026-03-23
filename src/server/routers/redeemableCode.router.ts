@@ -13,6 +13,7 @@ import {
   deleteRedeemableCode,
   getCodeByOrderId,
   getAllGiftNotices,
+  getMyConsumedMembershipCodes,
   getMyPurchasedCodes,
   upsertGiftNotice,
   deleteGiftNotice,
@@ -25,6 +26,9 @@ const redemptionCounter = cachedCounter(REDIS_KEYS.COUNTERS.REDEMPTION_ATTEMPTS)
 export const redeemableCodeRouter = router({
   getMyPurchasedCodes: protectedProcedure.query(({ ctx }) =>
     getMyPurchasedCodes({ userId: ctx.user.id })
+  ),
+  getMyConsumedMembershipCodes: protectedProcedure.query(({ ctx }) =>
+    getMyConsumedMembershipCodes({ userId: ctx.user.id })
   ),
   getCodeByOrderId: protectedProcedure
     .input(getCodeByOrderIdSchema)

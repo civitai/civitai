@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { agentLog } from './freshdesk-debug';
 
@@ -695,6 +696,100 @@ export async function investigateModeration(userId: number): Promise<string> {
   } else {
     for (const r of filedReports) {
       lines.push(`  Report #${r.id}: ${r.reason} [${r.status}] - ${formatDate(r.createdAt)}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ─── TOOL: check_site_status ──────────────────────────────────────────
+
+type HealthResponse = {
+  healthy: boolean;
+  write: boolean;
+  read: boolean;
+  pgWrite: boolean;
+  pgRead: boolean;
+  searchMetrics: boolean;
+  redis: boolean;
+  sysRedis: boolean;
+  clickhouse: boolean;
+};
+
+type IncidentRow = {
+  id: number;
+  title: string;
+  content: string | null;
+  effectiveAt: Date;
+  tags: string[] | null;
+};
+
+export async function checkSiteStatus(): Promise<string> {
+  const [healthResult, incidentResult] = await Promise.all([
+    (async () => {
+      try {
+        const url = `${env.NEXTAUTH_URL}/api/health?token=${env.WEBHOOK_TOKEN}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) return { error: `Health endpoint returned ${res.status}` };
+        return (await res.json()) as HealthResponse;
+      } catch (err) {
+        return {
+          error: `Health endpoint unreachable: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    })(),
+    safeQuery<IncidentRow>(Prisma.sql`
+      SELECT id, title, content, "effectiveAt", tags
+      FROM "Changelog"
+      WHERE type = 'Incident'
+        AND disabled = false
+        AND "effectiveAt" >= NOW() - INTERVAL '2 days'
+      ORDER BY "effectiveAt" DESC
+      LIMIT 10
+    `),
+  ]);
+
+  const lines: string[] = ['=== PLATFORM STATUS ==='];
+
+  // Health section
+  if ('error' in healthResult) {
+    lines.push(`Overall: UNKNOWN (${healthResult.error})`);
+  } else {
+    lines.push(`Overall: ${healthResult.healthy ? 'HEALTHY' : 'DEGRADED'}`);
+    lines.push('');
+    lines.push('--- Service Health ---');
+    const checks: [string, boolean][] = [
+      ['Database (read)', healthResult.read],
+      ['Database (write)', healthResult.write],
+      ['PG (read)', healthResult.pgRead],
+      ['PG (write)', healthResult.pgWrite],
+      ['Redis', healthResult.redis],
+      ['System Redis', healthResult.sysRedis],
+      ['Search/Metrics', healthResult.searchMetrics],
+      ['ClickHouse', healthResult.clickhouse],
+    ];
+    for (const [name, ok] of checks) {
+      lines.push(`  ${name}: ${ok ? 'OK' : 'FAILING'}`);
+    }
+  }
+
+  // Incidents section
+  lines.push('');
+  if (incidentResult.length === 0) {
+    lines.push('No recent incidents (last 2 days).');
+  } else {
+    lines.push(`--- Recent Incidents (last 2 days) ---`);
+    for (const inc of incidentResult) {
+      const date = formatDate(inc.effectiveAt).slice(0, 10);
+      const tags = inc.tags?.length ? ` - Tags: [${inc.tags.join(', ')}]` : '';
+      lines.push(`  [${date}] "${inc.title}"${tags}`);
+      if (inc.content) {
+        const preview = inc.content
+          .replace(/<[^>]*>/g, '')
+          .slice(0, 200)
+          .trim();
+        if (preview) lines.push(`    Details: ${preview}`);
+      }
     }
   }
 

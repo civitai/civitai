@@ -29,9 +29,12 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getNetworkDisplayName } from '~/server/common/chain-config';
+import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export function DepositHistory() {
+  const currentUser = useCurrentUser();
   const [page, setPage] = useState(1);
   const perPage = 3;
   const utils = trpc.useUtils();
@@ -39,13 +42,11 @@ export function DepositHistory() {
 
   const { data, isLoading } = trpc.nowPayments.getDepositHistory.useQuery(
     { page, perPage },
-    { keepPreviousData: true, staleTime: 30 * 1000 }
+    { keepPreviousData: true, staleTime: 30 * 1000, enabled: !!currentUser }
   );
 
   // Reuse supported currencies query (React Query deduplicates) for ticker/network display
-  const { data: currencies } = trpc.nowPayments.getSupportedCurrencies.useQuery(undefined, {
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: currencies } = useSupportedCurrencies();
 
   // Build a lookup: NowPayments currency code → { ticker, network, multiNetwork }
   const currencyLookup = useMemo(() => {

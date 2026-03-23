@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
+  IconClock,
   IconInfoCircle,
   IconPencil,
   IconPhotoUp,
@@ -49,6 +50,8 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
+import { trpc } from '~/utils/trpc';
+import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
@@ -84,9 +87,9 @@ interface PanelModalProps {
   regeneratingPanelId: number | null;
   insertAtPosition: number | null;
   activeChapterPanelCount: number;
-  // Costs
-  panelCost: number;
-  enhanceCost: number;
+  // Costs (null = still loading)
+  panelCost: number | null;
+  enhanceCost: number | null;
   // Submission
   isSubmitting: boolean;
   onGeneratePanel: () => void;
@@ -154,6 +157,11 @@ export function PanelModal({
     'generate'
   );
 
+  // Queue status for disabling generation when full
+  const { canGenerate, available, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
+  const queueFull = available === 0 && !queueLoading;
+  const generationDisabled = !canGenerate && available > 0 && !queueLoading;
+
   // Enhance tab state
   const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
     url: string;
@@ -170,6 +178,20 @@ export function PanelModal({
     uploadToCF: uploadEnhanceToCF,
     resetFiles: resetEnhanceFiles,
   } = useCFImageUpload();
+
+  // Enhance tab cost — uses the actual source image for accurate img2img pricing
+  const { data: enhanceImgCost } = trpc.comics.getGenerationCostEstimate.useQuery(
+    {
+      baseModel: effectiveModel,
+      aspectRatio,
+      quantity: 1,
+      sourceImage: enhanceSourceImage
+        ? { url: enhanceSourceImage.url, width: enhanceSourceImage.width, height: enhanceSourceImage.height }
+        : undefined,
+    },
+    { enabled: !!enhanceSourceImage, staleTime: 30_000, retry: 2 }
+  );
+  const enhanceGenCost = enhanceSourceImage ? (enhanceImgCost?.cost ?? null) : panelCost;
 
   // Bulk tab state
   const [bulkItems, setBulkItems] = useState<BulkPanelItem[]>([]);
@@ -449,7 +471,10 @@ export function PanelModal({
   };
 
   const bulkGenerationCount = bulkItems.filter((item) => item.prompt.trim() !== '').length;
-  const bulkTotalCost = bulkGenerationCount * (panelCost + (bulkEnhance ? enhanceCost : 0));
+  const costReady = panelCost != null;
+  const effectivePanelCost = panelCost ?? 0;
+  const effectiveEnhanceCost = enhanceCost ?? 0;
+  const bulkTotalCost = bulkGenerationCount * (effectivePanelCost + (bulkEnhance ? effectiveEnhanceCost : 0));
 
   // ── Import handlers ──
   const handleImportSelect = () => {
@@ -651,21 +676,33 @@ export function PanelModal({
             description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
           />
 
+          {/* Queue full warning */}
+          {queueFull && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Queue full ({used}/{limit} jobs). Wait for jobs to complete.
+            </Alert>
+          )}
+          {generationDisabled && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
+
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
             <Tooltip
-              label={`Generation: ${panelCost} Buzz + Enhance: ${enhanceCost} Buzz`}
-              disabled={!enhancePrompt}
+              label={queueFull ? `Queue full (${used}/${limit})` : generationDisabled ? 'Generation unavailable' : costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
+              disabled={!queueFull && !generationDisabled && !enhancePrompt && costReady}
               withArrow
               position="top"
             >
               <BuzzTransactionButton
-                buzzAmount={panelCost + (enhancePrompt ? enhanceCost : 0)}
-                label={insertAtPosition != null ? 'Insert' : 'Generate'}
+                buzzAmount={effectivePanelCost + (enhancePrompt ? effectiveEnhanceCost : 0)}
+                label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : 'Generate'}
                 loading={isSubmitting || isCreatePending}
-                disabled={!prompt.trim()}
+                disabled={!prompt.trim() || !costReady || queueFull || generationDisabled}
                 onPerformTransaction={onGeneratePanel}
                 showPurchaseModal
               />
@@ -852,18 +889,37 @@ export function PanelModal({
             description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
           />
 
+          {/* Queue full warning */}
+          {queueFull && prompt.trim() && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Queue full ({used}/{limit} jobs). Wait for jobs to complete.
+            </Alert>
+          )}
+          {generationDisabled && prompt.trim() && (
+            <Alert color="red" icon={<IconClock size={16} />}>
+              Image generation is currently unavailable. Please try again later.
+            </Alert>
+          )}
+
           <Group justify="flex-end">
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
-            <BuzzTransactionButton
-              buzzAmount={panelCost + (prompt.trim() && enhancePrompt ? enhanceCost : 0)}
-              label={regeneratingPanelId ? 'Regenerate' : 'Enhance'}
-              loading={isSubmitting || isEnhancePending}
-              disabled={!enhanceSourceImage}
-              onPerformTransaction={handleEnhanceSubmit}
-              showPurchaseModal
-            />
+            <Tooltip
+              label={queueFull && prompt.trim() ? `Queue full (${used}/${limit})` : generationDisabled && prompt.trim() ? 'Generation unavailable' : undefined}
+              disabled={!((queueFull || generationDisabled) && prompt.trim())}
+              withArrow
+              position="top"
+            >
+              <BuzzTransactionButton
+                buzzAmount={(enhanceGenCost ?? 0) + (prompt.trim() && enhancePrompt ? effectiveEnhanceCost : 0)}
+                label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
+                loading={isSubmitting || isEnhancePending}
+                disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && (queueFull || generationDisabled))}
+                onPerformTransaction={handleEnhanceSubmit}
+                showPurchaseModal
+              />
+            </Tooltip>
           </Group>
         </Stack>
       ) : panelMode === 'bulk' ? (
@@ -972,7 +1028,7 @@ export function PanelModal({
                 <span>
                   {' '}
                   &middot; {bulkGenerationCount} generation{bulkGenerationCount !== 1 ? 's' : ''}{' '}
-                  = {bulkTotalCost} Buzz
+                  = {costReady ? `${bulkTotalCost} Buzz` : 'Calculating...'}
                 </span>
               )}
               {bulkItems.length - bulkGenerationCount > 0 && (
@@ -989,13 +1045,14 @@ export function PanelModal({
             <Button variant="default" onClick={handlePanelModalClose}>
               Cancel
             </Button>
-            {bulkTotalCost > 0 ? (
+            {bulkTotalCost > 0 || (bulkGenerationCount > 0 && !costReady) ? (
               <BuzzTransactionButton
                 buzzAmount={bulkTotalCost}
-                label={`Add ${bulkItems.length} Panel${bulkItems.length !== 1 ? 's' : ''}`}
+                label={!costReady ? 'Loading cost...' : `Add ${bulkItems.length} Panel${bulkItems.length !== 1 ? 's' : ''}`}
                 loading={isSubmitting || isBulkPending}
                 disabled={
                   bulkItems.length === 0 ||
+                  !costReady ||
                   bulkItems.some((item) => !item.sourceImage && !item.prompt.trim())
                 }
                 onPerformTransaction={handleBulkSubmit}

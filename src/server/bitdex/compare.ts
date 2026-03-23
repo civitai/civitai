@@ -25,10 +25,11 @@ const queryDurationHistogram = registerHistogram({
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
 });
 
-// Jaccard similarity of result ID sets
+// Jaccard similarity of result ID sets, labeled by sort and query class
 const overlapHistogram = registerHistogram({
   name: 'bitdex_shadow_result_overlap',
   help: 'Jaccard similarity of result ID sets (0-1)',
+  labelNames: ['sort', 'query_class'] as const,
   buckets: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0],
 });
 
@@ -39,11 +40,11 @@ const totalMatchedDiffHistogram = registerHistogram({
   buckets: [0, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000],
 });
 
-// Whether result ordering matched
+// Whether result ordering matched, labeled by sort
 const orderMatchCounter = registerCounter({
   name: 'bitdex_shadow_order_match_total',
   help: 'Count of queries where result ordering matched or not',
-  labelNames: ['matched'] as const, // 'true' or 'false'
+  labelNames: ['matched', 'sort'] as const,
 });
 
 // BitDex query errors
@@ -60,29 +61,37 @@ interface ComparisonInput {
   meiliTotalMatched: number;
   bitdexElapsedMs: number;
   meiliElapsedMs: number;
+  sort?: string;
+  hasPeriod?: boolean;
+  hasFilters?: boolean;
 }
 
 export function compareBitdexResults(comparison: ComparisonInput): void {
+  const sort = comparison.sort ?? 'unknown';
+  const queryClass = comparison.hasPeriod
+    ? comparison.hasFilters ? 'complex' : 'period'
+    : comparison.hasFilters ? 'filtered' : 'simple';
+
   // Record latencies
   queryDurationHistogram.observe({ source: 'bitdex' }, comparison.bitdexElapsedMs / 1000);
   queryDurationHistogram.observe({ source: 'meilisearch' }, comparison.meiliElapsedMs / 1000);
 
-  // Jaccard similarity
+  // Jaccard similarity — labeled by sort and query class
   const meiliSet = new Set(comparison.meiliIds);
   const intersection = comparison.bitdexIds.filter((id) => meiliSet.has(id)).length;
   const union = new Set([...comparison.bitdexIds, ...comparison.meiliIds]).size;
   const jaccard = union > 0 ? intersection / union : 1.0;
-  overlapHistogram.observe(jaccard);
+  overlapHistogram.observe({ sort, query_class: queryClass }, jaccard);
 
   // Total matched diff
   const diff = Math.abs(comparison.bitdexTotalMatched - comparison.meiliTotalMatched);
   totalMatchedDiffHistogram.observe(diff);
 
-  // Order match -- compare the sequence of overlapping IDs
+  // Order match — labeled by sort
   const orderMatch =
     comparison.bitdexIds.length === comparison.meiliIds.length &&
     comparison.bitdexIds.every((id, i) => id === comparison.meiliIds[i]);
-  orderMatchCounter.inc({ matched: orderMatch ? 'true' : 'false' });
+  orderMatchCounter.inc({ matched: orderMatch ? 'true' : 'false', sort });
 }
 
 export function recordBitdexError(err: unknown): void {
