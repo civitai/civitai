@@ -1382,7 +1382,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
     let winningEntries: Array<{
       userId: number;
-      imageId: number;
+      imageId: number | null;
       position: number;
       prize: number;
       reason: string | null;
@@ -1392,15 +1392,13 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
-      winningEntries = existingWinners
-        .filter((w) => w.imageId != null)
-        .map((w) => ({
-          userId: w.userId,
-          imageId: w.imageId!,
-          position: w.place,
-          prize: w.buzzAwarded,
-          reason: w.reason,
-        }));
+      winningEntries = existingWinners.map((w) => ({
+        userId: w.userId,
+        imageId: w.imageId,
+        position: w.place,
+        prize: w.buzzAwarded,
+        reason: w.reason,
+      }));
     } else {
       // Get judged entries
       if (!challenge.collectionId) {
@@ -1463,7 +1461,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         await createChallengeWinner({
           challengeId,
           userId: entry.userId,
-          imageId: entry.imageId,
+          imageId: entry.imageId!, // always non-null on fresh winner path
           place: entry.position,
           buzzAwarded: entry.prize,
           pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,

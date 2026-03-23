@@ -128,7 +128,7 @@ export function WinnerPodiumCard({
       </div>
 
       {/* Winner Image */}
-      {winner.imageUrl && (
+      {winner.imageId && winner.imageUrl && (
         <div
           className={`relative w-full overflow-hidden ${
             compact

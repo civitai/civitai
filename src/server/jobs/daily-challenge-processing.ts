@@ -1093,7 +1093,7 @@ export async function pickWinnersForChallenge(
 
     let winningEntries: Array<{
       userId: number;
-      imageId: number;
+      imageId: number | null;
       position: number;
       prize: number;
       reason: string | null;
@@ -1103,15 +1103,13 @@ export async function pickWinnersForChallenge(
 
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
-      winningEntries = existingWinners
-        .filter((w) => w.imageId != null)
-        .map((w) => ({
-          userId: w.userId,
-          imageId: w.imageId!,
-          position: w.place,
-          prize: w.buzzAwarded,
-          reason: w.reason,
-        }));
+      winningEntries = existingWinners.map((w) => ({
+        userId: w.userId,
+        imageId: w.imageId,
+        position: w.place,
+        prize: w.buzzAwarded,
+        reason: w.reason,
+      }));
 
       // Still close the collection if not already closed
       await endChallenge(currentChallenge);
@@ -1192,7 +1190,7 @@ export async function pickWinnersForChallenge(
         await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
           userId: entry.userId,
-          imageId: entry.imageId,
+          imageId: entry.imageId!, // always non-null on fresh winner path
           place: entry.position,
           buzzAwarded: entry.prize,
           pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
