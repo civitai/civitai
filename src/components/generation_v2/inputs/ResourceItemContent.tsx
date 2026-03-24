@@ -15,8 +15,6 @@ import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core'
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
 import { getRootEcosystem } from '~/shared/constants/basemodel.constants';

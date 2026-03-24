@@ -14,6 +14,7 @@ import {
   getCompatibleBaseModels,
   getEcosystemDefaults,
   getGenerationSupport,
+  filterCompatibleResources,
 } from '~/shared/constants/basemodel.constants';
 import { MAX_SEED, samplers } from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -964,15 +965,7 @@ export function createResourcesGraph(options?: { resourceTypes?: ModelType[]; li
         if (!resources?.length) return;
         const ecosystemData = ecosystemByKey.get(ctx.ecosystem);
         if (!ecosystemData) return;
-        const filtered = resources.filter((r) => {
-          if (!r.baseModel) return true;
-          const resourceEco = baseModelByName.get(r.baseModel);
-          if (!resourceEco) return true;
-          const modelType = (r.model?.type ?? 'LORA') as ModelType;
-          return (
-            getGenerationSupport(ecosystemData.id, resourceEco.ecosystemId, modelType) !== null
-          );
-        });
+        const filtered = filterCompatibleResources(ecosystemData.id, resources);
         if (filtered.length !== resources.length) {
           set('resources', filtered);
         }
