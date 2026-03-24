@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
@@ -212,9 +213,8 @@ export function DumbMarkerFiltersDropdown({
                 value={filters.baseModel ?? null}
                 onChange={(value) => setFilters({ baseModel: value ?? undefined })}
                 placeholder="All Models"
-                searchable
+                searchable={!isMobileDevice()}
                 clearable
-                size="xs"
                 comboboxProps={{ withinPortal: false }}
               />
 
@@ -225,9 +225,8 @@ export function DumbMarkerFiltersDropdown({
                 value={filters.processType ?? null}
                 onChange={(value) => setFilters({ processType: value ?? undefined })}
                 placeholder="All Workflows"
-                searchable
+                searchable={!isMobileDevice()}
                 clearable
-                size="xs"
                 comboboxProps={{ withinPortal: false }}
               />
 
@@ -241,7 +240,6 @@ export function DumbMarkerFiltersDropdown({
                   onChange={(date) => setFilters({ fromDate: date ?? undefined })}
                   maxDate={filters.toDate ?? undefined}
                   clearable
-                  size="xs"
                 />
                 <DatePickerInput
                   label="To"
@@ -250,7 +248,6 @@ export function DumbMarkerFiltersDropdown({
                   onChange={(date) => setFilters({ toDate: date ?? undefined })}
                   minDate={filters.fromDate ?? undefined}
                   clearable
-                  size="xs"
                 />
               </Group>
 

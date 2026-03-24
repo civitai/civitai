@@ -16,14 +16,14 @@ export function TechniqueMultiSelect({
 
   return (
     <MultiSelectWrapper
+      searchable
+      clearable
       {...selectProps}
       value={value}
       onChange={onChange}
       loading={isLoading}
       placeholder={placeholder}
       data={data.map(({ id, name }) => ({ value: id, label: name }))}
-      searchable
-      clearable
     />
   );
 }

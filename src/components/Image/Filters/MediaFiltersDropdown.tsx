@@ -5,6 +5,7 @@ import {
   Divider,
   Drawer,
   Indicator,
+  MultiSelect,
   Popover,
   ScrollArea,
   Stack,
@@ -12,21 +13,19 @@ import {
   useComputedColorScheme,
   Group,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
-import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
@@ -35,8 +34,6 @@ import { getDisplayName, titleCase } from '~/utils/string-helpers';
 const availableMediaTypes = Object.values(MediaType).filter(
   (value) => value === 'image' || value === 'video'
 );
-
-const baseModelLimit = 3;
 
 export function MediaFiltersDropdown({
   query,
@@ -56,10 +53,6 @@ export function MediaFiltersDropdown({
   const isModerator = currentUser?.isModerator;
 
   const [opened, setOpened] = useState(false);
-  const [truncateBaseModels, setTruncateBaseModels] = useLocalStorage({
-    key: 'image-filter-truncate-base-models',
-    defaultValue: false,
-  });
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
@@ -72,12 +65,6 @@ export function MediaFiltersDropdown({
   }));
 
   const mergedFilters = query || filters;
-
-  const displayedBaseModels = truncateBaseModels
-    ? activeBaseModels.filter(
-        (bm, idx) => idx < baseModelLimit || mergedFilters.baseModels?.includes(bm)
-      )
-    : activeBaseModels;
 
   // maybe have individual filter length with labels next to them
 
@@ -170,32 +157,15 @@ export function MediaFiltersDropdown({
       {!hideBaseModels && (
         <Stack gap="md">
           <Divider label="Base model" className="text-sm font-bold" mb={4} />
-          <Chip.Group
+          <MultiSelect
+            data={baseModelSelectData}
             value={mergedFilters.baseModels ?? []}
             onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
-            multiple
-          >
-            <Group gap={8}>
-              {displayedBaseModels.map((baseModel, index) => (
-                <FilterChip key={index} value={baseModel}>
-                  <span>{baseModel}</span>
-                </FilterChip>
-              ))}
-              {activeBaseModels.length > baseModelLimit && (
-                <LegacyActionIcon
-                  variant="transparent"
-                  size="sm"
-                  onClick={() => setTruncateBaseModels((prev) => !prev)}
-                >
-                  {truncateBaseModels ? (
-                    <IconChevronDown strokeWidth={3} />
-                  ) : (
-                    <IconChevronUp strokeWidth={3} />
-                  )}
-                </LegacyActionIcon>
-              )}
-            </Group>
-          </Chip.Group>
+            placeholder="All Base Models"
+            searchable={!isMobileDevice()}
+            clearable
+            comboboxProps={{ withinPortal: false }}
+          />
         </Stack>
       )}
 
@@ -347,6 +317,7 @@ export function MediaFiltersDropdown({
               value={mergedFilters.tools ?? []}
               onChange={(tools) => handleChange({ tools })}
               placeholder="Created with..."
+              searchable={!isMobileDevice()}
               comboboxProps={{ withinPortal: false }}
             />
           </>
@@ -357,6 +328,7 @@ export function MediaFiltersDropdown({
           value={mergedFilters.techniques ?? []}
           onChange={(techniques) => handleChange({ techniques })}
           placeholder="Created with..."
+          searchable={!isMobileDevice()}
           comboboxProps={{ withinPortal: false }}
         />
       </Stack>

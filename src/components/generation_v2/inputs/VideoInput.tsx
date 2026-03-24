@@ -144,7 +144,9 @@ export function VideoInput({
       fps: serverMetadata.fps,
       width: videoDimensions.width,
       height: videoDimensions.height,
-      duration: serverMetadata.duration ? new TimeSpan(serverMetadata.duration as string).totalSeconds : 0,
+      duration: serverMetadata.duration
+        ? new TimeSpan(serverMetadata.duration as string).totalSeconds
+        : 0,
     };
 
     // Only update if metadata changed

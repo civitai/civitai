@@ -979,9 +979,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   },
   {
     group: 'LTXV23',
-    support: [
-      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['LTXV 2.3'] },
-    ],
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['LTXV 2.3'] }],
   },
   {
     group: 'ZImageTurbo',
