@@ -34,7 +34,7 @@ export type EcosystemRecord = {
   description?: string; // Brief description for UI display
   parentEcosystemId?: number;
   familyId?: number; // For UI family grouping
-  sortOrder?: number; // For ordering in UI
+  sortOrder: number; // For ordering in UI
 };
 
 export type EcosystemSupport = {
