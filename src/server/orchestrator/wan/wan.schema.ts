@@ -355,7 +355,13 @@ type Wan22Transformed = ReturnType<typeof handleTransformWan22Schema>;
 function handleTransformWan22Schema(data: Wan22Schema) {
   const baseModel = data.process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
   const checkpoint = baseModelResourceMap[baseModel];
-  return { ...data, baseModel, resources: uniqBy([checkpoint, ...(data.resources ?? [])], 'id') };
+  // Legacy form always uses single-step FAL path
+  return {
+    ...data,
+    multiStep: false,
+    baseModel,
+    resources: uniqBy([checkpoint, ...(data.resources ?? [])], 'id'),
+  };
 }
 
 type Wan225bTransformed = ReturnType<typeof handleTransformWan225bSchema>;
