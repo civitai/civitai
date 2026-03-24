@@ -731,6 +731,30 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       maxFiles: 1,
     },
   },
+  TextEncoder: {
+    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
+  },
+  UNet: {
+    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
+  },
+  CLIPVision: {
+    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
+  },
   Poses: {
     primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
     additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },

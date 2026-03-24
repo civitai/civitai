@@ -93,6 +93,8 @@ export function RequiredComponentsSection({
     return result;
   }, [groupedFiles.requiredComponents]);
 
+  const [downloading, setDownloading] = useState(false);
+
   // Track selected file for each component type
   const [selectedFiles, setSelectedFiles] = useState<
     Partial<Record<ModelFileComponentType, FileType>>
@@ -130,29 +132,38 @@ export function RequiredComponentsSection({
 
   const needsPurchase = !canDownload && !!downloadPrice;
 
-  // Handle downloading all components
-  const handleDownloadAll = () => {
+  // Handle downloading all components using hidden iframes.
+  // The model download endpoint uses res.redirect(), so <a> tag clicks get blocked
+  // after the first programmatic navigation. Iframes each follow redirects independently.
+  const handleDownloadAll = async () => {
     if (!canDownload) {
       if (onPurchase) onPurchase();
       return;
     }
+    if (downloading) return;
 
-    // Stagger downloads with delays to avoid browser popup blocking
-    requiredComponents.forEach((component, index) => {
+    setDownloading(true);
+
+    for (let i = 0; i < requiredComponents.length; i++) {
+      const component = requiredComponents[i];
       const selectedFile = selectedFiles[component.type] || component.files[0];
       if (selectedFile) {
         const url = createModelFileDownloadUrl({ versionId, fileId: selectedFile.id });
-        setTimeout(() => {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = '';
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }, index * 500);
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        // Clean up iframe after download has started
+        setTimeout(() => iframe.remove(), 60_000);
+
+        // Small delay between downloads to avoid browser throttling
+        if (i < requiredComponents.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
       }
-    });
+    }
+
+    setDownloading(false);
   };
 
   if (requiredComponents.length === 0 && linkedComponents.length === 0) {
@@ -325,7 +336,8 @@ export function RequiredComponentsSection({
                 )
               }
               onClick={handleDownloadAll}
-              disabled={archived || isLoadingAccess}
+              loading={downloading}
+              disabled={archived || isLoadingAccess || downloading}
               style={
                 isPrimary || needsPurchase
                   ? undefined

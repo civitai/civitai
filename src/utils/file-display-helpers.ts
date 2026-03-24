@@ -6,6 +6,7 @@
 import {
   IconAdjustments,
   IconBrain,
+  IconCube,
   IconEye,
   IconFile3d,
   IconFileSettings,
@@ -33,6 +34,7 @@ export const componentTypeConfig: Record<
   ModelFileComponentType,
   { name: string; icon: typeof IconPhotoScan; color: string }
 > = {
+  Checkpoint: { name: 'Checkpoint', icon: IconCube, color: 'red' },
   VAE: { name: 'VAE', icon: IconPhotoScan, color: 'purple' },
   TextEncoder: { name: 'Text Encoder', icon: IconTypography, color: 'blue' },
   UNet: { name: 'UNet', icon: IconBrain, color: 'orange' },

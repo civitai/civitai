@@ -257,6 +257,9 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
  */
 function inferComponentType(fileType: string): ModelFileComponentType | null {
   switch (fileType) {
+    case 'Model':
+    case 'Pruned Model':
+      return 'Checkpoint';
     case 'VAE':
       return 'VAE';
     case 'Text Encoder':

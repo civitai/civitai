@@ -111,6 +111,12 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
   switch (modelType) {
     case ModelType.VAE:
       return 'VAE';
+    case ModelType.TextEncoder:
+      return 'TextEncoder';
+    case ModelType.UNet:
+      return 'UNet';
+    case ModelType.CLIPVision:
+      return 'CLIPVision';
     case ModelType.Controlnet:
       return 'ControlNet';
     case ModelType.Other:
@@ -200,6 +206,9 @@ export function Files() {
     // Compute compatible base models from the version's base model
     const resourceTypes = [
       ModelType.VAE,
+      ModelType.TextEncoder,
+      ModelType.UNet,
+      ModelType.CLIPVision,
       ModelType.Controlnet,
       ModelType.Poses,
       ModelType.TextualInversion,

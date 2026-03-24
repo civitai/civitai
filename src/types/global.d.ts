@@ -109,6 +109,7 @@ declare global {
   type ModelFileFp = 'fp32' | 'fp16' | 'bf16' | 'fp8' | 'nf4';
   type ModelFileQuantType = 'Q8_0' | 'Q6_K' | 'Q5_K_M' | 'Q4_K_M' | 'Q4_K_S' | 'Q3_K_M' | 'Q2_K';
   type ModelFileComponentType =
+    | 'Checkpoint'
     | 'VAE'
     | 'TextEncoder'
     | 'UNet'

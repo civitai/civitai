@@ -70,6 +70,7 @@ export const constants = {
   modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
   modelFileQuantTypes: ['Q8_0', 'Q6_K', 'Q5_K_M', 'Q4_K_M', 'Q4_K_S', 'Q3_K_M', 'Q2_K'],
   modelFileComponentTypes: [
+    'Checkpoint',
     'VAE',
     'TextEncoder',
     'UNet',

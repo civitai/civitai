@@ -9,6 +9,7 @@ import { formatKBytes } from '~/utils/number-helpers';
 
 // Component type display names for user-friendly labels
 const componentTypeDisplayNames: Record<ModelFileComponentType, string> = {
+  Checkpoint: 'Checkpoint',
   VAE: 'VAE',
   TextEncoder: 'Text Encoder',
   UNet: 'UNet',
