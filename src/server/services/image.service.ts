@@ -219,6 +219,9 @@ const {
   requestDurationSeconds,
   requestTotal,
   droppedIdsTotal,
+  postFilterIterations,
+  postFilterDocsProcessed,
+  postFilterFilterRatio,
 } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -3526,6 +3529,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         break;
       }
     }
+
+    // Record PostFilter metrics
+    const overallFilterRatio = totalProcessed > 0 ? 1 - accumulatedHits.length / totalProcessed : 0;
+    postFilterIterations.observe({ route }, iteration);
+    postFilterDocsProcessed.inc({ route }, totalProcessed);
+    postFilterFilterRatio.observe({ route }, overallFilterRatio);
 
     // Update nextCursor based on whether we have more results than requested
     if (accumulatedHits.length > limit) {
