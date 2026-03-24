@@ -50,6 +50,7 @@ export function ImageDetailProvider({
   hideReactions,
   filters,
   collectionId,
+  withoutPost,
 }: {
   children: React.ReactElement;
   imageId: number;
@@ -58,6 +59,7 @@ export function ImageDetailProvider({
   hideReactions?: boolean;
   filters: ImagesQueryParamSchema;
   collectionId?: number;
+  withoutPost?: boolean;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -92,7 +94,7 @@ export function ImageDetailProvider({
   // TODO - this needs to return the data as `ImagesInfiniteModel`
   // alternatively, we always query multiple images, with the cursor starting at `imageId`
   const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
-    { id: imageId },
+    { id: imageId, withoutPost },
     { enabled: shouldFetchImage }
   );
 
